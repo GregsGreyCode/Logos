@@ -55,7 +55,7 @@ def _strip_v1_suffix(base_url: str) -> str:
     """Normalise a user-supplied base URL to the LM Studio host root.
 
     The user's machines.endpoint_url usually ends in ``/v1`` (e.g.
-    ``http://192.168.1.117:1234/v1``) because that's the OpenAI-
+    ``http://192.0.2.117:1234/v1``) because that's the OpenAI-
     compatible API base. The LM Studio REST endpoints we use here
     live at ``/api/v1/...`` from the host root, so we strip the
     trailing ``/v1`` (and any trailing slash) before joining.

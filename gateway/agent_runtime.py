@@ -18,6 +18,7 @@ CLI can load it by file path without importing the gateway package.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
@@ -25,6 +26,7 @@ import secrets
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -237,7 +239,9 @@ class AgentRuntime:
             loaded = {m["id"]: m.get("loaded_context_length") for m in
                       json.loads(self.runner.http(base + "/api/v0/models", timeout=10))["data"]
                       if m.get("state") == "loaded"}
-            if loaded.get(model["default"]) == int(model["context_length"]):
+            # A loaded window at least as large is fine: hermes limits itself to context_length.
+            # Loading again would start a second instance ("<id>:2") and can exhaust memory.
+            if (loaded.get(model["default"]) or 0) >= int(model["context_length"]):
                 return
             body = json.dumps({"model": model["default"],
                                "context_length": int(model["context_length"])}).encode()
@@ -368,11 +372,43 @@ class AgentRuntime:
     def phase(self, name: str) -> str:
         return self.phases().get(name, MISSING)
 
+    def policy_path(self, name: str, agent: Mapping[str, Any]) -> Path:
+        """The policy file to create the sandbox with.
+
+        The tracked policy carries a documentation address for LM Studio. When the agent's
+        ``model.base_url`` (usually set in the untracked ``.local.yaml``) points somewhere else,
+        the ``lm_studio`` rule is rewritten to that host and port in an untracked copy under
+        ``.rendered/``, so the real LAN address never needs to be committed.
+        """
+        src = self.repo / agent["policy"]
+        model = agent.get("model") or {}
+        if model.get("provider") != "lmstudio" or not src.exists():
+            return src
+        policy = yaml.safe_load(src.read_text()) or {}
+        endpoints = ((policy.get("network_policies") or {}).get("lm_studio") or {}).get("endpoints")
+        if not endpoints:
+            return src
+        url = urllib.parse.urlsplit(model["base_url"])
+        host, port = url.hostname, url.port or (443 if url.scheme == "https" else 80)
+        if all(e.get("host") == host and e.get("port") == port for e in endpoints):
+            return src
+        for e in endpoints:
+            e["host"], e["port"] = host, port
+            try:
+                e["allowed_ips"] = [f"{ipaddress.ip_address(host)}/32"]
+            except ValueError:
+                e.pop("allowed_ips", None)      # a hostname: nothing to pin
+        out = self.repo / ".rendered" / f"{name}.policy.yaml"
+        out.parent.mkdir(exist_ok=True)
+        out.write_text(f"# Rendered from {agent['policy']} for agent {name}. Do not edit or commit.\n"
+                       + yaml.safe_dump(policy, sort_keys=False))
+        return out
+
     def create_argv(self, name: str, agent: Mapping[str, Any]) -> list[str]:
         """The full ``openshell sandbox create`` command for ``agent``."""
         cmd = ["openshell", "sandbox", "create", "--name", name, "--no-tty", "--detach",
                "--restart-policy", "always", "--from", agent["image"],
-               "--policy", str(self.repo / agent["policy"]),
+               "--policy", str(self.policy_path(name, agent)),
                "--driver-config-json", json.dumps(mounts_config(name))]
         for p in agent.get("providers") or []:
             cmd += ["--provider", p]

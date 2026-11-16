@@ -149,7 +149,7 @@ BUILTIN_CATALOGUE: Dict[str, Dict[str, Any]] = {
                 "type": "json",
                 "required": True,
                 "description": "JSON dict of host aliases to connection details",
-                "placeholder": '{"myhost": {"host": "192.168.1.100", "port": 22, "username": "admin"}}',
+                "placeholder": '{"myhost": {"host": "192.0.2.100", "port": 22, "username": "admin"}}',
             },
             {
                 "key": "SSH_PRIVATE_KEY",
@@ -268,7 +268,7 @@ BUILTIN_CATALOGUE: Dict[str, Dict[str, Any]] = {
                 "label": "Docker Host",
                 "type": "url",
                 "required": False,
-                "description": "Docker daemon URL for builds (e.g. tcp://192.168.1.198:2375)",
+                "description": "Docker daemon URL for builds (e.g. tcp://192.0.2.198:2375)",
             },
             {
                 "key": "MCP_CLIENT_TOKEN",

@@ -912,7 +912,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
             urls.append(base_url)
         else:
             # Pull registered machine endpoints from the auth DB so
-            # remote LM Studio instances (e.g. 192.168.1.117:1234)
+            # remote LM Studio instances (e.g. 192.0.2.117:1234)
             # are discovered automatically — same endpoints the setup
             # wizard found.
             try:

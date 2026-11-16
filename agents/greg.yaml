@@ -13,7 +13,7 @@ timezone: Europe/London
 
 model:
   provider: lmstudio
-  base_url: http://192.168.1.117:1234/v1
+  base_url: http://192.0.2.117:1234/v1   # placeholder; put the real address in agents/greg.local.yaml
   default: qwen/qwen3.6-35b-a3b   # provisional; S3.4 benchmark decides
   context_length: 65536           # must match what LM Studio loads the model with
 
