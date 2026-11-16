@@ -317,6 +317,8 @@ class AgentRuntime:
                 + (self.repo / "souls/_shared/brain.md").read_text())
         if _sibling("noticeboard_host").uses_noticeboard(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/noticeboard.md").read_text()
+        if _sibling("voice_host").uses_voice(agent):
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/voice.md").read_text()
         return text
 
     def env_file(self, agent: Mapping[str, Any], home: str) -> str:
