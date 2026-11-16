@@ -34,7 +34,7 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 | Model gateway | [scripts/logos-models](scripts/logos-models), [docs/model-gateway.md](docs/model-gateway.md) | One container all model calls go through: a key and a hard monthly budget per agent, paid provider keys kept out of the sandboxes |
 | Noticeboard | [gateway/noticeboard.py](gateway/noticeboard.py), [docs/noticeboard.md](docs/noticeboard.md) | The only channel between agents: a fixed menu of message kinds, the recipient always decides, limits and a full log |
 | Brain rules | [infra/brain-template/](infra/brain-template/), [infra/agent-jobs/](infra/agent-jobs/) | Vault layout, nightly consolidation, brain index, git history inside the vault |
-| Brain sync | [scripts/logos-sync](scripts/logos-sync), [docs/brain-sync.md](docs/brain-sync.md) | One Syncthing container per agent, so a brain opens as an Obsidian vault |
+| Brain sync | [scripts/logos-sync](scripts/logos-sync), [docs/brain-sync.md](docs/brain-sync.md) | One Syncthing container; each brain is a folder shared only with its own devices and opens as an Obsidian vault |
 | Gateway and web chat | [gateway/](gateway/), [logos_cli/](logos_cli/) | Login, account setup, trimmed dashboard. With `LOGOS_SANDBOX_BACKEND=openshell` it lists the defined agents and chats with them ([docs/architecture/web-chat.md](docs/architecture/web-chat.md)) |
 | Checks | [evals/](evals/) | Brain-write and brain-rule checks that run inside a sandbox |
 
