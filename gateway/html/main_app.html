@@ -4188,9 +4188,7 @@
               <label class="text-xs text-gray-500 block mb-1">Role</label>
               <select x-model="adminUserForm.role"
                 class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-white focus:border-[var(--accent)] focus:outline-none">
-                <option value="viewer">viewer — read-only access</option>
                 <option value="user">user — standard access</option>
-                <option value="operator">operator — manage instances &amp; routing</option>
                 <option value="admin">admin — full access</option>
               </select>
             </div>
@@ -4247,9 +4245,7 @@
                     :title="u.id===authUser?.id ? 'Cannot change your own role' : ''"
                     class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:border-[var(--accent)] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                     :class="u.role==='admin' ? 'text-red-400' : u.role==='operator' ? 'text-indigo-400' : 'text-gray-300'">
-                    <option value="viewer">viewer</option>
                     <option value="user">user</option>
-                    <option value="operator">operator</option>
                     <option value="admin">admin</option>
                   </select>
                 </td>

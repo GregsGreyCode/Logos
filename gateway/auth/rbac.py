@@ -1,85 +1,62 @@
-"""Role-based access control: roles, permissions, and enforcement helpers."""
+"""Role-based access control: two roles (admin, user) and their permissions.
+
+v2 has two people on it, so v1's four-role matrix collapsed to two in S1.6.
+The permission names are the ones handlers in ``gateway/`` still check via
+``require_permission`` / ``has_permission``; ``manage_machines`` is a v1
+name that survives as the general "admin operation" gate on those handlers.
+"""
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
     "admin": {
         "spawn_instance",           # unrestricted soul spawn
-        "spawn_instance_any_soul",  # alias: all souls, including non-user-accessible
         "delete_instance",
         "view_instances",
-        "manage_souls",
-        "manage_users",
-        "manage_machines",
-        "manage_profiles",          # create/edit/delete routing profiles (policies)
-        "assign_profile",           # assign a routing profile to a user
-        "override_routing",         # override machine selection at spawn time
         "override_toolsets",
-        "view_routing_debug",       # access routing debug/resolve tools
-        "view_audit_logs",
-        "view_settings",
-        "manage_settings",
-        "promote_canary",
+        "manage_machines",          # general admin gate (agents, costs, updates, ...)
         "manage_platform",
-        "claim_machine",            # stake ownership/priority on a compute machine
+        "manage_users",
+        "view_audit_logs",
         "view_approvals",           # view all pending approval requests
         "decide_approvals",         # approve or reject any pending request
-        # OpenShell sandbox permissions (network_policies bundles)
-        "view_sandbox_policies",    # read permission YAMLs + which agents use them
-        "manage_sandbox_policies",  # create/edit/delete permission YAMLs
-        # Soul authoring
         "view_souls",               # list + view soul manifests and soul.md content
         "manage_souls",             # create/edit/delete soul directories
-        # Agent run records
-        "view_runs",                # view agent run audit records
-        # Evolution
+        "view_runs",                # view dispatch records
         "view_evolution",           # view proposals and settings
         "manage_evolution",         # configure evolution settings / trigger runs
         "decide_evolution",         # accept / decline / question proposals
     },
-    "operator": {
-        "spawn_instance",
-        "delete_instance",
-        "view_instances",
-        "assign_profile",           # operators can assign routing profiles to users
-        "override_routing",         # operators can override machine at spawn time
-        "override_toolsets",
-        "view_routing_debug",       # operators can use the routing debug/resolve tool
-        "view_audit_logs",
-        "view_settings",
-        "claim_machine",            # operators can stake machine claims
-        "view_approvals",
-        "decide_approvals",
-        # OpenShell sandbox permissions
-        "view_sandbox_policies",
-        # Soul authoring — operators can read, not edit
-        "view_souls",
-        # Agent run records
-        "view_runs",
-        # Evolution
-        "view_evolution",
-        "manage_evolution",
-        "decide_evolution",
-    },
     "user": {
         "spawn_instance_restricted",  # only souls with user_accessible: true
         "view_instances",
-        "view_settings",
-        "claim_machine",            # users can claim machines assigned to them
-        # Users can view their own pending approvals (filtered by session in handler)
-        "view_approvals",
-        "view_runs",                # users can view their own agent run records
-        # Evolution
+        "view_approvals",           # own pending approvals (filtered in handler)
+        "view_runs",                # own dispatch records (filtered in handler)
         "view_evolution",
-    },
-    "viewer": {
-        "view_instances",
-        "view_settings",
-        "view_runs",                # viewers can see their own run records
     },
 }
 
+ROLES: tuple[str, ...] = ("admin", "user")
+
+# v1 roles that no longer exist. Both become plain users: operator loses
+# its elevated rights rather than being promoted to admin. The
+# collapse_roles_v1 migration in gateway/auth/db.py rewrites stored rows
+# the same way; this mapping also covers role claims in tokens issued
+# before that migration ran.
+_LEGACY_ROLES: dict[str, str] = {
+    "operator": "user",
+    "viewer":   "user",
+}
+
+
+def normalize_role(role: str | None) -> str:
+    """Map any role name to ``admin`` or ``user``; unknown names to ``""``."""
+    role = (role or "").strip().lower()
+    if role in ROLE_PERMISSIONS:
+        return role
+    return _LEGACY_ROLES.get(role, "")
+
 
 def has_permission(role: str, permission: str) -> bool:
-    return permission in ROLE_PERMISSIONS.get(role, set())
+    return permission in ROLE_PERMISSIONS.get(normalize_role(role), set())
 
 
 def can_spawn(role: str, soul_manifest_dict: dict) -> bool:
@@ -92,4 +69,4 @@ def can_spawn(role: str, soul_manifest_dict: dict) -> bool:
 
 
 def get_permissions(role: str) -> list[str]:
-    return sorted(ROLE_PERMISSIONS.get(role, set()))
+    return sorted(ROLE_PERMISSIONS.get(normalize_role(role), set()))
