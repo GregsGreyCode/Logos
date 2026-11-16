@@ -145,6 +145,15 @@ class TestRules:
         assert over["urgent"] is False and "normal message" in over["note"]
         assert len(board.urgent("bere")) == nb.URGENT_DAILY_LIMIT - 1
 
+    def test_test_agents_are_walled_off_from_real_ones(self, tmp_path):
+        agents = {**AGENTS, "bench": {"token": "t-b", "role": "test"}, "bench-peer": {"token": "t-p", "role": "test"}}
+        b = nb.Board(str(tmp_path / "t.db"), agents, clock=Clock())
+        assert [a["name"] for a in b.directory("greg")] == ["bere", "household"]
+        assert [a["name"] for a in b.directory("bench")] == ["bench-peer"]
+        assert code(lambda: b.send("greg", "bench", "fyi", "hi")) == "unknown_recipient"
+        assert code(lambda: b.send("bench", "greg", "fyi", "hi")) == "unknown_recipient"
+        assert b.send("bench-peer", "bench", "fyi", "hi")["status"] == "sent"
+
     def test_everything_is_logged(self, board):
         board.send("greg", "bere", "fyi", "hello")
         code(lambda: board.send("greg", "bere", "order", "do it"))

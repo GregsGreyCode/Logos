@@ -1,4 +1,5 @@
-# Throwaway agent used by the evals; evals/agent_writes/bench.py rewrites model.default.
+# Throwaway agent used by the evals (scripts/logos-eval); evals/agent_writes/bench.py rewrites
+# model.default when comparing models.
 name: bench
 dashboard: false                # benchmark runs only; not shown in the web dashboard
 display_name: Benchmark agent
@@ -7,6 +8,8 @@ soul: souls/general/soul.md
 policy: infra/agent-image/policy.yaml
 providers: []
 timezone: Europe/London
+noticeboard: true               # only so the evals can test the noticeboard rules
+role: test                      # test agents and real agents cannot message each other
 model:
   provider: lmstudio
   base_url: http://192.0.2.117:1234/v1   # placeholder; put the real address in agents/bench.local.yaml
