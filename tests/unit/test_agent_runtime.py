@@ -154,6 +154,7 @@ def repo(tmp_path):
     (jobs / "brain_inbox_state.sh").write_text("#!/bin/sh\n")
     (jobs / "noticeboard_state.py").write_text("print('latest message 0')\n")
     (jobs / "noticeboard_check.md").write_text("Noticeboard check.\n")
+    (jobs / "noticeboard_urgent.py").write_text("print('')\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (jobs / "brain_index.py").write_text("# index\n")
     (jobs / "consolidate.md").write_text("Consolidate the inbox.\n")
@@ -470,6 +471,8 @@ network_policies:
                                 "context_length": 65536}
         ep = yaml.safe_load(r.policy_path("alpha", agent).read_text())["network_policies"]["lm_studio"]["endpoints"][0]
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8089, ["172.17.0.1/32"])
+        assert "access" not in ep and ep["rules"] == [
+            {"allow": {"method": "GET", "path": "/v1/**"}}, {"allow": {"method": "POST", "path": "/v1/**"}}]
         env = r.env_file(agent, "logos-home-alpha")
         assert "LOGOS_MODEL_KEY=sk-bf-" in env
         assert "LOGOS_MODEL_KEY" not in r.env_file(r.load("alpha"), "logos-home-alpha")
@@ -536,6 +539,9 @@ network_policies:
         (job,) = [c for c in created if "noticeboard-check" in c]
         assert "--monitor-script noticeboard_state.py" in job and "--deliver telegram" in job
         assert '"*/10 * * * *"' in job
+        (urgent,) = [c for c in created if "noticeboard-urgent" in c]
+        assert "--no-agent --script noticeboard_urgent.py" in urgent and "--deliver telegram" in urgent
+        assert "LOGOS_NOTICEBOARD_POLL_URL=http://172.17.0.1:8091" in r.env_file(agent, "logos-home-alpha")
 
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)

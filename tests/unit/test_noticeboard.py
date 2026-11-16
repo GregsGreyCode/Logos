@@ -130,6 +130,21 @@ class TestRules:
         board.clock_obj.t += nb.DAY + 60
         assert board.pending("greg")["latest_expired"] == q            # the asker learns it expired
 
+    def test_urgent_is_announced_once_and_limited(self, board):
+        board.send("greg", "bere", "fyi", "not urgent")
+        q = board.send("greg", "bere", "question", "Locked out, do you have keys?", urgent=True)
+        assert q["urgent"] is True and "being told now" in q["note"]
+        lines = board.urgent("bere")
+        assert lines == [f"Urgent from Greg's agent: Locked out, do you have keys? "
+                         f"(request {q['id']}: tell your agent what to answer)"]
+        assert board.urgent("bere") == [] and board.urgent("greg") == []      # once, and only the recipient
+        assert [m["id"] for m in board.read("bere")["messages"]][-1] == q["id"]   # still handled normally
+        for i in range(nb.URGENT_DAILY_LIMIT - 1):
+            assert board.send("greg", "bere", "fyi", f"urgent {i}", urgent=True)["urgent"] is True
+        over = board.send("greg", "bere", "fyi", "one too many", urgent=True)
+        assert over["urgent"] is False and "normal message" in over["note"]
+        assert len(board.urgent("bere")) == nb.URGENT_DAILY_LIMIT - 1
+
     def test_everything_is_logged(self, board):
         board.send("greg", "bere", "fyi", "hello")
         code(lambda: board.send("greg", "bere", "order", "do it"))
@@ -192,6 +207,18 @@ class TestHttp:
             urllib.request.urlopen(url + "/mcp", timeout=5)
         assert e.value.code == 405
 
+    def test_poll_endpoints_need_the_token(self, url):
+        def get(path, token=None):
+            req = urllib.request.Request(url + path, headers={"Authorization": f"Bearer {token}"} if token else {})
+            try:
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, None
+        assert get("/pending")[0] == 401 and get("/urgent")[0] == 401
+        assert get("/pending", "tok-greg") == (200, {"latest": 0, "unread": 0, "latest_expired": 0})
+        assert get("/urgent", "tok-greg") == (200, {"lines": []})
+
 
 class Done:
     def __init__(self, returncode=0):
@@ -251,7 +278,7 @@ class TestHost:
         assert cfg == {"greg": {"token": "t1", "display_name": "Greg's agent", "role": "person"},
                        "household": {"token": "t2", "display_name": "household", "role": "household"}}
         start = next(c for c in rt.calls if c[:3] == ["docker", "run", "-d"])
-        assert "172.17.0.1:8090:8090" in start and start[-3:] == ["python3", "img:1", "/app/noticeboard.py"]
+        assert "172.17.0.1:8090:8090" in start and "172.17.0.1:8091:8091" in start and start[-3:] == ["python3", "img:1", "/app/noticeboard.py"]
         assert any(c.endswith("noticeboard.py:/app/noticeboard.py:ro") for c in start)
         assert h.up() is False
         rt.tokens["bere"] = "t3"

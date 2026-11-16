@@ -8,8 +8,8 @@ import urllib.request
 ENV = dict(l.strip().split("=", 1) for l in open("/opt/data/.env") if "=" in l and not l.startswith("#"))
 CACHE = pathlib.Path("/opt/data/.noticeboard_state")
 try:
-    url = ENV["LOGOS_NOTICEBOARD_URL"].rsplit("/mcp", 1)[0] + "/pending"
-    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + ENV["LOGOS_NOTICEBOARD_TOKEN"]})
+    req = urllib.request.Request(ENV["LOGOS_NOTICEBOARD_POLL_URL"] + "/pending",
+                                 headers={"Authorization": "Bearer " + ENV["LOGOS_NOTICEBOARD_TOKEN"]})
     p = json.load(urllib.request.urlopen(req, timeout=10))
     state = f"latest message {p['latest']}, latest expired request {p['latest_expired']}"
     CACHE.write_text(state)
