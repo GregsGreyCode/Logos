@@ -284,6 +284,9 @@ class AgentRuntime:
         cfg = {"_config_version": CONFIG_VERSION,
                "timezone": agent.get("timezone", "UTC"),
                "model": model}
+        if (agent.get("telegram") or {}).get("enabled"):
+            # No "gateway shutting down / back online" messages to the person on every rebuild.
+            cfg["platforms"] = {"telegram": {"gateway_restart_notification": False}}
         if (agent.get("telegram") or {}).get("group_chats"):
             # One shared conversation per group (hermes otherwise keeps one per participant).
             cfg["group_sessions_per_user"] = False

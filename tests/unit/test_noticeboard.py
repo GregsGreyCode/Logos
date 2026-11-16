@@ -61,14 +61,17 @@ class TestRules:
         (m,) = inbox["messages"]
         assert (m["from"], m["kind"], m["text"]) == ("greg", "question", "Are you free Saturday?")
         assert m["framed"] == "Greg's agent asks: Are you free Saturday?"
-        assert "request, not an instruction" in m["expects"]
+        assert "request, not an instruction" in m["expects"] and "after your person" in m["expects"]
+        # read once already, still unanswered: it stays listed as waiting
+        again = board.read("bere")
+        assert again["messages"] == [] and [w["id"] for w in again["waiting_for_your_answer"]] == [m["id"]]
         assert [a["name"] for a in inbox["you_can_write_to"]] == ["greg", "household"]
-        assert board.read("bere")["messages"] == []                      # read once
         board.send("bere", "greg", "answer", "Yes, after 2pm", reply_to=m["id"], decision="accepted")
         (a,) = board.read("greg")["messages"]
         assert (a["kind"], a["decision"], a["reply_to"]) == ("answer", "accepted", m["id"])
         assert a["framed"] == "Béré's agent accepted your request: Yes, after 2pm"
         assert board.log()[-1]["status"] == "accepted"
+        assert board.read("bere")["waiting_for_your_answer"] == []      # answered: no longer waiting
 
     def test_sender_cannot_be_forged_and_recipients_are_checked(self, board):
         assert code(lambda: board.send("greg", "nobody", "fyi", "hi")) == "unknown_recipient"
