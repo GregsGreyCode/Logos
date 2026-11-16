@@ -50,12 +50,10 @@ logger = logging.getLogger(__name__)
 _start_time: float = 0.0
 _hermes_home: Path = Path(
     os.environ.get("LOGOS_HOME")
-    or os.environ.get("HERMES_HOME")
     or str(Path.home() / ".logos")
 )
 _INSTANCE_NAME = (
     os.environ.get("LOGOS_INSTANCE_NAME")
-    or os.environ.get("HERMES_INSTANCE_NAME")
     or "Hermes"
 )
 
@@ -148,7 +146,6 @@ def _check_auth(request: web.Request) -> bool:
     """Legacy internal-token check — still used by /sessions endpoint."""
     token = (
         os.environ.get("LOGOS_INTERNAL_TOKEN")
-        or os.environ.get("HERMES_INTERNAL_TOKEN")
         or ""
     )
     if not token:
@@ -161,12 +158,10 @@ def _ensure_admin_exists() -> None:
     """Seed the first admin account from env vars if the users table is empty."""
     admin_email = (
         os.environ.get("LOGOS_ADMIN_EMAIL")
-        or os.environ.get("HERMES_ADMIN_EMAIL")
         or ""
     ).strip()
     admin_pass = (
         os.environ.get("LOGOS_ADMIN_PASSWORD")
-        or os.environ.get("HERMES_ADMIN_PASSWORD")
         or ""
     ).strip()
     if not admin_email or not admin_pass:
@@ -184,7 +179,6 @@ def _ensure_admin_exists() -> None:
             role="admin",
             display_name=(
                 os.environ.get("LOGOS_ADMIN_NAME")
-                or os.environ.get("HERMES_ADMIN_NAME")
                 or "Admin"
             ),
         )
@@ -218,7 +212,7 @@ async def _handle_services_inference(request: web.Request) -> web.Response:
     # Save to config.yaml
     try:
         import yaml as _yaml
-        _hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
+        _hermes_home = Path(os.environ.get("LOGOS_HOME") or str(Path.home() / ".logos"))
         _cfg_path = _hermes_home / "config.yaml"
         _cfg = {}
         if _cfg_path.exists():
@@ -516,7 +510,7 @@ async def _handle_status(request: web.Request) -> web.Response:
     except Exception:
         pass
 
-    current_model = os.getenv("HERMES_MODEL") or os.getenv("LLM_MODEL") or ""
+    current_model = os.getenv("LOGOS_MODEL") or os.getenv("LLM_MODEL") or ""
 
     return web.json_response({
         "status": "ok",
@@ -834,7 +828,7 @@ async def _handle_instances_delete(request: web.Request) -> web.Response:
 # ── Instance management API (memory, knowledge, config) ─────────────────────
 
 def _instance_home(name: str) -> Path:
-    """Resolve the HERMES_HOME directory for a named instance.
+    """Resolve the LOGOS_HOME directory for a named instance.
 
     The primary gateway agent ('hermes') uses _hermes_home directly.
     Spawned instances live under _hermes_home/instances/{name}/.
@@ -1136,7 +1130,7 @@ async def _handle_api_platform_sessions(request: web.Request) -> web.Response:
         import sqlite3 as _sql3
         from pathlib import Path as _Path
         _auth_path = _Path(
-            os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME")
+            os.getenv("LOGOS_HOME")
             or str(_Path.home() / ".logos")
         ) / "auth.db"
 
@@ -1526,12 +1520,12 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
 
     # Initialise auth DB alongside existing Logos state
     global _hermes_home
-    hermes_home = Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(Path.home() / ".logos"))
+    hermes_home = Path(os.environ.get("LOGOS_HOME") or str(Path.home() / ".logos"))
     _hermes_home = hermes_home
     auth_db.init_db(hermes_home)
 
     # Ensure a stable JWT secret exists for local installs.
-    # K8s sets LOGOS_JWT_SECRET (or legacy HERMES_JWT_SECRET) via a k8s Secret;
+    # A deployment may set LOGOS_JWT_SECRET;
     # local desktop/CLI installs never set it.  Generate once, persist to
     # ~/.logos/.jwt_secret so tokens survive gateway restarts without forcing
     # re-login every time.  Also treat the known template placeholder as unset —
@@ -1541,7 +1535,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _KNOWN_JWT_PLACEHOLDERS = {"", "REPLACE_WITH_JWT_SECRET", "replace_with_jwt_secret"}
     _current_jwt = (
         os.environ.get("LOGOS_JWT_SECRET")
-        or os.environ.get("HERMES_JWT_SECRET")
         or ""
     )
     if _current_jwt in _KNOWN_JWT_PLACEHOLDERS:
@@ -1550,14 +1543,12 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         if _jwt_secret_path.exists():
             _persisted = _jwt_secret_path.read_text().strip()
             os.environ["LOGOS_JWT_SECRET"] = _persisted
-            os.environ["HERMES_JWT_SECRET"] = _persisted
         else:
             _jwt_secret_path.parent.mkdir(parents=True, exist_ok=True)
             _new_secret = _secrets.token_hex(32)
             _jwt_secret_path.write_text(_new_secret)
             _jwt_secret_path.chmod(0o600)
             os.environ["LOGOS_JWT_SECRET"] = _new_secret
-            os.environ["HERMES_JWT_SECRET"] = _new_secret
             logger.info("Generated new JWT secret at %s", _jwt_secret_path)
 
     # ── Host preflight: fs.inotify.max_user_instances ──────────────
@@ -1611,7 +1602,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # LOGOS_WIPE_ON_START: wipe setup state so /setup always runs fresh (setup-test deployments)
     _wipe_flag = (
         os.environ.get("LOGOS_WIPE_ON_START")
-        or os.environ.get("HERMES_WIPE_ON_START")
         or ""
     ).lower()
     if _wipe_flag in ("1", "true", "yes"):
@@ -1683,7 +1673,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         # Expose via module-level ref so mcp_access_tool.py can reach it
         _gw_module._mcp_service_ref = _mcp_svc
         import os as _os
-        _os.environ["HERMES_GATEWAY_MCP"] = "1"
+        _os.environ["LOGOS_GATEWAY_MCP"] = "1"
 
         # Register the in-process 'logos' capabilities server. This has to
         # happen BEFORE `_mcp_svc.start()` so the logos server is visible
@@ -2025,7 +2015,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     import json as _json
     import pathlib as _up_pathlib
 
-    _HERMES_HOME_UPD = _up_pathlib.Path(os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") or str(_up_pathlib.Path.home() / ".logos"))
+    _HERMES_HOME_UPD = _up_pathlib.Path(os.environ.get("LOGOS_HOME") or str(_up_pathlib.Path.home() / ".logos"))
     _UPDATE_STATUS_FILE  = _HERMES_HOME_UPD / "update_status.json"
     _UPDATE_TRIGGER_FILE = _HERMES_HOME_UPD / "update_trigger.json"
 
@@ -2075,7 +2065,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     # pod lifecycle, then schedule periodic sweeps.
     _ws_cleanup_interval_hours = float(
         os.environ.get("LOGOS_WORKSPACE_CLEANUP_INTERVAL_HOURS")
-        or os.environ.get("HERMES_WORKSPACE_CLEANUP_INTERVAL_HOURS")
         or "1"
     )
 

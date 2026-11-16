@@ -14,7 +14,7 @@ URL resolution per execution mode:
   OpenShell sandbox: http://host.docker.internal:{mcp_port}/mcp/{name}
   Kubernetes pod:    http://logos-gateway.{ns}.svc.cluster.local:{mcp_port}/mcp/{name}
 
-The port defaults to 8081 and can be overridden with the HERMES_MCP_PORT env var.
+The port defaults to 8081 and can be overridden with the LOGOS_MCP_PORT env var.
 """
 
 import asyncio
@@ -263,12 +263,11 @@ class MCPGatewayService:
             platform: "local", "openshell", or "kubernetes".
         """
         port = int(
-            os.getenv("LOGOS_MCP_PORT") or os.getenv("HERMES_MCP_PORT") or "8081"
+            os.getenv("LOGOS_MCP_PORT") or "8081"
         )
         if platform == "kubernetes":
             ns = (
                 os.getenv("LOGOS_K8S_NAMESPACE")
-                or os.getenv("HERMES_K8S_NAMESPACE")
                 or "hermes"
             )
             base = f"http://logos-gateway.{ns}.svc.cluster.local:{port}"
