@@ -1,0 +1,12 @@
+# A noticeboard identity with no sandbox. The evals (scripts/logos-eval) use it to play
+# "another agent" writing to the bench agent. It can only reach other test agents.
+name: bench-peer
+display_name: Test peer agent
+dashboard: false
+sandbox: false                  # never started; only its noticeboard token exists
+noticeboard: true
+role: test
+image: logos-agent:0.23.1
+timezone: Europe/London
+telegram:
+  enabled: false

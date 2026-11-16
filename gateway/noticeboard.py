@@ -101,9 +101,13 @@ class Board:
     def display(self, name: str) -> str:
         return str(self.agents.get(name, {}).get("display_name") or name)
 
+    def _is_test(self, name: str) -> bool:
+        return self.agents.get(name, {}).get("role") == "test"
+
     def directory(self, me: str) -> List[Dict[str, str]]:
+        """Who ``me`` can write to. Test agents (the evals) and real agents never see each other."""
         return [{"name": n, "display_name": self.display(n), "role": str(a.get("role") or "person")}
-                for n, a in sorted(self.agents.items()) if n != me]
+                for n, a in sorted(self.agents.items()) if n != me and self._is_test(n) == self._is_test(me)]
 
     # ── log ──────────────────────────────────────────────────────────────
 
@@ -132,7 +136,7 @@ class Board:
         text = _norm(str(text or ""))
         if kind not in KINDS:
             raise Rejected("unknown_kind", f"'{kind}' is not a kind of message. Use one of: {', '.join(KINDS)}.")
-        if to not in self.agents:
+        if to not in self.agents or (to != sender and self._is_test(to) != self._is_test(sender)):
             others = ", ".join(a["name"] for a in self.directory(sender)) or "nobody else yet"
             raise Rejected("unknown_recipient", f"There is no agent called '{to}'. You can write to: {others}.")
         if to == sender:
