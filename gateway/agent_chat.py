@@ -12,6 +12,7 @@ dashboard lists exactly the agents that are defined on this host.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -211,3 +212,21 @@ def username_of(user: Mapping[str, Any], auth_db: Any) -> str:
 def runtime_of(backend: Any) -> Optional[Any]:
     """The :class:`~gateway.agent_runtime.AgentRuntime` behind ``backend``, if it has one."""
     return getattr(backend, "runtime", None)
+
+
+KEEP_ALIVE_S = 15
+
+
+async def keep_alive(write, every: float = KEEP_ALIVE_S) -> None:
+    """Write an SSE comment line every few seconds until cancelled.
+
+    A slow model can be silent for minutes before its first word, and a reverse
+    proxy in front of Logos drops a stream that is idle for about a minute.
+    Browsers ignore comment lines.
+    """
+    while True:
+        await asyncio.sleep(every)
+        try:
+            await write(b": keep-alive\n\n")
+        except ConnectionError:
+            return                      # the browser went away; the handler deals with it

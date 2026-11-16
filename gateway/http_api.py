@@ -1583,6 +1583,8 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
 
     hermes_session = _agent_chat.session_id_for(
         _auth_user.get("sub") or _auth_user.get("id") or "", str(session_id))
+
+    beat = asyncio.ensure_future(_agent_chat.keep_alive(resp.write))
     try:
         async for payload in _agent_chat.stream_run(
             client, message, session_id=hermes_session,
@@ -1595,6 +1597,7 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         logger.info("chat: client left during a run for %s", agent_name)
         raise
     finally:
+        beat.cancel()
         for run_id in started:
             runs.pop(run_id, None)
     await resp.write_eof()

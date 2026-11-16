@@ -240,3 +240,22 @@ def test_helpers():
     assert api_key_from_env("A=1\nAPI_SERVER_KEY='k'\n") == "k" and api_key_from_env("") == ""
     assert forward_argv("greg") == ["openshell", "forward", "service", "greg",
                                     "--target-port", "8642", "--local", "127.0.0.1:0"]
+
+
+def test_keep_alive_writes_comment_lines_until_cancelled():
+    sent = []
+
+    async def write(data):
+        sent.append(data)
+
+    async def go():
+        beat = asyncio.ensure_future(agent_chat.keep_alive(write, every=0.01))
+        await asyncio.sleep(0.05)
+        beat.cancel()
+        count = len(sent)
+        await asyncio.sleep(0.03)
+        return count
+
+    count = asyncio.run(go())
+    assert count >= 2 and len(sent) == count
+    assert set(sent) == {b": keep-alive\n\n"}
