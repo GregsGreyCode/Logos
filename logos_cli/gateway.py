@@ -28,7 +28,7 @@ _STOP_GRACE_SECONDS = 10.0
 
 def gateway_port() -> int:
     """HTTP port of the gateway (same resolution as ``gateway.run``)."""
-    return int(os.getenv("LOGOS_PORT") or os.getenv("HERMES_PORT") or "8091")
+    return int(os.getenv("LOGOS_PORT") or "8091")
 
 
 def background_log_path() -> Path:

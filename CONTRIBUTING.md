@@ -1,607 +1,99 @@
 # Contributing to Logos
 
-Thank you for contributing to Logos! This guide covers everything you need: setting up your dev environment, understanding the architecture, deciding what to build, and getting your PR merged.
+Logos v2 is a private project for two people, rebuilt on the `v2` branch. The plan, epics and
+stories are in the spec: https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 
----
+Read [README.md](README.md) first for what exists today, and
+[docs/project/REPO_STRUCTURE.md](docs/project/REPO_STRUCTURE.md) for where things live.
 
-## Contribution Priorities
+## Ground rules
 
-We value contributions in this order:
+- **Agents are upstream hermes, unmodified.** Do not patch hermes or copy its code in. Change
+  behaviour through the agent definition (`agents/<name>.yaml`), the soul, skills, the sandbox
+  policy or the jobs in `infra/agent-jobs/`.
+- **The brain is the durable part.** Sandboxes and containers are disposable. Anything that
+  must survive belongs on the agent's home or brain volume
+  ([ADR 0001](docs/adr/0001-agent-brains-on-docker-volumes.md)).
+- **Keep it small.** There are two users and three agents. Do not add multi-tenant features,
+  roles, routing layers or provider abstractions.
+- **Naming.** Gateway settings are `LOGOS_*` environment variables. `HERMES_*` names are
+  reserved for upstream hermes (for example `HERMES_HOME=/opt/data` inside a sandbox).
+- **No secrets in git.** Tokens and personal IDs go in the environment or in untracked
+  `agents/<name>.local.yaml` files.
 
-1. **Bug fixes** — crashes, incorrect behavior, data loss. Always top priority.
-2. **Cross-platform compatibility** — Windows, macOS, different Linux distros, different terminal emulators. We want Logos to work everywhere.
-3. **Security hardening** — shell injection, prompt injection, path traversal, privilege escalation. See [Security](#security-considerations).
-4. **Performance and robustness** — retry logic, error handling, graceful degradation.
-5. **New skills** — but only broadly useful ones. See [Should it be a Skill or a Tool?](#should-it-be-a-skill-or-a-tool)
-6. **New tools** — rarely needed. Most capabilities should be skills. See below.
-7. **Documentation** — fixes, clarifications, new examples.
+## Development setup
 
----
+Requirements: Python 3.11 or later. To create real agents you also need Docker Engine 28 or
+later and OpenShell 0.1.8 ([infra/openshell/README.md](infra/openshell/README.md)).
 
-## Should it be a Skill or a Tool?
-
-This is the most common question for new contributors. The answer is almost always **skill**.
-
-### Make it a Skill when:
-
-- The capability can be expressed as instructions + shell commands + existing tools
-- It wraps an external CLI or API that the agent can call via `terminal` or `web_extract`
-- It doesn't need custom Python integration or API key management baked into the agent
-- Examples: arXiv search, git workflows, Docker management, PDF processing, email via CLI tools
-
-### Make it a Tool when:
-
-- It requires end-to-end integration with API keys, auth flows, or multi-component configuration managed by the agent harness
-- It needs custom processing logic that must execute precisely every time (not "best effort" from LLM interpretation)
-- It handles binary data, streaming, or real-time events that can't go through the terminal
-- Examples: browser automation (Browserbase session management), TTS (audio encoding + platform delivery), vision analysis (base64 image handling)
-
-### Should the Skill be bundled?
-
-Bundled skills (in `skills/`) ship with every Logos install. They should be **broadly useful to most users**:
-
-- Document handling, web research, common dev workflows, system administration
-- Used regularly by a wide range of people
-
-If your skill is official and useful but not universally needed (e.g., a paid service integration, a heavyweight dependency), put it in **`optional-skills/`** — it ships with the repo but isn't activated by default. Users can discover it via `hermes skills browse` (labeled "official") and install it with `hermes skills install` (no third-party warning, builtin trust).
-
-If your skill is specialized, community-contributed, or niche, it's better suited for a **Skills Hub** — upload it to a skills registry and share it in [GitHub Discussions](https://github.com/GregsGreyCode/Logos/discussions). Users can install it with `hermes skills install`.
-
----
-
-## Development Setup
-
-### Prerequisites
-
-| Requirement | Notes |
-|-------------|-------|
-| **Git** | With `--recurse-submodules` support |
-| **Python 3.11+** | uv will install it if missing |
-| **uv** | Fast Python package manager ([install](https://docs.astral.sh/uv/)) |
-| **Node.js 18+** | Optional — needed for browser tools and WhatsApp bridge |
-
-### Clone and install
-
-```bash
-git clone --recurse-submodules https://github.com/GregsGreyCode/Logos.git
+```shell
+git clone https://github.com/GregsGreyCode/Logos.git
 cd Logos
-
-# Create venv with Python 3.11
-uv venv .venv --python 3.11
-source .venv/bin/activate
-
-# Install with all extras (messaging, cron, CLI menus, dev tools)
-uv pip install -e ".[all,dev]"
-uv pip install -e "./mini-swe-agent"
-
-# Optional: browser tools
-npm install
+git checkout v2
+python3 -m venv venv && . venv/bin/activate
+pip install -e ".[all,dev]"
 ```
 
-### Configure for development
+Run the gateway against a throwaway home so you never touch a real `~/.logos`:
 
-```bash
-mkdir -p ~/.logos/{cron,sessions,logs,memories,skills}
-cp cli-config.yaml.example ~/.logos/config.yaml
-touch ~/.logos/.env
-
-# Add at minimum an LLM provider key:
-echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.logos/.env
+```shell
+export LOGOS_HOME="$(mktemp -d)" LOGOS_PORT=18091
+logos doctor
+logos gateway run
 ```
 
-### Run
+## Tests
 
-```bash
-# Symlink for global access
-mkdir -p ~/.local/bin
-ln -sf "$(pwd)/.venv/bin/hermes" ~/.local/bin/hermes
-
-# Verify
-hermes doctor
-hermes chat -q "Hello"
+```shell
+python -m pytest -q tests
 ```
 
-### Run tests
-
-```bash
-pytest tests/ -v
-```
-
----
-
-## Project Structure
-
-```
-logos/                        ← repo root
-├── agents/hermes/agent.py    # AIAgent class — production agent runtime (entrypoint: agents.hermes.agent:main)
-├── core/                     # Canonical platform modules (state, model_tools, toolsets, clock, constants, …)
-├── hermes_state.py           # Shim → core/state.py
-├── model_tools.py            # Shim → core/model_tools.py
-├── toolsets.py               # Shim → core/toolsets.py
-├── batch_runner.py           # Parallel batch processing for trajectory generation
-│
-├── agent/                    # Agent internals
-│   ├── prompt_builder.py         # System prompt assembly (identity, skills, context files, memory)
-│   ├── context_compressor.py     # Auto-summarization when approaching context limits
-│   ├── auxiliary_client.py       # Resolves auxiliary OpenAI clients (summarization, vision)
-│   ├── display.py                # KawaiiSpinner, tool progress formatting
-│   ├── model_metadata.py         # Model context lengths, token estimation
-│   └── trajectory.py             # Trajectory saving helpers
-│
-├── logos_cli/               # `logos` CLI: gateway control + doctor
-│   ├── main.py                   # Entry point, argument parsing
-│   ├── gateway.py                # gateway run|start|stop|restart|status
-│   └── doctor.py                 # Host checks
-│
-├── tools/                    # Tool implementations (self-registering)
-│   ├── registry.py               # Central tool registry (schemas, handlers, dispatch)
-│   ├── approval.py               # Dangerous command detection + per-session approval
-│   ├── terminal_tool.py          # Terminal orchestration (sudo, env lifecycle, backends)
-│   ├── file_operations.py        # read_file, write_file, search, patch, etc.
-│   ├── web_tools.py              # web_search, web_extract
-│   ├── vision_tools.py           # Image analysis via multimodal models
-│   ├── delegate_tool.py          # Subagent spawning and parallel task execution
-│   ├── code_execution_tool.py    # Sandboxed Python with RPC tool access
-│   ├── session_search_tool.py    # Search past conversations with FTS5 + summarization
-│   ├── cronjob_tools.py          # Scheduled task management
-│   └── environments/             # Terminal execution backends
-│       └── base.py, local.py, docker.py, ssh.py, singularity.py, modal.py, daytona.py
-│
-├── gateway/                  # HTTP API, auth, web UI, messaging gateway
-│   ├── run.py                    # GatewayRunner — platform lifecycle, message routing, cron
-│   ├── config.py                 # Platform configuration resolution
-│   ├── session.py                # Session store, context prompts, reset policies
-│   ├── http_api.py               # Web dashboard REST API
-│   ├── auth/                     # Auth DB, policy enforcement
-│   └── platforms/                # Platform adapters
-│       └── telegram.py, discord_adapter.py, slack.py, whatsapp.py, email.py
-│
-├── logos/                    # Logos platform abstractions (WIP)
-│   ├── agent/                    # Agent interface ABC + runner
-│   ├── adapters/hermes/          # Hermes adapter implementation
-│   ├── blueprints/               # STAMP blueprint schema/loader/validator
-│   ├── policy/                   # Policy enforcement
-│   └── registry/                 # Agent/tool catalog + installer
-│
-├── scripts/                  # Installer and operational scripts
-│   ├── install.sh                # Linux/macOS installer
-│   ├── install.ps1               # Windows PowerShell installer
-│   ├── dev-setup.sh              # Local dev setup (after cloning)
-│   └── whatsapp-bridge/          # Node.js WhatsApp bridge (Baileys)
-│
-├── skills/                   # Bundled skills (copied to ~/.logos/skills/ on install)
-├── optional-skills/          # Official optional skills (discoverable via hub, not activated by default)
-├── tests/                    # Test suite
-├── docs/                     # Internal docs, architecture, project planning
-│
-└── AGENTS.md                 # Development guide for AI coding assistants
-```
-
-### User configuration (stored in `~/.logos/`)
-
-| Path | Purpose |
-|------|---------|
-| `~/.logos/config.yaml` | Settings (model, terminal, toolsets, compression, etc.) |
-| `~/.logos/.env` | API keys and secrets |
-| `~/.logos/auth.json` | OAuth credentials (Nous Portal) |
-| `~/.logos/skills/` | All active skills (bundled + hub-installed + agent-created) |
-| `~/.logos/memories/` | Persistent memory (MEMORY.md, USER.md) |
-| `~/.logos/state.db` | SQLite session database |
-| `~/.logos/sessions/` | JSON session logs |
-| `~/.logos/cron/` | Scheduled job data |
-| `~/.logos/whatsapp/session/` | WhatsApp bridge credentials |
-
-> **Note:** If you have an existing `~/.logos/` directory from an older install, Logos migrates it automatically on first run.
-
----
-
-## Architecture Overview
-
-### Core Loop
-
-```
-User message → AIAgent._run_agent_loop()
-  ├── Build system prompt (prompt_builder.py)
-  ├── Build API kwargs (model, messages, tools, reasoning config)
-  ├── Call LLM (OpenAI-compatible API)
-  ├── If tool_calls in response:
-  │     ├── Execute each tool via registry dispatch
-  │     ├── Add tool results to conversation
-  │     └── Loop back to LLM call
-  ├── If text response:
-  │     ├── Persist session to DB
-  │     └── Return final_response
-  └── Context compression if approaching token limit
-```
-
-### Key Design Patterns
-
-- **Self-registering tools**: Each tool file calls `registry.register()` at import time. `model_tools.py` triggers discovery by importing all tool modules.
-- **Toolset grouping**: Tools are grouped into toolsets (`web`, `terminal`, `file`, `browser`, etc.) that can be enabled/disabled per platform.
-- **Session persistence**: All conversations are stored in SQLite (`hermes_state.py`, SCHEMA v8) with full-text search and unique session titles. JSON logs go to `~/.logos/sessions/`.
-- **Ephemeral injection**: System prompts and prefill messages are injected at API call time, never persisted to the database or logs.
-- **Provider abstraction**: The agent works with any OpenAI-compatible API. Provider resolution happens at init time (Nous Portal OAuth, OpenRouter API key, or custom endpoint).
-- **Provider routing**: When using OpenRouter, `provider_routing` in config.yaml controls provider selection (sort by throughput/latency/price, allow/ignore specific providers, data retention policies). These are injected as `extra_body.provider` in API requests.
-
----
-
-## Code Style
-
-- **PEP 8** with practical exceptions (we don't enforce strict line length)
-- **Comments**: Only when explaining non-obvious intent, trade-offs, or API quirks. Don't narrate what the code does — `# increment counter` adds nothing
-- **Error handling**: Catch specific exceptions. Log with `logger.warning()`/`logger.error()` — use `exc_info=True` for unexpected errors so stack traces appear in logs
-- **Cross-platform**: Never assume Unix. See [Cross-Platform Compatibility](#cross-platform-compatibility)
-
----
-
-## Adding a New Tool
-
-Before writing a tool, ask: [should this be a skill instead?](#should-it-be-a-skill-or-a-tool)
-
-Tools self-register with the central registry. Each tool file co-locates its schema, handler, and registration:
-
-```python
-"""my_tool — Brief description of what this tool does."""
-
-import json
-from tools.registry import registry
-
-
-def my_tool(param1: str, param2: int = 10, **kwargs) -> str:
-    """Handler. Returns a string result (often JSON)."""
-    result = do_work(param1, param2)
-    return json.dumps(result)
-
-
-MY_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "my_tool",
-        "description": "What this tool does and when the agent should use it.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "param1": {"type": "string", "description": "What param1 is"},
-                "param2": {"type": "integer", "description": "What param2 is", "default": 10},
-            },
-            "required": ["param1"],
-        },
-    },
-}
-
-
-def _check_requirements() -> bool:
-    """Return True if this tool's dependencies are available."""
-    return True
-
-
-registry.register(
-    name="my_tool",
-    toolset="my_toolset",
-    schema=MY_TOOL_SCHEMA,
-    handler=lambda args, **kw: my_tool(**args, **kw),
-    check_fn=_check_requirements,
-)
-```
-
-Then add the import to `model_tools.py` in the `_modules` list:
-
-```python
-_modules = [
-    # ... existing modules ...
-    "tools.my_tool",
-]
-```
-
-If it's a new toolset, add it to `toolsets.py` and to the relevant platform presets.
-
----
-
-## Adding a Skill
-
-Bundled skills live in `skills/` organized by category. Official optional skills use the same structure in `optional-skills/`:
-
-```
-skills/
-├── research/
-│   └── arxiv/
-│       ├── SKILL.md              # Required: main instructions
-│       └── scripts/              # Optional: helper scripts
-│           └── search_arxiv.py
-├── productivity/
-│   └── ocr-and-documents/
-│       ├── SKILL.md
-│       ├── scripts/
-│       └── references/
-└── ...
-```
-
-### SKILL.md format
-
-```markdown
----
-name: my-skill
-description: Brief description (shown in skill search results)
-version: 1.0.0
-author: Your Name
-license: MIT
-platforms: [macos, linux]          # Optional — restrict to specific OS platforms
-                                   #   Valid: macos, linux, windows
-                                   #   Omit to load on all platforms (default)
-required_environment_variables:    # Optional — secure setup-on-load metadata
-  - name: MY_API_KEY
-    prompt: API key
-    help: Where to get it
-    required_for: full functionality
-prerequisites:                     # Optional legacy runtime requirements
-  env_vars: [MY_API_KEY]           #   Backward-compatible alias for required env vars
-  commands: [curl, jq]             #   Advisory only; does not hide the skill
-metadata:
-  hermes:
-    tags: [Category, Subcategory, Keywords]
-    related_skills: [other-skill-name]
-    fallback_for_toolsets: [web]       # Optional — show only when toolset is unavailable
-    requires_toolsets: [terminal]      # Optional — show only when toolset is available
----
-
-# Skill Title
-
-Brief intro.
-
-## When to Use
-Trigger conditions — when should the agent load this skill?
-
-## Quick Reference
-Table of common commands or API calls.
-
-## Procedure
-Step-by-step instructions the agent follows.
-
-## Pitfalls
-Known failure modes and how to handle them.
-
-## Verification
-How the agent confirms it worked.
-```
-
-### Platform-specific skills
-
-Skills can declare which OS platforms they support via the `platforms` frontmatter field. Skills with this field are automatically hidden from the system prompt, `skills_list()`, and slash commands on incompatible platforms.
-
-```yaml
-platforms: [macos]            # macOS only (e.g., iMessage, Apple Reminders)
-platforms: [macos, linux]     # macOS and Linux
-platforms: [windows]          # Windows only
-```
-
-If the field is omitted or empty, the skill loads on all platforms (backward compatible). See `skills/apple/` for examples of macOS-only skills.
-
-### Conditional skill activation
-
-Skills can declare conditions that control when they appear in the system prompt, based on which tools and toolsets are available in the current session. This is primarily used for **fallback skills** — alternatives that should only be shown when a primary tool is unavailable.
-
-Four fields are supported under `metadata.hermes`:
-
-```yaml
-metadata:
-  hermes:
-    fallback_for_toolsets: [web]      # Show ONLY when these toolsets are unavailable
-    requires_toolsets: [terminal]     # Show ONLY when these toolsets are available
-    fallback_for_tools: [web_search]  # Show ONLY when these specific tools are unavailable
-    requires_tools: [terminal]        # Show ONLY when these specific tools are available
-```
-
-**Semantics:**
-- `fallback_for_*`: The skill is a backup. It is **hidden** when the listed tools/toolsets are available, and **shown** when they are unavailable. Use this for free alternatives to premium tools.
-- `requires_*`: The skill needs certain tools to function. It is **hidden** when the listed tools/toolsets are unavailable. Use this for skills that depend on specific capabilities (e.g., a skill that only makes sense with terminal access).
-- If both are specified, both conditions must be satisfied for the skill to appear.
-- If neither is specified, the skill is always shown (backward compatible).
-
-**Examples:**
-
-```yaml
-# DuckDuckGo search — shown when Firecrawl (web toolset) is unavailable
-metadata:
-  hermes:
-    fallback_for_toolsets: [web]
-
-# Smart home skill — only useful when terminal is available
-metadata:
-  hermes:
-    requires_toolsets: [terminal]
-
-# Local browser fallback — shown when Browserbase is unavailable
-metadata:
-  hermes:
-    fallback_for_toolsets: [browser]
-```
-
-The filtering happens at prompt build time in `agent/prompt_builder.py`. The `build_skills_system_prompt()` function receives the set of available tools and toolsets from the agent and uses `_skill_should_show()` to evaluate each skill's conditions.
-
-### Skill setup metadata
-
-Skills can declare secure setup-on-load metadata via the `required_environment_variables` frontmatter field. Missing values do not hide the skill from discovery; they trigger a CLI-only secure prompt when the skill is actually loaded.
-
-```yaml
-required_environment_variables:
-  - name: TENOR_API_KEY
-    prompt: Tenor API key
-    help: Get a key from https://developers.google.com/tenor
-    required_for: full functionality
-```
-
-The user may skip setup and keep loading the skill. Hermes only exposes metadata (`stored_as`, `skipped`, `validated`) to the model — never the secret value.
-
-Legacy `prerequisites.env_vars` remains supported and is normalized into the new representation.
-
-```yaml
-prerequisites:
-  env_vars: [TENOR_API_KEY]       # Legacy alias for required_environment_variables
-  commands: [curl, jq]            # Advisory CLI checks
-```
-
-Gateway and messaging sessions never collect secrets in-band; they instruct the user to run `hermes setup` or update `~/.logos/.env` locally.
-
-**When to declare required environment variables:**
-- The skill uses an API key or token that should be collected securely at load time
-- The skill can still be useful if the user skips setup, but may degrade gracefully
-
-**When to declare command prerequisites:**
-- The skill relies on a CLI tool that may not be installed (e.g., `himalaya`, `openhue`, `ddgs`)
-- Treat command checks as guidance, not discovery-time hiding
-
-See `skills/gifs/gif-search/` and `skills/email/himalaya/` for examples.
-
-### Skill guidelines
-
-- **No external dependencies unless absolutely necessary.** Prefer stdlib Python, curl, and existing Hermes tools (`web_extract`, `terminal`, `read_file`).
-- **Progressive disclosure.** Put the most common workflow first. Edge cases and advanced usage go at the bottom.
-- **Include helper scripts** for XML/JSON parsing or complex logic — don't expect the LLM to write parsers inline every time.
-- **Test it.** Run `hermes --toolsets skills -q "Use the X skill to do Y"` and verify the agent follows the instructions correctly.
-
----
-
-## Cross-Platform Compatibility
-
-Logos runs on Linux, macOS, and Windows. When writing code that touches the OS:
-
-### Critical rules
-
-1. **`termios` and `fcntl` are Unix-only.** Always catch both `ImportError` and `NotImplementedError`:
-   ```python
-   try:
-       from simple_term_menu import TerminalMenu
-       menu = TerminalMenu(options)
-       idx = menu.show()
-   except (ImportError, NotImplementedError):
-       # Fallback: numbered menu for Windows
-       for i, opt in enumerate(options):
-           print(f"  {i+1}. {opt}")
-       idx = int(input("Choice: ")) - 1
-   ```
-
-2. **File encoding.** Windows may save `.env` files in `cp1252`. Always handle encoding errors:
-   ```python
-   try:
-       load_dotenv(env_path)
-   except UnicodeDecodeError:
-       load_dotenv(env_path, encoding="latin-1")
-   ```
-
-3. **Process management.** `os.setsid()`, `os.killpg()`, and signal handling differ on Windows. Use platform checks:
-   ```python
-   import platform
-   if platform.system() != "Windows":
-       kwargs["preexec_fn"] = os.setsid
-   ```
-
-4. **Path separators.** Use `pathlib.Path` instead of string concatenation with `/`.
-
-5. **Shell commands in installers.** If you change `scripts/install.sh`, check if the equivalent change is needed in `scripts/install.ps1`.
-
----
-
-## Security Considerations
-
-Logos has terminal access. Security matters.
-
-### Existing protections
-
-| Layer | Implementation |
-|-------|---------------|
-| **Sudo password piping** | Uses `shlex.quote()` to prevent shell injection |
-| **Dangerous command detection** | Regex patterns in `tools/approval.py` with user approval flow |
-| **Cron prompt injection** | Scanner in `tools/cronjob_tools.py` blocks instruction-override patterns |
-| **Write deny list** | Protected paths (`~/.ssh/authorized_keys`, `/etc/shadow`) resolved via `os.path.realpath()` to prevent symlink bypass |
-| **Skills guard** | Security scanner for hub-installed skills (`tools/skills_guard.py`) |
-| **Code execution sandbox** | `execute_code` child process runs with API keys stripped from environment |
-| **Container hardening** | Docker: all capabilities dropped, no privilege escalation, PID limits, size-limited tmpfs |
-
-### When contributing security-sensitive code
-
-- **Always use `shlex.quote()`** when interpolating user input into shell commands
-- **Resolve symlinks** with `os.path.realpath()` before path-based access control checks
-- **Don't log secrets.** API keys, tokens, and passwords should never appear in log output
-- **Catch broad exceptions** around tool execution so a single failure doesn't crash the agent loop
-- **Test on all platforms** if your change touches file paths, process management, or shell commands
-
-If your PR affects security, note it explicitly in the description.
-
----
-
-## Pull Request Process
-
-### Branch naming
-
-```
-fix/description        # Bug fixes
-feat/description       # New features
-docs/description       # Documentation
-test/description       # Tests
-refactor/description   # Code restructuring
-```
-
-### Before submitting
-
-1. **Run tests**: `pytest tests/ -v`
-2. **Test manually**: Run `hermes` and exercise the code path you changed
-3. **Check cross-platform impact**: If you touch file I/O, process management, or terminal handling, consider Windows and macOS
-4. **Keep PRs focused**: One logical change per PR. Don't mix a bug fix with a refactor with a new feature.
-
-### PR description
-
-Include:
-- **What** changed and **why**
-- **How to test** it (reproduction steps for bugs, usage examples for features)
-- **What platforms** you tested on
-- Reference any related issues
-
-### Commit messages
-
-We use [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-<type>(<scope>): <description>
-```
-
-| Type | Use for |
-|------|---------|
-| `fix` | Bug fixes |
-| `feat` | New features |
-| `docs` | Documentation |
-| `test` | Tests |
-| `refactor` | Code restructuring (no behavior change) |
-| `chore` | Build, CI, dependency updates |
-
-Scopes: `cli`, `gateway`, `tools`, `skills`, `agent`, `install`, `whatsapp`, `security`, etc.
-
-Examples:
-```
-fix(cli): prevent crash in save_config_value when model is a string
-feat(gateway): add WhatsApp multi-user session isolation
-fix(security): prevent shell injection in sudo password piping
-test(tools): add unit tests for file_operations
-```
-
----
-
-## Reporting Issues
-
-- Use [GitHub Issues](https://github.com/GregsGreyCode/Logos/issues)
-- Include: OS, Python version, Hermes version (`hermes version`), full error traceback
-- Include steps to reproduce
-- Check existing issues before creating duplicates
-- For security vulnerabilities, please report privately
-
----
-
-## Community
-
-- **GitHub Discussions**: [github.com/GregsGreyCode/Logos/discussions](https://github.com/GregsGreyCode/Logos/discussions) — for questions, showcasing projects, sharing skills, and architecture proposals
-- **Skills Hub**: Upload specialized skills to a registry and share them with the community
-
----
+- The suite must be green before a change is merged. CI runs it on pushes and pull requests
+  to `main` and `v2`.
+- Tests never touch the real `~/.logos` or `~/.hermes`: `tests/conftest.py` points
+  `LOGOS_HOME` and `HERMES_HOME` at a temp directory.
+- Delete a test only when the code it tests is deleted. Never weaken a test of code that
+  remains.
+- `evals/` holds checks that need a live sandbox. They are run by hand, not by CI.
+
+## Where to make a change
+
+| You want to change | Look at |
+| --- | --- |
+| How a sandbox is created or configured | `gateway/agent_runtime.py` (used by `scripts/logos-agent` and the gateway) |
+| An agent's model, schedule or Telegram settings | `agents/<name>.yaml` |
+| What an agent may read, write or reach | `infra/agent-image/policy.yaml` |
+| The agent image | `infra/agent-image/Dockerfile` |
+| Brain layout and rules | `infra/brain-template/`, `infra/agent-jobs/` |
+| Brain sync to devices | `scripts/logos-sync`, `docs/brain-sync.md` |
+| Gateway HTTP API | `gateway/http_api.py` and the `*_handlers.py` modules |
+| Login, accounts, sessions | `gateway/auth/` |
+| Dashboard | `gateway/html/main_app.html` (one Alpine.js file) |
+| How the gateway finds and controls sandboxes | `gateway/sandbox_backend.py` |
+| The `logos` command | `logos_cli/` |
+
+Record a decision that is hard to reverse as an ADR in `docs/adr/`.
+
+## Pull requests
+
+- Branch from `v2`. Name the branch after the story, for example `s1.11-rename-docs`.
+- One story or one logical change per pull request.
+- Commit messages follow Conventional Commits with the story as scope:
+
+  ```
+  <type>(sN.N): <summary>
+  ```
+
+  Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
+- In the description say what changed, why, and how you checked it. Call out anything that
+  affects security (sandbox policy, auth, secrets, network exposure).
+
+## Reporting issues
+
+Use [GitHub Issues](https://github.com/GregsGreyCode/Logos/issues). For a security problem see
+[SECURITY.md](SECURITY.md).
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions are licensed under the
+[MIT License](LICENSE).
