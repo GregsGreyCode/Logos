@@ -78,7 +78,6 @@ except Exception:
         _APP_VERSION = "dev"
 _BUILD_SHA = os.environ.get("BUILD_SHA", "local")[:7]
 _VERSION_LABEL = f"v{_APP_VERSION} · {_BUILD_SHA}"
-_SERVER_START_TS = str(int(__import__("time").time()))  # unique per pod start; used to invalidate setup localStorage
 # Agent sandbox runtime seam. NullBackend (no sandboxes) until epic E2.
 from gateway.sandbox_backend import (  # noqa: E402
     NO_BACKEND_MESSAGE as _NO_BACKEND_MESSAGE,
@@ -359,7 +358,7 @@ async def _handle_setup_page(request: web.Request) -> web.Response:
     from gateway.auth.db import is_setup_completed
     if is_setup_completed():
         raise web.HTTPFound("/")
-    html = _read_html("setup.html").replace("__VERSION_LABEL__", _VERSION_LABEL).replace("__SETUP_TS__", _SERVER_START_TS)
+    html = _read_html("setup.html").replace("__VERSION_LABEL__", _VERSION_LABEL)
     return web.Response(text=html, content_type="text/html",
                         headers={"Cache-Control": "no-store"})
 
@@ -369,20 +368,11 @@ async def _handle_setup_status(request: web.Request) -> web.Response:
     return web.json_response({"completed": is_setup_completed()})
 
 
-async def _handle_setup_reset(request: web.Request) -> web.Response:
-    from gateway.auth.db import reset_setup_completed, write_audit_log
-    user_id = request["current_user"]["sub"]
-    reset_setup_completed()
-    write_audit_log(user_id, "setup_reset", ip_address=request.remote)
-    return web.json_response({"ok": True})
-
-
 async def _handle_setup_wipe(request: web.Request) -> web.Response:
     """POST /api/setup/wipe — destructive factory reset.
 
     True first-install simulation: wipes everything user-scoped so the
-    next visit goes through the full /setup wizard including the admin
-    account-creation step.
+    next visit goes through /setup, which creates a fresh admin account.
 
     Wipes:
       - Every agent (DB row + on-disk ~/.logos/agents/<name>/ via
@@ -1265,29 +1255,6 @@ async def _handle_health_ready(request: web.Request) -> web.Response:
     )
 
 
-_MODEL_CATALOG_PATH = Path(__file__).parent / "model_catalog.yaml"
-_model_catalog_cache: list | None = None
-
-
-async def _handle_model_catalog(request: web.Request) -> web.Response:
-    """GET /api/model-catalog — return the Ollama model catalog.
-
-    Loads from gateway/model_catalog.yaml on first call (cached).
-    Falls back to an empty list if the file is missing.
-    """
-    global _model_catalog_cache
-    if _model_catalog_cache is None:
-        try:
-            import yaml
-            _model_catalog_cache = yaml.safe_load(
-                _MODEL_CATALOG_PATH.read_text(encoding="utf-8")
-            ) or []
-        except Exception as exc:
-            logger.warning("Failed to load model catalog: %s", exc)
-            _model_catalog_cache = []
-    return web.json_response(_model_catalog_cache)
-
-
 async def _handle_sessions(request: web.Request) -> web.Response:
     if not _check_auth(request):
         raise web.HTTPUnauthorized()
@@ -2039,7 +2006,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/api/hue",       _handle_hue)          # public — tray icon phase-lock
     app.router.add_get("/chat_logo.png", _handle_logo)
     app.router.add_get("/login",         _handle_login_page)
-    app.router.add_get("/api/model-catalog", _handle_model_catalog)
 
     # ── Auth routes (no cookie required) ───────────────────────────────────
     app.router.add_post("/auth/login",   handle_login)
@@ -2079,23 +2045,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/services/messaging/validate", _handle_messaging_validate)
 
     app.router.add_get("/setup",              _handle_setup_page)
-    app.router.add_get("/api/setup/probe",    _sh.handle_setup_probe)
-    app.router.add_get("/api/setup/scan",     _sh.handle_setup_scan)
     app.router.add_get("/api/setup/status",   _handle_setup_status)
-    app.router.add_post("/api/setup/pull",    _sh.handle_setup_pull)
-    app.router.add_post("/api/setup/compare", _sh.handle_setup_compare)
-    app.router.add_post("/api/setup/compare/cancel-server", _sh.handle_setup_compare_cancel_server)
-    app.router.add_post("/api/setup/test",    _sh.handle_setup_test)
-    app.router.add_get("/api/setup/model-catalog",       _sh.handle_model_catalog)
-    app.router.add_post("/api/setup/validate-provider", _sh.handle_validate_provider)
-    app.router.add_post("/api/setup/complete",    _sh.handle_setup_complete)
-    app.router.add_post("/api/setup/prewarm",     _sh.handle_setup_prewarm)
-    app.router.add_post("/api/setup/preload-model", _sh.handle_setup_preload_model)
-    app.router.add_get("/api/setup/progress",     _sh.handle_setup_progress)
-    app.router.add_get("/api/setup/session",      _sh.handle_setup_session_claim)
-    app.router.add_get("/api/setup/env-probe",       _sh.handle_setup_env_probe)
-    app.router.add_post("/api/setup/reset",
-        require_csrf(require_permission("manage_platform")(_handle_setup_reset)))
+    app.router.add_post("/api/setup/complete", _sh.handle_setup_complete)
     app.router.add_post("/api/setup/wipe",
         require_csrf(require_permission("manage_platform")(_handle_setup_wipe)))
 
