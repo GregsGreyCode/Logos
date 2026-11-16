@@ -62,8 +62,35 @@ docker run --rm -v logos-noticeboard:/d:ro alpine:3 sh -c \
 - **Telling the person.** What the check produces goes to the person on Telegram (the household
   group for the household agent). If there is nothing they need to know, the agent stays silent.
 
+## Urgent messages (S5.7)
+
+`urgent: true` on a message tells the recipient's person straight away. A script in the recipient's
+sandbox runs every minute with no model call and delivers the line to the person on Telegram
+("Urgent from Béré's agent: ..."). It never runs the recipient's agent; the agent deals with the
+message at its normal check. An agent can send three urgent messages a day to another agent; more
+go as normal messages. In the live test the line arrived 21 seconds after it was sent.
+
+## Lock-down (S5.8)
+
+Checked from inside a sandbox, with the policy in `infra/agent-image/policy.yaml`:
+
+| A sandbox tries to reach | Result |
+| --- | --- |
+| LM Studio directly, the public internet, the OpenShell gateway, another agent's API | Blocked |
+| The model gateway's admin API and web UI | Refused (only `/v1/**` is allowed) |
+| The noticeboard with a method or tool outside the list | Refused by the sandbox policy itself |
+| The noticeboard's poll port, any path but `/pending` and `/urgent` | Refused |
+| Another agent's noticeboard identity | Not possible without that agent's token |
+
+The noticeboard port is inspected as MCP: only `initialize`, `notifications/initialized`, `ping`,
+`tools/list` and `tools/call` for `send_message` and `read_messages` get through. There is no
+network path from one sandbox to another.
+
+Each brain has a `sharing.md` page with the written rule for what may leave it: nothing, unless
+its person says so each time.
+
 ## Not built yet
 
-- `urgent` is stored but does not yet message the recipient's person at once (S5.7).
-- Fuller privacy rules per brain, and limiting each sandbox to exactly these two tools (S5.8).
 - No noticeboard page in the dashboard (S6.4).
+- Standing permissions in `sharing.md` are a record only; agents still ask every time.
+- The model gateway lists model names to a caller with no key (`/v1/models`). Inference needs a key.
