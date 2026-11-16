@@ -239,6 +239,10 @@ class AgentRuntime:
         self.run(["docker", "run", "--rm", "-i", "-v", f"{vol}:/v", HELPER, "sh", "-c", sh], input=content)
 
     def get(self, vol: str, rel: str) -> str:
+        # `docker run -v <name>` silently creates a missing volume (unlabelled and root-owned,
+        # which OpenShell then refuses to mount), so never touch one that does not exist yet.
+        if self.runner.run(["docker", "volume", "inspect", vol]).returncode != 0:
+            return ""
         p = self.runner.run(["docker", "run", "--rm", "-v", f"{vol}:/v:ro", HELPER, "cat", f"/v/{rel}"])
         return p.stdout if p.returncode == 0 else ""
 
@@ -265,8 +269,9 @@ class AgentRuntime:
         except Exception as e:
             print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 
-    def config_text(self, name: str, agent: Mapping[str, Any]) -> str:
-        """The hermes ``config.yaml`` written into the agent's home."""
+    def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "") -> str:
+        """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` is the
+        agent's own noticeboard token (the file lives in its private home volume, next to ``.env``)."""
         m = agent["model"]
         model = {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
                  "context_length": int(m["context_length"])}
@@ -279,6 +284,9 @@ class AgentRuntime:
         cfg = {"_config_version": CONFIG_VERSION,
                "timezone": agent.get("timezone", "UTC"),
                "model": model}
+        if (agent.get("telegram") or {}).get("group_chats"):
+            # One shared conversation per group (hermes otherwise keeps one per participant).
+            cfg["group_sessions_per_user"] = False
         if agent.get("brain_index", True):
             cfg["memory"] = {"memory_char_limit": MEMORY_CHAR_LIMIT}
         reset = agent.get("session_reset")
@@ -287,6 +295,12 @@ class AgentRuntime:
             # image) starts a fresh session on the first message after the daily boundary.
             cfg["plugins"] = {"enabled": [RESET_PLUGIN]}
             cfg["session_reset"] = {k: reset[k] for k in ("mode", "at_hour", "idle_minutes") if k in reset}
+        nb = _sibling("noticeboard_host")
+        if nb.uses_noticeboard(agent) and noticeboard_token:
+            # The only channel to other agents: two tools, send_message and read_messages.
+            cfg["mcp_servers"] = {"noticeboard": {
+                "url": nb.NoticeboardHost(self).url(),
+                "headers": {"Authorization": f"Bearer {noticeboard_token}"}}}
         return ("# Written by scripts/logos-agent; edit agents/%s.yaml instead.\n%s"
                 % (name, yaml.safe_dump(cfg, sort_keys=False)))
 
@@ -307,9 +321,17 @@ class AgentRuntime:
                     "telegram.enabled is true but no token: set LOGOS_TELEGRAM_BOT_TOKEN for the first `up`")
             cur["TELEGRAM_BOT_TOKEN"] = token
             cur["TELEGRAM_ALLOWED_USERS"] = ",".join(str(u) for u in tg.get("allowed_users") or [])
+            # Group chats: which groups the bot may answer in, and whether it must be @mentioned there.
+            groups = [str(g) for g in tg.get("group_chats") or []]
+            if groups:
+                cur["TELEGRAM_GROUP_ALLOWED_CHATS"] = ",".join(groups)
+            else:
+                cur.pop("TELEGRAM_GROUP_ALLOWED_CHATS", None)
+            cur["TELEGRAM_REQUIRE_MENTION"] = "true" if tg.get("require_mention", True) else "false"
             # Home channel: where scheduled jobs and failure notices are delivered. A person's DM chat
             # id is their user id, so default to the first allowed user unless the definition says otherwise.
-            home_chat = tg.get("home_channel") or next(iter(tg.get("allowed_users") or []), None)
+            home_chat = (tg.get("home_channel") or next(iter(tg.get("group_chats") or []), None)
+                         or next(iter(tg.get("allowed_users") or []), None))
             if home_chat:
                 cur["TELEGRAM_HOME_CHANNEL"] = str(home_chat)
                 cur.setdefault("TELEGRAM_HOME_CHANNEL_NAME", agent.get("display_name", agent["name"]))
@@ -321,6 +343,9 @@ class AgentRuntime:
         mg = _sibling("model_gateway")
         if mg.uses_gateway(agent):
             cur.setdefault(mg.KEY_ENV, "sk-bf-" + secrets.token_urlsafe(32))
+        nb = _sibling("noticeboard_host")
+        if nb.uses_noticeboard(agent):
+            cur.setdefault(nb.TOKEN_ENV, secrets.token_urlsafe(32))
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -399,32 +424,44 @@ class AgentRuntime:
     def policy_path(self, name: str, agent: Mapping[str, Any]) -> Path:
         """The policy file to create the sandbox with.
 
-        The tracked policy carries a documentation address for LM Studio. When the agent's
-        ``model.base_url`` (usually set in the untracked ``.local.yaml``) points somewhere else,
-        the ``lm_studio`` rule is rewritten to that host and port in an untracked copy under
-        ``.rendered/``, so the real LAN address never needs to be committed.
+        The tracked policy carries documentation addresses. Two rules are filled in per agent,
+        in an untracked copy under ``.rendered/``, so real addresses never need committing:
+
+        * ``lm_studio``: the agent's model endpoint. That is the model gateway when the agent
+          uses it, otherwise ``model.base_url`` (usually set in the untracked ``.local.yaml``).
+        * ``noticeboard``: the noticeboard's address, or removed when the agent is not on it.
         """
         src = self.repo / agent["policy"]
-        model = agent.get("model") or {}
-        if model.get("provider") != "lmstudio" or not src.exists():
+        if not src.exists():
             return src
         policy = yaml.safe_load(src.read_text()) or {}
-        endpoints = ((policy.get("network_policies") or {}).get("lm_studio") or {}).get("endpoints")
-        if not endpoints:
-            return src
+        rules = policy.get("network_policies") or {}
+        before = json.dumps(rules, sort_keys=True)
+
+        def point(rule: str, target: str) -> None:
+            url = urllib.parse.urlsplit(target)
+            host, port = url.hostname, url.port or (443 if url.scheme == "https" else 80)
+            for e in (rules.get(rule) or {}).get("endpoints") or []:
+                e["host"], e["port"] = host, port
+                try:
+                    e["allowed_ips"] = [f"{ipaddress.ip_address(host)}/32"]
+                except ValueError:
+                    e.pop("allowed_ips", None)      # a hostname: nothing to pin
+
+        model = agent.get("model") or {}
         mg = _sibling("model_gateway")
-        # Behind the model gateway the agent talks only to the gateway, never to LM Studio itself.
-        target = mg.ModelGateway(self).base_url() if mg.uses_gateway(agent) else model["base_url"]
-        url = urllib.parse.urlsplit(target)
-        host, port = url.hostname, url.port or (443 if url.scheme == "https" else 80)
-        if all(e.get("host") == host and e.get("port") == port for e in endpoints):
+        if mg.uses_gateway(agent):
+            # Behind the model gateway the agent talks only to the gateway, never to LM Studio itself.
+            point("lm_studio", mg.ModelGateway(self).base_url())
+        elif model.get("provider") == "lmstudio":
+            point("lm_studio", model["base_url"])
+        nb = _sibling("noticeboard_host")
+        if nb.uses_noticeboard(agent):
+            point("noticeboard", nb.NoticeboardHost(self).url())
+        else:
+            rules.pop("noticeboard", None)
+        if json.dumps(rules, sort_keys=True) == before:
             return src
-        for e in endpoints:
-            e["host"], e["port"] = host, port
-            try:
-                e["allowed_ips"] = [f"{ipaddress.ip_address(host)}/32"]
-            except ValueError:
-                e.pop("allowed_ips", None)      # a hostname: nothing to pin
         out = self.repo / ".rendered" / f"{name}.policy.yaml"
         out.parent.mkdir(exist_ok=True)
         out.write_text(f"# Rendered from {agent['policy']} for agent {name}. Do not edit or commit.\n"
@@ -456,11 +493,20 @@ class AgentRuntime:
         home, brain = volumes(name)
         for v in (home, brain):
             self.ensure_volume(v)
-        self.put(home, "config.yaml", self.config_text(name, agent))
+        env_text = self.env_file(agent, home)
+        self.put(home, ".env", env_text, mode="0600")
+        nb = _sibling("noticeboard_host")
+        token = next((l.split("=", 1)[1] for l in env_text.splitlines() if l.startswith(nb.TOKEN_ENV + "=")), "")
+        self.put(home, "config.yaml", self.config_text(name, agent, token))
         self.ensure_vault(brain)
         self.ensure_model(agent["model"])
         self.put(home, "SOUL.md", self.soul_text(agent))
-        self.put(home, ".env", self.env_file(agent, home), mode="0600")
+        if nb.uses_noticeboard(agent):
+            try:
+                if nb.NoticeboardHost(self).up():
+                    print("noticeboard: started with the current agents")
+            except (ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"noticeboard: {e}")
         mg = _sibling("model_gateway")
         if mg.uses_gateway(agent):
             try:
