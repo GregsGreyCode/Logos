@@ -416,6 +416,15 @@ async def _handle_index(request: web.Request) -> web.Response:
                         headers={"Cache-Control": "no-store"})
 
 
+async def _handle_app(request: web.Request) -> web.Response:
+    """GET / — the v2 dashboard (gateway/html/app.html plus the modules under gateway/ui/)."""
+    from gateway.auth.db import is_setup_completed
+    if not is_setup_completed():
+        raise web.HTTPFound("/login")
+    return web.Response(text=_read_html("app.html"), content_type="text/html",
+                        headers={"Cache-Control": "no-store"})
+
+
 async def _handle_login_page(request: web.Request) -> web.Response:
     html = _read_html("login.html").replace("__VERSION_LABEL__", _VERSION_LABEL)
     return web.Response(text=html, content_type="text/html",
@@ -1916,7 +1925,11 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/api/setup/wipe",
         require_csrf(require_permission("manage_platform")(_handle_setup_wipe)))
 
-    app.router.add_get("/",              _handle_index)
+    app.router.add_get("/",              _handle_app)
+    app.router.add_get("/classic",       _handle_index)      # the v1-era page, until v2 covers it
+    from gateway import dashboard_api as _dashboard_api
+    _dashboard_api.register(app)
+    app.router.add_static("/ui", str(Path(__file__).parent / "ui"), show_index=False)
     # Per-tab URL paths. Each one serves the same SPA (main_app.html);
     # Alpine reads window.location.pathname on init and pushes state on
     # tab changes so refresh keeps the user on the current page.
