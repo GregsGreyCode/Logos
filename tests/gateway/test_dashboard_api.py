@@ -266,3 +266,74 @@ def test_you_cannot_answer_for_an_agent_that_is_not_yours(nb):
     assert go("u-greg", "POST", "/api/v2/noticeboard/3/answer", {"decision": "declined"})[0] == 404   # he asked it
     assert go("u-greg", "POST", "/api/v2/noticeboard/5/answer", {"decision": "maybe"})[0] == 400
     assert board.answers == []
+
+
+# ── brain ────────────────────────────────────────────────────────────────────
+
+def test_brain_paths_cannot_escape_the_vault():
+    from gateway import brain_reader as b
+    assert b.safe_path("projects/Wedding speech.md") == "projects/Wedding speech.md"
+    for bad in ("", "../x.md", "/etc/passwd.md", ".git/config.md", "a/../../b.md", "a//b.md", "x.txt",
+                ".obsidian/app.md", "a/.hidden/b.md", "x" * 400 + ".md"):
+        with pytest.raises(b.BrainError):
+            b.safe_path(bad)
+    assert b.new_page_path("projects", "  Garden   plan ") == "projects/Garden plan.md"
+    assert b.new_page_path("topics", 'A/B: "notes"?') == "topics/AB notes.md"
+    for folder, title in (("daily", "x"), ("..", "x"), ("projects", ""), ("projects", "///"), ("projects", "..")):
+        with pytest.raises(b.BrainError):
+            b.new_page_path(folder, title)
+
+
+def test_brain_listing_is_parsed():
+    from gateway import brain_reader as b
+    out = ("P\tprojects/Trip.md\t200\tTrip to Lisbon\nP\tREADME.md\t100\tBrain\nP\tdaily/2026-11-15.md\t150\t\n"
+           "P\tdaily/2026-11-16.md\t190\t\nC\t190\ndaily/2026-11-16.md\nprojects/Trip.md\nC\t150\nprojects/Trip.md\ngone.md\n")
+    d = b.parse_listing(out)
+    assert [(p["folder"], p["title"]) for p in d["pages"]] == [
+        ("", "Brain"), ("daily", "2026-11-16"), ("daily", "2026-11-15"), ("projects", "Trip to Lisbon")]
+    assert d["changes"] == [{"path": "daily/2026-11-16.md", "when": 190, "title": "2026-11-16"},
+                            {"path": "projects/Trip.md", "when": 190, "title": "Trip to Lisbon"}]
+
+
+class BrainRunner:
+    def __init__(self):
+        self.calls, self.rc, self.out = [], 0, "123\n"
+
+    def run(self, argv, *, input=None, text=True):
+        self.calls.append((list(argv), input))
+        class R:
+            pass
+        r = R()
+        r.returncode = 0 if argv[:3] == ["docker", "volume", "inspect"] else self.rc
+        r.stdout, r.stderr = self.out, ""
+        return r
+
+
+class BrainRuntime:
+    def __init__(self):
+        self.runner = BrainRunner()
+
+
+def test_brain_write_is_guarded():
+    from gateway import brain_reader as b
+    rt = BrainRuntime()
+    assert b.write_page(rt, "greg", "projects/Trip.md", "# Trip", 100) == {"path": "projects/Trip.md", "modified": 123}
+    argv, sent = rt.runner.calls[-1]
+    assert "logos-brain-greg:/v" in argv and "--network" in argv and "P=projects/Trip.md" in argv and "EXPECT=100" in argv
+    assert sent == "# Trip\n"                                   # the path is never part of the shell text
+    assert "projects/Trip.md" not in argv[-1]
+    rt.runner.rc = 3
+    with pytest.raises(b.PageChanged):
+        b.write_page(rt, "greg", "projects/Trip.md", "x", 100)
+    with pytest.raises(b.BrainError):
+        b.write_page(rt, "greg", "../outside.md", "x", 100)
+    with pytest.raises(b.BrainError):
+        b.write_page(rt, "greg", "projects/Trip.md", "x" * (b.MAX_PAGE_BYTES + 1), 100)
+    rt.runner.rc = 5
+    with pytest.raises(b.BrainError, match="already exists"):
+        b.create_page(rt, "greg", "projects", "Trip")
+
+
+def test_reading_someone_elses_brain_is_a_404(run):
+    assert run("u-bere", "/api/v2/agents/greg/brain")[0] == 404
+    assert run("u-bere", "/api/v2/agents/greg/brain/page?path=README.md")[0] == 404
