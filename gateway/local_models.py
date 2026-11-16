@@ -93,3 +93,9 @@ def report(http: Callable[..., bytes], agents: Mapping[str, Mapping[str, Any]]) 
         for model_id in strays(have, want):
             lines.append(f"  {model_id}: loaded, but no agent uses it (context {have[model_id]})")
     return "\n".join(lines) or "no agent uses a local model server"
+
+
+def available(http: Callable[..., bytes], base: str) -> List[str]:
+    """Every model the server has downloaded, loaded or not."""
+    return sorted(m["id"] for m in json.loads(http(base + "/api/v0/models", timeout=10))["data"]
+                  if m.get("type") != "embeddings")
