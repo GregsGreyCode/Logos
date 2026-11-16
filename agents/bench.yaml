@@ -1,5 +1,6 @@
 # Throwaway agent used by the evals; evals/agent_writes/bench.py rewrites model.default.
 name: bench
+dashboard: false                # benchmark runs only; not shown in the web dashboard
 display_name: Benchmark agent
 image: logos-agent:0.23.1
 soul: souls/general/soul.md

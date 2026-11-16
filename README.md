@@ -33,19 +33,19 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 | Agent lifecycle | [scripts/logos-agent](scripts/logos-agent), [agents/](agents/) | `up`, `down`, `status`, `exec` from `agents/<name>.yaml` |
 | Brain rules | [infra/brain-template/](infra/brain-template/), [infra/agent-jobs/](infra/agent-jobs/) | Vault layout, nightly consolidation, brain index, git history inside the vault |
 | Brain sync | [scripts/logos-sync](scripts/logos-sync), [docs/brain-sync.md](docs/brain-sync.md) | One Syncthing container per agent, so a brain opens as an Obsidian vault |
-| Gateway shell | [gateway/](gateway/), [logos_cli/](logos_cli/) | Login, account setup, trimmed dashboard. Chat answers `503 no_agents_running` |
+| Gateway and web chat | [gateway/](gateway/), [logos_cli/](logos_cli/) | Login, account setup, trimmed dashboard. With `LOGOS_SANDBOX_BACKEND=openshell` it lists the defined agents and chats with them ([docs/architecture/web-chat.md](docs/architecture/web-chat.md)) |
 | Checks | [evals/](evals/) | Brain-write and brain-rule checks that run inside a sandbox |
 
 ## What is not built yet
 
-- The gateway does not talk to the agents by default. It runs with a null sandbox backend, so
-  the dashboard shows empty states and chat returns `503 no_agents_running`. An OpenShell
-  backend exists behind `LOGOS_SANDBOX_BACKEND=openshell`, but it is not wired through to
-  chat yet.
+- The gateway talks to the agents only when started with `LOGOS_SANDBOX_BACKEND=openshell`
+  (put it in `~/.logos/.env`). Without it the dashboard shows empty states and chat returns
+  `503 no_agents_running`.
 - Only Greg's agent is defined (`agents/greg.yaml`, plus `agents/bench.yaml` for
   benchmarking). Béré's agent and the Household agent do not exist yet.
 - There is no brain browser in the dashboard yet.
-- Talking to an agent today happens over Telegram, straight to hermes, not through Logos.
+- Web conversations and Telegram conversations are separate sessions of the same agent. They
+  share its memory and brain, not the message history.
 - The agent image is built locally. Nothing is published to a registry.
 
 ## Quick start
