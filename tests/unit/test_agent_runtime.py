@@ -155,6 +155,7 @@ def repo(tmp_path):
     (jobs / "noticeboard_state.py").write_text("print('latest message 0')\n")
     (jobs / "noticeboard_check.md").write_text("Noticeboard check.\n")
     (jobs / "noticeboard_urgent.py").write_text("print('')\n")
+    (jobs / "weekly_digest.md").write_text("Weekly digest.\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (jobs / "brain_index.py").write_text("# index\n")
     (jobs / "consolidate.md").write_text("Consolidate the inbox.\n")
@@ -539,9 +540,18 @@ network_policies:
         (job,) = [c for c in created if "noticeboard-check" in c]
         assert "--monitor-script noticeboard_state.py" in job and "--deliver telegram" in job
         assert '"*/10 * * * *"' in job
+        (digest,) = [c for c in created if "weekly-digest" in c]
+        assert '"0 18 * * 0"' in digest and "--deliver telegram" in digest
         (urgent,) = [c for c in created if "noticeboard-urgent" in c]
         assert "--no-agent --script noticeboard_urgent.py" in urgent and "--deliver telegram" in urgent
         assert "LOGOS_NOTICEBOARD_POLL_URL=http://172.17.0.1:8092" in r.env_file(agent, "logos-home-alpha")
+
+    def test_no_weekly_digest_without_telegram_or_when_disabled(self, repo):
+        for agent_extra in ({}, {"telegram": {"enabled": True, "allowed_users": [1]}, "digest": {"enabled": False}}):
+            runner = FakeRunner()
+            r = rt(repo, runner, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
+            r.ensure_jobs("alpha", {**r.load("alpha"), **agent_extra}, "logos-home-alpha")
+            assert not [c for c in runner.matching("openshell", "sandbox", "exec") if "weekly-digest" in c[-1]]
 
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)
