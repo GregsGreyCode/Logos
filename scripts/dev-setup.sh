@@ -273,27 +273,14 @@ echo ""
 echo "  1. Reload your shell:"
 echo "     source $SHELL_CONFIG"
 echo ""
-echo "  2. Run the setup wizard to configure API keys:"
-echo "     logos setup"
+echo "  2. Set up the OpenShell gateway (see infra/openshell/README.md)."
 echo ""
-echo "  3. Launch the gateway (web dashboard at http://localhost:8080):"
-echo "     logos gateway"
-echo ""
-echo "  4. Or start a local chat session:"
-echo "     hermes"
+echo "  3. Check the host, then launch the gateway (dashboard at http://localhost:8091):"
+echo "     logos doctor"
+echo "     logos gateway start"
 echo ""
 echo "Other commands:"
-echo "  logos status              # Check configuration"
-echo "  logos gateway install     # Install gateway service (messaging + cron)"
-echo "  logos cron list           # View scheduled jobs"
-echo "  logos doctor              # Diagnose issues"
+echo "  logos gateway status      # Is the gateway running?"
+echo "  logos gateway stop        # Stop the gateway"
+echo "  logos gateway restart     # Restart the gateway"
 echo ""
-
-# Ask if they want to run setup wizard now
-read -p "Would you like to run the setup wizard now? [Y/n] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]] || [[ -z $REPLY ]]; then
-    echo ""
-    # Run directly with venv Python (no activation needed)
-    "$SCRIPT_DIR/venv/bin/python" -m logos_cli.main setup
-fi

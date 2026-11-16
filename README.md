@@ -198,80 +198,9 @@ By default Logos binds to `0.0.0.0:8091`, making the dashboard reachable from an
 
 ## ⚡ Quick install
 
-### Linux / WSL2 — one-shot installer (recommended)
-
-Three steps. The install script handles everything else — uv, venv, deps, ~/.logos layout, CLI symlinks, and optionally OpenShell + sysctl bumps.
-
-```bash
-# 1. Docker (required if you want the default OpenShell sandboxed multi-agent mode)
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
-
-# 2. Log out and log back in so the new 'docker' group membership applies.
-
-# 3. Run the installer. Takes ~10-15 minutes on a fresh box — most of
-#    that is the one-time `docker build` of the hermes-sandbox image
-#    (~5-10 min, cached after). Prompts once for sudo to bump inotify
-#    limits and, if Node.js ≥20 isn't already installed, to auto-
-#    install it via nodesource (needed for browser automation +
-#    WhatsApp). Pass SKIP_NPM=1 to skip Node entirely;
-#    LOGOS_SKIP_SANDBOX_BUILD=1 to skip the image build (agents
-#    won't be able to spawn sandboxes until you build it manually).
-curl -fsSL https://raw.githubusercontent.com/GregsGreyCode/Logos/main/scripts/fresh-install.sh \
-  | INSTALL_OPENSHELL=1 BUMP_INOTIFY=1 bash
-```
-
-Afterwards:
-
-```bash
-logos gateway start
-logos status          # confirm Process + Port 8091 are green
-
-# open http://<host>:8091/setup — the wizard provisions model routes
-# and creates your first agent. On first install the wizard's
-# "Complete" step runs for 1–3 minutes (cold sandbox-image pull +
-# k3s boot + agent spawn). Subsequent agents spin up much faster.
-
-# Optional — keep the gateway running after logout / reboot:
-logos gateway install                   # installs a systemd user unit
-sudo loginctl enable-linger $USER        # service survives logout
-
-# Keeping Logos current:
-logos gateway update --check            # is origin ahead of local HEAD?
-logos gateway update                    # ff-only git pull + restart
-# …or click the "⬆ update" pill in the dashboard when new commits land.
-```
-
-<!-- screenshot: setup-wizard-landing — the /setup page as a new user first sees it -->
-<!-- screenshot: setup-benchmark — benchmark results page with several scored models -->
-<!-- screenshot: setup-complete — the final provisioning spinner (shows 1-3 minute copy) -->
-
-**Published images** (listed so you can inspect or pin them — the installer only pulls `hermes-sandbox` by default):
-
-| Image | What it is | Installer behaviour |
-| --- | --- | --- |
-| `ghcr.io/gregsgreycode/hermes-sandbox:v1.0.18` (also `:latest`) | The sandbox runtime image that every agent runs inside. Wraps upstream hermes with the sandbox user, iproute2, and agent-browser. | Pulled automatically. Override with `LOGOS_SANDBOX_IMAGE=…` or skip with `LOGOS_SKIP_SANDBOX_BUILD=1`. |
-| `ghcr.io/gregsgreycode/hermes-upstream:v1.0.18` (also `:latest`) | The upstream `hermes-agent` base image, rebuilt in our registry for determinism. The sandbox image `FROM`s this. | Not pulled separately — its layers arrive baked into `hermes-sandbox`. Only fetched directly when you rebuild from source (`LOGOS_FORCE_SANDBOX_BUILD=1`, or GHCR unreachable). |
-| `ghcr.io/gregsgreycode/logos:1.0.18` (also `:latest`, `:canary`) | The gateway — used when deploying Logos itself in a container. | Not pulled. The installer runs Logos from source. Only relevant if you're running the gateway as a container (e.g. via the `k8s/` manifests). |
-
-Env flags for the installer:
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `INSTALL_OPENSHELL=1` | off | Fetches the OpenShell static binary into `~/.local/bin/openshell` and builds the `hermes-sandbox` Docker image (first build: ~5-10 min) |
-| `BUMP_INOTIFY=1` | off | Raises `fs.inotify.max_user_instances` to 8192 (needed for ≥8 OpenShell routes) |
-| `SKIP_NPM=1` | off | Skips `npm install` (browser tools + WhatsApp bridge won't work) |
-| `LOGOS_SKIP_SANDBOX_BUILD=1` | off | Skips the local `docker build` of the sandbox image. Use when pulling from a pre-built registry |
-| `LOGOS_FORCE_SANDBOX_BUILD=1` | off | Forces a rebuild of the sandbox image even when it already exists locally (use after editing `docker/Dockerfile.hermes-upstream` or anything else baked into the sandbox image) |
-| `START_AFTER=1` | off | Launches `logos gateway start` at the end |
-| `LOGOS_REPO_DIR=/path` | `$HOME/logos` | Where to clone the repo |
-| `PYTHON_VERSION=<ver>` | `3.12` | Pins the venv's Python version (3.11 also supported) |
-
-The script is idempotent — safe to re-run as a repair tool.
+Install and configure the OpenShell gateway by following [infra/openshell/README.md](infra/openshell/README.md), then install the Logos gateway from source as shown below.
 
 ### Linux / macOS — manual install
-
-> ⚠ **Not recommended for first-time users.** This path skips several things the one-shot installer does for you — the `~/.logos/` directory scaffold, the `logos` CLI symlink, `npm install` for browser tools + WhatsApp, and the OpenShell binary download. Use only if you have a specific reason (e.g. packaging Logos yourself, or you already have uv + an unusual Python pinned).
 
 ```bash
 git clone https://github.com/GregsGreyCode/Logos.git
@@ -292,17 +221,16 @@ ln -sf "$PWD/venv/bin/logos" ~/.local/bin/logos
 
 # Optional but needed for full functionality:
 #   npm ci                     # browser automation tools + WhatsApp bridge
-#   Install the OpenShell CLI  # https://github.com/NVIDIA/OpenShell/releases
-#                              # (or re-run fresh-install.sh with INSTALL_OPENSHELL=1)
+#   Install the OpenShell CLI  # see infra/openshell/README.md
 
 logos gateway start
 ```
 
 Then open <http://localhost:8091/setup> — the **setup wizard launches automatically on first run** (whenever `auth.db` doesn't have the `setup_completed` feature flag).
 
-> **OpenShell:** to use the default `openshell` runtime mode, install the [OpenShell CLI](https://github.com/NVIDIA/OpenShell) first (the one-shot installer does this for you with `INSTALL_OPENSHELL=1`). The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
+> **OpenShell:** to use the default `openshell` runtime mode, install the OpenShell CLI first (see [infra/openshell/README.md](infra/openshell/README.md)). The setup wizard will detect it. If OpenShell is missing, you'll be steered to the `docker` fallback.
 
-> **Windows:** there is no native Windows build at this time. Run Logos under WSL2 using the Linux installer path above.
+> **Windows:** there is no native Windows build at this time. Run Logos under WSL2 using the Linux install path above.
 
 ---
 

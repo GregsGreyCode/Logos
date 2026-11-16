@@ -21,10 +21,6 @@ name: Publish hermes-sandbox image
 # Trigger: any git tag starting with v (v0.13.0, v0.13.1-rc.1, etc).
 # Manual runs via workflow_dispatch also work — handy for rebuilding
 # after an upstream bump without tagging a Logos release.
-#
-# Fresh-install flow: scripts/fresh-install.sh prefers the GHCR image
-# and only falls back to a local build if LOGOS_FORCE_SANDBOX_BUILD=1
-# is set or the pull fails. (TODO in TASKS.md #23.)
 
 on:
   push:
