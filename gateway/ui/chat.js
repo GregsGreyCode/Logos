@@ -112,6 +112,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
           let d;
           try { d = JSON.parse(line.slice(5)); } catch (e) { continue; }
           if (d.type === 'task_started') running = { taskId: d.task_id };
+          else if (d.type === 'status' && !body) reply.replaceChildren(h('span', { class: 'when' }, d.content));
           else if (d.type === 'token') { body += d.content; reply.replaceChildren(...markdown(body.replace(/^\s+/, ''))); }
           else if (d.type === 'message') { body = d.content; reply.replaceChildren(...markdown(body)); }
           else if (d.type === 'tool_start') {
