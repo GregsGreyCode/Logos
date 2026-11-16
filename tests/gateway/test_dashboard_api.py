@@ -463,3 +463,12 @@ def test_agents_you_cannot_use_are_listed_by_name_only(run):
     body = run("u-bere", "/api/v2/agents")[1]
     assert [a["name"] for a in body["agents"]] == ["household"]
     assert body["others"] == [{"name": "greg", "display_name": "Greg's agent", "running": True}]
+
+
+def test_audio_suffix_accepts_browser_recordings_only():
+    from gateway.dashboard_api import audio_suffix
+    assert audio_suffix("audio/webm;codecs=opus") == ".webm"
+    assert audio_suffix("audio/mp4") == ".m4a"
+    assert audio_suffix("Audio/OGG; codecs=opus") == ".ogg"
+    assert audio_suffix("application/json") is None
+    assert audio_suffix("") is None

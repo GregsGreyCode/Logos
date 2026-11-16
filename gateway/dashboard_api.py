@@ -99,6 +99,7 @@ async def handle_agents(request: web.Request) -> web.Response:
             "running": bool(st and st.running), "state": st.state if st else "missing",
             "shared": owners is None or len(owners) > 1,
             "model": str((definition.get("model") or {}).get("default") or ""),
+            "voice": bool(definition.get("voice")),
         })
     # Agents this person cannot use are shown by name and up/down only.
     others = []
@@ -590,8 +591,75 @@ async def handle_noticeboard_answer(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "delegated": False})
 
 
+VOICE_MAX_BYTES = 25 * 1024 * 1024
+_VOICE_SUFFIXES = {"audio/webm": ".webm", "video/webm": ".webm", "audio/ogg": ".ogg", "audio/mp4": ".m4a",
+                   "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/aac": ".aac"}
+
+
+def audio_suffix(content_type: str) -> Optional[str]:
+    """File suffix for a browser recording's content type, or None when it is not audio we take."""
+    return _VOICE_SUFFIXES.get((content_type or "").split(";", 1)[0].strip().lower())
+
+
+async def handle_voice(request: web.Request) -> web.Response:
+    """POST /api/v2/agents/{name}/voice  (body: the recording)  ->  {"text": "..."}
+
+    The microphone button in web chat. The recording goes to the voice service with the
+    agent's own token, exactly as a Telegram voice note does, and only its words come back;
+    the person sees them in the message box before anything is sent to the agent.
+    """
+    import aiohttp
+    from gateway import voice_host
+    name, info, _user_ = await _agent_or_404(request)
+    if not voice_host.uses_voice(info["definition"]):
+        return web.json_response({"error": "no_voice", "message": "Voice is not switched on for this agent."},
+                                 status=400)
+    suffix = audio_suffix(request.headers.get("Content-Type", ""))
+    if suffix is None:
+        return web.json_response({"error": "not_audio", "message": "That is not a recording."}, status=415)
+    chunks, size = [], 0
+    async for chunk in request.content.iter_chunked(65536):
+        size += len(chunk)
+        if size > VOICE_MAX_BYTES:
+            return web.json_response({"error": "too_large", "message": "That recording is too long."}, status=413)
+        chunks.append(chunk)
+    if not size:
+        return web.json_response({"error": "empty", "message": "Nothing was recorded."}, status=400)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    host = voice_host.VoiceHost(runtime)
+    tokens = request.app.setdefault("voice_tokens", {})
+    if name not in tokens:
+        tokens[name] = await asyncio.to_thread(host.token_for, name)
+    if not tokens[name]:
+        tokens.pop(name)
+        return web.json_response({"error": "no_voice", "message":
+                                  f"Voice is not set up for this agent yet (scripts/logos-agent up {name})."}, status=503)
+    base = request.app.get("voice_base_url") or await asyncio.to_thread(host.base_url)
+    request.app["voice_base_url"] = base
+    form = aiohttp.FormData()
+    form.add_field("file", b"".join(chunks), filename="recording" + suffix, content_type="application/octet-stream")
+    form.add_field("model", "whisper-1")
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as s:
+            async with s.post(base + "/audio/transcriptions", data=form,
+                              headers={"Authorization": f"Bearer {tokens[name]}"}) as r:
+                if r.status == 401:
+                    tokens.pop(name, None)          # the agent was set up again; read its token afresh next time
+                if r.status == 422:
+                    return web.json_response({"error": "unreadable", "message":
+                                              "That recording could not be read. Try again."}, status=422)
+                r.raise_for_status()
+                text = str((await r.json()).get("text") or "").strip()
+    except Exception as e:
+        logger.warning("voice: transcription for %s failed: %s", name, type(e).__name__)
+        return web.json_response({"error": "voice_unreachable", "message": "The voice service did not answer."},
+                                 status=503)
+    return web.json_response({"text": text})
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
+    app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
     app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
     app.router.add_get("/api/v2/people", handle_people)
