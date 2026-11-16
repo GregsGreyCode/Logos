@@ -260,9 +260,11 @@ class AgentRuntime:
         except Exception as e:
             print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 
-    def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "") -> str:
-        """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` is the
-        agent's own noticeboard token (the file lives in its private home volume, next to ``.env``)."""
+    def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "",
+                    voice_token: str = "") -> str:
+        """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` and
+        ``voice_token`` are the agent's own tokens for those services (the file lives in its
+        private home volume, next to ``.env``)."""
         m = agent["model"]
         model = {"default": m["default"], "provider": m["provider"], "base_url": m["base_url"],
                  "context_length": int(m["context_length"])}
@@ -295,6 +297,17 @@ class AgentRuntime:
             cfg["mcp_servers"] = {"noticeboard": {
                 "url": nb.NoticeboardHost(self).url(),
                 "headers": {"Authorization": f"Bearer {noticeboard_token}"}}}
+        vh = _sibling("voice_host")
+        if vh.uses_voice(agent) and voice_token:
+            # Voice notes are turned into text by the shared voice service (docs/voice.md).
+            # hermes calls it as an OpenAI-style transcription endpoint.
+            cfg["stt"] = {"enabled": True, "provider": "openai",
+                          "openai": {"api_key": voice_token, "base_url": vh.VoiceHost(self).base_url(),
+                                     "model": "whisper-1"}}
+        else:
+            # Without the service a voice note cannot be understood; never fall back to
+            # downloading a model inside the sandbox.
+            cfg["stt"] = {"enabled": False}
         return ("# Written by scripts/logos-agent; edit agents/%s.yaml instead.\n%s"
                 % (name, yaml.safe_dump(cfg, sort_keys=False)))
 
@@ -345,6 +358,11 @@ class AgentRuntime:
             cur.setdefault(nb.TOKEN_ENV, secrets.token_urlsafe(32))
             cur["LOGOS_NOTICEBOARD_URL"] = nb.NoticeboardHost(self).url()
             cur["LOGOS_NOTICEBOARD_POLL_URL"] = nb.NoticeboardHost(self).poll_url()
+        vh = _sibling("voice_host")
+        if vh.uses_voice(agent):
+            cur.setdefault(vh.TOKEN_ENV, secrets.token_urlsafe(32))
+        else:
+            cur.pop(vh.TOKEN_ENV, None)
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -449,6 +467,7 @@ class AgentRuntime:
         * ``lm_studio``: the agent's model endpoint. That is the model gateway when the agent
           uses it, otherwise ``model.base_url`` (usually set in the untracked ``.local.yaml``).
         * ``noticeboard``: the noticeboard's address, or removed when the agent is not on it.
+        * ``voice``: the voice service's address, or removed when the agent has no voice.
         """
         src = self.repo / agent["policy"]
         if not src.exists():
@@ -486,6 +505,11 @@ class AgentRuntime:
         else:
             rules.pop("noticeboard", None)
             rules.pop("noticeboard_poll", None)
+        vh = _sibling("voice_host")
+        if vh.uses_voice(agent):
+            point("voice", vh.VoiceHost(self).base_url(), rest_rules=[("POST", "/v1/audio/transcriptions")])
+        else:
+            rules.pop("voice", None)
         if json.dumps(rules, sort_keys=True) == before:
             return src
         out = self.repo / ".rendered" / f"{name}.policy.yaml"
@@ -523,7 +547,10 @@ class AgentRuntime:
         self.put(home, ".env", env_text, mode="0600")
         nb = _sibling("noticeboard_host")
         token = next((l.split("=", 1)[1] for l in env_text.splitlines() if l.startswith(nb.TOKEN_ENV + "=")), "")
-        self.put(home, "config.yaml", self.config_text(name, agent, token))
+        vh = _sibling("voice_host")
+        voice_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
+                            if l.startswith(vh.TOKEN_ENV + "=")), "")
+        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token))
         self.ensure_vault(brain)
         self.ensure_model(agent["model"])
         self.put(home, "SOUL.md", self.soul_text(agent))
@@ -533,6 +560,12 @@ class AgentRuntime:
                     print("noticeboard: started with the current agents")
             except (ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"noticeboard: {e}")
+        if vh.uses_voice(agent):
+            try:
+                if vh.VoiceHost(self).up():
+                    print("voice: started with the current agents")
+            except (ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"voice: {e}")
         mg = _sibling("model_gateway")
         if mg.uses_gateway(agent):
             try:

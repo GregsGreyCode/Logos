@@ -84,6 +84,19 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
+  voice:                           # voice notes become text at the shared voice service (docs/voice.md).
+                                   # One request only: send a recording, get its words back.
+    endpoints:
+      - host: 192.0.2.1
+        port: 8093
+        protocol: rest
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: POST, path: /v1/audio/transcriptions}
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   telegram:                        # the agent's own bot
     endpoints:
       - host: api.telegram.org
