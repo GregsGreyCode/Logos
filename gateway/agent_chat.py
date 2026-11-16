@@ -230,3 +230,25 @@ async def keep_alive(write, every: float = KEEP_ALIVE_S) -> None:
             await write(b": keep-alive\n\n")
         except ConnectionError:
             return                      # the browser went away; the handler deals with it
+
+
+async def wake_model(model: Mapping[str, Any], http) -> AsyncIterator[Dict[str, Any]]:
+    """Make sure the agent's local model is loaded before a run starts.
+
+    Yields a ``status`` event when it has to load, so the chat can say why the
+    reply is slow. Problems are logged and swallowed: the model server loads on
+    demand anyway, so the run is still worth starting.
+    """
+    from gateway import local_models
+    base = local_models.server(model)
+    if not base or not model.get("default"):
+        return
+    try:
+        have = await asyncio.to_thread(local_models.loaded, http, base)
+        if local_models.is_ready(have, model["default"], model.get("context_length") or 0):
+            return
+        yield {"type": "status", "content": "Loading the model. The first reply after a quiet spell takes longer."}
+        await asyncio.to_thread(local_models.ensure, http, base, model["default"],
+                                model.get("context_length") or 0)
+    except Exception as exc:
+        logger.warning("chat: could not check or load the local model: %s", exc)

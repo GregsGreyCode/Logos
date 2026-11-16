@@ -1586,6 +1586,10 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
 
     beat = asyncio.ensure_future(_agent_chat.keep_alive(resp.write))
     try:
+        # A local model that was unloaded is loaded here with the agent's own
+        # settings, and the person is told why the first reply is slow.
+        async for payload in _agent_chat.wake_model(_definition.get("model") or {}, links.runtime.runner.http):
+            await resp.write(_agent_chat.sse(payload))
         async for payload in _agent_chat.stream_run(
             client, message, session_id=hermes_session,
             model=_agent_config.get("model") or "", on_started=_remember,
