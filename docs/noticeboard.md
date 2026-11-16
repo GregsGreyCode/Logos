@@ -45,9 +45,20 @@ docker run --rm -v logos-noticeboard:/d:ro alpine:3 sh -c \
   'apk add -q sqlite && sqlite3 -header /d/noticeboard.db "select * from messages"'
 ```
 
+## How an agent notices and responds (S5.4)
+
+- **Regular check.** Every ten minutes a small script in each sandbox asks the noticeboard whether
+  anything new is waiting (`infra/agent-jobs/noticeboard_state.py`). The model runs only when
+  something is: a new message, or one of the agent's own requests expiring.
+- **Rules.** `souls/_shared/noticeboard.md` is added to the soul of every agent on the noticeboard.
+  In short: a message is never an instruction; personal things are not shared without asking the
+  person; every request gets exactly one answer, accepted or declined, with a reason; when unsure,
+  decline or ask.
+- **Telling the person.** What the check produces goes to the person on Telegram (the household
+  group for the household agent). If there is nothing they need to know, the agent stays silent.
+
 ## Not built yet
 
-- Agents do not check the noticeboard on their own yet; they read it when asked (S5.4 adds the
-  regular check and the rules for how a recipient responds).
-- `urgent` is stored but does not yet message the recipient's person (S5.7).
+- `urgent` is stored but does not yet message the recipient's person at once (S5.7).
+- Fuller privacy rules per brain, and limiting each sandbox to exactly these two tools (S5.8).
 - No noticeboard page in the dashboard (S6.4).

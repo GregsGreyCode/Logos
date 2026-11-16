@@ -49,7 +49,7 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
          "exec hermes gateway run")
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
-MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate")
+MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -306,8 +306,11 @@ class AgentRuntime:
 
     def soul_text(self, agent: Mapping[str, Any]) -> str:
         """The persona plus the shared rules every agent follows (brain filing, honesty)."""
-        return ((self.repo / agent["soul"]).read_text().rstrip() + "\n\n"
+        text = ((self.repo / agent["soul"]).read_text().rstrip() + "\n\n"
                 + (self.repo / "souls/_shared/brain.md").read_text())
+        if _sibling("noticeboard_host").uses_noticeboard(agent):
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/noticeboard.md").read_text()
+        return text
 
     def env_file(self, agent: Mapping[str, Any], home: str) -> str:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
@@ -346,6 +349,7 @@ class AgentRuntime:
         nb = _sibling("noticeboard_host")
         if nb.uses_noticeboard(agent):
             cur.setdefault(nb.TOKEN_ENV, secrets.token_urlsafe(32))
+            cur["LOGOS_NOTICEBOARD_URL"] = nb.NoticeboardHost(self).url()
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -384,7 +388,7 @@ class AgentRuntime:
 
     def ensure_jobs(self, name: str, agent: Mapping[str, Any], home: str) -> None:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
-        for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py"):
+        for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         if not self.wait_api(name):
             print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
@@ -409,6 +413,14 @@ class AgentRuntime:
                            f'--workdir /opt/data/brain --timezone {tz} --continuity --deliver local {model}'
                            f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
                      input=(self.jobs_dir / "consolidate.md").read_text())
+        if _sibling("noticeboard_host").uses_noticeboard(agent):
+            # Every ten minutes a script asks the noticeboard whether anything new is waiting. The
+            # model runs only when it is, and what it reports goes to the person (or stays silent).
+            deliver = "telegram" if (agent.get("telegram") or {}).get("enabled") else "local"
+            self.sbx(name, f'{HERMES} cron create --name noticeboard-check '
+                           f'--monitor-script noticeboard_state.py --timezone {tz} '
+                           f'--deliver {deliver} --failure-deliver local "*/10 * * * *" "$(cat)"',
+                     input=(self.jobs_dir / "noticeboard_check.md").read_text())
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
 
