@@ -152,6 +152,9 @@ def repo(tmp_path):
     jobs.mkdir()
     (jobs / "brain_commit.sh").write_text("#!/bin/sh\n")
     (jobs / "brain_inbox_state.sh").write_text("#!/bin/sh\n")
+    (jobs / "noticeboard_state.py").write_text("print('latest message 0')\n")
+    (jobs / "noticeboard_check.md").write_text("Noticeboard check.\n")
+    (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (jobs / "brain_index.py").write_text("# index\n")
     (jobs / "consolidate.md").write_text("Consolidate the inbox.\n")
     return tmp_path
@@ -516,6 +519,20 @@ network_policies:
         runner = FakeRunner()
         assert rt(repo, runner).get("logos-home-nobody", ".env") == ""
         assert runner.matching("docker", "run") == []
+
+    def test_noticeboard_job_and_soul(self, repo, capsys):
+        runner = FakeRunner()
+        r = rt(repo, runner, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
+        agent = {**r.load("alpha"), "noticeboard": True,
+                 "telegram": {"enabled": True, "allowed_users": [11]}}
+        assert "## The household noticeboard" in r.soul_text(agent)
+        assert "household noticeboard" not in r.soul_text(r.load("alpha"))
+        assert "LOGOS_NOTICEBOARD_URL=http://172.17.0.1:8090/mcp" in r.env_file(agent, "logos-home-alpha")
+        r.ensure_jobs("alpha", agent, "logos-home-alpha")
+        created = [c[-1] for c in runner.matching("openshell", "sandbox", "exec") if "cron create" in c[-1]]
+        (job,) = [c for c in created if "noticeboard-check" in c]
+        assert "--monitor-script noticeboard_state.py" in job and "--deliver telegram" in job
+        assert '"*/10 * * * *"' in job
 
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)

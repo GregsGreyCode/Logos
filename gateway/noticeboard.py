@@ -224,6 +224,24 @@ class Board:
             self.db.commit()
             return {"messages": out, "expired_requests": lapsed, "you_can_write_to": self.directory(me)}
 
+    def pending(self, me: str) -> Dict[str, int]:
+        """A cheap fingerprint an agent polls to learn that something new is waiting. It changes
+        only when a new message arrives for ``me`` or one of its own requests expires, and it
+        marks nothing as read."""
+        with self._lock:
+            now = self.clock()
+            latest = self.db.execute("SELECT COALESCE(MAX(id), 0) FROM messages WHERE recipient = ?",
+                                     (me,)).fetchone()[0]
+            unread = self.db.execute("SELECT COUNT(*) FROM messages WHERE recipient = ? AND read_at IS NULL",
+                                     (me,)).fetchone()[0]
+            expired = 0
+            for r in self.db.execute(
+                    "SELECT * FROM messages WHERE sender = ? AND kind IN ('question','shared_change','reminder') "
+                    "AND ts <= ? AND ts > ? ORDER BY id", (me, now - DAY, now - 3 * DAY)).fetchall():
+                if self.status_of(r, now) == "expired":
+                    expired = r["id"]
+            return {"latest": latest, "unread": unread, "latest_expired": expired}
+
     def _present(self, r: sqlite3.Row, expired: bool) -> Dict[str, Any]:
         who = self.display(r["sender"])
         verb = {"fyi": "wants you to know", "question": "asks", "shared_change": "proposes a shared change",
@@ -346,6 +364,12 @@ def make_handler(board: Board):
         def do_GET(self):
             if self.path == "/health":
                 return self._send(200, {"status": "ok", "agents": sorted(board.agents)})
+            if self.path == "/pending":
+                auth = self.headers.get("Authorization", "")
+                agent = board.agent_for_token(auth[7:].strip() if auth.lower().startswith("bearer ") else "")
+                if agent is None:
+                    return self._send(401, {"error": "unknown or missing token"})
+                return self._send(200, board.pending(agent))
             # No server-initiated stream: the MCP spec lets a server answer 405 here.
             self._send(405, {"error": "use POST"}, (("Allow", "POST"),))
 
