@@ -11,6 +11,10 @@ The local model server (LM Studio), which the gateway passes local model calls o
   scripts/logos-models local load          load what the agents need, with their context size
   scripts/logos-models local unload <id>   unload one model
   scripts/logos-models local tidy          unload loaded models that no agent uses
+  scripts/logos-models local use <id>      switch every agent to another model on the server, for
+                                           example a small one while the graphics card is needed
+                                           for something else. Restarts the agents (about 2 minutes)
+  scripts/logos-models local use default   back to the model in each agent's definition
 
 Paid providers are switched on by API keys in ~/.config/logos/models.env, for example:
   ANTHROPIC_API_KEY=sk-ant-...
@@ -31,6 +35,51 @@ def _load(name):
     return mod
 
 
+def use(rt, art, lm, model_id):
+    """Point every agent at ``model_id`` (or back at its own with "default") and restart them."""
+    import yaml
+    override = REPO / "agents" / art.ALL_LOCAL
+    current = (yaml.safe_load(override.read_text()) or {}) if override.exists() else {}
+    http = rt.runner.http
+    before = lm.wanted({n: rt.load(n) for n in rt.defined()})
+    if model_id == "default":
+        current.pop("model", None)
+    else:
+        try:
+            known = [m for base in before for m in lm.available(http, base)]
+        except OSError:
+            known = None                                # server off: trust the name, load it later
+        if known is not None and model_id not in known:
+            sys.exit(f"{model_id} is not on the model server. Available:\n  " + "\n  ".join(known))
+        current["model"] = {"default": model_id}
+    if current:
+        override.write_text("# Written by scripts/logos-models local use. Untracked; applies to every agent.\n"
+                            + yaml.safe_dump(current, sort_keys=False))
+    elif override.exists():
+        override.unlink()
+    agents = {n: rt.load(n) for n in rt.defined()}
+    server_up = True
+    for base, models in lm.wanted(agents).items():
+        try:
+            have = lm.loaded(http, base)
+            for old in before.get(base, {}):            # free the memory first; other models are left alone
+                if old not in models and old in have:
+                    lm.unload(http, base, old); print(f"{old}: unloaded")
+            for mid, ctx in models.items():
+                print(f"{mid}: {'loaded' if lm.ensure(http, base, mid, ctx) else 'already loaded'}")
+        except OSError:
+            server_up = False
+            print(f"the model server at {base} is not answering; the agents are switched anyway and "
+                  "the model loads when it is back (scripts/logos-models local load)")
+    phases = rt.phases()
+    for name in sorted(agents):
+        if phases.get(name, art.MISSING) != art.MISSING:
+            rt.up(name)
+    if server_up:
+        print(lm.report(http, agents))
+    return 0
+
+
 def local(args):
     art = _load("agent_runtime")
     lm = _load("local_models")
@@ -48,6 +97,8 @@ def local(args):
             for base in want:
                 if args[1] in lm.loaded(http, base):
                     lm.unload(http, base, args[1]); print(f"{args[1]}: unloaded")
+        elif args[:1] == ["use"] and len(args) == 2:
+            return use(rt, art, lm, args[1])
         elif args[:1] == ["tidy"]:
             for base, models in want.items():
                 for model_id in lm.strays(lm.loaded(http, base), models):

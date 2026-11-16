@@ -55,6 +55,7 @@ HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 MISSING = "Missing"
+ALL_LOCAL = "all.local.yaml"            # untracked overrides for every agent
 # Sessions opened with `openshell sandbox exec` do not inherit the image ENV, so hermes CLI calls
 # must be told where the agent's home is.
 HERMES = "export HERMES_HOME=/opt/data; hermes"
@@ -201,10 +202,12 @@ class AgentRuntime:
         if not path.exists():
             raise AgentRuntimeError(f"no agent definition at {path}")
         agent = yaml.safe_load(path.read_text())
-        # agents/<name>.local.yaml is untracked: personal values (Telegram user IDs) stay out of git.
-        local = path.with_suffix(".local.yaml")
-        if local.exists():
-            merge(agent, yaml.safe_load(local.read_text()) or {})
+        # Untracked overrides, so personal values (Telegram user IDs) stay out of git:
+        # agents/all.local.yaml applies to every agent (for example the model in use right now,
+        # see `scripts/logos-models local use`), then agents/<name>.local.yaml to this one.
+        for local in (path.with_name(ALL_LOCAL), path.with_suffix(".local.yaml")):
+            if local.exists():
+                merge(agent, yaml.safe_load(local.read_text()) or {})
         return agent
 
     # ── volumes ──────────────────────────────────────────────────────────
