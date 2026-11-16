@@ -30,7 +30,7 @@ logos/
 │
 ├── scripts/
 │   ├── logos-agent           create, inspect and remove agents (up / down / status / exec)
-│   ├── logos-sync            Syncthing container per agent, for opening a brain in Obsidian
+│   ├── logos-sync            Syncthing for the brains, for opening one in Obsidian
 │   └── ...                   v1 helper scripts (see "Leftovers")
 │
 ├── souls/                    persona files; an agent definition points at one
