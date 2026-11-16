@@ -541,7 +541,7 @@ network_policies:
         assert '"*/10 * * * *"' in job
         (urgent,) = [c for c in created if "noticeboard-urgent" in c]
         assert "--no-agent --script noticeboard_urgent.py" in urgent and "--deliver telegram" in urgent
-        assert "LOGOS_NOTICEBOARD_POLL_URL=http://172.17.0.1:8091" in r.env_file(agent, "logos-home-alpha")
+        assert "LOGOS_NOTICEBOARD_POLL_URL=http://172.17.0.1:8092" in r.env_file(agent, "logos-home-alpha")
 
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)

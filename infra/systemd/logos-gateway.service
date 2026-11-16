@@ -1,0 +1,23 @@
+# Logos gateway (web dashboard and chat) as a systemd user service.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   sed "s#@REPO@#$HOME/logos#g" infra/systemd/logos-gateway.service > ~/.config/systemd/user/logos-gateway.service
+#   systemctl --user daemon-reload && systemctl --user enable --now logos-gateway
+#   loginctl enable-linger "$USER"        # so it starts at boot without a login
+#
+# Settings live in ~/.logos/.env (for example LOGOS_SANDBOX_BACKEND=openshell, LOGOS_PORT=8091).
+[Unit]
+Description=Logos gateway (dashboard and web chat)
+After=network-online.target openshell-gateway.service docker.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/venv/bin/python -m gateway.run
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -62,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     gateway_sub.add_parser("stop", help="Stop the running gateway")
     gateway_sub.add_parser("restart", help="Restart the gateway in the background")
     gateway_sub.add_parser("status", help="Show whether the gateway is running")
+    gateway_sub.add_parser("setup-link", help="Show the one-time link for creating the first account")
     gateway_parser.set_defaults(func=cmd_gateway)
 
     doctor_parser = subparsers.add_parser("doctor", help="Check the host setup")

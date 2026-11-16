@@ -278,7 +278,7 @@ class TestHost:
         assert cfg == {"greg": {"token": "t1", "display_name": "Greg's agent", "role": "person"},
                        "household": {"token": "t2", "display_name": "household", "role": "household"}}
         start = next(c for c in rt.calls if c[:3] == ["docker", "run", "-d"])
-        assert "172.17.0.1:8090:8090" in start and "172.17.0.1:8091:8091" in start and start[-3:] == ["python3", "img:1", "/app/noticeboard.py"]
+        assert "172.17.0.1:8090:8090" in start and "172.17.0.1:8092:8092" in start and start[-3:] == ["python3", "img:1", "/app/noticeboard.py"]
         assert any(c.endswith("noticeboard.py:/app/noticeboard.py:ro") for c in start)
         assert h.up() is False
         rt.tokens["bere"] = "t3"

@@ -35,7 +35,7 @@ Nothing to do by hand. An agent whose definition has `noticeboard: true` gets a 
 
 The service is one standard-library Python file, `gateway/noticeboard.py`, run in the agent image
 with the file mounted read-only. It listens on the Docker bridge address (usually
-`172.17.0.1:8090`), which sandboxes can reach and the LAN cannot. Each sandbox's network policy
+`172.17.0.1:8090`, with `8092` for the sandbox scripts' polling), which sandboxes can reach and the LAN cannot. Each sandbox's network policy
 allows that one address.
 
 To look at the log:

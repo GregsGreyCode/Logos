@@ -19,7 +19,7 @@ from typing import Any, Dict, Mapping
 CONTAINER = "logos-noticeboard"
 VOLUME = "logos-noticeboard"
 PORT = 8090                             # MCP: the two tools
-POLL_PORT = 8091                        # plain GET /pending and /urgent for the sandbox scripts
+POLL_PORT = 8092                        # plain GET /pending and /urgent for the sandbox scripts
 HELPER = "alpine:3"
 RUN_AS = "10000:10000"                  # `hermes` in the logos-agent image
 TOKEN_ENV = "LOGOS_NOTICEBOARD_TOKEN"   # the agent's own token, kept in its home volume .env
