@@ -31,6 +31,7 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 | Agent image | [infra/agent-image/](infra/agent-image/) | Upstream hermes pinned by digest, plus a thin layer and a sandbox policy |
 | OpenShell setup | [infra/openshell/](infra/openshell/) | Gateway config and provider definitions for OpenShell 0.1.8 |
 | Agent lifecycle | [scripts/logos-agent](scripts/logos-agent), [agents/](agents/) | `up`, `down`, `status`, `exec` from `agents/<name>.yaml` |
+| Model gateway | [scripts/logos-models](scripts/logos-models), [docs/model-gateway.md](docs/model-gateway.md) | One container all model calls go through: a key and a hard monthly budget per agent, paid provider keys kept out of the sandboxes |
 | Brain rules | [infra/brain-template/](infra/brain-template/), [infra/agent-jobs/](infra/agent-jobs/) | Vault layout, nightly consolidation, brain index, git history inside the vault |
 | Brain sync | [scripts/logos-sync](scripts/logos-sync), [docs/brain-sync.md](docs/brain-sync.md) | One Syncthing container per agent, so a brain opens as an Obsidian vault |
 | Gateway and web chat | [gateway/](gateway/), [logos_cli/](logos_cli/) | Login, account setup, trimmed dashboard. With `LOGOS_SANDBOX_BACKEND=openshell` it lists the defined agents and chats with them ([docs/architecture/web-chat.md](docs/architecture/web-chat.md)) |
