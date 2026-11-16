@@ -253,20 +253,10 @@ class AgentRuntime:
         """LM Studio only: make sure the agent's model is loaded with the configured context length."""
         if model.get("provider") != "lmstudio":
             return
-        base = model["base_url"].rsplit("/v1", 1)[0]
+        lm = _sibling("local_models")
         try:
-            loaded = {m["id"]: m.get("loaded_context_length") for m in
-                      json.loads(self.runner.http(base + "/api/v0/models", timeout=10))["data"]
-                      if m.get("state") == "loaded"}
-            # A loaded window at least as large is fine: hermes limits itself to context_length.
-            # Loading again would start a second instance ("<id>:2") and can exhaust memory.
-            if (loaded.get(model["default"]) or 0) >= int(model["context_length"]):
-                return
-            body = json.dumps({"model": model["default"],
-                               "context_length": int(model["context_length"])}).encode()
-            self.runner.http(base + "/api/v1/models/load", data=body,
-                             headers={"Content-Type": "application/json"}, timeout=600)
-            print(f"loaded {model['default']} in LM Studio (context {model['context_length']})")
+            if lm.ensure(self.runner.http, lm.server(model), model["default"], model["context_length"]):
+                print(f"loaded {model['default']} in LM Studio (context {model['context_length']})")
         except Exception as e:
             print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 

@@ -73,3 +73,24 @@ streaming requests, a wrong key gets 401, spend survives a restart, and a change
 takes effect on restart. An agent behind the gateway passed the brain-write checks.
 
 Not yet tested: a real paid provider (no key has been attached).
+
+## The local model server
+
+Local model calls end at LM Studio. It loads a model by itself when a request names one, but
+with its own default context size, and it treats a second download of the same model (for
+example `qwen3.6-35b-a3b` next to `qwen/qwen3.6-35b-a3b`) as a different model and loads both.
+`gateway/local_models.py` is the one place that decides what should be loaded:
+
+```shell
+scripts/logos-models local               # what the agents need, what is loaded, anything extra
+scripts/logos-models local load          # load what the agents need, with their context size
+scripts/logos-models local unload <id>   # unload one model
+scripts/logos-models local tidy          # unload loaded models that no agent uses
+```
+
+- `logos-agent up` loads the agent's model if it is missing, and replaces it if it is loaded
+  with too small a window. It never loads a second copy.
+- Web chat checks before each message. If the model was unloaded, it loads it with the agent's
+  settings and the chat says "Loading the model" while it waits.
+- Telegram messages go straight from the agent to the gateway, so there LM Studio's own
+  on-demand loading applies.
