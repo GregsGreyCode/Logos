@@ -61,7 +61,6 @@ def get_user_from_request(request: web.Request) -> Optional[dict]:
     # M2M / service bypass (K8s health probes, internal services)
     internal_token = (
         os.environ.get("LOGOS_INTERNAL_TOKEN")
-        or os.environ.get("HERMES_INTERNAL_TOKEN")
         or ""
     )
     auth_header = request.headers.get("Authorization", "")
@@ -150,7 +149,6 @@ def require_csrf(handler):
             # Service Bearer token bypasses CSRF (machine-to-machine)
             internal_token = (
                 os.environ.get("LOGOS_INTERNAL_TOKEN")
-                or os.environ.get("HERMES_INTERNAL_TOKEN")
                 or ""
             )
             auth_header = request.headers.get("Authorization", "")

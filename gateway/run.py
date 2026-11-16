@@ -33,24 +33,11 @@ from typing import Dict, Optional, Any, List, Tuple
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Resolve home directory (respects LOGOS_HOME / HERMES_HOME override; defaults to ~/.logos).
-# Migration: if ~/.logos does not yet exist but ~/.hermes does (legacy Linux/macOS
-# installations), rename ~/.hermes → ~/.logos so existing data is preserved.
+# Resolve home directory (LOGOS_HOME override; defaults to ~/.logos).
+# ~/.hermes is never touched here: in v2 that name belongs to upstream hermes.
 _default_logos_home = Path.home() / ".logos"
-_legacy_hermes_home = Path.home() / ".hermes"
-if (
-    "LOGOS_HOME" not in os.environ
-    and "HERMES_HOME" not in os.environ
-    and not _default_logos_home.exists()
-    and _legacy_hermes_home.exists()
-):
-    try:
-        _legacy_hermes_home.rename(_default_logos_home)
-    except OSError:
-        pass  # cross-device rename or permissions — leave both in place
 _hermes_home = Path(
     os.getenv("LOGOS_HOME")
-    or os.getenv("HERMES_HOME")
     or str(_default_logos_home)
 )
 
@@ -75,42 +62,6 @@ if _shell_env_path.exists():
     except UnicodeDecodeError:
         load_dotenv(_shell_env_path, encoding="latin-1", override=False)
 
-
-def _warn_deprecated_hermes_env_vars() -> None:
-    """One-time warning for HERMES_* env vars whose canonical name is LOGOS_*.
-
-    Phase 1 of the env-var rename keeps HERMES_* readable for backward compat,
-    but emits a single grouped warning at boot so deployments are nudged to
-    migrate. Removed entirely in Phase 3 of the migration.
-    """
-    import logging as _logging
-    _renamed = (
-        "HERMES_HOME", "HERMES_PORT", "HERMES_INSTANCE_NAME",
-        "HERMES_JWT_SECRET", "HERMES_INTERNAL_TOKEN", "HERMES_COOKIE_SECURE",
-        "HERMES_ADMIN_EMAIL", "HERMES_ADMIN_PASSWORD", "HERMES_ADMIN_NAME",
-        "HERMES_OAUTH_TRACE", "HERMES_CODEX_BASE_URL", "HERMES_PORTAL_BASE_URL",
-        "HERMES_CA_BUNDLE", "HERMES_LOG_LEVEL", "HERMES_MCP_PORT",
-        "HERMES_IS_CANARY", "HERMES_WIPE_ON_START",
-        "HERMES_WORKSPACE_TTL_HOURS", "HERMES_WORKSPACE_DIR",
-        "HERMES_WORKSPACE_CLEANUP_INTERVAL_HOURS", "HERMES_REPO_ROOTS",
-        "HERMES_GATEWAY_MCP", "HERMES_GATEWAY_URL", "HERMES_QUIET",
-        "HERMES_INTERACTIVE", "HERMES_EXEC_ASK", "HERMES_GATEWAY_SESSION",
-        "HERMES_REDACT_SECRETS", "HERMES_DUMP_REQUESTS", "HERMES_DUMP_REQUEST_STDOUT",
-        "HERMES_HUMAN_DELAY_MODE", "HERMES_HUMAN_DELAY_MIN_MS", "HERMES_HUMAN_DELAY_MAX_MS",
-        "HERMES_SHARED_HOME", "HERMES_SOUL", "HERMES_TOOLSETS", "HERMES_POLICY_LEVEL",
-        "HERMES_SESSION_KEY", "HERMES_SESSION_PLATFORM", "HERMES_YOLO_MODE",
-        "HERMES_MODEL",
-    )
-    _present = [n for n in _renamed if n in os.environ and not os.environ.get(n.replace("HERMES_", "LOGOS_"))]
-    if _present:
-        _logging.getLogger("gateway").warning(
-            "DEPRECATED env vars in use — please rename to LOGOS_* (HERMES_* will be "
-            "removed in a future release): %s",
-            ", ".join(sorted(_present)),
-        )
-
-
-_warn_deprecated_hermes_env_vars()
 
 # Bridge config into the environment so os.getenv() picks them up.
 # Two-file strategy:
@@ -226,12 +177,12 @@ if _cfg:
         _agent_cfg = _cfg.get("agent", {})
         if _agent_cfg and isinstance(_agent_cfg, dict):
             if "max_turns" in _agent_cfg:
-                os.environ["HERMES_MAX_ITERATIONS"] = str(_agent_cfg["max_turns"])
-        # Timezone: bridge config.yaml → HERMES_TIMEZONE env var.
-        # HERMES_TIMEZONE from .env takes precedence (already in os.environ).
+                os.environ["LOGOS_MAX_ITERATIONS"] = str(_agent_cfg["max_turns"])
+        # Timezone: bridge config.yaml → LOGOS_TIMEZONE env var.
+        # LOGOS_TIMEZONE from .env takes precedence (already in os.environ).
         _tz_cfg = _cfg.get("timezone", "")
-        if _tz_cfg and isinstance(_tz_cfg, str) and "HERMES_TIMEZONE" not in os.environ:
-            os.environ["HERMES_TIMEZONE"] = _tz_cfg.strip()
+        if _tz_cfg and isinstance(_tz_cfg, str) and "LOGOS_TIMEZONE" not in os.environ:
+            os.environ["LOGOS_TIMEZONE"] = _tz_cfg.strip()
         # (Runtime mode bridge removed — OpenShell is the only supported
         # runtime and there is nothing to select.)
         # Security settings
@@ -240,13 +191,11 @@ if _cfg:
             _redact = _security_cfg.get("redact_secrets")
             if _redact is not None:
                 os.environ["LOGOS_REDACT_SECRETS"] = str(_redact).lower()
-                os.environ["HERMES_REDACT_SECRETS"] = str(_redact).lower()
     except Exception:
         pass  # Non-fatal; gateway can still run with .env values
 
 # Gateway runs in quiet mode - suppress debug output and use cwd directly (no temp dirs)
 os.environ["LOGOS_QUIET"] = "1"
-os.environ["HERMES_QUIET"] = "1"  # deprecated alias — kept for legacy in-flight code
 
 # ── Mirror-hook secret + gateway URL (used by in-sandbox logos-mirror hook) ──
 # The sandbox's logos-mirror handler POSTs each completed `agent:end`
@@ -264,14 +213,12 @@ if not os.environ.get("LOGOS_GATEWAY_URL"):
     # IP the gateway listens on. Port matches LOGOS_GATEWAY_PORT.
     _mirror_port = (
         os.environ.get("LOGOS_GATEWAY_PORT")
-        or os.environ.get("HERMES_GATEWAY_PORT")
         or "8091"
     )
     os.environ["LOGOS_GATEWAY_URL"] = f"http://host.openshell.internal:{_mirror_port}"
 
 # Enable interactive exec approval for dangerous commands on messaging platforms
 os.environ["LOGOS_EXEC_ASK"] = "1"
-os.environ["HERMES_EXEC_ASK"] = "1"  # deprecated alias — kept for legacy in-flight code
 
 # Set terminal working directory for messaging platforms.
 # If the user set an explicit path in config.yaml (not "." or "auto"),
@@ -487,7 +434,7 @@ def _resolve_gateway_model() -> str:
     back to the hardcoded default ("anthropic/claude-opus-4.6") which fails
     when the active provider is openai-codex.
     """
-    model = os.getenv("HERMES_MODEL") or os.getenv("LLM_MODEL") or "anthropic/claude-opus-4.6"
+    model = os.getenv("LOGOS_MODEL") or os.getenv("LLM_MODEL") or "anthropic/claude-opus-4.6"
     try:
         import yaml as _y
         _cfg_path = _hermes_home / "config.yaml"
@@ -685,12 +632,12 @@ class GatewayRunner:
     def _load_prefill_messages() -> List[Dict[str, Any]]:
         """Load ephemeral prefill messages from config or env var.
 
-        Checks HERMES_PREFILL_MESSAGES_FILE env var first, then falls back to
+        Checks LOGOS_PREFILL_MESSAGES_FILE env var first, then falls back to
         the prefill_messages_file key in ~/.logos/config.yaml.
         Relative paths are resolved from ~/.hermes/.
         """
         import json as _json
-        file_path = os.getenv("HERMES_PREFILL_MESSAGES_FILE", "")
+        file_path = os.getenv("LOGOS_PREFILL_MESSAGES_FILE", "")
         if not file_path:
             try:
                 import yaml as _y
@@ -724,10 +671,10 @@ class GatewayRunner:
     def _load_ephemeral_system_prompt() -> str:
         """Load ephemeral system prompt from config or env var.
 
-        Checks HERMES_EPHEMERAL_SYSTEM_PROMPT env var first, then falls back to
+        Checks LOGOS_EPHEMERAL_SYSTEM_PROMPT env var first, then falls back to
         agent.system_prompt in ~/.logos/config.yaml.
         """
-        prompt = os.getenv("HERMES_EPHEMERAL_SYSTEM_PROMPT", "")
+        prompt = os.getenv("LOGOS_EPHEMERAL_SYSTEM_PROMPT", "")
         if prompt:
             return prompt
         try:
@@ -746,7 +693,7 @@ class GatewayRunner:
         """Load reasoning effort from config with env fallback.
 
         Checks agent.reasoning_effort in config.yaml first, then
-        HERMES_REASONING_EFFORT as a fallback. Valid: "xhigh", "high",
+        LOGOS_REASONING_EFFORT as a fallback. Valid: "xhigh", "high",
         "medium", "low", "minimal", "none". Returns None to use default
         (medium).
         """
@@ -761,7 +708,7 @@ class GatewayRunner:
         except Exception:
             pass
         if not effort:
-            effort = os.getenv("HERMES_REASONING_EFFORT", "")
+            effort = os.getenv("LOGOS_REASONING_EFFORT", "")
         if not effort:
             return None
         effort = effort.lower().strip()
@@ -797,7 +744,7 @@ class GatewayRunner:
           - ``error``  — only the final message when exit code is non-zero
           - ``off``    — no watcher messages at all
         """
-        mode = os.getenv("HERMES_BACKGROUND_NOTIFICATIONS", "")
+        mode = os.getenv("LOGOS_BACKGROUND_NOTIFICATIONS", "")
         if not mode:
             try:
                 import yaml as _y
@@ -1081,14 +1028,14 @@ class GatewayRunner:
 
     def _set_session_env(self, context: SessionContext) -> None:
         """Set environment variables for the current session."""
-        os.environ["HERMES_SESSION_PLATFORM"] = context.source.platform.value
-        os.environ["HERMES_SESSION_CHAT_ID"] = context.source.chat_id
+        os.environ["LOGOS_SESSION_PLATFORM"] = context.source.platform.value
+        os.environ["LOGOS_SESSION_CHAT_ID"] = context.source.chat_id
         if context.source.chat_name:
-            os.environ["HERMES_SESSION_CHAT_NAME"] = context.source.chat_name
+            os.environ["LOGOS_SESSION_CHAT_NAME"] = context.source.chat_name
 
     def _clear_session_env(self) -> None:
         """Clear session environment variables."""
-        for var in ["HERMES_SESSION_PLATFORM", "HERMES_SESSION_CHAT_ID", "HERMES_SESSION_CHAT_NAME"]:
+        for var in ["LOGOS_SESSION_PLATFORM", "LOGOS_SESSION_CHAT_ID", "LOGOS_SESSION_CHAT_NAME"]:
             if var in os.environ:
                 del os.environ[var]
 
@@ -1142,9 +1089,9 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
                  when the previous process hasn't fully exited yet.
     """
     # ── Duplicate-instance guard ──────────────────────────────────────
-    # Prevent two gateways from running under the same HERMES_HOME.
-    # The PID file is scoped to HERMES_HOME, so future multi-profile
-    # setups (each profile using a distinct HERMES_HOME) will naturally
+    # Prevent two gateways from running under the same LOGOS_HOME.
+    # The PID file is scoped to LOGOS_HOME, so future multi-profile
+    # setups (each profile using a distinct LOGOS_HOME) will naturally
     # allow concurrent instances without tripping this guard.
     #
     # Skip the guard when LOGOS_INSTANCE_NAME is set — that env var is used
@@ -1152,7 +1099,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # from the host's main process.
     import time as _time
     from gateway.status import get_running_pid, remove_pid_file
-    if os.environ.get("LOGOS_INSTANCE_NAME") or os.environ.get("HERMES_INSTANCE_NAME"):
+    if os.environ.get("LOGOS_INSTANCE_NAME"):
         existing_pid = None  # agent instances coexist with the main gateway
     else:
         existing_pid = get_running_pid()
@@ -1194,7 +1141,6 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         else:
             logos_home = (
                 os.getenv("LOGOS_HOME")
-                or os.getenv("HERMES_HOME")
                 or str(Path.home() / ".logos")
             )
             logger.error(
@@ -1289,8 +1235,8 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # Start the HTTP API + dashboard server alongside the platform adapters.
     # Default is 8091 — this is also the port the OpenShell network policy
     # whitelists for sandbox-worker → gateway WebSocket traffic, so the two
-    # are kept in sync. Override with HERMES_PORT / LOGOS_PORT env vars.
-    http_port = int(os.getenv("LOGOS_PORT") or os.getenv("HERMES_PORT") or "8091")
+    # are kept in sync. Override with the LOGOS_PORT env var.
+    http_port = int(os.getenv("LOGOS_PORT") or "8091")
     try:
         from gateway.http_api import start_http_api
         asyncio.create_task(start_http_api(runner, http_port))

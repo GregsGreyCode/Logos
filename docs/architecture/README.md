@@ -12,16 +12,11 @@ deleting it.
 
 ## Entries
 
-- [Dispatch worker model (Plan A-prime)](./dispatch-worker-model.md) — per-task
-  subprocess spawn instead of persistent worker, why it's forced on us by
-  `openshell sandbox exec` semantics, and what newer OpenShell versions
-  might change.
-- [MCP server reachability from sandboxes](./mcp-sandbox-reachability.md) —
-  why `http://host.openshell.internal:8091/mcp/<name>` is blocked by
-  OpenShell's SSRF layer, and what the OpenShell-aligned options are.
 - [Hermes API client](./hermes-client.md) — the upstream hermes v0.23.1 endpoints and
   SSE events `gateway/hermes_client.py` uses (with upstream file:line), and the open
   question of how Logos reaches port 8642 inside the sandbox.
+
+Notes about the v1 architecture are in [../archive/v1/architecture/](../archive/v1/architecture/).
 
 ## Style
 

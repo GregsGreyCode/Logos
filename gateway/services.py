@@ -101,11 +101,11 @@ def _get_credentials() -> dict:
     except Exception:
         pass
     # Fallback: direct SQLite read bypassing the init_db requirement.
-    # Matches the path auth_db would resolve via HERMES_HOME/LOGOS_HOME.
+    # Matches the path auth_db would resolve via LOGOS_HOME.
     try:
         import sqlite3
         from pathlib import Path
-        home = os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME") \
+        home = os.environ.get("LOGOS_HOME") \
             or str(Path.home() / ".logos")
         db_path = Path(home) / "auth.db"
         if not db_path.exists():

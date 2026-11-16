@@ -1,174 +1,103 @@
-# Repository Structure and Naming Conventions
+# Repository structure
 
-> Defines where things live, what they are called, and why — so the repo stays navigable as it grows.
+Where things live on the `v2` branch. Update this file in the same change that adds, moves or
+removes a top-level directory.
 
----
-
-## Top-Level Directory Rules
-
-The repo root should contain only:
-- Standard project files: `README.md`, `LICENSE`, `pyproject.toml`, `uv.lock`, `Dockerfile`, `.dockerignore`, `.gitignore`
-- Agent persona files that must be at root by convention: `SOUL.md`, `AGENTS.md`
-- Runtime entry points that cannot be moved without breaking `CMD` or installed scripts: `cli.py`
-
-**Everything else belongs in a named subdirectory.** A cluttered root is a navigation tax paid on every session.
-
----
-
-## Directory Map
+## Directory map
 
 ```
 logos/
-├── README.md                   Standard project readme
-├── LICENSE                     MIT license
-├── SOUL.md                     Agent persona (root by convention — Claude Code reads it)
-├── AGENTS.md                   Agent configuration hints for Claude Code
-├── CONTRIBUTING.md             Contribution guide (keep at root — GitHub surfaces it)
-├── pyproject.toml              Python package definition + dependencies
-├── uv.lock                     Dependency lockfile
-├── Dockerfile                  Container build definition
+├── README.md                 what Logos v2 is, status, quick start
+├── CONTRIBUTING.md           how to work on the repo
+├── SECURITY.md               how to report a vulnerability
+├── LICENSE                   MIT
+├── pyproject.toml            Python package (`logos`), dependencies, pytest config
+├── uv.lock                   dependency lockfile (CI does not use it)
+├── .env.example              gateway settings (LOGOS_* variables)
+├── package.json              Node dependencies left from v1 (see "Leftovers")
+├── tailwind.config.js        Tailwind build config for the dashboard stylesheet
 │
-├── docs/                       All documentation
-│   ├── project/                Internal planning, architecture, ops docs
-│   │   ├── REPO_STRUCTURE.md   ← this file
-│   │   ├── BUILD_AND_DEPLOY.md Build pipeline, deploy process, improvements
-│   │   ├── CRITIQUE.md         Architecture audit, known gaps, improvement backlog
-│   │   ├── COMPARISON.md       Logos vs competing projects
-│   │   ├── RELEASE_v*.md       Release notes per version
-│   │   └── onboarding_plan.md  Setup wizard planning
-│   ├── checkpoint-rollback.md  Checkpoint/rollback guide
-│   ├── migration/              Migration guides (versioned breaking changes)
-│   └── skins/                  Theming documentation
+├── agents/                   agent definitions, one YAML per agent
+│   ├── greg.yaml             Greg's agent
+│   └── bench.yaml            benchmark agent
+│                             (<name>.local.yaml files are untracked personal overrides)
 │
-├── gateway/                    HTTP API server, auth, setup wizard, web UI
-├── agent/                      Agent loop, prompt builder, runtime adapter
-├── tools/                      All agent tools (file, shell, approval, workspace, etc.)
-├── core/                       Shared domain models and utilities
+├── infra/
+│   ├── agent-image/          Dockerfile for logos-agent:<hermes version>, sandbox policy, README
+│   ├── openshell/            OpenShell 0.1.8 gateway config, providers, install README
+│   ├── brain-template/       starting layout and rules of a brain vault
+│   └── agent-jobs/           jobs that run inside a sandbox (consolidation, brain index, commit)
 │
-│   ├── 00-namespace.yaml
-│   ├── 01-rbac.yaml
-│   ├── ...
-│   └── 10-logos-canary-deployment.yaml
+├── scripts/
+│   ├── logos-agent           create, inspect and remove agents (up / down / status / exec)
+│   ├── logos-sync            Syncthing container per agent, for opening a brain in Obsidian
+│   └── ...                   v1 helper scripts (see "Leftovers")
 │
-├── scripts/                    Operational scripts
-│   ├── install.sh              Bare-metal install
-│   ├── smoke-test.sh           Post-deploy smoke test (to be added)
-│   └── promote.sh              Canary → production promotion (to be added)
+├── souls/                    persona files; an agent definition points at one
+├── skills/                   skills available to agents
+├── optional-skills/          skills that are off by default
 │
-├── tests/                      Test suites
-│   ├── unit/                   Fast, no-network tests (run in CI)
-│   └── integration/            Tests requiring live services (run manually)
+├── gateway/                  the Logos gateway (aiohttp)
+│   ├── run.py                process entry point (`logos gateway run`)
+│   ├── http_api.py           app setup, routes, chat endpoints
+│   ├── *_handlers.py         admin, chat, setup, MCP and other route handlers
+│   ├── auth/                 accounts, passwords, JWT cookies, middleware
+│   ├── html/                 login.html, setup.html, main_app.html (Alpine.js dashboard)
+│   ├── agent_runtime.py      builds sandboxes from agents/<name>.yaml (shared with scripts/logos-agent)
+│   ├── sandbox_backend.py    backend seam: NullBackend (default) and OpenShellBackend
+│   ├── hermes_client.py      client for the upstream hermes API server
+│   ├── sandbox_hooks/        hermes hooks installed into a sandbox
+│   ├── mcp_logos/            in-process MCP server exposing Logos capabilities
+│   └── lib/                  shared helpers (state DB, redaction, transcription, MCP client)
 │
-├── evals/                      Eval framework and suites
-│   └── suites/                 Named eval suites
+├── logos_cli/                the `logos` command: gateway run/start/stop/status, doctor, version
 │
-├── skills/                     Agent skills (self-contained capability packages)
-├── souls/                      Named soul files (agent personas)
-├── workflows/                  JSON workflow definitions (DAG engine)
-├── cron/                       Cron scheduler and job definitions
+├── evals/
+│   ├── agent_writes/         does an agent write its brain correctly (needs a live sandbox)
+│   └── brain_checks/         brain rule checks (needs a live sandbox)
 │
-├── environments/               Benchmark environments and eval harnesses
+├── tests/                    pytest suite (what CI runs)
+│   ├── gateway/              gateway and auth
+│   ├── logos_cli/            CLI
+│   ├── unit/                 agent runtime, sandbox backend, brain index
+│   ├── skills/               skill scripts
+│   └── integration/          excluded from CI
 │
-└── .github/
-    └── workflows/
-        ├── tests.yml           CI: run unit tests on push/PR
-        ├── build.yml           CI: build + push container image (to be added)
-        └── deploy-site.yml     CI: build + deploy GitHub Pages site
+├── e2e/                      Playwright tests written for the v1 dashboard (see "Leftovers")
+├── assets/                   logo, banner, dashboard stylesheet (tailwind.css)
+├── docker/                   v1 sandbox Dockerfiles and an MCP test image (see "Leftovers")
+│
+├── docs/
+│   ├── adr/                  architecture decision records
+│   ├── architecture/         architecture notes (hermes API client)
+│   ├── brain-sync.md         opening a brain in Obsidian
+│   ├── project/              this file
+│   └── archive/v1/           v1 planning, design and migration documents, history only
+│
+└── .github/workflows/
+    └── tests.yml             pytest on pushes and pull requests to main and v2
 ```
 
----
+## Rules
 
-## Naming Conventions
+- The repo root holds only standard project files. Everything else goes in a named directory.
+- Host-side tooling goes in `scripts/` (commands a person runs) or `infra/` (things that are
+  built, installed or copied into a sandbox).
+- Runtime state never lives in the repo. The gateway keeps its state in `~/.logos`
+  (`LOGOS_HOME`); an agent keeps its state on its two Docker volumes.
+- Gateway settings are `LOGOS_*` environment variables. `HERMES_*` names belong to upstream
+  hermes.
+- New documents go in `docs/`. Documents about removed v1 features go in `docs/archive/v1/`.
 
-### Files
+## Leftovers
 
-| Type | Convention | Example |
-|---|---|---|
-| Python modules | `snake_case.py` | `session_manager.py` |
-| Python packages | `snake_case/` with `__init__.py` | `gateway/` |
-| K8s manifests | `NN-descriptive-name.yaml` (two-digit prefix for apply order) | `06-deployment.yaml` |
-| Documentation | `SCREAMING_SNAKE.md` for important project docs; `kebab-case.md` for guides | `CRITIQUE.md`, `acp-setup.md` |
-| Release notes | `RELEASE_v{semver}.md` | `RELEASE_v0.2.0.md` |
-| Shell scripts | `kebab-case.sh` | `smoke-test.sh` |
-| Workflow definitions | `kebab-case.json` | `daily-digest.json` |
-| Soul files | `kebab-case.md` in `souls/` | `souls/focused-dev.md` |
+These survive from v1 and have not been reviewed for v2 yet. Do not build on them.
 
-### Branches
-
-| Branch | Purpose |
-|---|---|
-| `main` | Source of truth — always deployable |
-| `feat/description` | Feature branches (short-lived, merge to main via PR) |
-| `fix/description` | Bug fix branches |
-
-Currently everything merges direct to main. As the team grows, use short-lived feature branches and PRs to keep main always green.
-
-### Docker image tags
-
-| Tag | Meaning |
-|---|---|
-| `:canary` | Latest canary build (mutable — tracks main) |
-| `:latest` | Latest production build (mutable — tracks promoted releases) |
-| `:{git-sha}` | Immutable build tied to a specific commit — use for rollbacks |
-
-The `:canary` and `:latest` tags are mutable and should never be used for rollback. Always use the SHA tag to pin to a specific build.
-
----
-
-## What Does Not Belong at Root
-
-Move these if they appear at root:
-
-| File/pattern | Move to |
-|---|---|
-| `*_plan.md`, `*_spec.md`, `*_notes.md` | `docs/project/` |
-| `RELEASE_*.md` | `docs/project/` |
-| `CRITIQUE.md`, `COMPARISON.md`, `BUILD_AND_DEPLOY.md` | `docs/project/` |
-| One-off scripts (`batch_runner.py`, etc.) | `scripts/` or delete if unused |
-| Temporary output files | `.gitignore` them; never commit |
-| `*.example` config files | `docs/` or `scripts/` with a README |
-| `node_modules/` | Should be in `.gitignore` — never committed |
-| `venv/` | Should be in `.gitignore` — never committed |
-| `logs/`, `temp_*/` | Should be in `.gitignore` — never committed |
-| `__pycache__/`, `*.egg-info/` | Should be in `.gitignore` — never committed |
-
----
-
-## Current Root Cleanup Backlog
-
-These files currently sit at root and should be moved or reviewed:
-
-| File | Action |
-|---|---|
-| `batch_runner.py` | Move to a `runners/` package or `scripts/` |
-| `mini_swe_runner.py` | Move to a `runners/` package or `scripts/` |
-| `rl_cli.py` | Move to a `runners/` package or `scripts/` |
-| `metrics.py` | Move to `core/` |
-| `runs.py` | Move to `core/` |
-| `utils.py` | Move to `core/` |
-| `cli-config.yaml.example` | Move to `docs/` with explanation |
-| `minisweagent_path.py` | Move to `scripts/` or delete |
-| `data/`, `logs/`, `temp_vision_images/` | Verify `.gitignore` coverage |
-
-**Already completed:**
-- `run_agent.py` — deleted; production runtime is now `agents/hermes/agent.py` (entrypoint `agents.hermes.agent:main`)
-- `hermes_state.py`, `hermes_time.py`, `hermes_constants.py`, `model_tools.py`, `toolsets.py`, `toolset_distributions.py`, `trajectory_compressor.py` — `core/` is now canonical; root-level files are thin re-export shims
-- `setup-hermes.sh` — archived to `archive/`
-
----
-
-## docs/project/ — What Goes Here
-
-Planning docs, architecture decisions, operational runbooks, and project-level notes that are:
-- Written for the development team, not end users
-- Not surfaced in the public Docusaurus site
-- Likely to be referenced across multiple sessions
-
-| File | Purpose |
-|---|---|
-| `REPO_STRUCTURE.md` | This file — naming conventions and layout |
-| `BUILD_AND_DEPLOY.md` | Build pipeline, deploy process, CI improvements |
-| `CRITIQUE.md` | Architecture audit, known gaps, improvement backlog |
-| `COMPARISON.md` | Logos vs competing projects |
-| `RELEASE_v*.md` | Release notes per version |
-| `onboarding_plan.md` | Setup wizard planning notes |
+- `docker/Dockerfile.hermes-sandbox`, `docker/Dockerfile.hermes-upstream`,
+  `docker/entrypoint-hermes.sh`, `docker/AGENT-IMAGES.md`: the v1 sandbox image, replaced by
+  `infra/agent-image/`. `docker/testing/mcp-echo/` is still referenced by
+  `gateway/mcp_catalogue.py`.
+- `scripts/dev-setup.sh`, `scripts/test.sh`, `scripts/smoke-test.sh`, `scripts/tag.sh`,
+  `scripts/hermes-gateway`, `scripts/whatsapp-bridge/`: v1 developer and release helpers.
+- `e2e/`: Playwright tests for dashboard tabs that were removed.
+- `package.json`, `package-lock.json`: Node dependencies for v1 browser tools.

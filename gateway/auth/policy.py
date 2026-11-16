@@ -307,14 +307,14 @@ def categorise_tool(tool_name: str) -> str:
 def _get_repo_roots() -> list:
     """Return the list of resolved absolute paths allowed under repo_scoped policy.
 
-    Reads LOGOS_REPO_ROOTS (or legacy HERMES_REPO_ROOTS), colon-separated env
+    Reads LOGOS_REPO_ROOTS, colon-separated env
     var.  Falls back to sensible defaults: /repo (homelab-infra mount in the
     Logos pod), ~/work, ~/workspace.
 
     Symlinks in the configured roots are resolved so comparisons are consistent.
     """
     import os as _os
-    raw = _os.getenv("LOGOS_REPO_ROOTS") or _os.getenv("HERMES_REPO_ROOTS") or ""
+    raw = _os.getenv("LOGOS_REPO_ROOTS") or ""
     if raw:
         paths = [p.strip() for p in raw.split(":") if p.strip()]
     else:
@@ -405,7 +405,7 @@ def check_filesystem_path(
         roots_display = ", ".join(repo_roots) if repo_roots else "(none configured)"
         return False, (
             f"filesystem_policy=repo_scoped: '{path}' is outside the allowed repo roots "
-            f"({roots_display}). Set HERMES_REPO_ROOTS or write to a listed root."
+            f"({roots_display}). Set LOGOS_REPO_ROOTS or write to a listed root."
         )
 
     # FULL — any path allowed
