@@ -33,7 +33,7 @@ def test_parser_exposes_only_gateway_doctor_version():
     sub = next(a for a in parser._actions if a.dest == "command")
     assert set(sub.choices) == {"gateway", "doctor", "version"}
     gw = next(a for a in sub.choices["gateway"]._actions if a.dest == "gateway_command")
-    assert set(gw.choices) == {"run", "start", "stop", "restart", "status"}
+    assert set(gw.choices) == {"run", "start", "stop", "restart", "status", "setup-link"}
 
 
 @pytest.mark.parametrize("removed", ["setup", "update", "config", "claw", "pairing", "uninstall", "login"])

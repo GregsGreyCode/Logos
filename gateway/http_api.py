@@ -387,6 +387,10 @@ async def _handle_setup_wipe(request: web.Request) -> web.Response:
             logger.warning("wipe: user delete failed: %s", exc)
 
     reset_setup_completed()
+    # Setup is open again: it needs a fresh one-time token.
+    from gateway import setup_handlers as _setup_handlers
+    if _hermes_home is not None:
+        _setup_handlers.ensure_setup_token(_hermes_home)
     logger.warning("setup wipe by user_id=%s: deleted %d agent(s), %d user(s)",
                    user_id, counts["agents"], counts["users"])
     resp = web.json_response({"ok": True, "deleted": counts})
@@ -1687,9 +1691,13 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
             logger.warning("LOGOS_WIPE_ON_START: partial failure: %s", _wipe_err)
     # Env-var admin seeding (takes priority over generic seed)
     _ensure_admin_exists()
-    # Generic seed: default admin user (a no-op once any user exists)
-    from gateway import seed as _seed
-    _seed.run_seed()
+    # No default admin is created. Until setup has run there are no accounts, and setup needs
+    # the one-time token below (or a request from this machine).
+    from gateway import setup_handlers as _setup_handlers
+    _setup_token = _setup_handlers.ensure_setup_token(hermes_home)
+    if _setup_token:
+        logger.warning("Setup is not finished. Open /setup?token=%s on this server's address "
+                       "(or run: logos gateway setup-link).", _setup_token)
 
     # Zombie-dispatch sweep: any dispatch row still at status='running'
     # when the process starts was orphaned by a crash or restart of the
@@ -2065,20 +2073,6 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
                         _mm(require_csrf(admin_handlers.handle_agent_env_credentials_post)))
     app.router.add_delete("/admin/agents/{id}/env-credentials/{env_var}",
                           _mm(require_csrf(admin_handlers.handle_agent_env_credentials_delete)))
-    # Internal sandbox-facing endpoints — called by agent code inside
-    # OpenShell via host.openshell.internal:8091/api/internal/*. No auth.
-    app.router.add_get("/api/internal/embedding-stats",
-                       admin_handlers.handle_internal_embedding_stats)
-    app.router.add_post("/api/internal/embedding-backfill",
-                        admin_handlers.handle_internal_embedding_backfill)
-    # Sandbox-to-gateway turn mirror: hermes `agent:end` hooks inside
-    # each sandbox POST here so Telegram/Discord/Slack conversations
-    # land in the gateway's sessions + dispatches tables, where the
-    # Chats sidebar pill query at /api/platform-sessions can find
-    # them. Auth via shared secret in X-Mirror-Token header — not a
-    # CSRF-guarded user route; bypass the CSRF middleware.
-    from gateway.mirror_receiver import _handle_mirror_turn as _mirror_h
-    app.router.add_post("/api/internal/mirror-turn", _mirror_h)
     # User ↔ platform identity links (Admin → Users or Config → Messaging)
     app.router.add_get("/api/admin/platform-links",
                        _mm(admin_handlers.handle_platform_links_list))
