@@ -100,7 +100,17 @@ async def handle_agents(request: web.Request) -> web.Response:
             "shared": owners is None or len(owners) > 1,
             "model": str((definition.get("model") or {}).get("default") or ""),
         })
-    return web.json_response({"agents": out})
+    # Agents this person cannot use are shown by name and up/down only.
+    others = []
+    runtime = agent_chat.runtime_of(backend)
+    if runtime is not None:
+        shown = await asyncio.to_thread(agent_chat.sync_definitions, runtime, auth_db)
+        for name in sorted(set(shown) - set(agents)):
+            definition = await asyncio.to_thread(runtime.load, name)
+            st = states.get(name)
+            others.append({"name": name, "display_name": str(definition.get("display_name") or name),
+                           "running": bool(st and st.running)})
+    return web.json_response({"agents": out, "others": others})
 
 
 async def _client(request: web.Request, name: str):
@@ -183,6 +193,155 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
         elif role == "user" and text:
             out.append({"role": "user", "text": text, "tools": []})
     return web.json_response({"messages": [m for m in out if m["text"] or m["tools"]]})
+
+
+# ── agent status ─────────────────────────────────────────────────────────────
+
+JOB_LABELS = {
+    "consolidate": "Tidy the brain",
+    "brain-commit": "Save brain history",
+    "brain-index": "Refresh the list of pages it knows",
+    "noticeboard-check": "Check the noticeboard",
+    "noticeboard-urgent": "Watch for urgent messages",
+    "weekly-digest": "Weekly digest",
+}
+
+
+def parse_jobs(listing: str) -> List[dict]:
+    """Jobs from ``hermes cron list`` output. Jobs Logos installs are ``managed``; anything else
+    (a reminder the agent set) can be cancelled by its person."""
+    import re as _re
+    jobs: List[dict] = []
+    job: Optional[dict] = None
+    for line in listing.splitlines():
+        m = _re.match(r"\s+([0-9a-f]{8,})\s+\[(\w+)\]", line)
+        if m:
+            job = {"id": m.group(1), "active": m.group(2) == "active", "name": "", "schedule": "",
+                   "next_run": None, "last_run": None, "last_ok": None}
+            jobs.append(job)
+            continue
+        m = _re.match(r"\s+(Name|Schedule|Next run|Last run):\s+(.*)$", line)
+        if not (m and job):
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if key == "Name":
+            job["name"] = value
+        elif key == "Schedule":
+            job["schedule"] = value
+        elif key == "Next run":
+            job["next_run"] = value
+        else:
+            stamp, _, result = value.partition("  ")
+            job["last_run"], job["last_ok"] = stamp.strip(), result.strip() == "ok"
+    for j in jobs:
+        j["managed"] = j["name"] in JOB_LABELS
+        j["label"] = JOB_LABELS.get(j["name"], j["name"])
+    jobs.sort(key=lambda j: (j["managed"], j["label"].lower()))
+    return jobs
+
+
+def _sibling(runtime: Any, module: str):
+    import importlib.util
+    import sys as _sys
+    from pathlib import Path as _Path
+    name = f"logos_{module}"
+    if name not in _sys.modules:
+        spec = importlib.util.spec_from_file_location(name, _Path(__file__).with_name(f"{module}.py"))
+        mod = importlib.util.module_from_spec(spec)
+        _sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    return _sys.modules[name]
+
+
+async def handle_agent_status(request: web.Request) -> web.Response:
+    """GET /api/v2/agents/{name}/status — what it does on its own, its model and budget, its reach."""
+    name, info, _user_ = await _agent_or_404(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    definition = info["definition"]
+    try:
+        listing = await asyncio.to_thread(runtime.sbx, name, "export HERMES_HOME=/opt/data; hermes cron list")
+        jobs: Optional[List[dict]] = parse_jobs(listing)
+    except Exception as e:
+        logger.info("agent status: could not list jobs for %s: %s", name, e)
+        jobs = None
+    mg = _sibling(runtime, "model_gateway")
+    nb = _sibling(runtime, "noticeboard_host")
+    model = definition.get("model") or {}
+    via_gateway = mg.uses_gateway(definition)
+    paid: List[str] = []
+    if via_gateway:
+        path = mg.keys_file(runtime.env)
+        attached = mg.paid_providers(path.read_text() if path.exists() else "")
+        paid = [p for p in (model.get("allow") or []) if p in attached]
+    allowed = []
+    if (definition.get("telegram") or {}).get("enabled"):
+        allowed.append("Telegram")
+    allowed.append("The model gateway" if via_gateway else "Its model server")
+    if nb.uses_noticeboard(definition):
+        allowed.append("The noticeboard")
+    return web.json_response({
+        "jobs": jobs,
+        "model": {"name": str(model.get("default") or ""), "local": model.get("provider") == "lmstudio",
+                  "via_gateway": via_gateway, "paid_providers": paid},
+        "budget": {"monthly_usd": float((definition.get("budget") or {}).get("monthly_usd", mg.DEFAULT_MONTHLY_USD))
+                   if via_gateway else None},
+        "reach": {"allowed": allowed, "blocked": ["Your home network", "The internet", "The other agents"]},
+    })
+
+
+async def handle_job_cancel(request: web.Request) -> web.Response:
+    """POST /api/v2/agents/{name}/jobs/{job}/cancel — remove a reminder the agent set. The jobs
+    Logos installs cannot be removed here."""
+    import re as _re
+    name, _info, user = await _agent_or_404(request)
+    job_id = request.match_info["job"]
+    if not _re.fullmatch(r"[0-9a-f]{8,32}", job_id):
+        return web.json_response({"error": "invalid_job"}, status=400)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    hermes = "export HERMES_HOME=/opt/data; hermes cron"
+    try:
+        jobs = parse_jobs(await asyncio.to_thread(runtime.sbx, name, f"{hermes} list"))
+        job = next((j for j in jobs if j["id"] == job_id), None)
+        if job is None:
+            return web.json_response({"error": "not_found"}, status=404)
+        if job["managed"]:
+            return web.json_response({"error": "managed", "message": "That job is part of how the agent works."},
+                                     status=400)
+        await asyncio.to_thread(runtime.sbx, name, f"{hermes} remove {job_id}")
+    except Exception as e:
+        logger.warning("job cancel: %s: %s", name, e)
+        return web.json_response({"error": "agent_unreachable", "message": "Could not reach the agent."}, status=503)
+    auth_db.write_audit_log(user["id"], "agent_job_cancel", target_type="agent_job",
+                            target_id=f"{name}:{job['name']}", ip_address=request.remote)
+    return web.json_response({"ok": True})
+
+
+# ── people ───────────────────────────────────────────────────────────────────
+
+async def handle_people(request: web.Request) -> web.Response:
+    """GET /api/v2/people — who can sign in, and which agents each person can use."""
+    me = _user(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    shown: Dict[str, Any] = {}
+    names: Dict[str, str] = {}
+    if runtime is not None:
+        shown = await asyncio.to_thread(agent_chat.sync_definitions, runtime, auth_db)
+        for name in shown:
+            names[name] = str((await asyncio.to_thread(runtime.load, name)).get("display_name") or name)
+    users, _total = auth_db.list_users(page=1, limit=50)
+    people = []
+    for u in users:
+        if u.get("status") not in (None, "active"):
+            continue
+        people.append({
+            "username": u["username"], "display_name": u.get("display_name") or u["username"],
+            "is_admin": u.get("role") == "admin", "is_you": u["id"] == me["id"],
+            "signed_in_before": bool(u.get("last_login")),
+            "agents": {n: agent_chat.may_use(owners, u["username"]) for n, owners in shown.items()},
+        })
+    people.sort(key=lambda p: (not p["is_you"], p["display_name"].lower()))
+    return web.json_response({"people": people, "is_admin": me["role"] == "admin",
+                              "agents": [{"name": n, "display_name": names[n]} for n in sorted(shown)]})
 
 
 # ── brain ────────────────────────────────────────────────────────────────────
@@ -431,6 +590,9 @@ async def handle_noticeboard_answer(request: web.Request) -> web.Response:
 
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
+    app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)
+    app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
+    app.router.add_get("/api/v2/people", handle_people)
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
     app.router.add_get("/api/v2/agents/{name}/brain/search", handle_brain_search)
