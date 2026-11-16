@@ -64,6 +64,11 @@ connect, and only to:
 | `anthropic` | `api.anthropic.com:443` | Nightly consolidation on Claude |
 | `telegram` | `api.telegram.org:443` | The agent's own bot |
 
+`192.0.2.117` is a placeholder. Put the real LM Studio address in the untracked
+`agents/<name>.local.yaml` (`model.base_url`); `scripts/logos-agent up` then rewrites the `lm_studio`
+rule into an untracked copy under `.rendered/` and creates the sandbox with that. Print the path
+with `scripts/logos-agent policy <name>`.
+
 `boundary.yaml` is the most any agent may ever be granted. Check a policy against it before use:
 
 ```shell

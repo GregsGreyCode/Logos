@@ -24,7 +24,9 @@ landlock:
 # S2.4: deny by default. Only the hermes Python interpreter may connect, and only to these.
 # The interpreter's real path (symlinks are not matched): /opt/hermes/tools/python-<ver>/bin/python3.<n>
 network_policies:
-  lm_studio:                       # local models on the LAN PC (private address, so pinned)
+  lm_studio:                       # local models on the LAN PC (private address, so pinned).
+                                   # 192.0.2.117 is a placeholder: logos-agent rewrites this rule
+                                   # from the agent's model.base_url (set in agents/<name>.local.yaml).
     endpoints:
       - host: 192.0.2.117
         port: 1234

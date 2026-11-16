@@ -8,7 +8,7 @@ providers: []
 timezone: Europe/London
 model:
   provider: lmstudio
-  base_url: http://192.0.2.117:1234/v1
+  base_url: http://192.0.2.117:1234/v1   # placeholder; put the real address in agents/bench.local.yaml
   default: qwen/qwen3.6-35b-a3b
   context_length: 65536
 telegram:
