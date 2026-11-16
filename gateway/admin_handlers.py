@@ -114,8 +114,25 @@ async def handle_agents_list(request: web.Request) -> web.Response:
     # sandbox runs under, plus live state from the sandbox backend. The
     # frontend uses this to grey out the chat UI until the sandbox is
     # ready. NullBackend (until E2) reports every agent as disconnected.
-    from gateway.sandbox_backend import get_backend, sanitize_sandbox_name
+    from gateway.sandbox_backend import get_backend
     backend = request.app.get("sandbox_backend") or get_backend()
+
+    # With a backend that runs agents, the list is exactly what agents/<name>.yaml
+    # defines: rows are created on demand and anything else (v1 leftovers) is hidden.
+    from gateway import agent_chat as _agent_chat
+    _runtime = _agent_chat.runtime_of(backend)
+    if _runtime is not None:
+        try:
+            _shown = await asyncio.to_thread(_agent_chat.sync_definitions, _runtime, auth_db)
+            _username = _agent_chat.username_of(user, auth_db)
+            agents = [a for a in auth_db.list_agents()
+                      if a.get("name") in _shown and _agent_chat.may_use(_shown[a["name"]], _username)]
+        except Exception as _exc:
+            logger.warning("could not sync agent definitions: %s", _exc)
+    try:
+        _states = {st.name: st for st in await asyncio.to_thread(backend.list)}
+    except Exception:
+        _states = {}
 
     # Aggregate dispatch counts per agent in a single query so the world
     # view's per-agent maturity tier ("Sprout/Sapling/Branch/Tree/Old
@@ -139,13 +156,11 @@ async def handle_agents_list(request: web.Request) -> web.Response:
 
     for a in agents:
         name = a.get("name", "")
-        sandbox_name = sanitize_sandbox_name(f"hermes-{name}") if name else ""
+        # A sandbox is named after its agent (gateway/agent_runtime.py).
+        sandbox_name = name
         a["sandbox_name"] = sandbox_name
         a["worker_id"] = sandbox_name
-        try:
-            st = backend.status(sandbox_name) if sandbox_name else None
-        except Exception:
-            st = None
+        st = _states.get(sandbox_name)
         running = bool(st and st.running)
         a["worker_healthy"] = running
         a["worker_status"] = st.state if (st and running) else "disconnected"
