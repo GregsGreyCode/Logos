@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 
-DEFAULT_DB_PATH = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "state.db"
+DEFAULT_DB_PATH = Path(os.getenv("LOGOS_HOME", Path.home() / ".logos")) / "state.db"
 
 SCHEMA_VERSION = 9
 
@@ -918,7 +918,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_results_case ON eval_results(case_id);
             try:
                 import sqlite3 as _sql3
                 _auth_path = Path(
-                    os.getenv("LOGOS_HOME") or os.getenv("HERMES_HOME")
+                    os.getenv("LOGOS_HOME")
                     or str(Path.home() / ".logos")
                 ) / "auth.db"
                 if _auth_path.exists():

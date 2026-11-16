@@ -29,11 +29,10 @@ _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 def get_logos_home() -> Path:
     """Return the Logos home directory.
 
-    ``LOGOS_HOME`` wins, then ``HERMES_HOME`` (legacy name), then ``~/.logos``.
+    ``LOGOS_HOME`` wins, then ``~/.logos``.
     """
     return Path(
         os.getenv("LOGOS_HOME")
-        or os.getenv("HERMES_HOME")
         or str(Path.home() / ".logos")
     )
 

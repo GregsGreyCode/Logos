@@ -104,7 +104,6 @@ def redact_sensitive_text(text: str) -> str:
         return text
     if (
         os.getenv("LOGOS_REDACT_SECRETS")
-        or os.getenv("HERMES_REDACT_SECRETS")
         or ""
     ).lower() in ("0", "false", "no", "off"):
         return text

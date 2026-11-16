@@ -235,7 +235,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
     # sandbox a working model.
     if not model:
         model = (
-            os.environ.get("HERMES_MODEL")
+            os.environ.get("LOGOS_MODEL")
             or os.environ.get("LLM_MODEL")
             or ""
         ).strip()
@@ -278,7 +278,7 @@ async def handle_agents_post(request: web.Request) -> web.Response:
             else:
                 src_name = src_agent.get("name") or ""
                 logos_home = _pathlib.Path(
-                    os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+                    os.environ.get("LOGOS_HOME")
                     or str(_pathlib.Path.home() / ".logos")
                 )
                 src_dir = logos_home / "agents" / src_name
@@ -363,7 +363,7 @@ async def handle_agents_patch(request: web.Request) -> web.Response:
         import pathlib as _pathlib
         import shutil as _shutil
         _HH = _pathlib.Path(
-            os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+            os.environ.get("LOGOS_HOME")
             or str(_pathlib.Path.home() / ".logos")
         )
         new_name = agent["name"]
@@ -1066,7 +1066,7 @@ async def handle_agent_logs_get(request: web.Request) -> web.Response:
     import pathlib as _pathlib
     import datetime as _dt
     logos_home = _pathlib.Path(
-        os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+        os.environ.get("LOGOS_HOME")
         or str(_pathlib.Path.home() / ".logos")
     )
     log_path = logos_home / "agents" / name / "logs" / log_name
@@ -1149,7 +1149,7 @@ def _resolve_agent_dir(agent_id: str):
     if not name:
         return None, None, web.json_response({"error": "agent_has_no_name"}, status=400)
     logos_home = _pathlib.Path(
-        os.environ.get("LOGOS_HOME") or os.environ.get("HERMES_HOME")
+        os.environ.get("LOGOS_HOME")
         or str(_pathlib.Path.home() / ".logos")
     )
     return name, logos_home / "agents" / name, None
@@ -1225,7 +1225,7 @@ async def handle_agent_skills_get(request: web.Request) -> web.Response:
 
     Walks the host mirror at ``~/.logos/agents/<name>/skills/`` (populated
     by the v1 runtime's periodic sync from the sandbox's
-    ``$HERMES_HOME/skills/``). Each SKILL.md is parsed for its YAML
+    ``$LOGOS_HOME/skills/``). Each SKILL.md is parsed for its YAML
     frontmatter; body preview is the first 400 chars of the non-
     frontmatter content. Entries sort newest-first by mtime, capped at
     500 to bound response size.
