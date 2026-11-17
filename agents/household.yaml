@@ -25,6 +25,12 @@ model:
 budget:
   monthly_usd: 10               # hard cap on paid model spend a month; beyond it only the local model answers
 
+matrix:                           # the household's own Matrix server (docs/matrix.md)
+  enabled: true
+  e2ee: required
+  allowed_users: []               # set in agents/household.local.yaml (untracked): both people, @name:gregandbere.com
+  require_mention: true           # in the household room it answers only when @mentioned
+
 telegram:
   enabled: true
   allowed_users: []               # set in agents/household.local.yaml (untracked): both people's Telegram IDs

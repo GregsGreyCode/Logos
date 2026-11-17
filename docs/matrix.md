@@ -44,3 +44,14 @@ On its first `up`, the agent gets its own account, `@<name>-agent`. Its login is
 2. They install Tailscale and Element X, sign in to the tailnet address, and change the password.
 3. Add them to the agent's `allowed_users` and run `scripts/logos-agent up <name>`.
 4. They start a chat with `@<name>-agent:gregandbere.com`. The agent joins by itself.
+
+## The household room
+
+The household agent talks to both people in one shared room.
+
+1. Someone creates a private room, for example "Household", in Element X.
+2. They invite the other person and `@household-agent:gregandbere.com`. The agent joins by itself.
+
+In the room it answers only when @mentioned (`require_mention: true`). Once it replies in a thread, follow-ups in that thread need no mention. A one-to-one chat with the agent always gets an answer.
+
+It answers only people in its `allowed_users`, and any room they invite it to works.
