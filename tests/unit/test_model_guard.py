@@ -95,3 +95,20 @@ def test_a_server_that_is_off_is_refused_at_once_in_plain_words():
         assert error["code"] == "model_server_off" and "switched off" in error["message"]
     finally:
         g.shutdown()
+
+
+def test_a_server_that_was_off_is_refused_without_waiting_again_for_a_while():
+    """With paid fallbacks every call would otherwise start with the full connection wait."""
+    # 10.255.255.1 is not routable, so a connection attempt hangs until the timeout.
+    g = serve(model_guard.make_handler("http://10.255.255.1:9", connect_timeout=0.6, off_memory=30))
+    try:
+        times = []
+        for _ in range(3):
+            conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+            started = time.monotonic()
+            conn.request("POST", "/v1/chat/completions", body="{}", headers={"Content-Type": "application/json"})
+            assert conn.getresponse().status == 503
+            times.append(time.monotonic() - started)
+        assert times[1] < 0.2 and times[2] < 0.2
+    finally:
+        g.shutdown()
