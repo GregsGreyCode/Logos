@@ -52,6 +52,50 @@ PAID_PROVIDERS = {
 }
 
 
+#: Every agent request carries its memories and brain index, so any request that reaches a
+#: paid provider would take the brain out of the house. Until a separate brain-free advisor
+#: exists (one that only ever sees questions the private agent writes for it), agents are
+#: local-only: no fallbacks, no paid models, no provider keys. Not a setting: changing this
+#: is a design decision, with its own review.
+BRAIN_STAYS_LOCAL = True
+LOCAL_ONLY_PROVIDERS = ("lmstudio",)
+#: OpenShell provider profiles that would give the sandbox a cloud model key of its own.
+MODEL_PROVIDER_PROFILES = {"anthropic", "openai", "openrouter", "gemini", "google", "nous", "xai",
+                           "deepseek", "mistral", "groq", "together", "fireworks"}
+
+
+def local_only_problems(name: str, agent: Mapping[str, Any]) -> List[str]:
+    """Why this agent definition would let a request leave the house (empty when it would not)."""
+    model = agent.get("model") or {}
+    problems = []
+    if model.get("fallbacks"):
+        problems.append("model.fallbacks lists paid models")
+    paid = set(PAID_PROVIDERS.values())
+    if any(p in paid for p in (model.get("allow") or [])):
+        problems.append("model.allow lists a paid provider")
+    model_keys = [p for p in (agent.get("providers") or []) if str(p) in MODEL_PROVIDER_PROFILES]
+    if model_keys:
+        problems.append("providers attaches a model provider key to the sandbox: " + ", ".join(model_keys))
+    if str(model.get("provider") or "") not in LOCAL_ONLY_PROVIDERS:
+        problems.append(f"model.provider is {model.get('provider')!r}, not a local model server")
+    for job in ("consolidation", "digest"):
+        cfg = agent.get(job) or {}
+        if cfg.get("provider") and str(cfg["provider"]) not in LOCAL_ONLY_PROVIDERS:
+            problems.append(f"{job}.provider is {cfg['provider']!r}")
+        if "/" in str(cfg.get("model") or "") and str(cfg["model"]).split("/", 1)[0] in paid:
+            problems.append(f"{job}.model is a paid model")
+    return [f"{name}: {p}" for p in problems]
+
+
+def require_local_only(name: str, agent: Mapping[str, Any]) -> None:
+    """Raise ValueError when the definition could send a request (and so the brain) out."""
+    if BRAIN_STAYS_LOCAL:
+        problems = local_only_problems(name, agent)
+        if problems:
+            raise ValueError("the brain stays local, so agents use only the local model. Remove: "
+                             + "; ".join(problems))
+
+
 def uses_gateway(agent: Mapping[str, Any]) -> bool:
     return bool((agent.get("model") or {}).get("gateway"))
 
@@ -182,6 +226,10 @@ def build_config(agents: Mapping[str, Mapping[str, Any]], keys: Mapping[str, str
     """
     if not agents:
         raise ValueError("no agent uses the model gateway (set model.gateway: true in its definition)")
+    for name in sorted(agents):
+        require_local_only(name, agents[name])
+    if BRAIN_STAYS_LOCAL:
+        paid = {}                       # no paid provider is configured at all
     local_url = local_url or local_server(agents)
     providers: Dict[str, Any] = {
         LOCAL_PROVIDER: {
@@ -313,7 +361,7 @@ class ModelGateway:
         changed = current.returncode != 0 or current.stdout != config
         # The keys file is passed as the container's environment, so a new or
         # changed provider key also needs a fresh container.
-        stamp = hashlib.sha256(keys_text.encode()).hexdigest()[:16]
+        stamp = "local-only" if BRAIN_STAYS_LOCAL else hashlib.sha256(keys_text.encode()).hexdigest()[:16]
         if changed:
             self.rt.run(["docker", "run", "--rm", "-i", "-v", f"{VOLUME}:/v", HELPER, "sh", "-c",
                          f"cat > /v/config.json && chown {GATEWAY_UID} /v/config.json && chmod 0600 /v/config.json"],
@@ -331,7 +379,7 @@ class ModelGateway:
                "--label", f"logos.models.keys={stamp}",
                "-p", f"{self.bind_address()}:{PORT}:8080", "-v", f"{VOLUME}:/app/data"]
         path = keys_file(self.rt.env)
-        if path.exists():
+        if path.exists() and not BRAIN_STAYS_LOCAL:
             cmd += ["--env-file", str(path)]
         self.rt.run(cmd + [IMAGE])
         self.wait()
