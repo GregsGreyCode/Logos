@@ -88,6 +88,19 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
+  matrix:                          # the household's own Matrix server (gateway/matrix_host.py).
+                                   # Placeholder address: logos-agent fills in the real one, and
+                                   # removes this rule for agents without `matrix: {enabled: true}`.
+    endpoints:
+      - host: 192.0.2.1
+        port: 6167
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips: [192.0.2.1/32]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   telegram:                        # the agent's own bot
     endpoints:
       - host: api.telegram.org

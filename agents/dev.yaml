@@ -31,6 +31,11 @@ model:
 budget:
   monthly_usd: 1                # a test agent has no business spending more
 
+matrix:                           # the household's own Matrix server (gateway/matrix_host.py)
+  enabled: true
+  e2ee: required
+  allowed_users: []               # set in agents/dev.local.yaml (untracked): @name:<server name>
+
 telegram:
   enabled: true
   allowed_users: []               # set in agents/dev.local.yaml (untracked): Telegram numeric user IDs

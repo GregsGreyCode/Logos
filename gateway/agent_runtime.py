@@ -66,6 +66,15 @@ CONFIG_VERSION = 53
 Data = Union[str, bytes]
 
 
+def delivery(agent: Mapping[str, Any]) -> str:
+    """Where scheduled jobs send what they have to say: Telegram, else Matrix, else nowhere."""
+    if (agent.get("telegram") or {}).get("enabled"):
+        return "telegram"
+    if (agent.get("matrix") or {}).get("enabled"):
+        return "matrix"
+    return "local"
+
+
 def _sibling(module: str):
     """Load a module that sits next to this file, whether or not ``gateway`` is importable
     (the CLI loads this file by path)."""
@@ -284,9 +293,10 @@ class AgentRuntime:
         # twenty seconds). hermes would otherwise keep trying in the background for some
         # eight more minutes, during which the person hears nothing.
         cfg["agent"] = {"auto_recovery_cycles": 0}
-        if (agent.get("telegram") or {}).get("enabled"):
-            # No "gateway shutting down / back online" messages to the person on every rebuild.
-            cfg["platforms"] = {"telegram": {"gateway_restart_notification": False}}
+        # No "gateway shutting down / back online" messages to the person on every rebuild.
+        for platform in ("telegram", "matrix"):
+            if (agent.get(platform) or {}).get("enabled"):
+                cfg.setdefault("platforms", {})[platform] = {"gateway_restart_notification": False}
         if (agent.get("telegram") or {}).get("group_chats"):
             # One shared conversation per group (hermes otherwise keeps one per participant).
             cfg["group_sessions_per_user"] = False
@@ -328,6 +338,39 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/voice.md").read_text()
         return text
 
+    MATRIX_EXPORTED = ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID",
+                       "MATRIX_ALLOWED_USERS", "MATRIX_E2EE_MODE", "MATRIX_HOME_ROOM",
+                       "MATRIX_RECOVERY_KEY_OUTPUT_FILE")
+
+    def _matrix_env(self, agent: Mapping[str, Any], cur: dict) -> None:
+        """The agent's Matrix account. Its login is kept under LOGOS_MATRIX_* so switching Matrix
+        off (which removes what hermes reads) and on again reuses the same account and keys."""
+        mx = agent.get("matrix") or {}
+        for k in self.MATRIX_EXPORTED:
+            cur.pop(k, None)
+        if not mx.get("enabled"):
+            return
+        mh = _sibling("matrix_host")
+        host = mh.MatrixHost(self)
+        try:
+            if host.up():
+                print("matrix: server started")
+            stored = {k[len("LOGOS_"):]: v for k, v in cur.items() if k.startswith("LOGOS_MATRIX_")}
+            login = host.agent_login(agent["name"], stored)
+        except (mh.MatrixError, TimeoutError, OSError) as e:
+            raise AgentRuntimeError(f"matrix: {e}")
+        for k, v in login.items():
+            cur[f"LOGOS_{k}"] = v
+        cur.update({k: v for k, v in login.items() if k != "MATRIX_PASSWORD"})
+        cur["MATRIX_HOMESERVER"] = host.url()
+        cur["MATRIX_ALLOWED_USERS"] = ",".join(str(u) for u in mx.get("allowed_users") or [])
+        cur["MATRIX_E2EE_MODE"] = str(mx.get("e2ee", "required"))
+        # Cross-signing recovery key, written once (0600) into the home volume, so a rebuilt
+        # sandbox can prove it is the same device and still read encrypted history.
+        cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] = "/opt/data/matrix-recovery-key"
+        if mx.get("home_room"):
+            cur["MATRIX_HOME_ROOM"] = str(mx["home_room"])
+
     def env_file(self, agent: Mapping[str, Any], home: str) -> str:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
         cur = dict(l.split("=", 1) for l in self.get(home, ".env").splitlines()
@@ -357,6 +400,7 @@ class AgentRuntime:
         else:
             cur.pop("TELEGRAM_BOT_TOKEN", None)
             cur.pop("TELEGRAM_ALLOWED_USERS", None)
+        self._matrix_env(agent, cur)
         cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
         cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
         mg = _sibling("model_gateway")
@@ -437,16 +481,16 @@ class AgentRuntime:
                            f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
                      input=(self.jobs_dir / "consolidate.md").read_text())
         digest = agent.get("digest") or {}
-        if digest.get("enabled", True) and (agent.get("telegram") or {}).get("enabled"):
+        if digest.get("enabled", True) and delivery(agent) != "local":
             # Sunday evening: what the brain learned this week, sent to the person.
             self.sbx(name, f'{HERMES} cron create --name weekly-digest --workdir /opt/data/brain '
-                           f'--timezone {tz} --deliver telegram --failure-deliver local '
+                           f'--timezone {tz} --deliver {delivery(agent)} --failure-deliver local '
                            f'"{digest.get("schedule", "0 18 * * 0")}" "$(cat)"',
                      input=(self.jobs_dir / "weekly_digest.md").read_text())
         if _sibling("noticeboard_host").uses_noticeboard(agent):
             # Every ten minutes a script asks the noticeboard whether anything new is waiting. The
             # model runs only when it is, and what it reports goes to the person (or stays silent).
-            deliver = "telegram" if (agent.get("telegram") or {}).get("enabled") else "local"
+            deliver = delivery(agent)
             self.sbx(name, f'{HERMES} cron create --name noticeboard-check '
                            f'--monitor-script noticeboard_state.py --timezone {tz} '
                            f'--deliver {deliver} --failure-deliver local "*/10 * * * *" "$(cat)"',
@@ -514,6 +558,11 @@ class AgentRuntime:
         else:
             rules.pop("noticeboard", None)
             rules.pop("noticeboard_poll", None)
+        mh = _sibling("matrix_host")
+        if mh.uses_matrix(agent):
+            point("matrix", mh.MatrixHost(self).url())
+        else:
+            rules.pop("matrix", None)
         vh = _sibling("voice_host")
         if vh.uses_voice(agent):
             point("voice", vh.VoiceHost(self).base_url(), rest_rules=[("POST", "/v1/audio/transcriptions")])
