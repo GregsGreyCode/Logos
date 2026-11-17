@@ -169,7 +169,7 @@ class TestGuard:
     def test_guard_starts_in_front_of_the_model_server(self):
         rt = self.Rt()
         url = mg.ModelGateway(rt).guard_up("http://10.0.0.5:1234/v1", "logos-agent:1")
-        assert url == "http://172.17.0.1:8094/v1"
+        assert url == "http://172.17.0.1:8094"                 # Bifrost adds /v1 itself
         run = next(c for c in rt.calls if c[:3] == ["docker", "run", "-d"])
         assert "GUARD_UPSTREAM=http://10.0.0.5:1234" in run and "172.17.0.1:8094:8094" in run
         assert run[-3:] == ["python3", "logos-agent:1", "/app/model_guard.py"] and "--read-only" in run
@@ -184,5 +184,72 @@ class TestGuard:
         assert not [c for c in again.calls if c[:3] == ["docker", "run", "-d"]]
 
     def test_config_sends_local_calls_to_the_guard(self):
-        cfg = mg.build_config({"greg": agent()}, {"greg": "sk-bf-x"}, {}, "http://172.17.0.1:8094/v1")
-        assert cfg["providers"]["lm-studio"]["network_config"]["base_url"] == "http://172.17.0.1:8094/v1"
+        cfg = mg.build_config({"greg": agent()}, {"greg": "sk-bf-x"}, {}, "http://172.17.0.1:8094")
+        assert cfg["providers"]["lm-studio"]["network_config"]["base_url"] == "http://172.17.0.1:8094"
+
+
+PAID = {"anthropic": "ANTHROPIC_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+
+
+def chained(fallbacks, monthly=5):
+    a = agent()
+    a["model"]["fallbacks"] = fallbacks
+    a["budget"] = {"monthly_usd": monthly}
+    return a
+
+
+class TestFallbacks:
+    def test_chain_keeps_order_and_shares_the_budget(self):
+        chain = mg.fallback_chain(chained([{"model": "anthropic/claude-haiku-5-5", "monthly_usd": 4},
+                                           "openrouter/google/gemini-2.5-flash-lite"]), PAID)
+        assert chain == [{"provider": "anthropic", "model": "claude-haiku-5-5", "monthly_usd": 4.0},
+                         {"provider": "openrouter", "model": "google/gemini-2.5-flash-lite", "monthly_usd": 1.0}]
+        equal = mg.fallback_chain(chained(["anthropic/a", "openrouter/b/c"], monthly=3), PAID)
+        assert [c["monthly_usd"] for c in equal] == [1.5, 1.5]
+
+    def test_a_provider_without_a_key_is_left_out(self):
+        chain = mg.fallback_chain(chained(["anthropic/a", "openrouter/b"]), {"openrouter": "OPENROUTER_API_KEY"})
+        assert chain == [{"provider": "openrouter", "model": "b", "monthly_usd": 5.0}]
+        assert mg.fallback_chain(chained(["anthropic/a"]), {}) == []
+        assert mg.fallback_chain(agent(), PAID) == []
+
+    def test_amounts_must_fit_inside_the_agents_total(self):
+        with pytest.raises(ValueError, match="add up to more"):
+            mg.fallback_chain(chained([{"model": "anthropic/a", "monthly_usd": 4},
+                                       {"model": "openrouter/b", "monthly_usd": 2}]), PAID)
+        with pytest.raises(ValueError, match="add up to more"):
+            mg.fallback_chain(chained([{"model": "anthropic/a", "monthly_usd": 5}, "openrouter/b"]), PAID)
+        with pytest.raises(ValueError, match="must be <provider>/<model>"):
+            mg.fallback_chain(chained(["mystery/model"]), PAID)
+        with pytest.raises(ValueError, match="must be <provider>/<model>"):
+            mg.fallback_chain(chained(["anthropic"]), PAID)
+
+    def test_config_puts_the_limit_on_each_paid_provider_never_on_the_key(self):
+        cfg = mg.build_config({"greg": chained([{"model": "anthropic/claude-haiku-5-5", "monthly_usd": 4},
+                                                "openrouter/google/gemini-2.5-flash-lite"])},
+                              {"greg": "sk-bf-x"}, PAID)
+        gov = cfg["governance"]
+        assert gov["budgets"] == []                      # a key-wide limit would also refuse the free local model
+        local, anthropic, openrouter = gov["virtual_keys"][0]["provider_configs"]
+        assert local == {"provider": "lm-studio", "weight": 1.0, "allowed_models": ["*"], "key_ids": ["*"]}
+        assert anthropic["allowed_models"] == ["claude-haiku-5-5"]
+        assert anthropic["budgets"] == [{"id": "budget-greg-anthropic", "max_limit": 4.0, "reset_duration": "1M"}]
+        assert openrouter["budgets"] == [{"id": "budget-greg-openrouter", "max_limit": 1.0, "reset_duration": "1M"}]
+        rule = gov["routing_rules"][0]
+        assert rule["fallbacks"] == ["anthropic/claude-haiku-5-5", "openrouter/google/gemini-2.5-flash-lite"]
+        assert (rule["scope"], rule["scope_id"], rule["targets"]) == ("virtual_key", "vk-greg", [{"weight": 1.0}])
+        assert rule["cel_expression"] == 'provider == "lm-studio"'
+        assert mg.budget_ids(cfg) == ["budget-greg-anthropic", "budget-greg-openrouter"]
+
+    def test_two_models_from_one_provider_share_one_limit(self):
+        cfg = mg.build_config({"greg": chained(["anthropic/small", "anthropic/large"], monthly=4)},
+                              {"greg": "sk-bf-x"}, PAID)
+        _local, anthropic = cfg["governance"]["virtual_keys"][0]["provider_configs"]
+        assert anthropic["allowed_models"] == ["small", "large"]
+        assert anthropic["budgets"][0]["max_limit"] == 4.0
+
+    def test_without_fallbacks_the_config_is_as_before(self):
+        cfg = mg.build_config({"greg": agent()}, {"greg": "sk-bf-x"}, PAID)
+        assert "routing_rules" not in cfg["governance"]
+        assert [b["id"] for b in cfg["governance"]["budgets"]] == ["budget-greg"]
+        assert mg.budget_ids(cfg) == ["budget-greg"]

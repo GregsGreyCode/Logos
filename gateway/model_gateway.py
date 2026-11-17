@@ -97,6 +97,72 @@ def gateway_model(agent: Mapping[str, Any]) -> str:
     return f"{LOCAL_PROVIDER}/{default}"
 
 
+def fallback_chain(agent: Mapping[str, Any], paid: Mapping[str, str]) -> List[dict]:
+    """The paid models to try, in order, when the local model cannot answer.
+
+    From ``model.fallbacks`` in the agent definition. Each entry is ``provider/model`` or
+    ``{model: provider/model, monthly_usd: 2}``. Entries whose provider has no key in
+    ``models.env`` are left out, so a definition can name a provider before its key exists.
+
+    The agent's ``budget.monthly_usd`` is its total for the month. An entry with its own
+    ``monthly_usd`` gets that much; the rest is shared equally by the entries without one.
+    Returns ``[{"provider", "model", "monthly_usd"}]``; raises ValueError when the amounts
+    do not fit inside the total.
+    """
+    name = str(agent.get("name") or "agent")
+    total = float((agent.get("budget") or {}).get("monthly_usd", DEFAULT_MONTHLY_USD))
+    chain: List[dict] = []
+    for entry in (agent.get("model") or {}).get("fallbacks") or []:
+        spec = entry if isinstance(entry, Mapping) else {"model": entry}
+        full = str(spec.get("model") or "")
+        provider, _, model = full.partition("/")
+        if provider not in set(PAID_PROVIDERS.values()) or not model:
+            raise ValueError(f"{name}: fallback {full!r} must be <provider>/<model> with provider one of "
+                             + ", ".join(sorted(set(PAID_PROVIDERS.values()))))
+        if provider in paid:
+            chain.append({"provider": provider, "model": model, "monthly_usd": spec.get("monthly_usd")})
+    fixed = sum(float(c["monthly_usd"]) for c in chain if c["monthly_usd"] is not None)
+    open_entries = [c for c in chain if c["monthly_usd"] is None]
+    if fixed > total + 1e-9 or (open_entries and total - fixed <= 0):
+        raise ValueError(f"{name}: the fallbacks' monthly_usd add up to more than budget.monthly_usd (${total:g})")
+    for c in chain:
+        c["monthly_usd"] = round(float(c["monthly_usd"]) if c["monthly_usd"] is not None
+                                 else (total - fixed) / len(open_entries), 4)
+        if c["monthly_usd"] <= 0:
+            raise ValueError(f"{name}: every fallback needs a monthly_usd above 0")
+    return chain
+
+
+def budget_ids(config: Mapping[str, Any]) -> List[str]:
+    """Every budget id a generated config declares, on keys and on provider configs."""
+    gov = config.get("governance") or {}
+    ids = [b["id"] for b in gov.get("budgets") or []]
+    for vk in gov.get("virtual_keys") or []:
+        for pc in vk.get("provider_configs") or []:
+            ids += [b["id"] for b in pc.get("budgets") or []]
+    return sorted(ids)
+
+
+#: Run inside a Python image against the gateway's volume, while the gateway is stopped.
+#: Bifrost adds what the config declares but never removes a budget that the config no longer
+#: has, and a left-over limit on a whole key keeps being enforced: once reached it would
+#: refuse the free local model too. argv[1] is the JSON list of budget ids to keep.
+PRUNE_BUDGETS = """
+import json, os, sqlite3, sys
+keep = set(json.loads(sys.argv[1]))
+if os.path.exists("/v/config.db"):
+    db = sqlite3.connect("/v/config.db")
+    for bid, model_config in db.execute(
+            "select id, model_config_id from governance_budgets where id like 'budget-%'").fetchall():
+        if bid not in keep:
+            db.execute("delete from governance_budgets where id = ?", (bid,))
+            if model_config:
+                db.execute("delete from governance_model_configs where id = ?", (model_config,))
+            print("removed left-over budget", bid)
+    db.commit()
+"""
+
+
 def local_server(agents: Mapping[str, Mapping[str, Any]]) -> str:
     """The one local model server the agents behind the gateway share (its ``/v1`` URL)."""
     bases = sorted({local_base_url(a) for a in agents.values()})
@@ -131,23 +197,52 @@ def build_config(agents: Mapping[str, Mapping[str, Any]], keys: Mapping[str, str
                                          "models": ["*"], "weight": 1.0}]}
     vks: List[dict] = []
     budgets: List[dict] = []
+    rules: List[dict] = []
     for name in sorted(agents):
         agent = agents[name]
-        allowed = [p for p in ((agent.get("model") or {}).get("allow") or []) if p in paid]
-        vks.append({
-            "id": f"vk-{name}", "name": f"agent-{name}", "value": keys[name], "is_active": True,
-            "provider_configs": [{"provider": p, "weight": 1.0, "allowed_models": ["*"], "key_ids": ["*"]}
-                                 for p in [LOCAL_PROVIDER, *allowed]],
-        })
         monthly = float((agent.get("budget") or {}).get("monthly_usd", DEFAULT_MONTHLY_USD))
         if monthly <= 0:
             raise ValueError(f"{name}: budget.monthly_usd must be above 0")
-        budgets.append({"id": f"budget-{name}", "virtual_key_id": f"vk-{name}",
-                        "max_limit": monthly, "reset_duration": "1M"})
+        configs = [{"provider": LOCAL_PROVIDER, "weight": 1.0, "allowed_models": ["*"], "key_ids": ["*"]}]
+        chain = fallback_chain({**agent, "name": name}, paid)
+        if chain:
+            # The money limit sits on each paid provider, never on the whole key: a limit on the
+            # key would also refuse the free local model once it was reached. A provider whose
+            # share is spent is skipped and the next one in the chain is tried.
+            by_provider: Dict[str, dict] = {}
+            for c in chain:
+                slot = by_provider.setdefault(c["provider"], {"models": [], "usd": 0.0})
+                slot["models"].append(c["model"])
+                slot["usd"] += c["monthly_usd"]
+            for provider, slot in by_provider.items():
+                configs.append({"provider": provider, "weight": 1.0, "allowed_models": slot["models"],
+                                "key_ids": ["*"],
+                                "budgets": [{"id": f"budget-{name}-{provider}", "max_limit": round(slot["usd"], 4),
+                                             "reset_duration": "1M"}]})
+            rules.append({
+                "id": f"fallback-{name}", "name": f"fallback-{name}", "enabled": True,
+                "description": "Local model first; these paid models, in order, when it cannot answer.",
+                "cel_expression": f'provider == "{LOCAL_PROVIDER}"',
+                "targets": [{"weight": 1.0}],                    # keep the model the agent asked for
+                "fallbacks": [f"{c['provider']}/{c['model']}" for c in chain],
+                "scope": "virtual_key", "scope_id": f"vk-{name}", "priority": 0})
+        else:
+            # No chain: paid providers named in model.allow may be asked for directly, under one
+            # limit for the whole key (the arrangement before fallbacks existed).
+            for p in ((agent.get("model") or {}).get("allow") or []):
+                if p in paid:
+                    configs.append({"provider": p, "weight": 1.0, "allowed_models": ["*"], "key_ids": ["*"]})
+            budgets.append({"id": f"budget-{name}", "virtual_key_id": f"vk-{name}",
+                            "max_limit": monthly, "reset_duration": "1M"})
+        vks.append({"id": f"vk-{name}", "name": f"agent-{name}", "value": keys[name], "is_active": True,
+                    "provider_configs": configs})
+    governance: Dict[str, Any] = {"virtual_keys": vks, "budgets": budgets}
+    if rules:
+        governance["routing_rules"] = rules
     return {
         "client": {"enforce_auth_on_inference": True},
         "providers": providers,
-        "governance": {"virtual_keys": vks, "budgets": budgets},
+        "governance": governance,
     }
 
 
@@ -208,8 +303,8 @@ class ModelGateway:
         keys_text = self._keys_text()
         image = next((str(a["image"]) for a in agents.values() if a.get("image")), "")
         guard_url = self.guard_up(local_server(agents), image) if image else None
-        config = json.dumps(build_config(agents, keys, paid_providers(keys_text), guard_url),
-                            indent=1, sort_keys=True)
+        built = build_config(agents, keys, paid_providers(keys_text), guard_url)
+        config = json.dumps(built, indent=1, sort_keys=True)
         if self.rt.runner.run(["docker", "volume", "inspect", VOLUME]).returncode != 0:
             self.rt.run(["docker", "volume", "create", VOLUME])
             self.rt.run(["docker", "run", "--rm", "-v", f"{VOLUME}:/v", HELPER, "chown", GATEWAY_UID, "/v"])
@@ -226,6 +321,12 @@ class ModelGateway:
         if self.running() and not changed and self._label() == stamp:
             return False
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)
+        if image:
+            out = self.rt.run(["docker", "run", "--rm", "--user", GATEWAY_UID, "-v", f"{VOLUME}:/v",
+                               "--entrypoint", "python3", image, "-c", PRUNE_BUDGETS,
+                               json.dumps(budget_ids(built))], check=False)
+            if out.strip():
+                print(out.strip())
         cmd = ["docker", "run", "-d", "--name", CONTAINER, "--restart", "unless-stopped",
                "--label", f"logos.models.keys={stamp}",
                "-p", f"{self.bind_address()}:{PORT}:8080", "-v", f"{VOLUME}:/app/data"]
@@ -248,7 +349,7 @@ class ModelGateway:
                             check=False).split()
         label = self.rt.run(["docker", "inspect", GUARD_CONTAINER, "-f",
                              '{{index .Config.Labels "logos.guard.stamp"}}'], check=False).strip()
-        url = f"http://{self.bind_address()}:{GUARD_PORT}/v1"
+        url = f"http://{self.bind_address()}:{GUARD_PORT}"       # no /v1: Bifrost adds it itself
         if GUARD_CONTAINER in names and label == stamp:
             return url
         self.rt.run(["docker", "rm", "-f", GUARD_CONTAINER], check=False)
@@ -286,8 +387,14 @@ class ModelGateway:
         paid = sorted(paid_providers(self._keys_text()))
         lines = [f"model gateway: running at {self.base_url()}",
                  "paid providers: " + (", ".join(paid) if paid else "none (local models only)")]
+        attached = paid_providers(self._keys_text())
         for name, agent in sorted(self.agents().items()):
             monthly = float((agent.get("budget") or {}).get("monthly_usd", DEFAULT_MONTHLY_USD))
+            chain = fallback_chain({**agent, "name": name}, attached)
+            if chain:
+                lines.append(f"  {name}: local, then " + ", then ".join(
+                    f"{c['provider']}/{c['model']} (up to ${c['monthly_usd']:.2f} a month)" for c in chain))
+                continue
             allow = [p for p in (agent["model"].get("allow") or []) if p in paid]
             lines.append(f"  {name}: ${monthly:.2f} a month, may use local"
                          + ("".join(f", {p}" for p in allow)))
