@@ -49,6 +49,16 @@ def loaded(http: Callable[..., bytes], base: str) -> Dict[str, int]:
     return {m["id"]: int(m.get("loaded_context_length") or 0) for m in data if m.get("state") == "loaded"}
 
 
+def reachable(http: Callable[..., bytes], base: str, timeout: float = 3) -> bool:
+    """Is the model server answering at all? A machine that is on with LM Studio closed
+    usually drops the connection without a word, so the wait is kept short."""
+    try:
+        http(base + "/api/v0/models", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 def is_ready(have: Mapping[str, int], model_id: str, context: int) -> bool:
     """A loaded window at least as large is fine: the agent limits itself to its own size.
     Loading again would start a second instance and can exhaust memory."""

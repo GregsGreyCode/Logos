@@ -285,7 +285,7 @@ def test_wake_model_says_so_only_when_it_has_to_load():
     assert asyncio.run(events({"provider": "anthropic"})) == []
 
 
-def test_wake_model_survives_an_unreachable_server():
+def test_wake_model_reports_a_server_that_is_off_instead_of_starting_a_run():
     def http(url, **kw):
         raise OSError("no route")
 
@@ -293,4 +293,21 @@ def test_wake_model_survives_an_unreachable_server():
         return [p async for p in agent_chat.wake_model(
             {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q"}, http)]
 
-    assert asyncio.run(events()) == []
+    got = asyncio.run(events())
+    assert [(p["type"], p["error_type"]) for p in got] == [("error", "model_off")]
+    assert "switched off" in got[0]["error_title"] and "not sent" in got[0]["error_title"]
+
+
+def test_wake_model_survives_a_server_that_answers_but_will_not_load():
+    import json
+
+    def http(url, *, data=None, headers=None, timeout=10):
+        if url.endswith("/api/v0/models"):
+            return json.dumps({"data": []}).encode()
+        raise OSError("load refused")
+
+    async def events():
+        return [p async for p in agent_chat.wake_model(
+            {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q"}, http)]
+
+    assert [p["type"] for p in asyncio.run(events())] == ["status"]     # the run is still worth starting

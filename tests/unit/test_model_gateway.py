@@ -148,3 +148,41 @@ class TestLifecycle:
         rt.get = lambda vol, rel: ""
         with pytest.raises(ValueError, match="has a key yet"):
             mg.ModelGateway(rt).up()
+
+
+class TestGuard:
+    class Rt:
+        def __init__(self, running=False, label=""):
+            self.calls, self.running, self.label = [], running, label
+
+        def run(self, cmd, *, input=None, check=True):
+            self.calls.append(list(cmd))
+            a = " ".join(cmd)
+            if a.startswith("docker network inspect"):
+                return "172.17.0.1\n"
+            if a.startswith("docker ps"):
+                return "logos-model-guard\n" if self.running else ""
+            if a.startswith("docker inspect"):
+                return self.label
+            return ""
+
+    def test_guard_starts_in_front_of_the_model_server(self):
+        rt = self.Rt()
+        url = mg.ModelGateway(rt).guard_up("http://10.0.0.5:1234/v1", "logos-agent:1")
+        assert url == "http://172.17.0.1:8094/v1"
+        run = next(c for c in rt.calls if c[:3] == ["docker", "run", "-d"])
+        assert "GUARD_UPSTREAM=http://10.0.0.5:1234" in run and "172.17.0.1:8094:8094" in run
+        assert run[-3:] == ["python3", "logos-agent:1", "/app/model_guard.py"] and "--read-only" in run
+
+    def test_guard_is_left_alone_when_nothing_changed(self):
+        first = self.Rt()
+        mg.ModelGateway(first).guard_up("http://10.0.0.5:1234/v1", "logos-agent:1")
+        stamp = next(c for c in first.calls if c[:3] == ["docker", "run", "-d"])
+        label = next(x for x in stamp if x.startswith("logos.guard.stamp=")).split("=", 1)[1]
+        again = self.Rt(running=True, label=label)
+        mg.ModelGateway(again).guard_up("http://10.0.0.5:1234/v1", "logos-agent:1")
+        assert not [c for c in again.calls if c[:3] == ["docker", "run", "-d"]]
+
+    def test_config_sends_local_calls_to_the_guard(self):
+        cfg = mg.build_config({"greg": agent()}, {"greg": "sk-bf-x"}, {}, "http://172.17.0.1:8094/v1")
+        assert cfg["providers"]["lm-studio"]["network_config"]["base_url"] == "http://172.17.0.1:8094/v1"

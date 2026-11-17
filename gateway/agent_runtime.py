@@ -280,6 +280,10 @@ class AgentRuntime:
         cfg = {"_config_version": CONFIG_VERSION,
                "timezone": agent.get("timezone", "UTC"),
                "model": model}
+        # When the model cannot be reached, say so after the normal three attempts (about
+        # twenty seconds). hermes would otherwise keep trying in the background for some
+        # eight more minutes, during which the person hears nothing.
+        cfg["agent"] = {"auto_recovery_cycles": 0}
         if (agent.get("telegram") or {}).get("enabled"):
             # No "gateway shutting down / back online" messages to the person on every rebuild.
             cfg["platforms"] = {"telegram": {"gateway_restart_notification": False}}
