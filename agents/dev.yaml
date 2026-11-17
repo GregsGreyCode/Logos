@@ -27,8 +27,7 @@ model:
   default: qwen/qwen3.6-35b-a3b
   context_length: 65536
   gateway: true
-  fallbacks:
-    - anthropic/claude-haiku-5-5   # only if the dev machine's models.env has a key
+  # No paid fallbacks: the brain stays local (gateway/model_gateway.py BRAIN_STAYS_LOCAL).
 budget:
   monthly_usd: 1                # a test agent has no business spending more
 

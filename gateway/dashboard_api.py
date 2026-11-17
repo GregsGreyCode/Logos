@@ -292,7 +292,7 @@ async def handle_agent_status(request: web.Request) -> web.Response:
     paid: List[str] = []
     if via_gateway:
         path = mg.keys_file(runtime.env)
-        attached = mg.paid_providers(path.read_text() if path.exists() else "")
+        attached = {} if mg.BRAIN_STAYS_LOCAL else mg.paid_providers(path.read_text() if path.exists() else "")
         paid = [p for p in (model.get("allow") or []) if p in attached]
     allowed = []
     if (definition.get("telegram") or {}).get("enabled"):
@@ -756,7 +756,8 @@ async def models_overview(app: web.Application, runtime: Any) -> dict:
                     and (d.get("model") or {}).get("gateway")):
                 definitions[name] = d
         gw = model_gateway.ModelGateway(runtime)
-        attached = model_gateway.paid_providers(gw._keys_text())
+        # The brain stays local: a key in models.env is not attached to anything.
+        attached = {} if model_gateway.BRAIN_STAYS_LOCAL else model_gateway.paid_providers(gw._keys_text())
         chains = {n: model_gateway.fallback_chain({**d, "name": n}, attached) for n, d in definitions.items()}
         image = next((str(d["image"]) for d in definitions.values() if d.get("image")), "")
         try:

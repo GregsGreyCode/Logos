@@ -549,6 +549,10 @@ class AgentRuntime:
     def up(self, name: str) -> int:
         """Create or recreate the sandbox from its definition. 0 when it reaches Ready."""
         agent = self.load(name)
+        try:
+            _sibling("model_gateway").require_local_only(name, agent)
+        except ValueError as e:
+            raise AgentRuntimeError(str(e))
         home, brain = volumes(name)
         for v in (home, brain):
             self.ensure_volume(v)

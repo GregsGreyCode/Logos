@@ -20,6 +20,13 @@ def _load(name):
 mg = _load("model_gateway")
 
 
+@pytest.fixture
+def paid_allowed(monkeypatch):
+    """The paid-fallback code is kept for the future brain-free advisor; these tests run it
+    with the brain-stays-local rule switched off."""
+    monkeypatch.setattr(mg, "BRAIN_STAYS_LOCAL", False)
+
+
 def agent(**model):
     return {"model": {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q",
                       "context_length": 65536, "gateway": True, **model}}
@@ -39,7 +46,7 @@ class TestConfig:
         assert cfg["governance"]["budgets"] == [
             {"id": "budget-greg", "virtual_key_id": "vk-greg", "max_limit": 7.0, "reset_duration": "1M"}]
 
-    def test_paid_provider_only_for_agents_that_allow_it(self):
+    def test_paid_provider_only_for_agents_that_allow_it(self, paid_allowed):
         agents = {"greg": agent(allow=["anthropic", "openai"]), "bere": agent()}
         cfg = mg.build_config(agents, {"greg": "k1", "bere": "k2"}, {"anthropic": "ANTHROPIC_API_KEY"})
         assert cfg["providers"]["anthropic"]["keys"][0]["value"] == "env.ANTHROPIC_API_KEY"
@@ -124,7 +131,7 @@ class FakeRuntime:
 
 
 class TestLifecycle:
-    def test_up_is_idempotent_and_restarts_on_change(self, tmp_path):
+    def test_up_is_idempotent_and_restarts_on_change(self, tmp_path, paid_allowed):
         rt = FakeRuntime(tmp_path, {"greg": agent(), "plain": {"model": {"base_url": "http://x/v1"}}})
         gw = mg.ModelGateway(rt)
         assert gw.up() is True
@@ -198,6 +205,7 @@ def chained(fallbacks, monthly=5):
     return a
 
 
+@pytest.mark.usefixtures("paid_allowed")
 class TestFallbacks:
     def test_chain_keeps_order_and_shares_the_budget(self):
         chain = mg.fallback_chain(chained([{"model": "anthropic/claude-haiku-5-5", "monthly_usd": 4},
@@ -253,3 +261,50 @@ class TestFallbacks:
         assert "routing_rules" not in cfg["governance"]
         assert [b["id"] for b in cfg["governance"]["budgets"]] == ["budget-greg"]
         assert mg.budget_ids(cfg) == ["budget-greg"]
+
+
+class TestBrainStaysLocal:
+    def test_every_kind_of_way_out_is_refused(self):
+        assert mg.BRAIN_STAYS_LOCAL is True
+        assert mg.local_only_problems("greg", agent()) == []
+        cases = {
+            "model.fallbacks": agent(fallbacks=["anthropic/claude-haiku-5-5"]),
+            "model.allow": agent(allow=["anthropic"]),
+            "model provider key": {**agent(), "providers": ["anthropic"]},
+            "not a local model server": agent(provider="anthropic"),
+            "consolidation.model": {**agent(), "consolidation": {"model": "anthropic/claude-sonnet-5-5"}},
+            "digest.provider": {**agent(), "digest": {"provider": "openai"}},
+        }
+        for words, definition in cases.items():
+            problems = " ".join(mg.local_only_problems("greg", definition))
+            assert words in problems, words
+            with pytest.raises(ValueError, match="brain stays local"):
+                mg.build_config({"greg": definition}, {"greg": "k"}, {"anthropic": "ANTHROPIC_API_KEY"})
+
+    def test_tool_credentials_are_not_model_keys(self):
+        assert mg.local_only_problems("greg", {**agent(), "providers": ["github"]}) == []
+
+    def test_a_key_in_models_env_configures_no_paid_provider(self):
+        cfg = mg.build_config({"greg": agent()}, {"greg": "k"}, {"anthropic": "ANTHROPIC_API_KEY"})
+        assert set(cfg["providers"]) == {mg.LOCAL_PROVIDER}
+        assert "routing_rules" not in cfg["governance"]
+        configs = cfg["governance"]["virtual_keys"][0]["provider_configs"]
+        assert [c["provider"] for c in configs] == [mg.LOCAL_PROVIDER]
+
+    def test_the_gateway_container_never_gets_the_keys(self, tmp_path):
+        rt = FakeRuntime(tmp_path, {"greg": agent()})
+        (tmp_path / "models.env").write_text("ANTHROPIC_API_KEY=sk-ant-test\n")
+        assert mg.ModelGateway(rt).up() is True
+        start = next(c for c in rt.runner.calls if c[:3] == ["docker", "run", "-d"])
+        assert "--env-file" not in start and "sk-ant-test" not in " ".join(start)
+
+
+def test_every_agent_in_the_repo_is_local_only():
+    import yaml
+    for path in sorted((REPO / "agents").glob("*.yaml")):
+        if path.stem.endswith(".local"):
+            continue
+        definition = yaml.safe_load(path.read_text())
+        if definition.get("sandbox") is False:
+            continue
+        assert mg.local_only_problems(path.stem, definition) == [], path.name
