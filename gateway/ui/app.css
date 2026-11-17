@@ -61,6 +61,8 @@ button:disabled { cursor: default; opacity: 0.55; }
 .tabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); }
 .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--muted); }
 .status.up { color: var(--ok); }
+.status.down { color: var(--bad); }
+.status.down::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
 .status.up::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 .log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 24px; }
 .empty { margin: auto; max-width: 420px; text-align: center; color: var(--muted); }

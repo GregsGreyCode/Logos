@@ -73,6 +73,8 @@ export async function agentsView(root, [agentArg]) {
         h('section', { class: 'card', 'aria-label': 'Model and spend' },
           h('h2', {}, 'Model and spend'),
           kv('Model', `${m.local ? 'Local' : 'Hosted'} · ${m.name}`),
+          m.up === false ? h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Model server'),
+            h('span', {}, 'Not answering. The agent cannot reply or run its model jobs until it is back on.')) : null,
           kv('Paid providers', m.paid_providers.length ? m.paid_providers.join(', ') : 'None attached'),
           st.budget.monthly_usd == null ? kv('Budget', 'Not behind the model gateway')
             : kv('Monthly limit on paid models', `$${st.budget.monthly_usd.toFixed(2)}`),

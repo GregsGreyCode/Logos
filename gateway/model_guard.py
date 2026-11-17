@@ -1,0 +1,129 @@
+"""A doorman in front of the local model server (LM Studio).
+
+When LM Studio is closed, or its machine is busy with something else, that machine
+usually drops connections without a word. The model gateway then waits out its full
+request timeout (fifteen minutes, sized for long replies) and the agent sits silent.
+
+This small proxy stands between the gateway and the model server. It gives the server
+three seconds to accept the connection. If it does, the request and its streamed reply
+pass straight through, however long the reply takes. If it does not, the caller gets
+an immediate, plainly worded 503, so the agent can tell the person at once.
+
+It keeps nothing and changes nothing in the traffic. Stdlib only; runs in the
+``logos-model-guard`` container (see :mod:`gateway.model_gateway`).
+"""
+from __future__ import annotations
+
+import http.client
+import json
+import os
+import socket
+import sys
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
+       "transfer-encoding", "upgrade", "host", "content-length"}
+OFF_MESSAGE = ("The local model server is switched off or busy (LM Studio is not answering), "
+               "so no reply can be written right now. Try again when it is back on.")
+
+
+def off_body() -> bytes:
+    return json.dumps({"error": {"message": OFF_MESSAGE, "type": "model_server_off",
+                                 "code": "model_server_off"}}).encode()
+
+
+def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: float = 900.0):
+    target = urllib.parse.urlsplit(upstream)
+    host, port = target.hostname, target.port or 80
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        server_version = "logos-model-guard"
+
+        def log_message(self, *args) -> None:
+            pass
+
+        def _body(self) -> bytes:
+            if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+                out = b""
+                while True:
+                    size = int(self.rfile.readline().split(b";", 1)[0].strip() or b"0", 16)
+                    if size == 0:
+                        self.rfile.readline()
+                        return out
+                    out += self.rfile.read(size)
+                    self.rfile.readline()
+            length = int(self.headers.get("Content-Length") or 0)
+            return self.rfile.read(length) if length else b""
+
+        def _off(self) -> None:
+            body = off_body()
+            self.send_response(503)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.close_connection = True
+
+        def _pass(self) -> None:
+            self.close_connection = True
+            body = self._body()
+            try:
+                sock = socket.create_connection((host, port), timeout=connect_timeout)
+            except OSError:
+                print(f"model server not answering: {self.command} {self.path.split('?')[0]} refused at once",
+                      flush=True)
+                return self._off()
+            conn = http.client.HTTPConnection(host, port)
+            conn.sock = sock
+            try:
+                sock.settimeout(read_timeout)
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP}
+                headers["Host"] = f"{host}:{port}"
+                headers["Connection"] = "close"
+                conn.request(self.command, self.path, body=body or None, headers=headers)
+                resp = conn.getresponse()
+                self.send_response(resp.status)
+                for k, v in resp.getheaders():
+                    if k.lower() not in HOP:
+                        self.send_header(k, v)
+                length = resp.getheader("Content-Length")
+                if length is not None:
+                    self.send_header("Content-Length", length)
+                else:
+                    self.send_header("Transfer-Encoding", "chunked")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                while True:
+                    chunk = resp.read1(65536)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk if length is not None else b"%x\r\n%s\r\n" % (len(chunk), chunk))
+                    self.wfile.flush()             # streamed replies must not sit in a buffer
+                if length is None:
+                    self.wfile.write(b"0\r\n\r\n")
+            except (OSError, http.client.HTTPException):
+                pass                               # either side went away; closing both is all there is to do
+            finally:
+                conn.close()
+
+        do_GET = do_POST = do_PUT = do_DELETE = _pass
+
+    return Handler
+
+
+def main() -> int:
+    upstream = os.environ["GUARD_UPSTREAM"]
+    port = int(os.environ.get("GUARD_PORT", "8094"))
+    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(
+        upstream, connect_timeout=float(os.environ.get("GUARD_CONNECT_TIMEOUT", "3"))))
+    server.daemon_threads = True
+    print(f"model guard: {port} -> {upstream}", flush=True)
+    server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

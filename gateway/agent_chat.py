@@ -232,16 +232,27 @@ async def keep_alive(write, every: float = KEEP_ALIVE_S) -> None:
             return                      # the browser went away; the handler deals with it
 
 
+MODEL_OFF = "model_off"
+MODEL_OFF_MESSAGE = ("The model server is switched off, so there is no one to answer right now. "
+                     "Your message was not sent. Try again when it is back on.")
+
+
 async def wake_model(model: Mapping[str, Any], http) -> AsyncIterator[Dict[str, Any]]:
     """Make sure the agent's local model is loaded before a run starts.
 
     Yields a ``status`` event when it has to load, so the chat can say why the
-    reply is slow. Problems are logged and swallowed: the model server loads on
+    reply is slow, or one ``error`` event of type :data:`MODEL_OFF` when the server
+    is not answering at all, in which case the caller must not start the run. Problems are logged and swallowed: the model server loads on
     demand anyway, so the run is still worth starting.
     """
     from gateway import local_models
     base = local_models.server(model)
     if not base or not model.get("default"):
+        return
+    if not await asyncio.to_thread(local_models.reachable, http, base):
+        # Starting a run now would leave the person watching "Thinking" for many minutes
+        # while the agent waits on a server that is not there. Say so at once instead.
+        yield {"type": "error", "error_type": MODEL_OFF, "error_title": MODEL_OFF_MESSAGE}
         return
     try:
         have = await asyncio.to_thread(local_models.loaded, http, base)
