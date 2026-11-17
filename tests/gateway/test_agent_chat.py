@@ -311,3 +311,30 @@ def test_wake_model_survives_a_server_that_answers_but_will_not_load():
             {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q"}, http)]
 
     assert [p["type"] for p in asyncio.run(events())] == ["status"]     # the run is still worth starting
+
+
+def test_wake_model_lets_a_backup_answer_when_the_server_is_off():
+    def http(url, **kw):
+        raise OSError("no route")
+
+    async def events():
+        return [p async for p in agent_chat.wake_model(
+            {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q"}, http,
+            backup=True)]
+
+    got = asyncio.run(events())
+    assert [p["type"] for p in got] == ["status"] and "backup" in got[0]["content"]
+
+
+def test_has_backup_needs_the_gateway_a_fallback_and_its_key(tmp_path, monkeypatch):
+    keys = tmp_path / "models.env"
+    monkeypatch.setenv("LOGOS_MODELS_ENV", str(keys))
+    agent = {"name": "dev", "budget": {"monthly_usd": 1},
+             "model": {"gateway": True, "fallbacks": ["anthropic/claude-haiku-5-5"]}}
+    assert not agent_chat.has_backup(agent)                       # no models.env yet
+    keys.write_text("ANTHROPIC_API_KEY=\n")
+    assert not agent_chat.has_backup(agent)                       # key line but empty
+    keys.write_text("ANTHROPIC_API_KEY=sk-test\n")
+    assert agent_chat.has_backup(agent)
+    assert not agent_chat.has_backup({**agent, "model": {**agent["model"], "gateway": False}})
+    assert not agent_chat.has_backup({**agent, "model": {"gateway": True}})
