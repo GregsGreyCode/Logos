@@ -89,6 +89,7 @@ PROJECT_STATE.md
 
 # Per-machine agent overrides (personal IDs)
 agents/*.local.yaml
-agents/*.local.yaml.*          # backups and copies of the above hold the same private values
+# Backups and copies of those hold the same private values
+agents/*.local.yaml.*
 .rendered/
 evals/results/
