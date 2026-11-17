@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, AsyncIterator, Dict, List, Mapping, Optional
@@ -237,12 +238,31 @@ MODEL_OFF_MESSAGE = ("The model server is switched off, so there is no one to an
                      "Your message was not sent. Try again when it is back on.")
 
 
-async def wake_model(model: Mapping[str, Any], http) -> AsyncIterator[Dict[str, Any]]:
+BACKUP_MESSAGE = "The local model is switched off, so a backup model is answering."
+
+
+def has_backup(definition: Mapping[str, Any]) -> bool:
+    """True when the agent's model gateway can answer with a paid model while the local
+    one is off: it uses the gateway, names ``model.fallbacks`` and at least one of them
+    has a key in ``models.env`` on this machine."""
+    from gateway import model_gateway
+    if not model_gateway.uses_gateway(definition):
+        return False
+    try:
+        text = model_gateway.keys_file(os.environ).read_text()
+        return bool(model_gateway.fallback_chain(definition, model_gateway.paid_providers(text)))
+    except (OSError, ValueError):
+        return False
+
+
+async def wake_model(model: Mapping[str, Any], http, *, backup: bool = False) -> AsyncIterator[Dict[str, Any]]:
     """Make sure the agent's local model is loaded before a run starts.
 
     Yields a ``status`` event when it has to load, so the chat can say why the
     reply is slow, or one ``error`` event of type :data:`MODEL_OFF` when the server
-    is not answering at all, in which case the caller must not start the run. Problems are logged and swallowed: the model server loads on
+    is not answering at all, in which case the caller must not start the run. With
+    ``backup`` (see :func:`has_backup`) an unreachable server only yields a ``status``
+    event, and the run goes ahead so the gateway's fallback answers. Problems are logged and swallowed: the model server loads on
     demand anyway, so the run is still worth starting.
     """
     from gateway import local_models
@@ -251,7 +271,11 @@ async def wake_model(model: Mapping[str, Any], http) -> AsyncIterator[Dict[str, 
         return
     if not await asyncio.to_thread(local_models.reachable, http, base):
         # Starting a run now would leave the person watching "Thinking" for many minutes
-        # while the agent waits on a server that is not there. Say so at once instead.
+        # while the agent waits on a server that is not there. Say so at once instead,
+        # unless the model gateway has a paid fallback to answer in its place.
+        if backup:
+            yield {"type": "status", "content": BACKUP_MESSAGE}
+            return
         yield {"type": "error", "error_type": MODEL_OFF, "error_title": MODEL_OFF_MESSAGE}
         return
     try:
