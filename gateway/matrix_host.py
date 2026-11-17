@@ -11,9 +11,13 @@ cannot reach it.
 
 Settings live in ``~/.config/logos/matrix.env`` (never in the repo)::
 
-    MATRIX_SERVER_NAME=logos.<tailnet>.ts.net   # permanent: part of every Matrix ID
+    MATRIX_SERVER_NAME=example.org          # permanent: part of every Matrix ID
+    MATRIX_CLIENT_URL=https://logos.<tailnet>.ts.net  # where Element reaches it (tailscale serve)
     MATRIX_REGISTRATION_TOKEN=...               # people sign up in Element with this
     MATRIX_ADMIN_PASSWORD=...                   # @logos-admin, the server's first account
+
+The server name never has to resolve: with federation off, nothing looks it up. People type
+the client URL into Element; the server's /.well-known answers with that same URL.
 
 An agent with ``matrix: {enabled: true}`` gets its own account (``@<name>-agent``) on its
 first ``up``. The login is kept in the agent's home volume, like the Telegram token.
@@ -68,9 +72,16 @@ def server_env(settings: Mapping[str, str]) -> Dict[str, str]:
         "CONDUWUIT_ALLOW_ENCRYPTION": "true",
         "CONDUWUIT_ALLOW_PUBLIC_ROOM_DIRECTORY_OVER_FEDERATION": "false",
         "CONDUWUIT_URL_PREVIEW_DOMAIN_CONTAINS_ALLOWLIST": "[]",     # no link previews: nothing fetched
-        "CONDUWUIT_WELL_KNOWN__CLIENT": f"https://{name}",
-        "CONDUWUIT_WELL_KNOWN__SERVER": f"{name}:443",
+        "CONDUWUIT_WELL_KNOWN__CLIENT": settings.get("MATRIX_CLIENT_URL") or f"https://{name}",
     }
+
+
+def first_user_token(logs: str) -> str:
+    """The one-time token a fresh server prints for creating its first (admin) account."""
+    import re
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", logs or "")
+    m = re.search(r"using the registration token\W+(\w+)", clean)
+    return m.group(1) if m else ""
 
 
 class MatrixError(Exception):
@@ -130,6 +141,7 @@ class MatrixHost:
             cmd += ["-e", f"{k}={v}"]
         self.rt.run(cmd + [IMAGE])
         self.wait()
+        self.ensure_admin()
         return True
 
     def wait(self, tries: int = 30) -> None:
@@ -157,10 +169,10 @@ class MatrixHost:
     def user_id(self, localpart: str) -> str:
         return f"@{localpart}:{self.settings()['MATRIX_SERVER_NAME']}"
 
-    def register(self, localpart: str, password: str) -> dict:
+    def register(self, localpart: str, password: str, token: str = "") -> dict:
         """Create an account with the registration token. Returns the login (access token,
         device id) or raises MatrixError."""
-        token = self.settings()["MATRIX_REGISTRATION_TOKEN"]
+        token = token or self.settings()["MATRIX_REGISTRATION_TOKEN"]
         first = self._call("/_matrix/client/v3/register", {"username": localpart, "password": password})
         if "access_token" in first:
             return first
@@ -171,6 +183,26 @@ class MatrixHost:
         if "access_token" not in done:
             raise MatrixError(f"could not create @{localpart}: {done.get('error') or done}")
         return done
+
+    def ensure_admin(self) -> None:
+        """Make @logos-admin the server's first account (its admin), when it does not exist.
+
+        A new Continuwuity server prints a one-time token for that first sign-up in its log."""
+        password = self.settings().get("MATRIX_ADMIN_PASSWORD")
+        if not password:
+            return
+        login = self._call("/_matrix/client/v3/login", {
+            "type": "m.login.password", "identifier": {"type": "m.id.user", "user": ADMIN},
+            "password": password})
+        if "access_token" in login:
+            self._call("/_matrix/client/v3/logout", {}, token=login["access_token"])
+            return
+        p = self.rt.runner.run(["docker", "logs", CONTAINER])
+        logs = (p.stdout or "") + (p.stderr or "")
+        first = first_user_token(logs)
+        if not first:
+            raise MatrixError(f"@{ADMIN} cannot sign in and the server offers no first-user token")
+        self.register(ADMIN, password, token=first)
 
     def agent_login(self, name: str, current: Mapping[str, str]) -> Dict[str, str]:
         """The MATRIX_* values for this agent's .env: the stored ones, or a new account."""
