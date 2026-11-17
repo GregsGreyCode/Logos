@@ -39,6 +39,10 @@ GATEWAY_UID = "1000:0"                 # `appuser` in the Bifrost image
 LOCAL_PROVIDER = "lm-studio"
 KEY_ENV = "LOGOS_MODEL_KEY"            # the agent's own gateway key, kept in its home volume .env
 DEFAULT_MONTHLY_USD = 5.0
+GUARD_CONTAINER = "logos-model-guard"  # refuses at once when the local model server is off
+GUARD_PORT = 8094
+GUARD_FILE = Path(__file__).with_name("model_guard.py")
+GUARD_UID = "10000:10000"
 #: API-key variable in models.env -> Bifrost provider it switches on.
 PAID_PROVIDERS = {
     "ANTHROPIC_API_KEY": "anthropic",
@@ -93,23 +97,30 @@ def gateway_model(agent: Mapping[str, Any]) -> str:
     return f"{LOCAL_PROVIDER}/{default}"
 
 
+def local_server(agents: Mapping[str, Mapping[str, Any]]) -> str:
+    """The one local model server the agents behind the gateway share (its ``/v1`` URL)."""
+    bases = sorted({local_base_url(a) for a in agents.values()})
+    if len(bases) > 1:
+        raise ValueError("agents behind the gateway must share one local model server, found: " + ", ".join(bases))
+    return bases[0]
+
+
 def build_config(agents: Mapping[str, Mapping[str, Any]], keys: Mapping[str, str],
-                 paid: Mapping[str, str]) -> dict:
+                 paid: Mapping[str, str], local_url: Optional[str] = None) -> dict:
     """The Bifrost ``config.json`` for these agents.
 
     ``agents`` maps name -> definition (only agents that use the gateway),
     ``keys`` maps name -> that agent's gateway key, ``paid`` is
-    :func:`paid_providers`.
+    :func:`paid_providers`. ``local_url`` is where local model calls are sent: the model
+    guard when it runs, otherwise the model server itself.
     """
     if not agents:
         raise ValueError("no agent uses the model gateway (set model.gateway: true in its definition)")
-    bases = sorted({local_base_url(a) for a in agents.values()})
-    if len(bases) > 1:
-        raise ValueError("agents behind the gateway must share one local model server, found: " + ", ".join(bases))
+    local_url = local_url or local_server(agents)
     providers: Dict[str, Any] = {
         LOCAL_PROVIDER: {
             "keys": [{"name": "local", "value": "local", "models": ["*"], "weight": 1.0}],
-            "network_config": {"base_url": bases[0], "default_request_timeout_in_seconds": 900,
+            "network_config": {"base_url": local_url, "default_request_timeout_in_seconds": 900,
                                "allow_private_network": True},
             "custom_provider_config": {"base_provider_type": "openai", "allowed_requests": {
                 "chat_completion": True, "chat_completion_stream": True}},
@@ -195,7 +206,10 @@ class ModelGateway:
         if not agents:
             raise ValueError("no agent behind the gateway has a key yet (run scripts/logos-agent up <name> once)")
         keys_text = self._keys_text()
-        config = json.dumps(build_config(agents, keys, paid_providers(keys_text)), indent=1, sort_keys=True)
+        image = next((str(a["image"]) for a in agents.values() if a.get("image")), "")
+        guard_url = self.guard_up(local_server(agents), image) if image else None
+        config = json.dumps(build_config(agents, keys, paid_providers(keys_text), guard_url),
+                            indent=1, sort_keys=True)
         if self.rt.runner.run(["docker", "volume", "inspect", VOLUME]).returncode != 0:
             self.rt.run(["docker", "volume", "create", VOLUME])
             self.rt.run(["docker", "run", "--rm", "-v", f"{VOLUME}:/v", HELPER, "chown", GATEWAY_UID, "/v"])
@@ -222,6 +236,30 @@ class ModelGateway:
         self.wait()
         return True
 
+    def guard_up(self, upstream: str, image: str) -> str:
+        """Run the model guard in front of ``upstream`` and return the URL the gateway should use.
+
+        The guard (:mod:`gateway.model_guard`) passes calls through, and answers at once
+        with a clear error when the model server is not accepting connections. It runs in
+        the agent image, which already has Python, with its one file mounted read-only.
+        """
+        stamp = hashlib.sha256((upstream + GUARD_FILE.read_text() + image).encode()).hexdigest()[:16]
+        names = self.rt.run(["docker", "ps", "--filter", f"name=^{GUARD_CONTAINER}$", "--format", "{{.Names}}"],
+                            check=False).split()
+        label = self.rt.run(["docker", "inspect", GUARD_CONTAINER, "-f",
+                             '{{index .Config.Labels "logos.guard.stamp"}}'], check=False).strip()
+        url = f"http://{self.bind_address()}:{GUARD_PORT}/v1"
+        if GUARD_CONTAINER in names and label == stamp:
+            return url
+        self.rt.run(["docker", "rm", "-f", GUARD_CONTAINER], check=False)
+        self.rt.run(["docker", "run", "-d", "--name", GUARD_CONTAINER, "--restart", "unless-stopped",
+                     "--label", f"logos.guard.stamp={stamp}", "--user", GUARD_UID, "--read-only",
+                     "-p", f"{self.bind_address()}:{GUARD_PORT}:{GUARD_PORT}",
+                     "-v", f"{GUARD_FILE}:/app/model_guard.py:ro",
+                     "-e", f"GUARD_UPSTREAM={upstream.rsplit('/v1', 1)[0]}", "-e", f"GUARD_PORT={GUARD_PORT}",
+                     "--entrypoint", "python3", image, "/app/model_guard.py"])
+        return url
+
     def _label(self) -> str:
         return self.rt.run(["docker", "inspect", CONTAINER, "-f",
                             '{{index .Config.Labels "logos.models.keys"}}'], check=False).strip()
@@ -240,6 +278,7 @@ class ModelGateway:
 
     def down(self) -> None:
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)
+        self.rt.run(["docker", "rm", "-f", GUARD_CONTAINER], check=False)
 
     def status(self) -> str:
         if not self.running():

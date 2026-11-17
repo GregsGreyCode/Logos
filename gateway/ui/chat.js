@@ -55,6 +55,10 @@ export async function chatView(root, [agentArg, chatArg], state) {
   let recording = null;          // { recorder, stream, chunks, timer } while the microphone is on
   const convs = h('div', { class: 'convs' });
 
+  // Shown while the local model server is not answering (LM Studio closed, or that machine off).
+  const modelStatus = h('span', { class: 'status down', hidden: true }, 'Model server off: it cannot reply');
+  const modelOff = (off) => { modelStatus.hidden = !off; };
+  modelOff(agent.model_up === false);
   const scroll = () => { log.scrollTop = log.scrollHeight; };
   const bubble = (role, text) => {
     const el = h('div', { class: `msg ${role}` });
@@ -155,7 +159,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
     log.append(used);
     scroll();
     setBusy(true);
-    let body = '', failed = null, lost = false, finished = false;
+    let body = '', failed = null, lost = false, finished = false, unsent = false;
     const tools = {};
     setPending(agent.name, { chatId, text, at: Date.now() });
     try {
@@ -180,7 +184,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
           try { d = JSON.parse(line.slice(5)); } catch (e) { continue; }
           if (d.type === 'task_started') running = { taskId: d.task_id };
           else if (d.type === 'status' && !body) reply.replaceChildren(h('span', { class: 'when' }, d.content));
-          else if (d.type === 'token') { body += d.content; reply.replaceChildren(...markdown(body.replace(/^\s+/, ''))); }
+          else if (d.type === 'token') { modelOff(false); body += d.content; reply.replaceChildren(...markdown(body.replace(/^\s+/, ''))); }
           else if (d.type === 'message') { body = d.content; reply.replaceChildren(...markdown(body)); }
           else if (d.type === 'tool_start') {
             tools[d.call_id] = h('span', { class: 'chip', title: d.preview || '' }, `Using ${d.tool}…`);
@@ -192,7 +196,11 @@ export async function chatView(root, [agentArg, chatArg], state) {
           } else if (d.type === 'done') {
             finished = true;
             used.append(h('span', {}, d.stopped ? 'Stopped' : `${d.elapsed_s} s`));
-          } else if (d.type === 'error') failed = d.error_title || d.content || 'Something went wrong';
+          } else if (d.type === 'error') {
+            failed = d.error_title || d.content || 'Something went wrong';
+            // Never handed to the agent: give the words back so they need not be typed again.
+            if (d.error_type === 'model_off') { unsent = true; modelOff(true); }
+          }
           scroll();
         }
       }
@@ -209,6 +217,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
       return waitForReply(text);
     }
     setPending(agent.name, null);
+    if (unsent && !input.value.trim()) { input.value = text; input.dispatchEvent(new Event('input')); }
     if (failed) {
       if (!body) reply.remove();
       log.append(h('div', { class: 'msg error' }, failed));
@@ -315,6 +324,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
       h('header', { class: 'chat-head' },
         h('h1', {}, agent.display_name), tabs,
         h('span', { class: `status ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
+        modelStatus,
         h('span', { class: 'status' }, agent.shared ? 'Shared with the household' : 'Private to you')),
       log, micNote, form),
     h('aside', { class: 'side', 'aria-label': 'Conversations' },

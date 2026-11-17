@@ -613,6 +613,7 @@ network_policies:
             "_config_version": 53, "timezone": "Europe/London",
             "model": {"default": "some/model", "provider": "lmstudio",
                       "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
+            "agent": {"auto_recovery_cycles": 0},
             "memory": {"memory_char_limit": 6000},
             "stt": {"enabled": False}}
 
