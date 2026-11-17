@@ -112,3 +112,17 @@ def test_a_server_that_was_off_is_refused_without_waiting_again_for_a_while():
         assert times[1] < 0.2 and times[2] < 0.2
     finally:
         g.shutdown()
+
+
+def test_the_guard_reports_its_own_health_without_asking_the_model_server():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        dead = s.getsockname()[1]
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{dead}", connect_timeout=1))
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+        conn.request("GET", "/guard/health")
+        r = conn.getresponse()
+        assert r.status == 200 and json.loads(r.read()) == {"ok": True, "model_server_off": False}
+    finally:
+        g.shutdown()
