@@ -123,7 +123,7 @@ display_name: Alpha agent
 image: logos-agent:0.23.1
 soul: souls/general/soul.md
 policy: infra/agent-image/policy.yaml
-providers: [anthropic, github]
+providers: [github]
 timezone: Europe/London
 model:
   provider: lmstudio
@@ -411,7 +411,7 @@ class TestCreate:
             "--from", "logos-agent:0.23.1",
             "--policy", str(repo / "infra/agent-image/policy.yaml"),
             "--driver-config-json", mounts,
-            "--provider", "anthropic", "--provider", "github",
+            "--provider", "github",
             "--", "sh", "-c", art.START,
         ]
         assert json.loads(mounts) == {"docker": {"mounts": [

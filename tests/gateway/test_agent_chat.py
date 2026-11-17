@@ -327,6 +327,9 @@ def test_wake_model_lets_a_backup_answer_when_the_server_is_off():
 
 
 def test_has_backup_needs_the_gateway_a_fallback_and_its_key(tmp_path, monkeypatch):
+    from gateway import model_gateway
+    assert agent_chat.has_backup({"model": {"gateway": True, "fallbacks": ["anthropic/x"]}}) is False
+    monkeypatch.setattr(model_gateway, "BRAIN_STAYS_LOCAL", False)   # the code kept for later
     keys = tmp_path / "models.env"
     monkeypatch.setenv("LOGOS_MODELS_ENV", str(keys))
     agent = {"name": "dev", "budget": {"monthly_usd": 1},
