@@ -1979,6 +1979,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/classic",       _handle_index)      # the v1-era page, until v2 covers it
     from gateway import dashboard_api as _dashboard_api
     _dashboard_api.register(app)
+    from gateway import updates as _updates
+    _updates.register(app)
     app.router.add_static("/ui", str(Path(__file__).parent / "ui"), show_index=False)
     # Per-tab URL paths. Each one serves the same SPA (main_app.html);
     # Alpine reads window.location.pathname on init and pushes state on

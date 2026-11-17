@@ -245,3 +245,9 @@ table.plain td { vertical-align: top; }
 .chart-tip { position: absolute; top: 0; transform: translateX(-50%); display: flex; flex-direction: column; gap: 2px;
   padding: 8px 10px; border-radius: 8px; background: var(--raised); border: 1px solid var(--line);
   font-size: 13px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+
+/* Updates screen */
+.log-output { max-height: 360px; overflow: auto; padding: 12px; border-radius: 8px; background: var(--ground);
+  font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+ul.plain { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 4px; }
+ul.plain code { color: var(--muted); }
