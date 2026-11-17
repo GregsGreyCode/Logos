@@ -472,3 +472,13 @@ def test_audio_suffix_accepts_browser_recordings_only():
     assert audio_suffix("Audio/OGG; codecs=opus") == ".ogg"
     assert audio_suffix("application/json") is None
     assert audio_suffix("") is None
+
+
+def test_answering_now_prefers_local_then_the_first_fallback_with_money_left():
+    from gateway.dashboard_api import answering_now
+    chain = [{"provider": "anthropic", "model": "claude-haiku-5-5", "spent_out": True},
+             {"provider": "openrouter", "model": "google/gemini", "spent_out": False}]
+    assert answering_now({"fallbacks": chain}, True) == {"kind": "local", "label": "Local model"}
+    assert answering_now({"fallbacks": chain}, False) == {"kind": "paid", "label": "openrouter · google/gemini"}
+    assert answering_now({"fallbacks": chain[:1]}, False)["kind"] == "none"
+    assert "no paid fallback" in answering_now({"fallbacks": []}, False)["label"]
