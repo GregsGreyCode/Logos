@@ -1795,6 +1795,35 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
             _app["agents_boot_check"] = asyncio.create_task(_check())
         app.on_startup.append(_agents_boot_check)
 
+        async def _model_metrics(_app: web.Application) -> None:
+            # Model status and spend, pushed to an OpenTelemetry collector once a minute
+            # (gateway/model_metrics.py). Off unless LOGOS_OTLP_ENDPOINT is set.
+            from gateway import dashboard_api as _dash, model_metrics as _metrics
+            endpoint = os.environ.get(_metrics.ENV, "").strip()
+            if not endpoint:
+                return
+
+            async def _loop() -> None:
+                failing = False
+                while True:
+                    try:
+                        overview = await _dash.models_overview(_app, _agent_runtime)
+                        body = _metrics.payload(_metrics.points(overview))
+                        await asyncio.to_thread(_metrics.push, _agent_runtime.runner.http, endpoint, body)
+                        if failing:
+                            logger.info("model metrics: the collector is accepting data again")
+                        failing = False
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        if not failing:           # say it once, not every minute
+                            logger.warning("model metrics: could not send to the collector: %s", exc)
+                        failing = True
+                    await asyncio.sleep(_metrics.INTERVAL_SECONDS)
+            _app["model_metrics"] = asyncio.create_task(_loop())
+            logger.info("model metrics: sending to the collector every %s s", _metrics.INTERVAL_SECONDS)
+        app.on_startup.append(_model_metrics)
+
     # ── Pre-fetch cloud-model pricing from OpenRouter ──────────────────────
     # So the first dispatch doesn't stall waiting on a cold catalogue
     # fetch. Best-effort — if OpenRouter is unreachable at boot the
