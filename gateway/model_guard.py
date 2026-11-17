@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
        "transfer-encoding", "upgrade", "host", "content-length"}
+HEALTH_PATH = "/guard/health"
 OFF_MESSAGE = ("The local model server is switched off or busy (LM Studio is not answering), "
                "so no reply can be written right now. Try again when it is back on.")
 
@@ -75,6 +76,16 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
 
         def _pass(self) -> None:
             self.close_connection = True
+            if self.command == "GET" and self.path == HEALTH_PATH:
+                # About the guard itself, answered without touching the model server.
+                out = json.dumps({"ok": True, "model_server_off": time.monotonic() < state["off_until"]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(out)
+                return
             body = self._body()
             if time.monotonic() < state["off_until"]:
                 return self._off()

@@ -677,12 +677,128 @@ async def handle_voice(request: web.Request) -> web.Response:
     return web.json_response({"text": text})
 
 
+MODELS_CACHE_SECONDS = 30
+
+
+def _alive(http, url: str) -> bool:
+    """Does anything answer at ``url``? An HTTP error status still means the service is up."""
+    import urllib.error
+    try:
+        http(url, timeout=3)
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except Exception:
+        return False
+
+
+def models_status(runtime: Any, definitions: Mapping[str, Mapping[str, Any]]) -> dict:
+    """Health of everything a model call passes through. Blocking; run in a thread."""
+    from gateway import local_models, model_gateway, noticeboard_host, voice_host
+    http = runtime.runner.http
+    gw = model_gateway.ModelGateway(runtime)
+    bind = gw.bind_address()
+    servers = []
+    for base, wanted in local_models.wanted(definitions).items():
+        up = local_models.reachable(http, base)
+        loaded: Dict[str, int] = {}
+        if up:
+            try:
+                loaded = local_models.loaded(http, base)
+            except Exception:
+                up = False
+        servers.append({"up": up, "wanted": sorted(wanted),
+                        "loaded": [{"model": m, "context": c} for m, c in sorted(loaded.items())],
+                        "ready": bool(up and all(local_models.is_ready(loaded, m, c) for m, c in wanted.items()))})
+    return {
+        "model_server": servers[0] if servers else None,
+        "services": [
+            {"name": "Model gateway", "what": "passes every model call on, enforces limits", "up": gw.running()},
+            {"name": "Model guard", "what": "refuses at once when the model server is off",
+             "up": _alive(http, f"http://{bind}:{model_gateway.GUARD_PORT}/guard/health")},
+            {"name": "Voice", "what": "voice notes to text",
+             "up": _alive(http, f"http://{bind}:{voice_host.PORT}/health")},
+            {"name": "Noticeboard", "what": "messages between agents",
+             "up": _alive(http, f"http://{bind}:{noticeboard_host.PORT}/health")},
+            {"name": "Dashboard", "what": "this page and web chat", "up": True},
+        ],
+    }
+
+
+def answering_now(agent: dict, server_up: Optional[bool]) -> dict:
+    """Who would answer this agent's next message: the local model, a paid fallback, or nobody."""
+    if server_up:
+        return {"kind": "local", "label": "Local model"}
+    for share in agent.get("fallbacks") or []:
+        if not share["spent_out"]:
+            return {"kind": "paid", "label": f"{share['provider']} · {share['model']}"}
+    if agent.get("fallbacks"):
+        return {"kind": "none", "label": "Nothing: the local model is off and the paid limit is spent"}
+    return {"kind": "none", "label": "Nothing: the local model is off and no paid fallback is set up"}
+
+
+async def models_overview(app: web.Application, runtime: Any) -> dict:
+    """Status and spend for every agent, cached for half a minute (it starts a container)."""
+    from gateway import model_gateway, model_usage
+    loop = asyncio.get_running_loop()
+    cached = app.get("models_overview")
+    if cached and loop.time() - cached[0] < MODELS_CACHE_SECONDS:
+        return cached[1]
+
+    def build() -> dict:
+        definitions = {}
+        for name in runtime.defined():
+            d = runtime.load(name)
+            if d.get("sandbox", True) is not False and (d.get("model") or {}).get("gateway"):
+                definitions[name] = d
+        gw = model_gateway.ModelGateway(runtime)
+        attached = model_gateway.paid_providers(gw._keys_text())
+        chains = {n: model_gateway.fallback_chain({**d, "name": n}, attached) for n, d in definitions.items()}
+        image = next((str(d["image"]) for d in definitions.values() if d.get("image")), "")
+        try:
+            raw = model_usage.fetch(runtime, image) if image else {}
+            error = None
+        except Exception as e:
+            logger.warning("models: could not read the gateway's records: %s", type(e).__name__)
+            raw, error = {}, "The model gateway's records could not be read."
+        out = model_usage.summarise(raw, definitions, chains)
+        out["status"] = models_status(runtime, definitions)
+        out["paid_providers"] = sorted(attached)
+        out["error"] = error
+        server = out["status"]["model_server"]
+        for agent in out["agents"]:
+            agent["now"] = answering_now(agent, server["up"] if server else None)
+            agent["test"] = definitions[agent["name"]].get("role") == "test"
+        return out
+
+    data = await asyncio.to_thread(build)
+    app["models_overview"] = (loop.time(), data)
+    return data
+
+
+async def handle_models(request: web.Request) -> web.Response:
+    """GET /api/v2/models — model status for everyone; spend for the agents this person may
+    use, or for all of them when they manage Logos."""
+    user = _user(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    data = dict(await models_overview(request.app, runtime))
+    if user["role"] != "admin":
+        mine = set(await _visible_agents(request, user["username"]))
+        data["agents"] = [a for a in data["agents"] if a["name"] in mine]
+        data["providers"], data["daily"], data["total"] = [], [], None      # whole-household figures
+    data["all_agents"] = user["role"] == "admin"
+    return web.json_response(data)
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
     app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
     app.router.add_get("/api/v2/people", handle_people)
+    app.router.add_get("/api/v2/models", handle_models)
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
     app.router.add_get("/api/v2/agents/{name}/brain/search", handle_brain_search)
