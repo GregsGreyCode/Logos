@@ -119,6 +119,7 @@ async def handle_agents(request: web.Request) -> web.Response:
             "model": str((definition.get("model") or {}).get("default") or ""),
             "voice": bool(definition.get("voice")),
             "model_up": await model_server_up(request, definition),
+            "has_backup": await asyncio.to_thread(agent_chat.has_backup, definition),
         })
     # Agents this person cannot use are shown by name and up/down only.
     others = []
