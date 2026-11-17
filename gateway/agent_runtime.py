@@ -340,9 +340,10 @@ class AgentRuntime:
 
     MATRIX_EXPORTED = ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID",
                        "MATRIX_ALLOWED_USERS", "MATRIX_E2EE_MODE", "MATRIX_HOME_ROOM",
-                       "MATRIX_RECOVERY_KEY_OUTPUT_FILE")
+                       "MATRIX_RECOVERY_KEY_OUTPUT_FILE", "MATRIX_RECOVERY_KEY")
+    MATRIX_RECOVERY_FILE = "matrix-recovery-key"      # in the home volume (/opt/data)
 
-    def _matrix_env(self, agent: Mapping[str, Any], cur: dict) -> None:
+    def _matrix_env(self, agent: Mapping[str, Any], cur: dict, home: str = "") -> None:
         """The agent's Matrix account. Its login is kept under LOGOS_MATRIX_* so switching Matrix
         off (which removes what hermes reads) and on again reuses the same account and keys."""
         mx = agent.get("matrix") or {}
@@ -367,7 +368,11 @@ class AgentRuntime:
         cur["MATRIX_E2EE_MODE"] = str(mx.get("e2ee", "required"))
         # Cross-signing recovery key, written once (0600) into the home volume, so a rebuilt
         # sandbox can prove it is the same device and still read encrypted history.
-        cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] = "/opt/data/matrix-recovery-key"
+        cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] = f"/opt/data/{self.MATRIX_RECOVERY_FILE}"
+        # Once written, hand it back on every start so the agent re-proves its identity.
+        recovery = self.get(home, self.MATRIX_RECOVERY_FILE).strip() if home else ""
+        if recovery:
+            cur["MATRIX_RECOVERY_KEY"] = recovery
         if mx.get("home_room"):
             cur["MATRIX_HOME_ROOM"] = str(mx["home_room"])
 
@@ -400,7 +405,7 @@ class AgentRuntime:
         else:
             cur.pop("TELEGRAM_BOT_TOKEN", None)
             cur.pop("TELEGRAM_ALLOWED_USERS", None)
-        self._matrix_env(agent, cur)
+        self._matrix_env(agent, cur, home)
         cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
         cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
         mg = _sibling("model_gateway")

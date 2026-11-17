@@ -98,6 +98,7 @@ network_policies:
         enforcement: enforce
         access: read-write
         allowed_ips: [192.0.2.1/32]
+        allow_encoded_slash: true  # Matrix IDs in paths (e.g. secret-storage key ids) carry %2F
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 

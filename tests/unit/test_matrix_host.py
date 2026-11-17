@@ -65,3 +65,43 @@ def test_missing_settings_say_where(tmp_path):
     Path(rt.env["LOGOS_MATRIX_ENV"]).write_text("MATRIX_SERVER_NAME=x\n")
     with pytest.raises(mh.MatrixError, match="MATRIX_REGISTRATION_TOKEN"):
         mh.MatrixHost(rt).settings()
+
+
+def test_the_sandbox_policy_lets_matrix_ids_through():
+    # Secret-storage key ids (and other Matrix ids in paths) contain an encoded '/'; the
+    # sandbox proxy drops those unless the rule allows them, which broke cross-signing.
+    import yaml
+    policy = yaml.safe_load((REPO / "infra/agent-image/policy.yaml").read_text())
+    for e in policy["network_policies"]["matrix"]["endpoints"]:
+        assert e.get("allow_encoded_slash") is True
+
+
+def test_a_written_recovery_key_is_handed_back_on_start(monkeypatch):
+    from gateway import agent_runtime as art
+    host = type("Host", (), {"up": lambda s: False, "url": lambda s: "http://172.17.0.1:6167",
+                             "agent_login": lambda s, n, cur: {"MATRIX_ACCESS_TOKEN": "at",
+                                                               "MATRIX_USER_ID": "@dev-agent:x"}})
+    fake = type("M", (), {"MatrixHost": lambda rt: host(), "MatrixError": mh.MatrixError})
+    monkeypatch.setattr(art, "_sibling", lambda name: fake)
+
+    class RT:
+        MATRIX_EXPORTED = art.AgentRuntime.MATRIX_EXPORTED
+        MATRIX_RECOVERY_FILE = art.AgentRuntime.MATRIX_RECOVERY_FILE
+
+        def __init__(self, files):
+            self.files = files
+
+        def get(self, vol, rel):
+            return self.files.get((vol, rel), "")
+
+    agent = {"name": "dev", "matrix": {"enabled": True}}
+    cur = {}
+    art.AgentRuntime._matrix_env(RT({}), agent, cur, "logos-home-dev")
+    assert "MATRIX_RECOVERY_KEY" not in cur                 # first start: bootstrap writes one
+    assert cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] == "/opt/data/matrix-recovery-key"
+    cur = {"MATRIX_RECOVERY_KEY": "stale"}
+    art.AgentRuntime._matrix_env(RT({("logos-home-dev", "matrix-recovery-key"): "EsT abc\n"}),
+                                 agent, cur, "logos-home-dev")
+    assert cur["MATRIX_RECOVERY_KEY"] == "EsT abc"
+    art.AgentRuntime._matrix_env(RT({}), {"name": "dev"}, cur, "logos-home-dev")
+    assert "MATRIX_RECOVERY_KEY" not in cur                 # Matrix off: nothing exported
