@@ -17,9 +17,10 @@ model:
   default: qwen/qwen3.6-35b-a3b
   context_length: 65536
   gateway: true                 # model calls go through the model gateway (docs/model-gateway.md)
-  allow: []                     # paid providers this agent may use, e.g. [anthropic]. Local is always allowed
+  fallbacks:                    # paid models tried, in order, when the local model cannot answer
+    - anthropic/claude-haiku-5-5   # (docs/model-gateway.md). Needs ANTHROPIC_API_KEY in models.env
 budget:
-  monthly_usd: 1                # hard cap on paid model spend; the gateway refuses calls beyond it
+  monthly_usd: 1               # hard cap on paid model spend a month; beyond it only the local model answers
 telegram:
   enabled: false
   allowed_users: []
