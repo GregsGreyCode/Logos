@@ -105,3 +105,19 @@ def test_a_written_recovery_key_is_handed_back_on_start(monkeypatch):
     assert cur["MATRIX_RECOVERY_KEY"] == "EsT abc"
     art.AgentRuntime._matrix_env(RT({}), {"name": "dev"}, cur, "logos-home-dev")
     assert "MATRIX_RECOVERY_KEY" not in cur                 # Matrix off: nothing exported
+
+
+def test_the_client_url_can_differ_from_the_server_name():
+    env = mh.server_env({**SETTINGS, "MATRIX_SERVER_NAME": "gregandbere.com",
+                         "MATRIX_CLIENT_URL": "https://logos.example.ts.net"})
+    assert env["CONDUWUIT_SERVER_NAME"] == "gregandbere.com"
+    assert env["CONDUWUIT_WELL_KNOWN__CLIENT"] == "https://logos.example.ts.net"
+    assert "CONDUWUIT_WELL_KNOWN__SERVER" not in env          # no federation: nothing to announce
+
+
+def test_the_first_user_token_is_read_from_the_server_log():
+    log = ("\x1b[2m2026\x1b[0m INFO In order to use your new homeserver, you need to create its first "
+           "user account.\nOpen your Matrix client of choice and register an account on gregandbere.com "
+           "using the registration token \x1b[1mAbC123xyz\x1b[0m . Pick your own username.\n")
+    assert mh.first_user_token(log) == "AbC123xyz"
+    assert mh.first_user_token("nothing here") == ""
