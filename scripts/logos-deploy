@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""Bring this machine up to date with the v2 branch, restarting only what changed.
+
+Usage:
+  scripts/logos-deploy              show the plan, ask, then deploy
+  scripts/logos-deploy --dry-run    show the plan only; change nothing
+  scripts/logos-deploy --yes        deploy without asking
+  scripts/logos-deploy --check      only run the health checks
+  scripts/logos-deploy --plan-json  print the plan as JSON (the dashboard's Updates screen)
+
+The dashboard's "Update now" button runs `--yes` as its own systemd user unit
+(logos-deploy), so the deploy carries on while it restarts the dashboard. Progress is
+written to ~/.logos/deploy-status.json and the output to ~/.logos/deploy-output.txt.
+
+Steps:
+  1. Refuse unless this is a clean checkout of branch v2 (untracked files such as
+     agents/*.local.yaml are fine; they are never touched).
+  2. Fetch origin and fast-forward to origin/v2. Nothing is ever merged or forced.
+  3. Work out from the changed files what needs doing:
+       pyproject.toml                      reinstall the Python package into venv/
+       infra/agent-image/                  rebuild the agent image
+       gateway/, pyproject.toml            restart the dashboard (logos-gateway service)
+       agents/<name>.yaml                  recreate that agent
+       souls/, infra/agent-image/, infra/brain-template/, infra/agent-jobs/,
+       infra/openshell/, gateway/agent_runtime.py
+                                           recreate every agent that is running here
+     Agents are recreated only if they are running on this machine, so the dev and
+     bench agents never start on production. Their brains, memory and Telegram tokens
+     live in volumes and are kept.
+  4. Bring the model gateway, model guard, noticeboard and voice up to date. Each of
+     these restarts only if its own config or code changed.
+  5. Health checks: dashboard answers, every agent that was running is Ready again.
+
+Each deploy is logged to ~/.logos/deploy.log with the commit before and after. To go
+back, revert the change on GitHub (a revert PR into v2) and deploy again.
+"""
+import argparse
+import datetime as _dt
+import importlib
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+BRANCH = "v2"
+SERVICE = "logos-gateway"
+STATE_DIR = Path.home() / ".logos"
+LOG = STATE_DIR / "deploy.log"
+STATUS = STATE_DIR / "deploy-status.json"
+
+#: Changes under these paths affect every agent's sandbox (its config, soul, policy or jobs).
+ALL_AGENT_PATHS = ("souls/", "infra/agent-image/", "infra/brain-template/", "infra/agent-jobs/",
+                   "infra/openshell/", "gateway/agent_runtime.py")
+IMAGE_PATHS = ("infra/agent-image/",)
+DASHBOARD_PATHS = ("gateway/", "pyproject.toml")
+PACKAGE_PATHS = ("pyproject.toml",)
+
+
+class Refused(Exception):
+    """This checkout cannot be deployed as it is; the message says why."""
+
+
+def plan(changed, running):
+    """What a deploy has to do, from the changed paths and the agents running here.
+
+    Returns {"package": bool, "image": bool, "dashboard": bool, "agents": [names]}.
+    Pure, so it can be tested without git, Docker or OpenShell.
+    """
+    def hit(prefixes):
+        return any(p.startswith(prefixes) for p in changed)
+    agents = set()
+    if hit(ALL_AGENT_PATHS):
+        agents.update(running)
+    for p in changed:
+        if p.startswith("agents/") and p.endswith(".yaml") and Path(p).stem in running:
+            agents.add(Path(p).stem)
+    return {"package": hit(PACKAGE_PATHS), "image": hit(IMAGE_PATHS),
+            "dashboard": hit(DASHBOARD_PATHS), "agents": sorted(agents)}
+
+
+def describe(p):
+    """The plan as plain sentences, in the order the steps run."""
+    steps = []
+    if p["package"]:
+        steps.append("Reinstall the Python package")
+    if p["image"]:
+        steps.append("Rebuild the agent image (several minutes)")
+    if p["dashboard"]:
+        steps.append("Restart the dashboard (a few seconds)")
+    steps.append("Update the model gateway, noticeboard and voice where they changed")
+    steps += [f"Recreate agent {n} (about a minute without replies)" for n in p["agents"]]
+    return steps
+
+
+# --- shell helpers ------------------------------------------------------------------------
+
+def sh(*argv, check=True, capture=True):
+    r = subprocess.run(argv, cwd=REPO, text=True, capture_output=capture)
+    if check and r.returncode != 0:
+        detail = (r.stderr or r.stdout or "").strip() if capture else ""
+        raise RuntimeError(f"failed: {' '.join(argv)}\n{detail}".strip())
+    return (r.stdout or "").strip() if capture else ""
+
+
+def git(*args, check=True):
+    return sh("git", *args, check=check)
+
+
+def runtime():
+    """gateway/agent_runtime.py, loaded by path like scripts/logos-agent does."""
+    spec = importlib.util.spec_from_file_location("logos_agent_runtime", REPO / "gateway" / "agent_runtime.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod.AgentRuntime(REPO)
+
+
+def running_agents(rt):
+    phases = rt.phases()
+    return sorted(n for n in rt.defined() if phases.get(n) == "Ready")
+
+
+def container_exists(name):
+    return bool(sh("docker", "ps", "-a", "--filter", f"name=^{name}$", "--format", "{{.Names}}", check=False))
+
+
+def now():
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def write_status(**fields):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATUS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(fields))
+    tmp.replace(STATUS)
+
+
+# --- steps --------------------------------------------------------------------------------
+
+def prepare(rt):
+    """Fetch and work out the plan. Raises Refused when this checkout cannot be deployed."""
+    branch = git("rev-parse", "--abbrev-ref", "HEAD")
+    if branch != BRANCH:
+        raise Refused(f"This checkout is on {branch!r}; updates run from {BRANCH!r} (git switch {BRANCH}).")
+    dirty = git("status", "--porcelain", "--untracked-files=no")
+    if dirty:
+        raise Refused("Tracked files have local changes; commit or discard them first:\n" + dirty)
+    git("fetch", "--quiet", "origin", BRANCH)
+    before, after = git("rev-parse", "HEAD"), git("rev-parse", f"origin/{BRANCH}")
+    if before != after and subprocess.run(["git", "merge-base", "--is-ancestor", before, after],
+                                          cwd=REPO).returncode != 0:
+        raise Refused(f"Local {BRANCH} has commits that origin/{BRANCH} does not; not updating.")
+    running = running_agents(rt)
+    commits, changed = [], []
+    if before != after:
+        for line in git("log", "--no-decorate", "--format=%h%x09%s", f"{before}..{after}").splitlines():
+            sha, _, subject = line.partition("\t")
+            commits.append({"sha": sha, "subject": subject})
+        changed = git("diff", "--name-only", before, after).splitlines()
+    p = plan(changed, running)
+    return {"before": before, "after": after, "commits": commits, "changed": len(changed),
+            "plan": p, "steps": describe(p) if commits else [], "running": running}
+
+
+def images_for(rt, names):
+    return sorted({str(rt.load(n)["image"]) for n in names if rt.load(n).get("image")})
+
+
+def update_services(rt):
+    """Model gateway (+ guard), noticeboard and voice: each restarts only if it changed."""
+    sys.path.insert(0, str(REPO))
+    for module, cls, container, label in (("gateway.model_gateway", "ModelGateway", "logos-models", "model gateway"),
+                                          ("gateway.noticeboard_host", "NoticeboardHost", "logos-noticeboard", "noticeboard"),
+                                          ("gateway.voice_host", "VoiceHost", "logos-voice", "voice")):
+        if not container_exists(container):
+            continue                    # not used on this machine
+        try:
+            restarted = getattr(importlib.import_module(module), cls)(rt).up()
+            print(f"  {label}: {'restarted' if restarted else 'unchanged'}", flush=True)
+        except Exception as e:          # report and carry on: the agents may still be fine
+            print(f"  {label}: FAILED: {e}", flush=True)
+
+
+def dashboard_port():
+    try:
+        for line in (STATE_DIR / ".env").read_text().splitlines():
+            if line.startswith("LOGOS_PORT="):
+                return int(line.split("=", 1)[1].strip())
+    except (OSError, ValueError):
+        pass
+    return 8091
+
+
+def health(expect_agents, port):
+    ok = True
+    if subprocess.run(["systemctl", "--user", "is-active", "--quiet", SERVICE]).returncode != 0:
+        print(f"  dashboard: service {SERVICE} is NOT active"); ok = False
+    else:
+        code = None
+        for _ in range(20):
+            try:
+                code = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3).status
+            except urllib.error.HTTPError as e:
+                code = e.code           # 401 means it is up and asking for a login
+            except OSError:
+                time.sleep(1); continue
+            break
+        if code and code < 500:
+            print(f"  dashboard: answering on port {port}")
+        else:
+            print(f"  dashboard: NOT answering on port {port}"); ok = False
+    if expect_agents:
+        phases = runtime().phases()
+        for n in expect_agents:
+            ph = phases.get(n, "missing")
+            print(f"  {n}: {ph}")
+            ok = ok and ph == "Ready"
+    return ok
+
+
+def deploy(info):
+    """Fast-forward and restart what the plan says. Returns True when everything is healthy."""
+    p, before, after = info["plan"], info["before"], info["after"]
+    git("merge", "--ff-only", "--quiet", f"origin/{BRANCH}")
+    print(f"Now at {after[:7]}.", flush=True)
+    rt = runtime()                      # reload: agent_runtime.py itself may have changed
+    if p["package"]:
+        print("Reinstalling the Python package…", flush=True)
+        if subprocess.run(["sh", "-c", "command -v uv"], capture_output=True).returncode == 0:
+            sh("uv", "pip", "install", "--python", "venv/bin/python", "-e", ".", capture=False)
+        else:
+            sh("venv/bin/python", "-m", "pip", "install", "-q", "-e", ".", capture=False)
+    if p["image"]:
+        for image in images_for(rt, info["running"]) or images_for(rt, rt.defined()):
+            print(f"Building {image}…", flush=True)
+            sh("docker", "build", "-q", "-t", image, "infra/agent-image", capture=False)
+    if p["dashboard"]:
+        print("Restarting the dashboard…", flush=True)
+        sh("systemctl", "--user", "restart", SERVICE)
+    print("Services:", flush=True)
+    update_services(rt)
+    failed = []
+    for n in p["agents"]:
+        print(f"Recreating {n}…", flush=True)
+        try:
+            if rt.up(n) != 0:
+                failed.append(n)
+        except Exception as e:
+            print(f"  {n}: FAILED: {e}", flush=True); failed.append(n)
+    with LOG.open("a") as f:
+        f.write(f"{now()} {before[:7]} -> {after[:7]} {'; '.join(info['steps'])}\n")
+    print("\nHealth:", flush=True)
+    return health(info["running"], dashboard_port()) and not failed
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    for flag in ("--dry-run", "--yes", "--check", "--plan-json"):
+        ap.add_argument(flag, action="store_true")
+    args = ap.parse_args(argv)
+    rt = runtime()
+
+    if args.check:
+        return 0 if health(running_agents(rt), dashboard_port()) else 1
+
+    if args.plan_json:
+        try:
+            out = prepare(rt)
+        except (Refused, RuntimeError) as e:
+            out = {"refused": str(e)}
+        print(json.dumps(out))
+        return 0
+
+    try:
+        info = prepare(rt)
+    except (Refused, RuntimeError) as e:
+        if args.yes:
+            write_status(state="failed", finished=now(), error=str(e))
+        sys.exit(str(e))
+    if not info["commits"]:
+        print(f"Already up to date at {info['before'][:7]}.")
+        if args.yes:
+            write_status(state="done", before=info["before"], after=info["after"], finished=now(),
+                         message="Already up to date.")
+        return 0
+
+    print(f"{info['before'][:7]} -> {info['after'][:7]}:")
+    for c in info["commits"]:
+        print(f"  {c['sha']} {c['subject']}")
+    print(f"\n{info['changed']} file(s) changed. Plan:")
+    for s in info["steps"]:
+        print(f"  - {s}")
+    print(f"  Agents running here: {', '.join(info['running']) or 'none'}", flush=True)
+    if args.dry_run:
+        return 0
+    if not args.yes and input("\nDeploy? [y/N] ").strip().lower() not in ("y", "yes"):
+        print("Nothing changed."); return 1
+
+    started = now()
+    base = {"before": info["before"], "after": info["after"], "steps": info["steps"], "started": started}
+    write_status(state="running", **base)
+    try:
+        ok = deploy(info)
+    except Exception as e:
+        print(f"\nFAILED: {e}", flush=True)
+        write_status(state="failed", finished=now(), error=str(e), **base)
+        return 1
+    write_status(state="done" if ok else "problems", finished=now(), **base)
+    print("\nUpdated." if ok else f"\nUpdated with problems (see above). Log: {LOG}")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
