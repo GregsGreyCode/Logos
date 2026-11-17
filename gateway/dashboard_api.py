@@ -749,7 +749,10 @@ async def models_overview(app: web.Application, runtime: Any) -> dict:
         definitions = {}
         for name in runtime.defined():
             d = runtime.load(name)
-            if d.get("sandbox", True) is not False and (d.get("model") or {}).get("gateway"):
+            # Agents hidden from the dashboard (a dev agent defined but never started on this
+            # machine) stay out of the figures and the alerts too.
+            if (d.get("sandbox", True) is not False and d.get("dashboard") is not False
+                    and (d.get("model") or {}).get("gateway")):
                 definitions[name] = d
         gw = model_gateway.ModelGateway(runtime)
         attached = model_gateway.paid_providers(gw._keys_text())
