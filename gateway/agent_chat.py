@@ -246,7 +246,7 @@ def has_backup(definition: Mapping[str, Any]) -> bool:
     one is off: it uses the gateway, names ``model.fallbacks`` and at least one of them
     has a key in ``models.env`` on this machine."""
     from gateway import model_gateway
-    if not model_gateway.uses_gateway(definition):
+    if model_gateway.BRAIN_STAYS_LOCAL or not model_gateway.uses_gateway(definition):
         return False
     try:
         text = model_gateway.keys_file(os.environ).read_text()

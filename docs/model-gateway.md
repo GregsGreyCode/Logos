@@ -117,7 +117,20 @@ wait out a fifteen-minute timeout in silence. Three things prevent that:
 Scheduled jobs that need the model fail the same way while it is off and run again at their
 next time. Voice notes are still turned into text, because that runs on this server.
 
-## Paid fallbacks
+## Paid fallbacks (switched off: the brain stays local)
+
+**Since 2026-11-17 no agent may use a paid model.** Every agent request carries its memories
+and brain index, so any request that reaches a cloud provider takes the brain out of the house.
+`BRAIN_STAYS_LOCAL` in `gateway/model_gateway.py` enforces this in code: the gateway config
+gives each agent only the local model, the gateway container never receives `models.env`, and
+`logos-agent up` refuses a definition with `model.fallbacks`, a paid provider in `model.allow`,
+a model provider in `providers`, a non-local `model.provider`, or a paid model for the
+consolidation or digest job. When the local model is off, agents say so and do not answer.
+
+The planned replacement is a brain-free advisor: a stateless cloud helper that only ever sees
+questions the private agent writes for it, through a filter that checks them for personal
+identifiers and logs what was sent. The fallback code below is kept, and tested, for that work.
+
 
 The local model is free but not always there. An agent can name paid models to fall back on,
 tried in order:
