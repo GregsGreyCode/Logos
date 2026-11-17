@@ -56,7 +56,10 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const convs = h('div', { class: 'convs' });
 
   // Shown while the local model server is not answering (LM Studio closed, or that machine off).
-  const modelStatus = h('span', { class: 'status down', hidden: true }, 'Model server off: it cannot reply');
+  // With a paid fallback the agent still answers while the local model is off.
+  const modelStatus = agent.has_backup
+    ? h('span', { class: 'status', hidden: true }, 'Local model off: a backup model replies')
+    : h('span', { class: 'status down', hidden: true }, 'Model server off: it cannot reply');
   const modelOff = (off) => { modelStatus.hidden = !off; };
   modelOff(agent.model_up === false);
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -184,7 +187,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
           try { d = JSON.parse(line.slice(5)); } catch (e) { continue; }
           if (d.type === 'task_started') running = { taskId: d.task_id };
           else if (d.type === 'status' && !body) reply.replaceChildren(h('span', { class: 'when' }, d.content));
-          else if (d.type === 'token') { modelOff(false); body += d.content; reply.replaceChildren(...markdown(body.replace(/^\s+/, ''))); }
+          else if (d.type === 'token') { if (!agent.has_backup) modelOff(false); body += d.content; reply.replaceChildren(...markdown(body.replace(/^\s+/, ''))); }
           else if (d.type === 'message') { body = d.content; reply.replaceChildren(...markdown(body)); }
           else if (d.type === 'tool_start') {
             tools[d.call_id] = h('span', { class: 'chip', title: d.preview || '' }, `Using ${d.tool}…`);

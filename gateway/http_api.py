@@ -1589,7 +1589,9 @@ async def _handle_chat(request: web.Request) -> web.StreamResponse:
         # A local model that was unloaded is loaded here with the agent's own
         # settings, and the person is told why the first reply is slow.
         model_off = False
-        async for payload in _agent_chat.wake_model(_definition.get("model") or {}, links.runtime.runner.http):
+        async for payload in _agent_chat.wake_model(
+                _definition.get("model") or {}, links.runtime.runner.http,
+                backup=await asyncio.to_thread(_agent_chat.has_backup, _definition)):
             await resp.write(_agent_chat.sse(payload))
             model_off = model_off or payload.get("error_type") == _agent_chat.MODEL_OFF
         if model_off:
