@@ -45,7 +45,8 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
   (put it in `~/.logos/.env`). Without it the dashboard shows empty states and chat returns
   `503 no_agents_running`.
 - Three agents are defined (`agents/greg.yaml`, `agents/bere.yaml`, `agents/household.yaml`), plus
-  `agents/bench.yaml` for benchmarking. They can exchange messages but do not yet check the
+  `agents/bench.yaml` for benchmarking and `agents/dev.yaml` for a development machine (its own
+  Telegram bot, never started in production). They can exchange messages but do not yet check the
   noticeboard on their own.
 - There is no brain browser in the dashboard yet.
 - Web conversations and Telegram conversations are separate sessions of the same agent. They
