@@ -431,7 +431,7 @@ def test_agent_status(status):
     go, _rt = status
     code, body = go("u-greg", "GET", "/api/v2/agents/greg/status")
     assert code == 200 and len(body["jobs"]) == 3
-    assert body["model"] == {"name": "m", "local": False, "via_gateway": False, "paid_providers": []}
+    assert body["model"] == {"name": "m", "local": False, "via_gateway": False, "paid_providers": [], "up": None}
     assert body["budget"] == {"monthly_usd": None}
     assert body["reach"]["allowed"] == ["Its model server"] and "Your home network" in body["reach"]["blocked"]
     assert go("u-bere", "GET", "/api/v2/agents/greg/status")[0] == 404

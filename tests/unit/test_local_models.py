@@ -67,3 +67,12 @@ def test_report_names_missing_small_and_stray_models():
     assert "qwen/q: not loaded" in text and "q: loaded, but no agent uses it" in text
     s = Server({"qwen/q": 4096})
     assert "loaded too small" in lm.report(s.http, {"a": agent()})
+
+
+def test_reachable_is_true_only_when_the_server_answers():
+    assert lm.reachable(Server().http, BASE) is True
+
+    def dead(url, **kw):
+        raise TimeoutError("timed out")
+
+    assert lm.reachable(dead, BASE) is False

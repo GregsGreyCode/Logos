@@ -78,6 +78,24 @@ async def handle_me(request: web.Request) -> web.Response:
     return web.json_response(_user(request))
 
 
+MODEL_CHECK_SECONDS = 20
+
+
+async def model_server_up(request: web.Request, definition: Mapping[str, Any]) -> Optional[bool]:
+    """Whether this agent's local model server is answering: True, False, or None when the
+    agent has no local model. Checked at most every 20 seconds per server."""
+    from gateway import local_models
+    base = local_models.server(definition.get("model") or {})
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not base or runtime is None:
+        return None
+    cache = request.app.setdefault("model_server_up", {})
+    now = asyncio.get_running_loop().time()
+    if base not in cache or now - cache[base][0] > MODEL_CHECK_SECONDS:
+        cache[base] = (now, await asyncio.to_thread(local_models.reachable, runtime.runner.http, base))
+    return cache[base][1]
+
+
 async def handle_agents(request: web.Request) -> web.Response:
     """GET /api/v2/agents — the agents this user can talk to."""
     user = _user(request)
@@ -100,6 +118,7 @@ async def handle_agents(request: web.Request) -> web.Response:
             "shared": owners is None or len(owners) > 1,
             "model": str((definition.get("model") or {}).get("default") or ""),
             "voice": bool(definition.get("voice")),
+            "model_up": await model_server_up(request, definition),
         })
     # Agents this person cannot use are shown by name and up/down only.
     others = []
@@ -285,7 +304,8 @@ async def handle_agent_status(request: web.Request) -> web.Response:
     return web.json_response({
         "jobs": jobs,
         "model": {"name": str(model.get("default") or ""), "local": model.get("provider") == "lmstudio",
-                  "via_gateway": via_gateway, "paid_providers": paid},
+                  "via_gateway": via_gateway, "paid_providers": paid,
+                  "up": await model_server_up(request, definition)},
         "budget": {"monthly_usd": float((definition.get("budget") or {}).get("monthly_usd", mg.DEFAULT_MONTHLY_USD))
                    if via_gateway else None},
         "reach": {"allowed": allowed, "blocked": ["Your home network", "The internet", "The other agents"]},
