@@ -1,0 +1,49 @@
+# The dev agent: a real agent on a development machine, for trying features end to end,
+# including the parts only Telegram shows (voice notes, scheduled messages, replies to
+# "X's agent asks" prompts). Create or recreate with:
+#   scripts/logos-agent up dev
+#
+# It has its OWN Telegram bot. Never give it a bot that a production agent uses: two
+# machines polling one bot take each other's messages.
+#
+# Unlike the bench agent, nothing wipes its storage, so its bot token and brain survive
+# test runs. On the production machine it is defined but never started.
+name: dev
+display_name: Dev agent
+owners: []                      # set in agents/dev.local.yaml (untracked) on the dev machine
+dashboard: false                # hidden unless agents/dev.local.yaml says `dashboard: true`
+role: test                      # test agents and real agents cannot message each other
+image: logos-agent:0.23.1
+soul: souls/general/soul.md
+policy: infra/agent-image/policy.yaml
+providers: []
+timezone: Europe/London
+noticeboard: true
+voice: true
+
+model:
+  provider: lmstudio
+  base_url: http://192.0.2.117:1234/v1   # placeholder; put the real address in agents/dev.local.yaml
+  default: qwen/qwen3.6-35b-a3b
+  context_length: 65536
+  gateway: true
+  fallbacks:
+    - anthropic/claude-haiku-5-5   # only if the dev machine's models.env has a key
+budget:
+  monthly_usd: 1                # a test agent has no business spending more
+
+telegram:
+  enabled: true
+  allowed_users: []               # set in agents/dev.local.yaml (untracked): Telegram numeric user IDs
+
+consolidation:
+  enabled: true
+  schedule: "30 2 * * *"
+
+digest:
+  enabled: true
+  schedule: "0 18 * * 0"
+
+session_reset:
+  mode: daily
+  at_hour: 3
