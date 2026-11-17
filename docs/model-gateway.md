@@ -116,3 +116,47 @@ wait out a fifteen-minute timeout in silence. Three things prevent that:
 
 Scheduled jobs that need the model fail the same way while it is off and run again at their
 next time. Voice notes are still turned into text, because that runs on this server.
+
+## Paid fallbacks
+
+The local model is free but not always there. An agent can name paid models to fall back on,
+tried in order:
+
+```yaml
+model:
+  fallbacks:
+    - model: anthropic/claude-haiku-5-5     # first choice when the local model cannot answer
+      monthly_usd: 4                        # this provider's share of the agent's monthly total
+    - openrouter/google/gemini-2.5-flash-lite   # gets what is left of the total
+budget:
+  monthly_usd: 5                            # the agent's total for the month, across all paid providers
+```
+
+Then `scripts/logos-models up`. Agents do not need restarting: they keep asking the gateway for
+their local model, and the gateway does the rest.
+
+- **When it falls back.** Whenever the local model fails: the model guard's refusal while LM
+  Studio is off, a connection error, a timeout, an error reply. And again from one paid model to
+  the next when a provider fails (5xx, 429) or has no budget left.
+- **Providers need a key.** An entry whose provider has no key in `models.env` is left out, so
+  the chain can be written before the keys exist.
+- **The money limit is per paid provider, and it is hard.** Each provider may spend its share
+  and no more; the shares add up to at most `budget.monthly_usd`. When a provider's share is
+  spent it is skipped and the next is tried. When every share is spent the agent has the local
+  model only, and says the model is unavailable while that is off.
+- **The local model is never refused for money.** The limit is deliberately not put on the
+  agent's key as a whole: Bifrost enforces a key-wide limit on every call, including free local
+  ones, so reaching it would stop the agent altogether. (When a key-wide limit from an earlier
+  config is no longer wanted, `logos-models up` removes it from the gateway's store; Bifrost
+  does not do that by itself.)
+- **Which model answered.** Every reply carries it: `model` in the body, and the
+  `x-bifrost-provider` / `x-bifrost-resolved-model` / `x-bifrost-routing-info-is-fallback`
+  headers. The gateway's log (`logs.db` on the `logos-models` volume) records it with the cost.
+- **Speed.** While LM Studio is off the guard refuses instantly (it remembers for 15 seconds
+  that the server did not answer), so a fallback reply does not start late. A server that has
+  just come back is used again within those 15 seconds.
+- **`model.fallbacks` replaces `model.allow`** for that agent: with a chain, only the models in
+  it can be reached.
+
+Under the hood this is one Bifrost routing rule per agent (`governance.routing_rules`, scoped
+to the agent's virtual key) and a `budgets` entry on each paid provider config.

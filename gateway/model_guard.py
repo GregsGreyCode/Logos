@@ -19,6 +19,7 @@ import json
 import os
 import socket
 import sys
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -33,9 +34,14 @@ def off_body() -> bytes:
                                  "code": "model_server_off"}}).encode()
 
 
-def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: float = 900.0):
+def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: float = 900.0,
+                 off_memory: float = 15.0):
     target = urllib.parse.urlsplit(upstream)
     host, port = target.hostname, target.port or 80
+    # When the server did not answer, calls in the next few seconds are refused without
+    # waiting again: with paid fallbacks every call would otherwise start three seconds late.
+    # The price is that a server that has just come back is noticed up to 15 seconds later.
+    state = {"off_until": 0.0}
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -70,11 +76,13 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
         def _pass(self) -> None:
             self.close_connection = True
             body = self._body()
+            if time.monotonic() < state["off_until"]:
+                return self._off()
             try:
                 sock = socket.create_connection((host, port), timeout=connect_timeout)
             except OSError:
-                print(f"model server not answering: {self.command} {self.path.split('?')[0]} refused at once",
-                      flush=True)
+                state["off_until"] = time.monotonic() + off_memory
+                print(f"model server not answering: {self.command} {self.path.split('?')[0]} refused", flush=True)
                 return self._off()
             conn = http.client.HTTPConnection(host, port)
             conn.sock = sock
@@ -118,7 +126,8 @@ def main() -> int:
     upstream = os.environ["GUARD_UPSTREAM"]
     port = int(os.environ.get("GUARD_PORT", "8094"))
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(
-        upstream, connect_timeout=float(os.environ.get("GUARD_CONNECT_TIMEOUT", "3"))))
+        upstream, connect_timeout=float(os.environ.get("GUARD_CONNECT_TIMEOUT", "3")),
+        off_memory=float(os.environ.get("GUARD_OFF_MEMORY", "15"))))
     server.daemon_threads = True
     print(f"model guard: {port} -> {upstream}", flush=True)
     server.serve_forever()
