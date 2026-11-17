@@ -5,11 +5,12 @@ import { brainView } from './brain.js';
 import { agentsView } from './agents.js';
 import { peopleView } from './people.js';
 import { modelsView } from './models.js';
+import { updatesView } from './updates.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON } from './util.js';
 
 const views = { chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
-  models: modelsView, people: peopleView };
+  models: modelsView, people: peopleView, updates: updatesView };
 const root = document.getElementById('view');
 let cleanup = null;
 
@@ -57,6 +58,7 @@ document.getElementById('logout').addEventListener('click', async () => {
 
 paintTheme();
 state.me = await getJSON('/api/v2/me');
+if (state.me.role === 'admin') document.getElementById('nav-updates').hidden = false;
 document.getElementById('who').textContent = `Signed in as ${state.me.display_name || state.me.username}`;
 // Keep the "waiting on you" count in the menu current on every screen.
 const badge = () => getJSON('/api/v2/noticeboard').then((d) => setBadge(d.waiting.length)).catch(() => {});
