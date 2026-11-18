@@ -394,6 +394,8 @@ class ModelGateway:
         # The keys file is passed as the container's environment, so a new or
         # changed provider key also needs a fresh container.
         stamp = "local-only" if BRAIN_STAYS_LOCAL else hashlib.sha256(keys_text.encode()).hexdigest()[:16]
+        # The database clean-ups below run only on a (re)start, so a change to them needs one too.
+        stamp += "-" + hashlib.sha256((PRUNE_BUDGETS + PRUNE_PROVIDERS).encode()).hexdigest()[:8]
         if changed:
             self.rt.run(["docker", "run", "--rm", "-i", "-v", f"{VOLUME}:/v", HELPER, "sh", "-c",
                          f"cat > /v/config.json && chown {GATEWAY_UID} /v/config.json && chmod 0600 /v/config.json"],
