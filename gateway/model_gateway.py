@@ -207,6 +207,32 @@ if os.path.exists("/v/config.db"):
     db.commit()
 """
 
+# Bifrost keeps providers it has ever been given in its own database (config.db), even after
+# config.json stops listing them. Remove every provider config.json does not name, with its keys,
+# models, virtual-key grants and routing targets, so the gateway knows only what Logos configures.
+PRUNE_PROVIDERS = """
+import json, os, sqlite3, sys
+keep = set(json.loads(sys.argv[1]))
+if os.path.exists("/v/config.db"):
+    db = sqlite3.connect("/v/config.db")
+    for pid, name in db.execute("select id, name from config_providers").fetchall():
+        if name in keep:
+            continue
+        keys = [k for (k,) in db.execute("select id from config_keys where provider_id = ? or provider = ?", (pid, name))]
+        vkpc = [v for (v,) in db.execute("select id from governance_virtual_key_provider_configs where provider = ?", (name,))]
+        for v in vkpc:
+            db.execute("delete from governance_virtual_key_provider_config_keys where table_virtual_key_provider_config_id = ?", (v,))
+        for k in keys:
+            db.execute("delete from governance_virtual_key_provider_config_keys where table_key_id = ?", (k,))
+        db.execute("delete from governance_virtual_key_provider_configs where provider = ?", (name,))
+        db.execute("delete from routing_targets where provider = ?", (name,))
+        db.execute("delete from config_models where provider_id = ?", (pid,))
+        db.execute("delete from config_keys where provider_id = ? or provider = ?", (pid, name))
+        db.execute("delete from config_providers where id = ?", (pid,))
+        print("removed left-over provider", name)
+    db.commit()
+"""
+
 
 def local_server(agents: Mapping[str, Mapping[str, Any]]) -> str:
     """The one local model server the agents behind the gateway share (its ``/v1`` URL)."""
@@ -379,6 +405,11 @@ class ModelGateway:
             out = self.rt.run(["docker", "run", "--rm", "--user", GATEWAY_UID, "-v", f"{VOLUME}:/v",
                                "--entrypoint", "python3", image, "-c", PRUNE_BUDGETS,
                                json.dumps(budget_ids(built))], check=False)
+            if out.strip():
+                print(out.strip())
+            out = self.rt.run(["docker", "run", "--rm", "--user", GATEWAY_UID, "-v", f"{VOLUME}:/v",
+                               "--entrypoint", "python3", image, "-c", PRUNE_PROVIDERS,
+                               json.dumps(sorted(built["providers"]))], check=False)
             if out.strip():
                 print(out.strip())
         cmd = ["docker", "run", "-d", "--name", CONTAINER, "--restart", "unless-stopped",

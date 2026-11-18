@@ -315,3 +315,32 @@ def test_a_slow_local_model_is_not_cut_off_mid_reply():
     net = cfg["providers"]["lm-studio"]["network_config"]
     assert net["stream_idle_timeout_in_seconds"] == net["default_request_timeout_in_seconds"] == 900
     assert 5 <= net["stream_idle_timeout_in_seconds"] <= 3600        # Bifrost's accepted range
+
+
+def test_left_over_providers_are_removed_from_bifrosts_database(tmp_path):
+    import sqlite3, subprocess, sys as _sys
+    v = tmp_path / "v"
+    v.mkdir()
+    db = sqlite3.connect(v / "config.db")
+    db.executescript("""
+        create table config_providers (id integer, name text);
+        create table config_keys (id integer, name text, provider_id integer, provider text);
+        create table config_models (id integer, provider_id integer, name text);
+        create table governance_virtual_key_provider_configs (id integer, virtual_key_id text, provider text);
+        create table governance_virtual_key_provider_config_keys (table_virtual_key_provider_config_id integer, table_key_id integer);
+        create table routing_targets (rule_id text, provider text, model text, key_id text);
+        insert into config_providers values (1, 'lm-studio'), (14, 'anthropic');
+        insert into config_keys values (1, 'local', 1, 'lm-studio'), (2, 'anthropic-key', 14, 'anthropic');
+        insert into governance_virtual_key_provider_configs values (10, 'vk-greg', 'lm-studio'), (11, 'vk-greg', 'anthropic');
+        insert into governance_virtual_key_provider_config_keys values (10, 1), (11, 2);
+        insert into routing_targets values ('r', 'anthropic', 'claude', '2');
+    """)
+    db.commit()
+    script = mg.PRUNE_PROVIDERS.replace("/v/config.db", str(v / "config.db"))
+    out = subprocess.run([_sys.executable, "-c", script, '["lm-studio"]'], capture_output=True, text=True, check=True)
+    assert "removed left-over provider anthropic" in out.stdout
+    assert db.execute("select name from config_providers").fetchall() == [("lm-studio",)]
+    assert db.execute("select name from config_keys").fetchall() == [("local",)]
+    assert db.execute("select provider from governance_virtual_key_provider_configs").fetchall() == [("lm-studio",)]
+    assert db.execute("select * from governance_virtual_key_provider_config_keys").fetchall() == [(10, 1)]
+    assert db.execute("select count(*) from routing_targets").fetchone() == (0,)
