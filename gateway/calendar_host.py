@@ -20,6 +20,14 @@ their account through the symlink. No one can open another person's calendar. Ag
 account here: in story C3 they go through a Logos calendar service that checks what each one
 may see.
 
+Agents use the calendars through the Logos calendar service (:mod:`gateway.calendar_service`,
+story C3) in the ``logos-calendar-service`` container: MCP on the Docker bridge address, one token
+per agent, and its own Radicale account (``logos-service``). It shares a private Docker network
+with Radicale, so Radicale itself is never on the bridge. An agent definition says what it sees::
+
+    calendar: {enabled: true, person: greg}                  # Greg's own calendar + Household
+    calendar: {enabled: true, free_busy: {greg: Greg, bere: Béré}}   # Household + busy times only
+
 Passwords for people are written to ``~/.config/logos/calendar-<name>-password`` (mode 0600)
 so they can be typed into DAVx5; delete the file once the phone is set up.
 """
@@ -32,10 +40,16 @@ import os
 import re
 import secrets
 from pathlib import Path
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 CONTAINER = "logos-calendar"
 VOLUME = "logos-calendar"
+SERVICE = "logos-calendar-service"      # container and config volume of the agents' calendar service
+NETWORK = "logos-calendar"              # private network: Radicale + the service, nothing else
+SERVICE_PORT = 8095
+SERVICE_USER = "logos-service"          # the service's Radicale account
+TOKEN_ENV = "LOGOS_CALENDAR_TOKEN"      # an agent's own token, kept in its home volume .env
+SERVICE_FILE = Path(__file__).with_name("calendar_service.py")
 #: Radicale 3.9.2 (the project's own image), pinned by digest.
 IMAGE = "ghcr.io/kozea/radicale@sha256:c74545ef669a3166646ec13438a31b5d0bfff198d8ba7ecd214c0a5f40f03fb4"
 PORT = 5232
@@ -83,6 +97,13 @@ mask_passwords = True
 
 # Sections are tried in order; the first match decides. Anything not matched is refused.
 RIGHTS = """# Written by gateway/calendar_host.py.
+# The Logos calendar service reads and writes events everywhere; it cannot create or delete
+# calendars. What each agent may see is enforced by the service (gateway/calendar_service.py).
+[service]
+user: logos-service
+collection: .*
+permissions: Rrw
+
 # Anyone signed in may list the top level (needed for discovery).
 [root]
 user: .+
@@ -130,6 +151,12 @@ people = {l.split(":", 1)[0]: l for l in lines if ":" in l}
 add = req.get("add")
 if add:
     people[add["name"]] = f"{add['name']}:{add['hash']}"
+secret = f"{etc}/service-password"
+if not os.path.exists(secret) or req["service"] not in people:
+    import bcrypt, secrets as _s
+    pw = _s.token_urlsafe(32)
+    write(secret, pw + "\n")
+    people[req["service"]] = f"{req['service']}:" + bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
 write(users, "".join(people[n] + "\n" for n in sorted(people)))
 def git(*a): subprocess.run(["git", *a], cwd=coll, check=True, capture_output=True)
 if not os.path.isdir(f"{coll}/.git"):
@@ -140,6 +167,8 @@ if not os.path.isdir(shared):
     os.makedirs(shared)
     write(f"{shared}/.Radicale.props", req["shared_props"], 0o644)
 for name in people:
+    if name == req["service"]:
+        continue
     home = f"{top}/{name}"
     os.makedirs(home, exist_ok=True)
     if add and add["name"] == name and not os.path.isdir(f"{home}/personal"):
@@ -151,7 +180,8 @@ for name in people:
 git("add", "-A")
 if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=coll).returncode:
     git("-c", "user.name=Logos", "-c", "user.email=logos@logos.invalid", "commit", "-q", "-m", "Logos: calendar setup")
-print(json.dumps({"people": sorted(people)}))
+print(json.dumps({"people": sorted(n for n in people if n != req["service"]),
+                  "service_password": open(secret).read().strip()}))
 """
 
 HASH = r"""
@@ -162,6 +192,36 @@ print(bcrypt.hashpw(sys.stdin.read().encode(), bcrypt.gensalt(rounds=12)).decode
 
 class CalendarError(Exception):
     pass
+
+
+def uses_calendar(agent: Mapping[str, Any]) -> bool:
+    return bool((agent.get("calendar") or {}).get("enabled"))
+
+
+def calendars_for(agent: Mapping[str, Any], people: List[str]) -> Dict[str, dict]:
+    """What one agent may see: ``full`` calendars (details, changes) and ``busy`` ones (times only)."""
+    cal = agent.get("calendar") or {}
+    full = {"household": {"path": "/household/calendar/", "label": "Household (shared by everyone)"}}
+    busy = {}
+    person = cal.get("person")
+    if person:
+        if person not in people:
+            raise CalendarError(f"agent {agent.get('name')}: calendar.person {person!r} has no calendar account")
+        full = {"personal": {"path": f"/{person}/personal/", "label": f"{person.capitalize()}'s own calendar"},
+                **full}
+    for who, label in (cal.get("free_busy") or {}).items():
+        if who not in people:
+            raise CalendarError(f"agent {agent.get('name')}: free_busy {who!r} has no calendar account")
+        if who != person:
+            busy[who] = {"paths": [f"/{who}/personal/"], "label": str(label)}
+    return {"full": full, "busy": busy}
+
+
+def service_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str], people: List[str],
+                   password: str) -> dict:
+    return {"radicale": f"http://{CONTAINER}:{PORT}", "user": SERVICE_USER, "password": password,
+            "agents": {n: {"token": tokens[n], "timezone": str(a.get("timezone") or "UTC"),
+                           **calendars_for(a, people)} for n, a in sorted(agents.items())}}
 
 
 def password_file(env: Mapping[str, str], name: str) -> Path:
@@ -187,7 +247,7 @@ class CalendarHost:
                             '{{index .Config.Labels "logos.calendar.stamp"}}'], check=False).strip()
 
     def stamp(self) -> str:
-        return hashlib.sha256((radicale_config() + RIGHTS + IMAGE).encode()).hexdigest()[:16]
+        return hashlib.sha256((radicale_config() + RIGHTS + IMAGE + NETWORK).encode()).hexdigest()[:16]
 
     # ── volume ───────────────────────────────────────────────────────────
 
@@ -196,24 +256,34 @@ class CalendarHost:
                             "--entrypoint", PYTHON, "-v", f"{VOLUME}:{ROOT}", IMAGE,
                             "-c", script, *args], input=payload)
 
-    def _setup(self, add: Dict[str, str] = None) -> List[str]:
+    def _setup(self, add: Optional[Dict[str, str]] = None) -> List[str]:
         if self.rt.runner.run(["docker", "volume", "inspect", VOLUME]).returncode != 0:
             self.rt.run(["docker", "volume", "create", VOLUME])
         req = {"config": radicale_config(), "rights": RIGHTS, "gitignore": GITIGNORE,
-               "shared_props": calendar_props("Household", "#2e7d32"), "add": add}
+               "shared_props": calendar_props("Household", "#2e7d32"), "add": add, "service": SERVICE_USER}
         out = self._in_image(SETUP, json.dumps(req), ROOT)
-        return json.loads(out.strip().splitlines()[-1])["people"]
+        found = json.loads(out.strip().splitlines()[-1])
+        self._service_password = found["service_password"]
+        return found["people"]
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
     def up(self) -> bool:
-        """Lay out the volume and (re)start the server if its settings changed. True when (re)started."""
-        self._setup()
+        """Lay out the volume, (re)start the server if its settings changed, and the agents'
+        service if their tokens or its code changed. True when either was (re)started."""
+        people = self._setup()
+        if self.rt.runner.run(["docker", "network", "inspect", NETWORK]).returncode != 0:
+            self.rt.run(["docker", "network", "create", NETWORK])
+        started = self._up_server()
+        return self._up_service(people) or started
+
+    def _up_server(self) -> bool:
         stamp = self.stamp()
         if self.running() and self._label() == stamp:
             return False
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)
         self.rt.run(["docker", "run", "-d", "--name", CONTAINER, "--restart", "unless-stopped",
+                     "--network", NETWORK,
                      "--label", f"logos.calendar.stamp={stamp}",
                      "--memory", MEMORY, "--read-only", "--tmpfs", "/tmp",
                      # It never needs to call out; with no resolver it cannot look a name up.
@@ -235,7 +305,66 @@ class CalendarHost:
                 self.rt.runner.sleep(1)
         raise TimeoutError("the calendar server did not start; see: docker logs " + CONTAINER)
 
+    # ── the agents' calendar service ────────────────────────────────────
+
+    def bind_address(self) -> str:
+        out = self.rt.run(["docker", "network", "inspect", "bridge", "-f",
+                           "{{(index .IPAM.Config 0).Gateway}}"], check=False).strip()
+        return out or "172.17.0.1"
+
+    def service_url(self) -> str:
+        return f"http://{self.bind_address()}:{SERVICE_PORT}/mcp"
+
+    def agents(self) -> Dict[str, dict]:
+        return {n: a for n in self.rt.defined() for a in [self.rt.load(n)] if uses_calendar(a)}
+
+    def token_for(self, name: str) -> str:
+        for line in self.rt.get(f"logos-home-{name}", ".env").splitlines():
+            if line.startswith(TOKEN_ENV + "="):
+                return line.split("=", 1)[1].strip()
+        return ""
+
+    def _service_label(self) -> str:
+        return self.rt.run(["docker", "inspect", SERVICE, "-f",
+                            '{{index .Config.Labels "logos.calendar.stamp"}}'], check=False).strip()
+
+    def _service_running(self) -> bool:
+        out = self.rt.run(["docker", "ps", "--filter", f"name=^{SERVICE}$", "--format", "{{.Names}}"], check=False)
+        return SERVICE in out.split()
+
+    def _up_service(self, people: List[str]) -> bool:
+        agents = {n: a for n, a in self.agents().items()}
+        tokens = {n: self.token_for(n) for n in agents}
+        agents = {n: a for n, a in agents.items() if tokens[n]}  # joins on its first `up`
+        if not agents:
+            return False
+        config = json.dumps(service_config(agents, tokens, people, self._service_password), indent=1,
+                            sort_keys=True, ensure_ascii=False)
+        stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + IMAGE).encode()).hexdigest()[:16]
+        if self._service_running() and self._service_label() == stamp:
+            return False
+        if self.rt.runner.run(["docker", "volume", "inspect", SERVICE]).returncode != 0:
+            self.rt.run(["docker", "volume", "create", SERVICE])
+        self.rt.run(["docker", "run", "--rm", "-i", "-v", f"{SERVICE}:/v", "alpine:3", "sh", "-c",
+                     "cat > /v/config.json && chown -R 1000:1000 /v && chmod 0600 /v/config.json"], input=config)
+        self.rt.run(["docker", "rm", "-f", SERVICE], check=False)
+        self.rt.run(["docker", "run", "-d", "--name", SERVICE, "--restart", "unless-stopped",
+                     "--label", f"logos.calendar.stamp={stamp}", "--network", NETWORK,
+                     "--memory", MEMORY, "--read-only", "--tmpfs", "/tmp", "--dns", "127.0.0.1",
+                     "-p", f"{self.bind_address()}:{SERVICE_PORT}:{SERVICE_PORT}",
+                     "-v", f"{SERVICE}:/data:ro", "-v", f"{SERVICE_FILE}:/app/calendar_service.py:ro",
+                     "-e", "CALENDAR_CONFIG=/data/config.json", "-e", f"CALENDAR_PORT={SERVICE_PORT}",
+                     "--entrypoint", PYTHON, IMAGE, "/app/calendar_service.py"])
+        for _ in range(30):
+            try:
+                self.rt.runner.http(f"http://{self.bind_address()}:{SERVICE_PORT}/health", timeout=3)
+                return True
+            except Exception:
+                self.rt.runner.sleep(1)
+        raise TimeoutError("the calendar service did not start; see: docker logs " + SERVICE)
+
     def down(self) -> None:
+        self.rt.run(["docker", "rm", "-f", SERVICE], check=False)
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)
 
     # ── people ───────────────────────────────────────────────────────────
@@ -244,7 +373,7 @@ class CalendarHost:
                    reset: bool = False) -> Path:
         """Create (or with ``reset``, re-password) a person. Writes their new password to a 0600
         file and returns its path. Their own calendar and the Household link are created too."""
-        if not NAME_RE.match(name) or name == SHARED:
+        if not NAME_RE.match(name) or name in (SHARED, SERVICE_USER):
             raise CalendarError(f"{name!r} is not a usable name (lowercase letters, digits, dashes)")
         if name in self.people() and not reset:
             raise CalendarError(f"{name} already exists (use --reset for a new password)")
@@ -266,10 +395,13 @@ class CalendarHost:
             return []
         text = self._in_image("import sys,os;p=sys.argv[1];print(open(p).read() if os.path.exists(p) else '')",
                               "", f"{ROOT}/etc/users")
-        return sorted(l.split(":", 1)[0] for l in text.splitlines() if ":" in l)
+        return sorted(n for n in (l.split(":", 1)[0] for l in text.splitlines() if ":" in l) if n != SERVICE_USER)
 
     def status(self) -> str:
         if not self.running():
             return "calendar: not running"
+        agents = [n for n in sorted(self.agents()) if self.token_for(n)]
         return (f"calendar: running on 127.0.0.1:{PORT} (reach it through tailscale serve)\n"
-                f"  people: {', '.join(self.people()) or 'none yet'}")
+                f"  people: {', '.join(self.people()) or 'none yet'}\n"
+                f"  agents' service: {'running at ' + self.service_url() if self._service_running() else 'not running'}"
+                f" ({', '.join(agents) or 'no agents yet'})")

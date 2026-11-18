@@ -274,7 +274,7 @@ class AgentRuntime:
             print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 
     def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "",
-                    voice_token: str = "") -> str:
+                    voice_token: str = "", calendar_token: str = "") -> str:
         """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` and
         ``voice_token`` are the agent's own tokens for those services (the file lives in its
         private home volume, next to ``.env``)."""
@@ -312,9 +312,15 @@ class AgentRuntime:
         nb = _sibling("noticeboard_host")
         if nb.uses_noticeboard(agent) and noticeboard_token:
             # The only channel to other agents: two tools, send_message and read_messages.
-            cfg["mcp_servers"] = {"noticeboard": {
+            cfg.setdefault("mcp_servers", {})["noticeboard"] = {
                 "url": nb.NoticeboardHost(self).url(),
-                "headers": {"Authorization": f"Bearer {noticeboard_token}"}}}
+                "headers": {"Authorization": f"Bearer {noticeboard_token}"}}
+        ch = _sibling("calendar_host")
+        if ch.uses_calendar(agent) and calendar_token:
+            # The household's calendars, through the Logos calendar service (docs/calendar.md).
+            cfg.setdefault("mcp_servers", {})["calendar"] = {
+                "url": ch.CalendarHost(self).service_url(),
+                "headers": {"Authorization": f"Bearer {calendar_token}"}}
         vh = _sibling("voice_host")
         if vh.uses_voice(agent) and voice_token:
             # Voice notes are turned into text by the shared voice service (docs/voice.md).
@@ -337,6 +343,8 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/noticeboard.md").read_text()
         if _sibling("voice_host").uses_voice(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/voice.md").read_text()
+        if _sibling("calendar_host").uses_calendar(agent):
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/calendar.md").read_text()
         return text
 
     MATRIX_EXPORTED = ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID",
@@ -430,6 +438,11 @@ class AgentRuntime:
             cur.setdefault(vh.TOKEN_ENV, secrets.token_urlsafe(32))
         else:
             cur.pop(vh.TOKEN_ENV, None)
+        ch = _sibling("calendar_host")
+        if ch.uses_calendar(agent):
+            cur.setdefault(ch.TOKEN_ENV, secrets.token_urlsafe(32))
+        else:
+            cur.pop(ch.TOKEN_ENV, None)
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -535,6 +548,7 @@ class AgentRuntime:
           uses it, otherwise ``model.base_url`` (usually set in the untracked ``.local.yaml``).
         * ``noticeboard``: the noticeboard's address, or removed when the agent is not on it.
         * ``voice``: the voice service's address, or removed when the agent has no voice.
+        * ``calendar``: the calendar service's address, or removed when the agent has no calendar.
         """
         src = self.repo / agent["policy"]
         if not src.exists():
@@ -582,6 +596,11 @@ class AgentRuntime:
             point("voice", vh.VoiceHost(self).base_url(), rest_rules=[("POST", "/v1/audio/transcriptions")])
         else:
             rules.pop("voice", None)
+        ch = _sibling("calendar_host")
+        if ch.uses_calendar(agent):
+            point("calendar", ch.CalendarHost(self).service_url())
+        else:
+            rules.pop("calendar", None)
         if json.dumps(rules, sort_keys=True) == before:
             return src
         out = self.repo / ".rendered" / f"{name}.policy.yaml"
@@ -626,7 +645,10 @@ class AgentRuntime:
         vh = _sibling("voice_host")
         voice_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
                             if l.startswith(vh.TOKEN_ENV + "=")), "")
-        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token))
+        ch = _sibling("calendar_host")
+        calendar_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
+                               if l.startswith(ch.TOKEN_ENV + "=")), "")
+        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token))
         self.ensure_vault(brain)
         self.ensure_model(agent["model"])
         self.put(home, "SOUL.md", self.soul_text(agent))
@@ -642,6 +664,12 @@ class AgentRuntime:
                     print("voice: started with the current agents")
             except (ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"voice: {e}")
+        if ch.uses_calendar(agent):
+            try:
+                if ch.CalendarHost(self).up():
+                    print("calendar: started with the current agents")
+            except (ch.CalendarError, ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"calendar: {e}")
         mg = _sibling("model_gateway")
         if mg.uses_gateway(agent):
             try:
