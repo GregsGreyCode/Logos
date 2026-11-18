@@ -114,8 +114,9 @@ class Runner(Protocol):
         ...
 
     def http(self, url: str, *, data: Optional[bytes] = None,
-             headers: Optional[Mapping[str, str]] = None, timeout: float = 10) -> bytes:
-        """GET ``url`` (POST when ``data`` is given) and return the body."""
+             headers: Optional[Mapping[str, str]] = None, timeout: float = 10,
+             method: Optional[str] = None) -> bytes:
+        """GET ``url`` (POST when ``data`` is given, or ``method``) and return the body."""
         ...
 
     def sleep(self, seconds: float) -> None: ...
@@ -131,8 +132,8 @@ class SubprocessRunner:
     def call(self, argv):
         return subprocess.call(list(argv))
 
-    def http(self, url, *, data=None, headers=None, timeout=10):
-        req = urllib.request.Request(url, data=data, headers=dict(headers or {}))
+    def http(self, url, *, data=None, headers=None, timeout=10, method=None):
+        req = urllib.request.Request(url, data=data, headers=dict(headers or {}), method=method)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
 
@@ -377,6 +378,12 @@ class AgentRuntime:
             cur["MATRIX_RECOVERY_KEY"] = recovery
         if mx.get("home_room"):
             cur["MATRIX_HOME_ROOM"] = str(mx["home_room"])
+        try:
+            if host.set_display_name(login["MATRIX_USER_ID"], login["MATRIX_ACCESS_TOKEN"],
+                                     mh.agent_display_name(agent)):
+                print(f"matrix: named {mh.agent_display_name(agent)}")
+        except (mh.MatrixError, OSError) as e:          # a name is cosmetic: report, carry on
+            print(f"matrix: could not set the display name: {e}")
 
     def env_file(self, agent: Mapping[str, Any], home: str) -> str:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
