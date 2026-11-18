@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""The household's own calendar server (story C1; see gateway/calendar_host.py).
+
+Usage:
+  scripts/logos-calendar up                               start or update the server
+  scripts/logos-calendar status                           is it running, who has an account
+  scripts/logos-calendar add-person <name> [display name]  an account, a personal calendar and the Household link
+  scripts/logos-calendar reset-password <name>            a new password for someone
+  scripts/logos-calendar down                             stop it (calendars are kept in the volume)
+
+A new password is written to ~/.config/logos/calendar-<name>-password (mode 0600). Type it into
+DAVx5 on the person's phone, then delete the file.
+
+One-time setup per machine, so phones can reach it over the tailnet:
+  tailscale serve --bg --https=8443 http://127.0.0.1:5232
+"""
+import importlib.util
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def load(name, file):
+    spec = importlib.util.spec_from_file_location(name, REPO / "gateway" / file)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def main(a):
+    rt = load("logos_agent_runtime", "agent_runtime.py").AgentRuntime(REPO)
+    ch = load("logos_calendar_host", "calendar_host.py")
+    host = ch.CalendarHost(rt)
+    try:
+        if a[1:2] == ["up"]:
+            print("calendar: " + ("started" if host.up() else "already up to date"))
+        elif a[1:2] == ["status"]:
+            print(host.status())
+        elif a[1:2] == ["add-person"] and len(a) >= 3:
+            path = host.add_person(a[2], " ".join(a[3:]))
+            print(f"{a[2]}: account created; password in {path}")
+        elif a[1:2] == ["reset-password"] and len(a) == 3:
+            path = host.add_person(a[2], reset=True)
+            print(f"{a[2]}: new password in {path}")
+        elif a[1:2] == ["down"]:
+            host.down()
+            print("calendar: stopped (calendars kept in the volume)")
+        else:
+            print(__doc__)
+            return 2
+    except (ch.CalendarError, TimeoutError) as e:
+        sys.exit(f"calendar: {e}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
