@@ -308,3 +308,10 @@ def test_every_agent_in_the_repo_is_local_only():
         if definition.get("sandbox") is False:
             continue
         assert mg.local_only_problems(path.stem, definition) == [], path.name
+
+
+def test_a_slow_local_model_is_not_cut_off_mid_reply():
+    cfg = mg.build_config({"greg": agent()}, {"greg": "sk-bf-x"}, {}, "http://172.17.0.1:8094")
+    net = cfg["providers"]["lm-studio"]["network_config"]
+    assert net["stream_idle_timeout_in_seconds"] == net["default_request_timeout_in_seconds"] == 900
+    assert 5 <= net["stream_idle_timeout_in_seconds"] <= 3600        # Bifrost's accepted range
