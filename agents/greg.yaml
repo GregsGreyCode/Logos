@@ -13,6 +13,7 @@ providers: []                   # OpenShell providers to attach. None: everythin
 timezone: Europe/London
 noticeboard: true               # may exchange messages with the other agents (docs/noticeboard.md)
 voice: true                     # voice notes are turned into text by the voice service (docs/voice.md)
+calendar: {enabled: true, person: greg}   # Greg's own calendar + Household (docs/calendar.md)
 
 model:
   provider: lmstudio

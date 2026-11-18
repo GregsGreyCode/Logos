@@ -32,7 +32,7 @@ def test_server_settings_are_private_and_hashed():
 
 def test_rights_only_ever_name_the_signed_in_user():
     cp = parse(ch.RIGHTS)
-    assert list(cp.sections()) == ["root", "principal", "calendars"]
+    assert list(cp.sections()) == ["service", "root", "principal", "calendars"]
     assert cp["root"]["permissions"] == "R"
     # Every rule that grants anything below the top level is scoped to {user}, so no one can
     # reach another person's calendars or the shared one by its real path.
@@ -65,3 +65,29 @@ def test_add_person_refuses_unusable_names(bad):
 
 def test_password_file_is_under_config(tmp_path):
     assert ch.password_file({"XDG_CONFIG_HOME": str(tmp_path)}, "greg") == tmp_path / "logos" / "calendar-greg-password"
+
+
+def test_what_each_agent_sees():
+    people = ["bere", "greg"]
+    greg = ch.calendars_for({"name": "greg", "calendar": {"enabled": True, "person": "greg"}}, people)
+    assert greg["full"]["personal"]["path"] == "/greg/personal/"
+    assert greg["full"]["household"]["path"] == "/household/calendar/"
+    assert greg["busy"] == {}
+    house = ch.calendars_for({"name": "household", "calendar": {"enabled": True,
+                                                                "free_busy": {"greg": "Greg", "bere": "Béré"}}}, people)
+    assert list(house["full"]) == ["household"]                     # no one's personal calendar in full
+    assert house["busy"]["bere"] == {"paths": ["/bere/personal/"], "label": "Béré"}
+    with pytest.raises(ch.CalendarError):
+        ch.calendars_for({"name": "x", "calendar": {"enabled": True, "person": "nobody"}}, people)
+
+
+def test_service_config_and_rights():
+    cfg = ch.service_config({"greg": {"timezone": "Europe/London", "calendar": {"enabled": True, "person": "greg"}}},
+                            {"greg": "tok"}, ["greg"], "pw")
+    assert cfg["radicale"] == "http://logos-calendar:5232" and cfg["user"] == "logos-service"
+    assert cfg["agents"]["greg"]["token"] == "tok"
+    rights = parse(ch.RIGHTS)
+    assert rights["service"]["user"] == "logos-service"
+    assert "W" not in rights["service"]["permissions"]              # cannot create or delete calendars
+    with pytest.raises(ch.CalendarError):
+        ch.CalendarHost(FakeRuntime()).add_person("logos-service")
