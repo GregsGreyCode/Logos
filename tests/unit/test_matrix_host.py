@@ -80,8 +80,11 @@ def test_a_written_recovery_key_is_handed_back_on_start(monkeypatch):
     from gateway import agent_runtime as art
     host = type("Host", (), {"up": lambda s: False, "url": lambda s: "http://172.17.0.1:6167",
                              "agent_login": lambda s, n, cur: {"MATRIX_ACCESS_TOKEN": "at",
-                                                               "MATRIX_USER_ID": "@dev-agent:x"}})
-    fake = type("M", (), {"MatrixHost": lambda rt: host(), "MatrixError": mh.MatrixError})
+                                                               "MATRIX_USER_ID": "@dev-agent:x"},
+                             "set_display_name": lambda s, uid, tok, name: renamed.append((uid, name)) or True})
+    renamed = []
+    fake = type("M", (), {"MatrixHost": lambda rt: host(), "MatrixError": mh.MatrixError,
+                          "agent_display_name": staticmethod(mh.agent_display_name)})
     monkeypatch.setattr(art, "_sibling", lambda name: fake)
 
     class RT:
@@ -100,6 +103,7 @@ def test_a_written_recovery_key_is_handed_back_on_start(monkeypatch):
     assert "MATRIX_RECOVERY_KEY" not in cur                 # first start: bootstrap writes one
     assert cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] == "/opt/data/matrix-recovery-key"
     assert cur["MATRIX_REQUIRE_MENTION"] == "true"              # rooms: only when @mentioned
+    assert renamed == [("@dev-agent:x", "dev \U0001F916")]        # named in Element on every up
     cur = {"MATRIX_RECOVERY_KEY": "stale"}
     art.AgentRuntime._matrix_env(RT({("logos-home-dev", "matrix-recovery-key"): "EsT abc\n"}),
                                  agent, cur, "logos-home-dev")
@@ -126,3 +130,16 @@ def test_the_first_user_token_is_read_from_the_server_log():
            "using the registration token \x1b[1mAbC123xyz\x1b[0m . Pick your own username.\n")
     assert mh.first_user_token(log) == "AbC123xyz"
     assert mh.first_user_token("nothing here") == ""
+
+
+def test_no_name_suffix_and_no_announcements_call():
+    env = mh.server_env(SETTINGS)
+    assert env["CONDUWUIT_NEW_USER_DISPLAYNAME_SUFFIX"] == ""
+    assert env["CONDUWUIT_ALLOW_ANNOUNCEMENTS_CHECK"] == "false"
+
+
+def test_agent_display_name():
+    assert mh.agent_display_name({"name": "greg", "display_name": "Greg's agent"}) == "Greg's agent \U0001F916"
+    assert mh.agent_display_name({"name": "household", "display_name": "Household agent",
+                                  "matrix": {"display_name": "Household \U0001F916"}}) == "Household \U0001F916"
+    assert mh.agent_display_name({"name": "dev"}) == "dev \U0001F916"

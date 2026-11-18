@@ -30,6 +30,7 @@ matrix:                           # the household's own Matrix server (docs/matr
   e2ee: required
   allowed_users: []               # set in agents/household.local.yaml (untracked): both people, @name:example.org
   require_mention: true           # in the household room it answers only when @mentioned
+  display_name: "Household \U0001F916"   # its name in Element (others default to "<display_name> 🤖")
 
 telegram:
   enabled: true
