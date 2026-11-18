@@ -16,7 +16,8 @@ Layout of the volume (mounted at /var/lib/radicale)::
       collection-root/household/calendar
 
 Each person sees their own calendars plus the shared Household calendar, which appears under
-their account through the symlink. No one can open another person's calendar. Agents get no
+their account through the symlink. Each person also sees the others' own calendars, read only,
+linked in as ``view-<name>``. No one can change another person's calendar. Agents get no
 account here: in story C3 they go through a Logos calendar service that checks what each one
 may see.
 
@@ -116,6 +117,12 @@ user: .+
 collection: {user}
 permissions: RW
 
+# The other people's calendars, linked into your account as view-<name>: read only.
+[others]
+user: .+
+collection: {user}/view-[^/]+
+permissions: r
+
 # Your own calendars, including the shared Household calendar linked into your account.
 [calendars]
 user: .+
@@ -177,6 +184,13 @@ for name in people:
     link = f"{home}/household"
     if not os.path.lexists(link):
         os.symlink("../household/calendar", link)
+    # Everyone sees everyone else's own calendar, read only (the rights file makes view-* read only).
+    for other in people:
+        if other in (name, req["service"]) or not os.path.isdir(f"{top}/{other}/personal"):
+            continue
+        view = f"{home}/view-{other}"
+        if not os.path.lexists(view):
+            os.symlink(f"../{other}/personal", view)
 git("add", "-A")
 if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=coll).returncode:
     git("-c", "user.name=Logos", "-c", "user.email=logos@logos.invalid", "commit", "-q", "-m", "Logos: calendar setup")

@@ -32,11 +32,12 @@ def test_server_settings_are_private_and_hashed():
 
 def test_rights_only_ever_name_the_signed_in_user():
     cp = parse(ch.RIGHTS)
-    assert list(cp.sections()) == ["service", "root", "principal", "calendars"]
+    assert list(cp.sections()) == ["service", "root", "principal", "others", "calendars"]
+    assert cp["others"]["permissions"] == "r"                       # others' calendars: read only
     assert cp["root"]["permissions"] == "R"
     # Every rule that grants anything below the top level is scoped to {user}, so no one can
     # reach another person's calendars or the shared one by its real path.
-    for name in ("principal", "calendars"):
+    for name in ("principal", "others", "calendars"):
         assert cp[name]["collection"].startswith("{user}")
 
 
