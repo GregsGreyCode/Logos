@@ -73,7 +73,17 @@ def server_env(settings: Mapping[str, str]) -> Dict[str, str]:
         "CONDUWUIT_ALLOW_PUBLIC_ROOM_DIRECTORY_OVER_FEDERATION": "false",
         "CONDUWUIT_URL_PREVIEW_DOMAIN_CONTAINS_ALLOWLIST": "[]",     # no link previews: nothing fetched
         "CONDUWUIT_WELL_KNOWN__CLIENT": settings.get("MATRIX_CLIENT_URL") or f"https://{name}",
+        "CONDUWUIT_NEW_USER_DISPLAYNAME_SUFFIX": "",                  # no emoji added to new accounts' names
+        "CONDUWUIT_ALLOW_ANNOUNCEMENTS_CHECK": "false",               # no periodic call to continuwuity.org
     }
+
+
+def agent_display_name(agent: Mapping[str, Any]) -> str:
+    """What the agent is called in Element: ``matrix.display_name``, else its name with a robot."""
+    mx = agent.get("matrix") or {}
+    if mx.get("display_name"):
+        return str(mx["display_name"])
+    return f"{agent.get('display_name') or agent.get('name')} \U0001F916"
 
 
 def first_user_token(logs: str) -> str:
@@ -155,13 +165,15 @@ class MatrixHost:
 
     # ── accounts ─────────────────────────────────────────────────────────
 
-    def _call(self, path: str, body: Optional[dict] = None, token: str = "") -> dict:
+    def _call(self, path: str, body: Optional[dict] = None, token: str = "", method: str = "") -> dict:
         headers = {"Content-Type": "application/json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         data = json.dumps(body).encode() if body is not None else None
         try:
-            raw = self.rt.runner.http(f"http://127.0.0.1:{PORT}{path}", data=data, headers=headers, timeout=15)
+            extra = {"method": method} if method else {}
+            raw = self.rt.runner.http(f"http://127.0.0.1:{PORT}{path}", data=data, headers=headers, timeout=15,
+                                      **extra)
         except urllib.error.HTTPError as e:
             raw = e.read()
         return json.loads(raw or b"{}")
@@ -203,6 +215,16 @@ class MatrixHost:
         if not first:
             raise MatrixError(f"@{ADMIN} cannot sign in and the server offers no first-user token")
         self.register(ADMIN, password, token=first)
+
+    def set_display_name(self, user_id: str, token: str, name: str) -> bool:
+        """Set an account's display name when it differs. True when it was changed."""
+        path = f"/_matrix/client/v3/profile/{urllib.parse.quote(user_id)}/displayname"
+        if self._call(path, token=token).get("displayname") == name:
+            return False
+        done = self._call(path, {"displayname": name}, token=token, method="PUT")
+        if done.get("errcode"):
+            raise MatrixError(f"could not rename {user_id}: {done.get('error') or done}")
+        return True
 
     def agent_login(self, name: str, current: Mapping[str, str]) -> Dict[str, str]:
         """The MATRIX_* values for this agent's .env: the stored ones, or a new account."""
