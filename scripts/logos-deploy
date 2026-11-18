@@ -27,7 +27,7 @@ Steps:
      Agents are recreated only if they are running on this machine, so the dev and
      bench agents never start on production. Their brains, memory and Telegram tokens
      live in volumes and are kept.
-  4. Bring the model gateway, model guard, noticeboard and voice up to date. Each of
+  4. Bring the model gateway, model guard, noticeboard, voice and calendar up to date. Each of
      these restarts only if its own config or code changed.
   5. Health checks: dashboard answers, every agent that was running is Ready again.
 
@@ -93,7 +93,7 @@ def describe(p):
         steps.append("Rebuild the agent image (several minutes)")
     if p["dashboard"]:
         steps.append("Restart the dashboard (a few seconds)")
-    steps.append("Update the model gateway, noticeboard and voice where they changed")
+    steps.append("Update the model gateway, noticeboard, voice and calendar where they changed")
     steps += [f"Recreate agent {n} (about a minute without replies)" for n in p["agents"]]
     return steps
 
@@ -173,11 +173,12 @@ def images_for(rt, names):
 
 
 def update_services(rt):
-    """Model gateway (+ guard), noticeboard and voice: each restarts only if it changed."""
+    """Model gateway (+ guard), noticeboard, voice and calendar: each restarts only if it changed."""
     sys.path.insert(0, str(REPO))
     for module, cls, container, label in (("gateway.model_gateway", "ModelGateway", "logos-models", "model gateway"),
                                           ("gateway.noticeboard_host", "NoticeboardHost", "logos-noticeboard", "noticeboard"),
-                                          ("gateway.voice_host", "VoiceHost", "logos-voice", "voice")):
+                                          ("gateway.voice_host", "VoiceHost", "logos-voice", "voice"),
+                                          ("gateway.calendar_host", "CalendarHost", "logos-calendar", "calendar")):
         if not container_exists(container):
             continue                    # not used on this machine
         try:
