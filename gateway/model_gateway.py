@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
+REQUEST_TIMEOUT = 900                   # seconds: a whole reply, and the longest silence within one
 IMAGE = "maximhq/bifrost@sha256:5ec9873acaf1687556b6e4dd854b92b539d9debf87a5a683b66338648b84d3c8"
 CONTAINER = "logos-models"
 VOLUME = "logos-models"
@@ -234,7 +235,12 @@ def build_config(agents: Mapping[str, Mapping[str, Any]], keys: Mapping[str, str
     providers: Dict[str, Any] = {
         LOCAL_PROVIDER: {
             "keys": [{"name": "local", "value": "local", "models": ["*"], "weight": 1.0}],
-            "network_config": {"base_url": local_url, "default_request_timeout_in_seconds": 900,
+            # A local model can go quiet for minutes while it reads a long prompt (more so when the
+            # GPU is busy). Bifrost's own default cuts a stream after ~5 silent minutes and hermes
+            # then starts the whole reply again, three times. Allow the same 15 minutes as the
+            # request itself and the model guard; a model that is off is still caught in 3 s by the guard.
+            "network_config": {"base_url": local_url, "default_request_timeout_in_seconds": REQUEST_TIMEOUT,
+                               "stream_idle_timeout_in_seconds": REQUEST_TIMEOUT,
                                "allow_private_network": True},
             "custom_provider_config": {"base_provider_type": "openai", "allowed_requests": {
                 "chat_completion": True, "chat_completion_stream": True}},
