@@ -1,6 +1,6 @@
 # Calendar: our own CalDAV server
 
-Personal and household calendars live on our own server, not with Google (decided 18 Nov 2026; see the Calendar tab of the spec doc). This is story C1. Agents get calendar access in C3, through a Logos calendar service, never with a calendar password of their own.
+Personal and household calendars live on our own server, not with Google (decided 18 Nov 2026; see the Calendar tab of the spec doc). Stories C1 (the server) and C3 (agents). Agents never get a calendar password: they use the Logos calendar service, which decides what each one may see.
 
 - **Server:** Radicale 3.9.2, in the `logos-calendar` container and volume (`gateway/calendar_host.py`).
   - It listens on localhost only. `tailscale serve` gives it an HTTPS address on the tailnet.
@@ -11,6 +11,39 @@ Personal and household calendars live on our own server, not with Google (decide
   - Nobody can open another person's calendar.
 - **History:** every change is committed to git inside the volume (`collections/.git`), with who made it. This is the backup and the undo.
 - **Passwords:** stored as bcrypt hashes in the volume. A new password is written once to `~/.config/logos/calendar-<name>-password` (mode 0600). Type it into DAVx5, then delete the file.
+
+## Agents (story C3)
+
+The Logos calendar service (`gateway/calendar_service.py`) runs in the `logos-calendar-service` container.
+
+- It speaks MCP on the Docker bridge (port 8095). Each agent has its own token in its home volume.
+- It uses Radicale with its own account, `logos-service`, over a private Docker network called `logos-calendar`. Sandboxes cannot reach Radicale itself.
+- That account may read and write events, but cannot create or delete calendars.
+
+Each agent definition says what that agent sees:
+
+```yaml
+calendar: {enabled: true, person: greg}                  # Greg's own calendar + Household, in full
+calendar: {enabled: true, free_busy: {greg: Greg, bere: Béré}}   # Household in full; each person's busy times only
+```
+
+| Tool | What it does |
+| --- | --- |
+| `list_calendars` | What the agent can use, and how |
+| `list_events` | Events in a date range, repeats expanded. Busy-only calendars give times, never titles |
+| `add_event` | Add to `personal` or `household` |
+| `update_event` | Move or rename. Moving keeps the length |
+| `cancel_event` | Delete one event |
+| `find_free_time` | Free slots across everything the agent can see. Books nothing |
+
+**Repeating events are read-only for agents.** They are changed on the phone, so an agent can never move or delete a whole series by mistake.
+
+**Agent rules** live in `souls/_shared/calendar.md`:
+- Your own person's requests go straight in.
+- Anything another agent proposes waits for your person's yes.
+- Agents never answer "what's on" from memory.
+
+Every call is logged in `docker logs logos-calendar-service`: the agent, the action and the event id, never the event details. Every change is also in Radicale's git history, as "Changes by logos-service".
 
 ## Setting it up on a machine
 
