@@ -298,6 +298,10 @@ class AgentRuntime:
         for platform in ("telegram", "matrix"):
             if (agent.get(platform) or {}).get("enabled"):
                 cfg.setdefault("platforms", {})[platform] = {"gateway_restart_notification": False}
+                # One message per answer: which tools the agent is using goes to its log only, and
+                # its "let me check..." text before a tool call is not sent as a message of its own.
+                cfg.setdefault("display", {}).setdefault("platforms", {})[platform] = {
+                    "tool_progress": "log", "interim_assistant_messages": False}
         if (agent.get("telegram") or {}).get("group_chats"):
             # One shared conversation per group (hermes otherwise keeps one per participant).
             cfg["group_sessions_per_user"] = False

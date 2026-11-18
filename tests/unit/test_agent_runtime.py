@@ -500,6 +500,8 @@ network_policies:
         assert yaml.safe_load(r.config_text("alpha", agent))["group_sessions_per_user"] is False
         assert yaml.safe_load(r.config_text("alpha", agent))["platforms"] == {
             "telegram": {"gateway_restart_notification": False}}
+        assert yaml.safe_load(r.config_text("alpha", agent))["display"] == {"platforms": {
+            "telegram": {"tool_progress": "log", "interim_assistant_messages": False}}}   # answers only
         assert "platforms" not in yaml.safe_load(r.config_text("alpha", r.load("alpha")))
         agent["telegram"] = {"enabled": True, "allowed_users": [11]}
         env = r.env_file(agent, "logos-home-alpha")
