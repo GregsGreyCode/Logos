@@ -99,12 +99,17 @@ def test_a_written_recovery_key_is_handed_back_on_start(monkeypatch):
     art.AgentRuntime._matrix_env(RT({}), agent, cur, "logos-home-dev")
     assert "MATRIX_RECOVERY_KEY" not in cur                 # first start: bootstrap writes one
     assert cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] == "/opt/data/matrix-recovery-key"
+    assert cur["MATRIX_REQUIRE_MENTION"] == "true"              # rooms: only when @mentioned
     cur = {"MATRIX_RECOVERY_KEY": "stale"}
     art.AgentRuntime._matrix_env(RT({("logos-home-dev", "matrix-recovery-key"): "EsT abc\n"}),
                                  agent, cur, "logos-home-dev")
     assert cur["MATRIX_RECOVERY_KEY"] == "EsT abc"
     art.AgentRuntime._matrix_env(RT({}), {"name": "dev"}, cur, "logos-home-dev")
     assert "MATRIX_RECOVERY_KEY" not in cur                 # Matrix off: nothing exported
+    assert "MATRIX_REQUIRE_MENTION" not in cur
+    art.AgentRuntime._matrix_env(RT({}), {"name": "dev", "matrix": {"enabled": True, "require_mention": False}},
+                                 cur, "logos-home-dev")
+    assert cur["MATRIX_REQUIRE_MENTION"] == "false"
 
 
 def test_the_client_url_can_differ_from_the_server_name():
