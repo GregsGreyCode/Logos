@@ -9,6 +9,12 @@ privacy filter in front of every query.
 Only person agents get it (``web: {enabled: true}`` in their definition). The household agent
 never does, whatever its definition says (decided 19 Nov).
 
+Daily changes (story DC1): agents with ``changes: {enabled: true}`` (the household agent) get a
+separate token that opens only ``GET /changes/...`` on the REST port, never search. The reader
+asks GitHub with the read-only token in ``~/.config/logos/github-changes-token`` (copied into
+its own volume, mode 0600) and reads which commit this machine runs from the checkout's
+``.git``, mounted read-only.
+
 The private names the filter refuses come from three places, gathered on every ``up``:
 the people's and agents' own names, the titles of the pages in each brain's ``people/``
 folder, the names the agents added (``add_private_name``, kept in the ``logos-reader-names``
@@ -39,6 +45,12 @@ PORT = 8096
 WEATHER_PORT = 8097                      # GET /weather for the morning briefing (plain REST, same tokens)
 TOKEN_ENV = "LOGOS_WEB_TOKEN"
 WEATHER_ENV = "LOGOS_WEATHER_URL"
+CHANGES_TOKEN_ENV = "LOGOS_CHANGES_TOKEN"
+CHANGES_ENV = "LOGOS_CHANGES_URL"
+GITHUB_TOKEN_FILE = "github-changes-token"   # in ~/.config/logos; read-only, Logos + homelab-infra only
+# What /changes can report. live_git: the checkout this machine runs, to mark PRs live or not.
+REPOS = {"logos": {"repo": "GregsGreyCode/Logos", "branch": "v2", "live_git": "/repo-git"},
+         "homelab": {"repo": "GregsGreyCode/homelab-infra", "branch": "main", "commits": True}}
 LOCATION_FILE = "location"               # ~/.config/logos/location: "51.5, -0.1" (rounded to 0.1 when used)
 
 NAMES_TEMPLATE = """# Names that must never leave the house in a web search (or, later, a question to the advisor).
@@ -82,6 +94,11 @@ class WebError(Exception):
 def uses_web(agent: Mapping[str, Any]) -> bool:
     """Person agents that ask for it. Never the household agent."""
     return bool((agent.get("web") or {}).get("enabled")) and agent.get("role") != "household"
+
+
+def uses_changes(agent: Mapping[str, Any]) -> bool:
+    """Agents that post the daily changes (the household agent)."""
+    return bool((agent.get("changes") or {}).get("enabled"))
 
 
 def config_dir(env: Mapping[str, str]) -> Path:
@@ -132,12 +149,17 @@ def own_names(agents: Mapping[str, Mapping[str, Any]]) -> List[str]:
 
 
 def reader_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str],
-                  names: List[str], exact: List[str], place: Optional[dict] = None) -> dict:
+                  names: List[str], exact: List[str], place: Optional[dict] = None,
+                  changes_tokens: Optional[Mapping[str, str]] = None) -> dict:
     config = {"searxng": f"http://{SEARXNG}:8080",
               "agents": {n: {"token": tokens[n]} for n in sorted(agents) if uses_web(agents[n]) and tokens.get(n)},
               "names": sorted(set(names)), "capital_only": sorted(set(exact))}
     if place:
         config["weather"] = place
+    changes = {n: {"token": t} for n, t in sorted((changes_tokens or {}).items())
+               if t and n in agents and uses_changes(agents[n])}
+    if changes:
+        config["changes"] = {"agents": changes, "repos": REPOS}
     return config
 
 
@@ -158,13 +180,20 @@ class WebHost:
     def weather_url(self) -> str:
         return f"http://{self.bind_address()}:{WEATHER_PORT}/weather"
 
+    def changes_url(self) -> str:
+        return f"http://{self.bind_address()}:{WEATHER_PORT}/changes"
+
+    def github_token(self) -> str:
+        path = config_dir(self.rt.env) / GITHUB_TOKEN_FILE
+        return path.read_text().strip() if path.exists() else ""
+
     def place(self) -> Optional[dict]:
         path = config_dir(self.rt.env) / LOCATION_FILE
         return parse_location(path.read_text()) if path.exists() else None
 
-    def token_for(self, name: str) -> str:
+    def token_for(self, name: str, env: str = TOKEN_ENV) -> str:
         for line in self.rt.get(f"logos-home-{name}", ".env").splitlines():
-            if line.startswith(TOKEN_ENV + "="):
+            if line.startswith(env + "="):
                 return line.split("=", 1)[1].strip()
         return ""
 
@@ -214,19 +243,27 @@ class WebHost:
         """Start or update both containers. True when either was (re)started."""
         agents = {n: self.rt.load(n) for n in self.rt.defined()}
         web_agents = {n: a for n, a in agents.items() if uses_web(a)}
-        if not web_agents:
+        changes_agents = {n: a for n, a in agents.items() if uses_changes(a)}
+        if not web_agents and not changes_agents:
             return False
         if NETWORK not in self.rt.run(["docker", "network", "ls", "--format", "{{.Name}}"], check=False).split():
             self.rt.run(["docker", "network", "create", NETWORK])
-        changed = self._up_searxng()
+        changed = self._up_searxng() if web_agents else False
         tokens = {n: self.token_for(n) for n in web_agents}
+        changes_tokens = {n: self.token_for(n, CHANGES_TOKEN_ENV) for n in changes_agents}
         names, exact = self.private_names(agents)
-        config = json.dumps(reader_config(agents, tokens, names, exact, self.place()), indent=1, sort_keys=True,
-                            ensure_ascii=False)
-        stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + READER_IMAGE).encode()).hexdigest()[:16]
+        config = json.dumps(reader_config(agents, tokens, names, exact, self.place(), changes_tokens), indent=1,
+                            sort_keys=True, ensure_ascii=False)
+        github = self.github_token() if changes_agents else ""
+        git_dir = Path(self.rt.repo) / ".git"
+        stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + READER_IMAGE + github).encode()).hexdigest()[:16]
         if self._running(READER) and self._label(READER) == stamp:
             return changed
         self._write_volume(READER_VOLUME, "config.json", config, "1000:1000")
+        self._write_volume(READER_VOLUME, "github-token", github, "1000:1000")
+        if changes_agents and not github:
+            print(f"web reader: no {GITHUB_TOKEN_FILE} in {config_dir(self.rt.env)}; the daily changes are off")
+        mount_git = ["-v", f"{git_dir}:/repo-git:ro"] if git_dir.is_dir() else []
         if self.rt.runner.run(["docker", "volume", "inspect", NAMES_VOLUME]).returncode != 0:
             self.rt.run(["docker", "volume", "create", NAMES_VOLUME])
             self.rt.run(["docker", "run", "--rm", "--network", "none", "-v", f"{NAMES_VOLUME}:/v", "alpine:3",
@@ -241,7 +278,8 @@ class WebHost:
                      "-v", f"{SERVICE_FILE}:/app/web_service.py:ro",
                      "-e", "WEB_CONFIG=/data/config.json", "-e", f"WEB_PORT={PORT}",
                      "-e", f"WEB_WEATHER_PORT={WEATHER_PORT}",
-                     "-e", "WEB_ADDED_NAMES=/names/added.txt",
+                     "-e", "WEB_ADDED_NAMES=/names/added.txt", "-e", "WEB_GITHUB_TOKEN=/data/github-token",
+                     *mount_git,
                      "--entrypoint", "python3", READER_IMAGE, "/app/web_service.py"])
         self._wait()
         return True
