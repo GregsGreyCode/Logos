@@ -170,8 +170,11 @@ their local model, and the gateway does the rest.
   `model_server_off`), so a reload or a short close only makes the reply slower. The same goes
   for LM Studio's "Context size has been exceeded" refusal when other requests fill its shared
   context: the guard holds the reply until its first bytes arrive, and if they are that refusal
-  it sends the request again. Lookups (model lists, health) never wait. Tune with `GUARD_WAIT`
-  (seconds). `GET /guard/health` says whether LM Studio is off and since when.
+  it sends the request again. Lookups (model lists, health) never wait. After a request has
+  waited the whole minute in vain, the next ones in the following 2 minutes are answered at once
+  (hermes retries a failed call). Tune with `GUARD_WAIT` (seconds). `GET /guard/health` tests
+  the connection to LM Studio and says whether it is off and since when. What the agents do
+  while it is off: `docs/model-downtime.md`.
 - **`model.fallbacks` replaces `model.allow`** for that agent: with a chain, only the models in
   it can be reached.
 

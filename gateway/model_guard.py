@@ -34,12 +34,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
        "transfer-encoding", "upgrade", "host", "content-length"}
 HEALTH_PATH = "/guard/health"
-OFF_MESSAGE = ("The local model server is switched off or busy (LM Studio is not answering), "
-               "so no reply can be written right now. Try again when it is back on.")
+# What the person reads when a reply cannot be written (story D2: the agent answers later by itself).
+OFF_MESSAGE = ("My model is offline right now (LM Studio isn't running), so I can't reply yet. "
+               "I'll answer this as soon as it's back.")
 
 
 OPTIONS_TTL = 600.0                     # how long a model's reasoning options are remembered
 WAIT = 60.0                             # how long a request may wait for the model server (D1)
+KNOWN_OFF = 120.0                       # after a full wait in vain: answer "off" at once for this long
 RETRY_EVERY = 5.0
 FULL = b"Context size has been exceeded"  # LM Studio: the shared context is in use by other requests
 
@@ -81,11 +83,15 @@ def off_body() -> bytes:
 
 
 def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: float = 900.0,
-                 wait: float = WAIT, retry_every: float = RETRY_EVERY, sleep=time.sleep):
+                 wait: float = WAIT, retry_every: float = RETRY_EVERY, sleep=time.sleep,
+                 known_off: float = KNOWN_OFF):
     target = urllib.parse.urlsplit(upstream)
     host, port = target.hostname, target.port or 80
     # For /guard/health: whether the last attempt found the model server off, and since when.
-    state = {"off": False, "off_since": None}
+    # ``known_off_at``: when a request last waited the whole minute in vain. hermes tries a failed
+    # call several times (and probes it once more without streaming); without this each of those
+    # would wait a minute too, and the person would hear nothing for five.
+    state = {"off": False, "off_since": None, "known_off_at": -known_off}
     options = {"at": -OPTIONS_TTL, "by_model": {}}
 
     def options_for(model: str) -> list:
@@ -136,7 +142,16 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             self.close_connection = True
 
         def _health(self) -> None:
-            # About the guard itself, answered without touching the model server.
+            # Tests the model server's connection (a few seconds at most), so agents waiting for
+            # it and the dashboard learn when it is back without sending a model request.
+            try:
+                socket.create_connection((host, port), timeout=connect_timeout).close()
+                if state["off"]:
+                    print("model server answering again", flush=True)
+                state["off"], state["off_since"], state["known_off_at"] = False, None, -known_off
+            except OSError:
+                if not state["off"]:
+                    state["off"], state["off_since"] = True, time.time()
             out = json.dumps({"ok": True, "model_server_off": state["off"],
                               "off_since": state["off_since"]}).encode()
             self.send_response(200)
@@ -161,7 +176,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                     continue
                 if state["off"]:
                     print("model server answering again", flush=True)
-                state["off"], state["off_since"] = False, None
+                state["off"], state["off_since"], state["known_off_at"] = False, None, -known_off
                 return sock
 
         def _pass(self) -> None:
@@ -172,10 +187,13 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             if self.command == "POST":
                 body = fix_reasoning(self.path, body, options_for)
             # Only model requests wait; lookups (model lists, health) get their answer at once.
-            deadline = time.monotonic() + (wait if self.command == "POST" else 0)
+            known = time.monotonic() - state["known_off_at"] < known_off
+            deadline = time.monotonic() + (wait if self.command == "POST" and not known else 0)
             while True:
                 sock = self._connect(deadline)
                 if sock is None:
+                    if self.command == "POST" and not known:
+                        state["known_off_at"] = time.monotonic()
                     print(f"model server off: {self.command} {self.path.split('?')[0]} refused", flush=True)
                     return self._off()
                 conn = http.client.HTTPConnection(host, port)
