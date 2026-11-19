@@ -25,6 +25,11 @@ the reader reads the commit the machine runs from its checkout (mounted read-onl
 GitHub which commits of ``v2`` are not in it. It answers only the tokens listed under
 ``changes`` (the household agent's), never the web tokens, so it adds nothing to web search.
 
+And feature requests (story FR1): the ``file_request`` tool adds a dated entry at the bottom of
+the "Requests from agents" page in Docmost, with the reader's own Docmost login (from
+``WEB_DOCMOST``, never in a sandbox). Every agent of the reader gets it; the household agent
+gets only this tool, with its changes token, and never search.
+
 Stdlib only. Config (JSON, from ``WEB_CONFIG``):
 ``{"searxng": url, "agents": {name: {"token"}}, "names": [...], "capital_only": [...],
 "weather": {"lat": 51.5, "lon": -0.1}, "changes": {"agents": {name: {"token"}}, "repos": {...}}}``
@@ -112,6 +117,26 @@ TOOLS = [{
 }]
 
 
+FILE_REQUEST = {
+    "name": "file_request",
+    "description": ("Note a feature request, idea, bug or problem for Logos (the agents, their chat and the "
+                    "dashboard) or the homelab (the servers and apps at home), on the Requests from agents page "
+                    "in Docmost, where Greg's Claude picks it up. Use it only when your person asks you to note, "
+                    "save, log or report one. One request per call. Write it as your person said it, without "
+                    "adding your own ideas, and never include passwords or keys."),
+    "inputSchema": {"type": "object", "additionalProperties": False, "required": ["kind", "area", "title", "details"],
+                    "properties": {
+        "kind": {"type": "string", "enum": ["feature", "issue"],
+                 "description": "feature: something new or different they want. issue: something broken or wrong."},
+        "area": {"type": "string", "enum": ["logos", "homelab", "other"],
+                 "description": "logos: the agents, chat, dashboard. homelab: servers, media, network, backups."},
+        "title": {"type": "string", "description": "A short name for it, at most 100 characters."},
+        "details": {"type": "string", "description": ("What they want or what went wrong, in their words: what "
+                                                       "happened, when, and what they expected. At most 1500 characters.")}}},
+}
+MAX_REQUESTS_A_DAY = 20
+
+
 class Refused(Exception):
     """The query was not sent. ``str()`` says why, for the agent."""
 
@@ -192,6 +217,7 @@ class Service:
         self._weather_lock = threading.Lock()
         self.changes: Optional[Changes] = None              # set from the config's "changes" and the GitHub token
         self.changes_agents: Dict[str, Dict[str, Any]] = {}
+        self.requests: Optional[Requests] = None            # set from the config's "requests" and WEB_DOCMOST
         # Names the agents added: one per line, "name<TAB>agent<TAB>when", kept in the reader's own volume.
         self.added_file = added_file
         self.added = 0
@@ -243,6 +269,17 @@ class Service:
             if token and a.get("token") and hmac.compare_digest(token.encode(), a["token"].encode()):
                 return name
         return None
+
+    def mcp_agent(self, token: str) -> Tuple[Optional[str], bool]:
+        """(agent, may search): web tokens search; a changes token may only file requests."""
+        agent = self.agent_for_token(token)
+        if agent:
+            return agent, True
+        agent = self.agent_for_token(token, self.changes_agents) if self.requests else None
+        return agent, False
+
+    def tools_for(self, search: bool) -> List[Dict[str, Any]]:
+        return (TOOLS if search else []) + ([FILE_REQUEST] if self.requests else [])
 
     def search_web(self, agent: str, query: str, kind: str = "general") -> Dict[str, Any]:
         query = " ".join(str(query or "").split())
@@ -433,7 +470,94 @@ class Changes:
         return out
 
 
-def handle_rpc(svc: Service, agent: str, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+# ── feature requests into Docmost (story FR1) ──────────────────────────────
+
+class Docmost:
+    """Adds markdown at the bottom of one Docmost page, logged in as the reader's own user."""
+
+    def __init__(self, url: str, page: str, email: str, password: str):
+        import http.cookiejar
+        self.url, self.page, self.email, self.password = url.rstrip("/"), page, email, password
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.logged_in = False
+
+    def _post(self, path: str, body: Dict[str, Any]) -> Any:
+        req = urllib.request.Request(self.url + path, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json", "User-Agent": "logos-reader"})
+        with self.opener.open(req, timeout=20) as r:
+            return json.loads(r.read() or b"{}")
+
+    def append(self, markdown: str) -> None:
+        import urllib.error
+        for attempt in (1, 2):
+            if not self.logged_in:
+                self._post("/api/auth/login", {"email": self.email, "password": self.password})
+                self.logged_in = True
+            try:
+                self._post("/api/pages/update", {"pageId": self.page, "content": markdown,
+                                                 "format": "markdown", "operation": "append"})
+                return
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403) and attempt == 1:     # the session expired: log in again
+                    self.logged_in = False
+                    continue
+                raise
+
+
+def one_line(text: Any, limit: int) -> str:
+    return " ".join(str(text or "").split())[:limit]
+
+
+def request_entry(kind: str, area: str, title: str, details: str, person: str, agent_label: str, when: str) -> str:
+    """The markdown added to the page for one request."""
+    body = "  \n".join(l.rstrip() for l in str(details or "").strip().splitlines())[:1500]   # keep their line breaks
+    body = re.sub(r"(?m)^(#+)", r"\\\1", body)            # their words, never a heading of their own
+    area_name = {"logos": "Logos", "homelab": "Homelab", "other": "Other"}[area]
+    return (f"### {title}\n\n**{'Feature' if kind == 'feature' else 'Issue'}** · **{area_name}** · {when} · "
+            f"asked by {person} ({agent_label})\n\n{body}\n\nStatus: New")
+
+
+class Requests:
+    def __init__(self, page: Docmost, people: Dict[str, str], log: Callable[[str], None] = print):
+        self.page, self.people, self.log = page, people, log
+        self._count: Dict[Tuple[str, str], int] = {}
+        self._lock = threading.Lock()
+
+    def file(self, agent: str, args: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+        import datetime as _dt
+        kind, area = args.get("kind"), args.get("area")
+        if kind not in ("feature", "issue"):
+            raise Refused("kind is feature or issue.")
+        if area not in ("logos", "homelab", "other"):
+            raise Refused("area is logos, homelab or other.")
+        title = one_line(args.get("title"), 100)
+        details = str(args.get("details") or "").strip()
+        if len(title) < 3 or len(details) < 3:
+            raise Refused("give a short title and the details, in your person's words.")
+        if len(details) > 1500:
+            raise Refused("keep the details under 1500 characters.")
+        if PATTERNS[-1][1].search(title + " " + details):
+            raise Refused("it contains what looks like a key or password; leave that out.")
+        t = _dt.datetime.fromtimestamp(time.time() if now is None else now)
+        with self._lock:
+            key = (agent, t.strftime("%Y-%m-%d"))
+            if self._count.get(key, 0) >= MAX_REQUESTS_A_DAY:
+                raise Refused(f"{MAX_REQUESTS_A_DAY} requests today already; ask Greg to add more by hand.")
+            entry = request_entry(kind, area, title, details, self.people.get(agent, agent),
+                                  f"via the {agent} agent", t.strftime("%Y-%m-%d %H:%M"))
+            try:
+                self.page.append(entry)
+            except Exception as e:
+                self.log(f"{agent} file_request FAILED: {type(e).__name__}")
+                raise Refused("Docmost did not take it just now; try again in a few minutes, or tell your "
+                              "person it was not saved.")
+            self._count[key] = self._count.get(key, 0) + 1
+        self.log(f"{agent} file_request: {kind} for {area}")
+        return {"filed": title, "where": "the Requests from agents page in Docmost (HomeLab, then Logos)",
+                "note": "Tell your person it is noted there; Greg's Claude will pick it up."}
+
+
+def handle_rpc(svc: Service, agent: str, req: Dict[str, Any], search: bool = True) -> Optional[Dict[str, Any]]:
     method, rid = req.get("method"), req.get("id")
     if rid is None:
         return None
@@ -443,16 +567,20 @@ def handle_rpc(svc: Service, agent: str, req: Dict[str, Any]) -> Optional[Dict[s
     elif method == "ping":
         result = {}
     elif method == "tools/list":
-        result = {"tools": TOOLS}
+        result = {"tools": svc.tools_for(search)}
     elif method == "tools/call":
         params = req.get("params") or {}
         args = params.get("arguments") or {}
         tool = params.get("name")
-        if tool not in ("search_web", "add_private_name"):
+        if tool not in [t["name"] for t in svc.tools_for(search)]:
             return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool: {tool}"}}
         try:
-            out = (svc.search_web(agent, args.get("query"), args.get("kind") or "general") if tool == "search_web"
-                   else svc.add_private_name(agent, args.get("name")))
+            if tool == "search_web":
+                out = svc.search_web(agent, args.get("query"), args.get("kind") or "general")
+            elif tool == "add_private_name":
+                out = svc.add_private_name(agent, args.get("name"))
+            else:
+                out = svc.requests.file(agent, args)
             result = {"content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}]}
         except Refused as e:
             svc.log(f"{agent} {tool} refused: {str(e).split(',')[0]}")
@@ -493,7 +621,7 @@ def make_handler(svc: Service):
             if self.path.rstrip("/") != "/mcp":
                 return self._send(404, {"error": "not found"})
             auth = self.headers.get("Authorization", "")
-            agent = svc.agent_for_token(auth[7:].strip() if auth.lower().startswith("bearer ") else "")
+            agent, search = svc.mcp_agent(auth[7:].strip() if auth.lower().startswith("bearer ") else "")
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if 0 < length <= 1_000_000 else b""
             if agent is None:
@@ -503,9 +631,9 @@ def make_handler(svc: Service):
             except ValueError:
                 return self._send(400, {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
             if isinstance(req, list):
-                answers = [x for x in (handle_rpc(svc, agent, r) for r in req if isinstance(r, dict)) if x]
+                answers = [x for x in (handle_rpc(svc, agent, r, search) for r in req if isinstance(r, dict)) if x]
                 return self._send(200, answers) if answers else self._send(202)
-            answer = handle_rpc(svc, agent, req) if isinstance(req, dict) else None
+            answer = handle_rpc(svc, agent, req, search) if isinstance(req, dict) else None
             return self._send(200, answer) if answer else self._send(202)
 
     return Handler
@@ -570,6 +698,13 @@ def main() -> None:
         token = open(token_file).read().strip()
         if token:
             svc.changes = Changes(changes["repos"], token, log=svc.log)
+    requests = config.get("requests") or {}
+    docmost_file = os.environ.get("WEB_DOCMOST")
+    if requests and docmost_file and os.path.exists(docmost_file):
+        login = dict(l.strip().split("=", 1) for l in open(docmost_file) if "=" in l and not l.startswith("#"))
+        if login.get("DOCMOST_EMAIL") and login.get("DOCMOST_PASSWORD"):
+            svc.requests = Requests(Docmost(requests["url"], requests["page"], login["DOCMOST_EMAIL"],
+                                            login["DOCMOST_PASSWORD"]), requests.get("people") or {}, log=svc.log)
     weather_port = int(os.environ.get("WEB_WEATHER_PORT", "0"))
     if weather_port:
         ws = ThreadingHTTPServer(("0.0.0.0", weather_port), make_weather_handler(svc))
@@ -578,7 +713,8 @@ def main() -> None:
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(svc))
     print(f"web reader: {len(config['agents'])} agents, {len(svc.filter.names)} private names "
           f"({svc.added} added by agents), MCP on :{port}, weather {'on' if svc.place else 'off'}, "
-          f"changes {'on for ' + ', '.join(sorted(svc.changes_agents)) if svc.changes else 'off'}", flush=True)
+          f"changes {'on for ' + ', '.join(sorted(svc.changes_agents)) if svc.changes else 'off'}, "
+          f"requests {'on' if svc.requests else 'off'}", flush=True)
     server.serve_forever()
 
 
