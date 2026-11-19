@@ -70,17 +70,19 @@ export async function agentsView(root, [agentArg]) {
             h('tbody', {}, rows))),
         h('p', { class: 'when' }, 'Reminders the agent set for you can be cancelled here. The rest is how it keeps its brain in order.')),
       h('div', { class: 'stack' },
-        h('section', { class: 'card', 'aria-label': 'Model and spend' },
-          h('h2', {}, 'Model and spend'),
+        h('section', { class: 'card', 'aria-label': 'Model' },
+          h('h2', {}, 'Model'),
           kv('Model', `${m.local ? 'Local' : 'Hosted'} · ${m.name}`),
           m.up === false ? h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Model server'),
             h('span', {}, 'Not answering. The agent cannot reply or run its model jobs until it is back on.')) : null,
-          kv('Paid providers', m.paid_providers.length ? m.paid_providers.join(', ') : 'None attached'),
-          st.budget.monthly_usd == null ? kv('Budget', 'Not behind the model gateway')
-            : kv('Monthly limit on paid models', `$${st.budget.monthly_usd.toFixed(2)}`),
+          // The brain stays local: agents use only the local model. Paid providers and their
+          // limit show only if one were ever attached again.
+          m.paid_providers.length ? kv('Paid providers', m.paid_providers.join(', ')) : null,
+          m.paid_providers.length && st.budget.monthly_usd != null
+            ? kv('Monthly limit on paid models', `$${st.budget.monthly_usd.toFixed(2)}`) : null,
           h('p', { class: 'when' }, m.paid_providers.length
-            ? 'At the limit, paid calls are refused until next month. A running total is not shown here yet.'
-            : 'Local replies are free, so nothing can be spent. The limit applies once a paid provider is attached.')),
+            ? 'At the limit, paid calls are refused until next month.'
+            : 'The brain stays local: this agent uses only the model on the home server, so nothing it knows is sent anywhere and nothing is spent.')),
         h('section', { class: 'card', 'aria-label': 'What it can reach' },
           h('h2', {}, 'What it can reach'),
           h('div', { class: 'kv' }, h('span', { class: 'ok strong' }, 'Allowed'), h('span', {}, st.reach.allowed.join(', '))),
