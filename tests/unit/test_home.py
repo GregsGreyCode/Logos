@@ -37,7 +37,10 @@ def test_calendar_today_asks_for_today_and_tomorrow_with_the_agents_token(monkey
             pass
 
         def token_for(self, name):
-            return "tok-greg"
+            return "tok-agent"
+
+        def reader_token(self, name):
+            return "tok-reader" if name == "greg" else ""
 
         def service_url(self):
             return "http://svc/mcp"
@@ -45,15 +48,21 @@ def test_calendar_today_asks_for_today_and_tomorrow_with_the_agents_token(monkey
     monkeypatch.setattr(calendar_host, "CalendarHost", Host)
     monkeypatch.setattr(calendar_host, "uses_calendar", lambda d: True)
     monkeypatch.setattr(home, "today_in", lambda tz, now=None: __import__("datetime").date(2026, 11, 19))
-    seen = {}
+    seen = []
 
     def post(url, body, token):
-        seen.update(url=url, token=token, req=json.loads(body))
-        return {"result": {"content": [{"type": "text", "text": json.dumps({"events": [{"title": "Dentist"}]})}]}}
+        req = json.loads(body)
+        seen.append((token, req["params"]["name"], req["params"]["arguments"]))
+        answer = ({"events": [{"title": "Dentist", "calendar": "bere"}]} if req["params"]["name"] == "list_events"
+                  else {"calendars": [{"name": "personal", "shows": "Your own calendar"}, {"name": "bere", "shows": "Béré"}]})
+        return {"result": {"content": [{"type": "text", "text": json.dumps(answer)}]}}
 
-    out = home.calendar_today(object(), "greg", {"timezone": "Europe/London"}, post=post)
-    assert out == {"date": "2026-11-19", "events": [{"title": "Dentist"}], "busy": []}
-    assert seen["token"] == "tok-greg" and seen["req"]["params"]["name"] == "list_events"
-    assert seen["req"]["params"]["arguments"] == {"start": "2026-11-19", "end": "2026-11-20"}
-    failing = home.calendar_today(object(), "greg", {}, post=lambda *a: (_ for _ in ()).throw(OSError("down")))
+    out = home.calendar_today(object(), "greg", {"timezone": "Europe/London"}, "greg", post=post)
+    assert out == {"date": "2026-11-19", "events": [{"title": "Dentist", "calendar": "bere"}], "busy": [],
+                   "calendars": {"personal": "Your own calendar", "bere": "Béré"}}
+    assert seen[0] == ("tok-reader", "list_events", {"start": "2026-11-19", "end": "2026-11-20"})   # the person's key
+    seen.clear()
+    home.calendar_today(object(), "dev", {"timezone": "UTC"}, "review", post=post)
+    assert seen[0][0] == "tok-agent"             # no calendar account: what the agent sees
+    failing = home.calendar_today(object(), "greg", {}, "greg", post=lambda *a: (_ for _ in ()).throw(OSError("down")))
     assert failing["error"] == "calendar_unavailable"

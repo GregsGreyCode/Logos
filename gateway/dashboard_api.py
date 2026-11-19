@@ -326,14 +326,14 @@ async def handle_home(request: web.Request) -> web.Response:
         return web.json_response({"agent": None})
     definition = agents[name]["definition"]
     runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
-    out: Dict[str, Any] = {"agent": {"name": name, "display_name": str(definition.get("display_name") or name),
+    out: Dict[str, Any] = {"me": user["username"], "agent": {"name": name, "display_name": str(definition.get("display_name") or name),
                                      "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}")},
                            "model_up": await model_server_up(request, definition)}
     if runtime is None:
         out.update(today={"error": "no_backend"}, brain_changes=[])
         return web.json_response(out)
     today, listing = await asyncio.gather(
-        asyncio.to_thread(home.calendar_today, runtime, name, definition),
+        asyncio.to_thread(home.calendar_today, runtime, name, definition, user["username"]),
         asyncio.to_thread(brain_reader.list_pages, runtime, name), return_exceptions=True)
     out["today"] = today if isinstance(today, dict) else {"error": "calendar_unavailable"}
     out["brain_changes"] = home.recent_brain_changes(listing) if isinstance(listing, dict) else []
