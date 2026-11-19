@@ -150,6 +150,9 @@ async def handle_agents(request: web.Request) -> web.Response:
             "shared": owners is None or len(owners) > 1,
             "model": str((definition.get("model") or {}).get("default") or ""),
             "voice": bool(definition.get("voice")),
+            # The vault's name in Obsidian on the phones, for "Open in Obsidian" links. Syncthing
+            # shares the brain as the folder brain-<agent>; a different name goes in the definition.
+            "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}"),
             "model_up": await model_server_up(request, definition),
             "has_backup": await asyncio.to_thread(agent_chat.has_backup, definition),
         })
