@@ -20,9 +20,6 @@ model:
   # No paid fallbacks: the brain stays local (gateway/model_gateway.py BRAIN_STAYS_LOCAL).
 budget:
   monthly_usd: 1               # hard cap on paid model spend a month; beyond it only the local model answers
-telegram:
-  enabled: false
-  allowed_users: []
 consolidation:
   enabled: true
   schedule: "30 2 * * *"        # in the agent's timezone; before the 03:00 fresh session

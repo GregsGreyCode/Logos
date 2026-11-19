@@ -25,7 +25,7 @@ Steps:
        infra/openshell/, gateway/agent_runtime.py
                                            recreate every agent that is running here
      Agents are recreated only if they are running on this machine, so the dev and
-     bench agents never start on production. Their brains, memory and Telegram tokens
+     bench agents never start on production. Their brains, memory and Matrix logins
      live in volumes and are kept.
   4. Bring the model gateway, model guard, noticeboard, voice and calendar up to date. Each of
      these restarts only if its own config or code changed.

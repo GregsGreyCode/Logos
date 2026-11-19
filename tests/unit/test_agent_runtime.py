@@ -130,9 +130,6 @@ model:
   base_url: http://10.0.0.5:1234/v1
   default: some/model
   context_length: 65536
-telegram:
-  enabled: false
-  allowed_users: []
 consolidation:
   enabled: true
   schedule: "0 3 * * *"
@@ -210,15 +207,15 @@ class TestLoad:
     def test_loads_definition(self, repo):
         agent = rt(repo).load("alpha")
         assert agent["image"] == "logos-agent:0.23.1"
-        assert agent["telegram"] == {"enabled": False, "allowed_users": []}
+        assert "telegram" not in agent
 
     def test_local_yaml_is_deep_merged(self, repo):
         (repo / "agents" / "alpha.local.yaml").write_text(
-            "telegram:\n  enabled: true\n  allowed_users: [111, 222]\n"
+            "matrix:\n  enabled: true\n  allowed_users: ['@a:x', '@b:x']\n"
             "model:\n  default: other/model\n"
             "providers: [anthropic]\n")
         agent = rt(repo).load("alpha")
-        assert agent["telegram"] == {"enabled": True, "allowed_users": [111, 222]}
+        assert agent["matrix"] == {"enabled": True, "allowed_users": ['@a:x', '@b:x']}
         # nested mapping merged key by key: untouched keys survive
         assert agent["model"]["default"] == "other/model"
         assert agent["model"]["base_url"] == "http://10.0.0.5:1234/v1"
@@ -319,7 +316,7 @@ def _env(text):
 
 
 class TestEnvFile:
-    def test_fresh_env_without_telegram(self, repo):
+    def test_fresh_env(self, repo):
         r = rt(repo)
         env = _env(r.env_file(r.load("alpha"), "logos-home-alpha"))
         assert env["TZ"] == env["HERMES_TIMEZONE"] == "Europe/London"
@@ -330,32 +327,15 @@ class TestEnvFile:
     def test_existing_secrets_are_kept(self, repo):
         runner = FakeRunner(files={("logos-home-alpha", ".env"):
                                    "# comment\nAPI_SERVER_KEY=keepme\nANTHROPIC_API_KEY=sk-x\n"
-                                   "TELEGRAM_BOT_TOKEN=old\nTELEGRAM_ALLOWED_USERS=1\n"})
+                                   "TELEGRAM_BOT_TOKEN=old\nTELEGRAM_ALLOWED_USERS=1\nTELEGRAM_HOME_CHANNEL=1\n"})
         r = rt(repo, runner)
         text = r.env_file(r.load("alpha"), "logos-home-alpha")
         env = _env(text)
         assert env["API_SERVER_KEY"] == "keepme"
         assert env["ANTHROPIC_API_KEY"] == "sk-x"
-        # telegram disabled: its keys are dropped
-        assert "TELEGRAM_BOT_TOKEN" not in env and "TELEGRAM_ALLOWED_USERS" not in env
+        # Telegram is gone: whatever an older `up` stored for it is dropped, the token included
+        assert not [k for k in env if k.startswith("TELEGRAM_")]
         assert text.splitlines() == sorted(text.splitlines())
-
-    def test_telegram_token_from_environment(self, repo):
-        (repo / "agents" / "alpha.local.yaml").write_text(
-            "telegram:\n  enabled: true\n  allowed_users: [111, 222]\n")
-        r = rt(repo, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
-        env = _env(r.env_file(r.load("alpha"), "logos-home-alpha"))
-        assert env["TELEGRAM_BOT_TOKEN"] == "tok"
-        assert env["TELEGRAM_ALLOWED_USERS"] == "111,222"
-        assert env["TELEGRAM_HOME_CHANNEL"] == "111"
-        assert env["TELEGRAM_HOME_CHANNEL_NAME"] == "Alpha agent"
-
-    def test_telegram_without_token_fails(self, repo):
-        (repo / "agents" / "alpha.local.yaml").write_text("telegram:\n  enabled: true\n")
-        r = rt(repo)
-        with pytest.raises(AgentRuntimeError, match="telegram.enabled is true but no token"):
-            r.env_file(r.load("alpha"), "logos-home-alpha")
-
 
 # ── model ────────────────────────────────────────────────────────────────────
 
@@ -430,10 +410,6 @@ network_policies:
         allowed_ips: [192.0.2.117/32]
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
-  telegram:
-    endpoints:
-      - host: api.telegram.org
-        port: 443
 """
 
     def _with_policy(self, repo):
@@ -452,7 +428,7 @@ network_policies:
         assert rendered["lm_studio"]["endpoints"] == [
             {"host": "10.0.0.5", "port": 1234, "protocol": "rest", "allowed_ips": ["10.0.0.5/32"]}]
         assert rendered["lm_studio"]["binaries"] == [{"path": "/opt/hermes/tools/python-*/bin/python3*"}]
-        assert rendered["telegram"]["endpoints"] == [{"host": "api.telegram.org", "port": 443}]
+        assert "telegram" not in rendered
         assert str(out) in r.create_argv("alpha", agent)
 
     def test_policy_is_used_as_is_when_the_address_already_matches(self, repo):
@@ -488,25 +464,19 @@ network_policies:
         assert "LOGOS_MODEL_KEY=sk-bf-" in env
         assert "LOGOS_MODEL_KEY" not in r.env_file(r.load("alpha"), "logos-home-alpha")
 
-    def test_group_chat_settings(self, repo):
-        r = rt(repo, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
-        agent = r.load("alpha")
-        agent["telegram"] = {"enabled": True, "allowed_users": [11, 22], "group_chats": [-100123]}
-        env = dict(l.split("=", 1) for l in r.env_file(agent, "logos-home-alpha").splitlines() if "=" in l)
-        assert env["TELEGRAM_GROUP_ALLOWED_CHATS"] == "-100123"
-        assert env["TELEGRAM_REQUIRE_MENTION"] == "true"
-        assert env["TELEGRAM_HOME_CHANNEL"] == "-100123"          # scheduled jobs report to the group
-        assert env["TELEGRAM_ALLOWED_USERS"] == "11,22"
-        assert yaml.safe_load(r.config_text("alpha", agent))["group_sessions_per_user"] is False
-        assert yaml.safe_load(r.config_text("alpha", agent))["platforms"] == {
-            "telegram": {"gateway_restart_notification": False}}
-        assert yaml.safe_load(r.config_text("alpha", agent))["display"] == {"platforms": {
-            "telegram": {"tool_progress": "log", "interim_assistant_messages": False}}}   # answers only
+    def test_chat_settings_for_matrix(self, repo):
+        r = rt(repo)
+        agent = {**r.load("alpha"), "matrix": {"enabled": True}}
+        cfg = yaml.safe_load(r.config_text("alpha", agent))
+        assert cfg["platforms"] == {"matrix": {"gateway_restart_notification": False}}
+        assert cfg["display"] == {"platforms": {
+            "matrix": {"tool_progress": "log", "interim_assistant_messages": False}}}   # answers only
         assert "platforms" not in yaml.safe_load(r.config_text("alpha", r.load("alpha")))
-        agent["telegram"] = {"enabled": True, "allowed_users": [11]}
-        env = r.env_file(agent, "logos-home-alpha")
-        assert "TELEGRAM_GROUP_ALLOWED_CHATS" not in env and "TELEGRAM_HOME_CHANNEL=11" in env
-        assert "group_sessions_per_user" not in yaml.safe_load(r.config_text("alpha", agent))
+
+    def test_telegram_is_refused(self, repo):
+        (repo / "agents" / "alpha.local.yaml").write_text("telegram:\n  enabled: true\n")
+        with pytest.raises(AgentRuntimeError, match="Telegram is no longer supported"):
+            rt(repo).up("alpha")
 
     POLICY_NB = POLICY + """\
   noticeboard:
@@ -576,29 +546,28 @@ network_policies:
 
     def test_noticeboard_job_and_soul(self, repo, capsys):
         runner = FakeRunner()
-        r = rt(repo, runner, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
-        agent = {**r.load("alpha"), "noticeboard": True,
-                 "telegram": {"enabled": True, "allowed_users": [11]}}
+        r = rt(repo, runner)
+        agent = {**r.load("alpha"), "noticeboard": True}
         assert "## The household noticeboard" in r.soul_text(agent)
         assert "household noticeboard" not in r.soul_text(r.load("alpha"))
         assert "# Voice notes" in r.soul_text({**r.load("alpha"), "voice": True})
         assert "# Voice notes" not in r.soul_text(r.load("alpha"))
         assert "LOGOS_NOTICEBOARD_URL=http://172.17.0.1:8090/mcp" in r.env_file(agent, "logos-home-alpha")
-        r.ensure_jobs("alpha", agent, "logos-home-alpha")
+        r.ensure_jobs("alpha", {**agent, "matrix": {"enabled": True}}, "logos-home-alpha")
         created = [c[-1] for c in runner.matching("openshell", "sandbox", "exec") if "cron create" in c[-1]]
         (job,) = [c for c in created if "noticeboard-check" in c]
-        assert "--monitor-script noticeboard_state.py" in job and "--deliver telegram" in job
+        assert "--monitor-script noticeboard_state.py" in job and "--deliver matrix" in job
         assert '"*/10 * * * *"' in job
         (digest,) = [c for c in created if "weekly-digest" in c]
-        assert '"0 18 * * 0"' in digest and "--deliver telegram" in digest
+        assert '"0 18 * * 0"' in digest and "--deliver matrix" in digest
         (urgent,) = [c for c in created if "noticeboard-urgent" in c]
-        assert "--no-agent --script noticeboard_urgent.py" in urgent and "--deliver telegram" in urgent
+        assert "--no-agent --script noticeboard_urgent.py" in urgent and "--deliver matrix" in urgent
         assert "LOGOS_NOTICEBOARD_POLL_URL=http://172.17.0.1:8092" in r.env_file(agent, "logos-home-alpha")
 
-    def test_no_weekly_digest_without_telegram_or_when_disabled(self, repo):
-        for agent_extra in ({}, {"telegram": {"enabled": True, "allowed_users": [1]}, "digest": {"enabled": False}}):
+    def test_no_weekly_digest_without_matrix_or_when_disabled(self, repo):
+        for agent_extra in ({}, {"matrix": {"enabled": True}, "digest": {"enabled": False}}):
             runner = FakeRunner()
-            r = rt(repo, runner, env={"LOGOS_TELEGRAM_BOT_TOKEN": "tok"})
+            r = rt(repo, runner)
             r.ensure_jobs("alpha", {**r.load("alpha"), **agent_extra}, "logos-home-alpha")
             assert not [c for c in runner.matching("openshell", "sandbox", "exec") if "weekly-digest" in c[-1]]
 

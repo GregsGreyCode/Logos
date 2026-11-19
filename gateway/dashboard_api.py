@@ -295,13 +295,15 @@ async def handle_agent_status(request: web.Request) -> web.Response:
         attached = {} if mg.BRAIN_STAYS_LOCAL else mg.paid_providers(path.read_text() if path.exists() else "")
         paid = [p for p in (model.get("allow") or []) if p in attached]
     allowed = []
-    if (definition.get("telegram") or {}).get("enabled"):
-        allowed.append("Telegram")
+    if (definition.get("matrix") or {}).get("enabled"):
+        allowed.append("The Matrix server (chat)")
     allowed.append("The model gateway" if via_gateway else "Its model server")
     if nb.uses_noticeboard(definition):
         allowed.append("The noticeboard")
     if definition.get("voice"):
         allowed.append("The voice service (voice notes to text)")
+    if _sibling(runtime, "calendar_host").uses_calendar(definition):
+        allowed.append("The calendar service")
     return web.json_response({
         "jobs": jobs,
         "model": {"name": str(model.get("default") or ""), "local": model.get("provider") == "lmstudio",
@@ -626,7 +628,7 @@ async def handle_voice(request: web.Request) -> web.Response:
     """POST /api/v2/agents/{name}/voice  (body: the recording)  ->  {"text": "..."}
 
     The microphone button in web chat. The recording goes to the voice service with the
-    agent's own token, exactly as a Telegram voice note does, and only its words come back;
+    agent's own token, exactly as a voice note in chat does, and only its words come back;
     the person sees them in the message box before anything is sent to the agent.
     """
     import aiohttp
