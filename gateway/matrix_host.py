@@ -12,7 +12,7 @@ cannot reach it.
 Settings live in ``~/.config/logos/matrix.env`` (never in the repo)::
 
     MATRIX_SERVER_NAME=gregandbere.com          # permanent: part of every Matrix ID
-    MATRIX_CLIENT_URL=https://logos.<tailnet>.ts.net  # where Element reaches it (tailscale serve)
+    MATRIX_CLIENT_URL=https://<device>.<tailnet>.ts.net  # where Element reaches it (tailscale serve)
     MATRIX_REGISTRATION_TOKEN=...               # people sign up in Element with this
     MATRIX_ADMIN_PASSWORD=...                   # @logos-admin, the server's first account
 
