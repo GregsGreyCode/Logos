@@ -15,6 +15,7 @@ name                                 labels         meaning
 logos_model_server_up                               1 when the local model server answers
 logos_model_server_ready                            1 when the agents' model is loaded there
 logos_service_up                     service        1 when that Logos service answers
+logos_agent_sandbox_running          agent          1 when the agent's sandbox is Ready
 logos_agent_can_answer               agent          0 when nothing would answer its next message
 logos_agent_on_paid_fallback         agent          1 while a paid model would answer
 logos_agent_paid_fallback_seconds    agent          how long its answers have come from a paid model
@@ -48,6 +49,8 @@ def points(overview: Mapping[str, Any], now: Optional[datetime] = None) -> List[
     for s in status.get("services") or []:
         label = re.sub(r"[^a-z0-9]+", "_", str(s["name"]).lower()).strip("_")
         out.append(("logos_service_up", {"service": label}, 1.0 if s.get("up") else 0.0))
+    for name, ready in sorted((status.get("sandboxes") or {}).items()):
+        out.append(("logos_agent_sandbox_running", {"agent": name}, 1.0 if ready else 0.0))
     for a in overview.get("agents") or []:
         labels = {"agent": a["name"]}
         kind = (a.get("now") or {}).get("kind")
