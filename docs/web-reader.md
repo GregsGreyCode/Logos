@@ -45,6 +45,13 @@ Gathered on every `up` of the web reader:
    street and town. A line starting with `=` matches only exactly as written, for names that
    are also words (`=Rose`).
 
+4. Names the agents added themselves with `add_private_name`, when their person mentions someone
+   new who should stay private. Agents can only add (never remove or read the list); the names
+   are kept in the `logos-reader-names` volume (`added.txt`: name, agent, when), at most 500.
+   To remove one, edit that file:
+   `docker run --rm -it -v logos-reader-names:/v alpine:3 vi /v/added.txt`, then restart
+   `logos-reader`.
+
 After editing the file, run `scripts/logos-agent up <agent>` for one agent (or redeploy) to
 reload it.
 
