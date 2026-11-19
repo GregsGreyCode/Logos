@@ -7,7 +7,9 @@ from gateway import model_metrics as mm
 NOW = datetime(2026, 11, 20, 15, 30, tzinfo=timezone.utc)
 OVERVIEW = {
     "status": {"model_server": {"up": False, "ready": False},
-               "services": [{"name": "Model gateway", "up": True}, {"name": "Model guard", "up": False}]},
+               "services": [{"name": "Model gateway", "up": True}, {"name": "Model guard", "up": False},
+                            {"name": "Calendar service", "up": True}],
+               "sandboxes": {"greg": True, "bere": False}},
     "agents": [
         {"name": "greg", "now": {"kind": "paid"}, "month_usd": 1.25, "limit_usd": 10.0, "projected_usd": 4.5,
          "current": {"kind": "paid", "since": "2026-11-20T13:30:00+00:00"},
@@ -27,6 +29,9 @@ def test_points_cover_status_agents_and_providers():
     assert value(rows, "logos_model_server_up") == 0.0
     assert value(rows, "logos_service_up", service="model_gateway") == 1.0
     assert value(rows, "logos_service_up", service="model_guard") == 0.0
+    assert value(rows, "logos_service_up", service="calendar_service") == 1.0
+    assert value(rows, "logos_agent_sandbox_running", agent="greg") == 1.0
+    assert value(rows, "logos_agent_sandbox_running", agent="bere") == 0.0
     assert value(rows, "logos_agent_on_paid_fallback", agent="greg") == 1.0
     assert value(rows, "logos_agent_paid_fallback_seconds", agent="greg") == 7200.0
     assert value(rows, "logos_agent_paid_fallback_seconds", agent="bere") == 0.0
@@ -64,3 +69,25 @@ def test_push_posts_to_the_metrics_path():
 
 def test_an_empty_overview_sends_nothing_odd():
     assert mm.points({}, NOW) == []
+
+
+def test_house_services_only_where_their_container_exists():
+    import urllib.error
+    from gateway import dashboard_api as d
+
+    class Rt:
+        def run(self, argv, check=True):
+            return "logos-matrix\nlogos-sync\nsomething-else\n"
+
+        def phases(self):
+            return {"greg": "Ready", "bere": "Provisioning"}
+
+    def http(url, timeout=3):
+        if "8384" in url:
+            raise OSError("refused")                       # Syncthing down
+        raise urllib.error.HTTPError(url, 401, "", {}, None)   # Matrix answers (a 401 is still up)
+
+    got = {s["name"]: s["up"] for s in d._house_services(Rt(), http, "172.17.0.1")}
+    assert got == {"Matrix": True, "Syncthing": False}            # no calendar containers here
+    assert d._sandboxes(Rt(), {"greg": {}, "bere": {}, "household": {}}) == {
+        "bere": False, "greg": True, "household": False}

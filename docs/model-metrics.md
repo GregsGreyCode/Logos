@@ -24,7 +24,8 @@ All are gauges, with `service_name="logos"`.
 | --- | --- | --- |
 | `logos_model_server_up` | | 1 when the local model server answers |
 | `logos_model_server_ready` | | 1 when the agents' model is loaded there |
-| `logos_service_up` | `service` | 1 when that service answers: `model_gateway`, `model_guard`, `voice`, `noticeboard`, `dashboard` |
+| `logos_service_up` | `service` | 1 when that service answers: `model_gateway`, `model_guard`, `voice`, `noticeboard`, `dashboard`, and where they run, `matrix`, `calendar_server`, `calendar_service`, `syncthing` |
+| `logos_agent_sandbox_running` | `agent` | 1 when the agent's sandbox is Ready (OpenShell) |
 | `logos_agent_can_answer` | `agent` | 0 when nothing would answer its next message |
 | `logos_agent_on_paid_fallback` | `agent` | 1 while a paid model would answer |
 | `logos_agent_paid_fallback_seconds` | `agent` | how long its answers have been coming from a paid model |
@@ -43,6 +44,7 @@ All are gauges, with `service_name="logos"`.
 | Projected to pass its limit | `logos_agent_projected_usd > logos_agent_limit_usd` | 1h |
 | Most of the limit is spent | `logos_agent_spend_usd / logos_agent_limit_usd > 0.8` | 0m |
 | A Logos service is down | `logos_service_up == 0` | 5m |
+| An agent's sandbox is not running | `logos_agent_sandbox_running == 0` | 5m |
 | No data from Logos | `absent(logos_service_up{service="dashboard"})` | 10m |
 
 `logos_model_server_up == 0` is normal whenever the model server's machine is used for
