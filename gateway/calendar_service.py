@@ -239,6 +239,9 @@ class Service:
         return ZoneInfo(self.agents[agent].get("timezone") or "UTC")
 
     def _full(self, agent: str, key: str) -> Dict[str, str]:
+        # Every change goes through here: a person's reader key (the dashboard's Home) changes nothing.
+        if self.agents[agent].get("read_only"):
+            raise Refused("This is a read-only view of the calendars: nothing can be changed with it.")
         full = self.agents[agent].get("full") or {}
         if key not in full:
             raise Refused(f"'{key}' is not a calendar you can change. Yours: {', '.join(full) or 'none'}.")
@@ -255,7 +258,8 @@ class Service:
 
     def calendars(self, agent: str) -> Dict[str, Any]:
         a = self.agents[agent]
-        return {"calendars": [{"name": k, "shows": v["label"], "access": "read and change"} for k, v in (a.get("full") or {}).items()]
+        access = "read only" if a.get("read_only") else "read and change"
+        return {"calendars": [{"name": k, "shows": v["label"], "access": access} for k, v in (a.get("full") or {}).items()]
                 + [{"name": k, "shows": v["label"], "access": "busy times only"} for k, v in (a.get("busy") or {}).items()],
                 "timezone": a.get("timezone") or "UTC"}
 

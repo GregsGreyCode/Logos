@@ -1,8 +1,8 @@
 """What the dashboard's Home screen shows (story S6.11), apart from the noticeboard.
 
-* Today: the events of the person's own agent's calendars (their own and Household), read
-  through the calendar service with that agent's own token, so Home shows exactly what the
-  agent sees and nothing more.
+* Today: what the person sees on their phone (their own calendar, Household, and the other
+  people's), read through the calendar service with the person's own read-only key. Someone
+  without a calendar account sees what their agent sees instead.
 * Brain changes in the last day, from the brain's git history.
 
 Every function blocks (it runs docker or HTTP); call it with ``asyncio.to_thread``.
@@ -46,25 +46,35 @@ def rpc_result(reply: Mapping[str, Any]) -> Dict[str, Any]:
     return json.loads(text or "{}")
 
 
-def calendar_today(runtime: Any, agent: str, definition: Mapping[str, Any], post=None) -> Dict[str, Any]:
-    """``{"date", "events", "busy"}`` for today and tomorrow in the agent's timezone, or ``{"error"}``."""
+def _call(name: str, arguments: Mapping[str, Any]) -> bytes:
+    return json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": name, "arguments": dict(arguments)}}).encode()
+
+
+def calendar_today(runtime: Any, agent: str, definition: Mapping[str, Any], username: str = "",
+                   post=None) -> Dict[str, Any]:
+    """``{"date", "events", "busy", "calendars"}`` for today and tomorrow, or ``{"error"}``.
+
+    ``calendars`` maps each calendar's key to the name people know it by."""
     from gateway import calendar_host
-    if not calendar_host.uses_calendar(definition):
-        return {"error": "no_calendar"}
     host = calendar_host.CalendarHost(runtime)
-    token = host.token_for(agent)
+    token = host.reader_token(username) if username else ""
+    if not token:                                # no calendar account: what their agent sees
+        if not calendar_host.uses_calendar(definition):
+            return {"error": "no_calendar"}
+        token = host.token_for(agent)
     if not token:
         return {"error": "no_calendar"}
     day = today_in(str(definition.get("timezone") or "UTC"))
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
-        "name": "list_events", "arguments": {"start": day.isoformat(),
-                                              "end": (day + dt.timedelta(days=1)).isoformat()}}}).encode()
     post = post or _post
     try:
-        out = rpc_result(post(host.service_url(), body, token))
+        out = rpc_result(post(host.service_url(), _call("list_events", {
+            "start": day.isoformat(), "end": (day + dt.timedelta(days=1)).isoformat()}), token))
+        cals = rpc_result(post(host.service_url(), _call("list_calendars", {}), token))
     except Exception as e:                       # the calendar service is down or refused: say so
         return {"error": "calendar_unavailable", "message": str(e)[:200]}
-    return {"date": day.isoformat(), "events": out.get("events") or [], "busy": out.get("busy") or []}
+    return {"date": day.isoformat(), "events": out.get("events") or [], "busy": out.get("busy") or [],
+            "calendars": {c["name"]: c.get("shows") or c["name"] for c in cals.get("calendars") or []}}
 
 
 def _post(url: str, body: bytes, token: str) -> Dict[str, Any]:

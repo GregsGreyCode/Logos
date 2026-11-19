@@ -4,7 +4,6 @@ import { h, getJSON, when } from './util.js';
 import { requestCard, setBadge } from './noticeboard.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
-const CAL_LABEL = { personal: 'Yours', household: 'Household' };
 const ASK_KEY = 'logos-ask';           // Chat picks the question up from here and sends it
 
 // "2026-11-19 10:30" -> "10:30"; an all-day event shows "All day".
@@ -39,9 +38,10 @@ export async function homeView(root) {
     const later = rows.filter((e) => !String(e.start).startsWith(day));
     const row = (e, label) => h('div', { class: 'home-row' },
       h('span', { class: 'home-time' }, label ?? timeOf(e)),
-      h('span', { class: `dot ${e.calendar === 'household' ? 'household' : e.kind === 'busy' ? 'bere' : data.agent.name}`, 'aria-hidden': 'true' }),
+      h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, e.title, e.location ? h('span', { class: 'when' }, ` · ${e.location}`) : null),
-      h('span', { class: 'when' }, e.kind === 'busy' ? e.who : (CAL_LABEL[e.calendar] || e.calendar)));
+      h('span', { class: 'when' }, e.kind === 'busy' ? e.who
+        : e.calendar === 'personal' ? 'Yours' : (today.calendars || {})[e.calendar] || e.calendar));
     todayBox.replaceChildren(
       ...(todays.length ? todays.map((e) => row(e)) : [h('p', { class: 'when' }, 'Nothing in the calendar today.')]),
       ...later.slice(0, 4).map((e) => row(e, 'Tomorrow')));
