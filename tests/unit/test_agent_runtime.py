@@ -615,19 +615,21 @@ network_policies:
           - allow: {method: tools/call, tool: {any: [list_lights, set_lights, list_scenes, activate_scene]}}
 """
 
-    def test_house_only_for_the_household_agent(self, repo):
+    def test_house_only_when_the_definition_asks(self, repo):
         path = repo / "infra/agent-image/policy.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.POLICY_HOUSE)
         (repo / "souls/_shared/house.md").write_text("## The lights\n")
         r = rt(repo)
         base = r.load("alpha")
-        # A person's agent never gets it, even when its definition asks.
-        for agent in (base, {**base, "house": {"enabled": True}}, {**base, "role": "household"}):
+        # Only with house on: the household agent, or a person's agent (Greg and Béré, 19 Nov).
+        for agent in (base, {**base, "role": "household"}, {**base, "house": {"enabled": False}}):
             assert "LOGOS_HOUSE_TOKEN" not in r.env_file(agent, "logos-home-alpha")
             assert "house" not in (yaml.safe_load(r.config_text("alpha", agent, house_token="th")).get("mcp_servers") or {})
             assert "house" not in yaml.safe_load(r.policy_path("alpha", agent).read_text())["network_policies"]
             assert "The lights" not in r.soul_text(agent)
+        person = {**base, "house": {"enabled": True}}
+        assert "LOGOS_HOUSE_TOKEN=" in r.env_file(person, "logos-home-alpha") and "The lights" in r.soul_text(person)
         house = {**base, "role": "household", "house": {"enabled": True}}
         assert "LOGOS_HOUSE_TOKEN=" in r.env_file(house, "logos-home-alpha")
         cfg = yaml.safe_load(r.config_text("alpha", house, house_token="th"))
