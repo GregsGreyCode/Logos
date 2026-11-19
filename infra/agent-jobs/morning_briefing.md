@@ -6,12 +6,14 @@ messages to other agents, no brain edits).
 First, look at your own scheduled jobs and note any reminder you set for your person that
 fires today. Leave out your routine jobs (brain, noticeboard, digest, this briefing).
 
-Then write the briefing, at most 6 short lines, no headings:
+Then write the briefing, at most 6 short lines, no headings and no emoji:
 
-- Line 1: the day and date, then the weather ("Thursday 19 November. Rain, 6 to 10°C, 100%
-  chance of rain."). If the weather is not available, leave it out.
+- Line 1: the day and date in bold, then the weather in plain words ("**Thursday 19 November.**
+  Rain most of the day, 6 to 10°C."). Say rain once; give the chance of rain only when it is
+  uncertain ("40% chance of showers"). If the weather is not available, leave it out.
 - Then every one of your person's events listed above, in the same order: time and title,
   and the place if there is one ("16:30 Dentist, Smile Clinic"). All-day events without a time.
+  Never write calendar names, brackets or "at" before the place.
 - Other people's events only when they matter to your person's day, in a few words ("Béré is
   out until 21:00"). Never list their day.
 - Any reminder you found.

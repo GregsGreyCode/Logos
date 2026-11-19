@@ -1,8 +1,8 @@
 """Runs with no model at 16:20, after the daily-changes jobs (story DC2). For each of today's
-changes jobs that did not run, failed or was not delivered (LM Studio was off, say), it sends
-the plain list of what changed, made from the same facts. A job that found nothing, or ran
+changes posts that did not run, failed or was not delivered (the AI computer was off, say), it
+sends the plain list of what changed, made from the same facts. A job that found nothing, or ran
 and was delivered, adds nothing; when all of them did, this prints nothing (which sends
-nothing). The weekly jobs count only on Sundays. Standard library only."""
+nothing). The weekly post counts only on Sundays. Standard library only."""
 import datetime
 import json
 import os
@@ -11,8 +11,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import changes_facts as cf  # noqa: E402
 
-DAILY = {"changes-homelab": ("homelab", 1), "changes-logos": ("logos", 1)}
-WEEKLY = {"changes-homelab-week": ("homelab", 7), "changes-logos-week": ("logos", 7)}
+DAILY = {"changes-daily": 1}
+WEEKLY = {"changes-week": 7}
 
 
 def done_today(jobs, name, today):
@@ -33,16 +33,14 @@ def due(today):
 
 
 def report(jobs, today, e, fetch=cf.fetch):
-    parts = []
-    for name, (repo, days) in due(today).items():
+    posts = []
+    for name, days in due(today).items():
         if done_today(jobs, name, today):
             continue
-        data = fetch(e, repo, days)
-        if data and cf.count(data):
-            parts.append(cf.plain(data))
-    if not parts:
-        return ""
-    return "\n\n".join(parts) + "\n\n(Plain list: I couldn't write the summary this afternoon.)"
+        parts = cf.gather(e, days, fetch)
+        if parts:
+            posts.append(cf.plain(parts, days))
+    return "\n\n".join(posts)
 
 
 def main():

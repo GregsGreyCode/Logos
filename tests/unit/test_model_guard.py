@@ -107,7 +107,8 @@ def test_a_server_that_stays_off_is_refused_in_plain_words_after_the_wait():
         error = json.loads(r.read())["error"]
         waited = time.monotonic() - started
         assert r.status == 503 and 0.3 < waited < 2
-        assert error["code"] == "model_server_off" and "offline" in error["message"]
+        assert error["code"] == "model_server_off" and "the AI computer is off" in error["message"]
+        assert "LM Studio" not in error["message"]                  # no product names to people
     finally:
         g.shutdown()
 

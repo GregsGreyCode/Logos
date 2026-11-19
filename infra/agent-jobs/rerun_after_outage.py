@@ -15,7 +15,7 @@ import urllib.request
 
 HOME = "/opt/data"
 DONE = os.path.join(HOME, ".rerun_after_outage")
-OFF = ("model_server_off", "LM Studio isn't running")
+OFF = ("model_server_off", "the AI computer is off", "LM Studio isn't running")   # the last: older outputs
 UNTIL = {"weekly-digest": 24, "consolidate": 9}       # rerun only before this hour, the same day
 
 

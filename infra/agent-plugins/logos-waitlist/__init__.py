@@ -4,8 +4,10 @@ When LM Studio is closed (Greg is gaming), the model guard answers a model reque
 ``model_server_off`` after a minute of waiting (story D1). This plugin then:
 
 - tells hermes not to retry that error three more times (each would wait another minute), so
-  the person hears at once: "My model is offline right now ... I'll answer this as soon as it's
-  back" (the guard's own words);
+  the person hears at once: "I can't answer right now: the AI computer is off ..." (the
+  guard's own words). In the household group chat, once model-watch has told everyone, the
+  household agent answers each message with one short line instead, so the explanation is not
+  repeated under every message (docs/messages.md);
 - remembers the conversation in ``/opt/data/waitlist.json`` (session id and when, no text);
 - while anything is waiting, asks the guard every 30 seconds whether LM Studio is back
   (``LOGOS_MODEL_HEALTH_URL``, the sandbox's one rule for it);
@@ -33,8 +35,23 @@ MAX_AGE = 12 * 3600               # older than this: a note instead of an answer
 TURN_LIMIT = 15 * 60              # longest wait for one re-sent answer before the next
 SKIP_PLATFORMS = {"cron", "api", "api_server", "cli", "local", ""}   # handled elsewhere
 OFF_CODE = "model_server_off"
-EXPIRED_NOTE = ("I was offline when you sent your last message, more than 12 hours ago, so I "
-                "haven't answered it. Ask again if you still need it.")
+EXPIRED_NOTE = ("The AI computer was off when you sent your last message, more than 12 hours ago, "
+                "so I didn't answer it. Ask again if you still need it.")
+OFF_REPLY = "I can't answer right now: the AI computer is off. I'll reply here as soon as it's back on."
+# After model-watch's group notice (household agent only; its state file is in the same home).
+NOTED_REPLY = "Noted. I'll answer this when the AI computer is back on."
+WATCH_STATE = os.path.join(HOME, ".model_watch")
+
+
+def off_reply() -> str:
+    """The short line once the group has been told the AI computer is off; the full one otherwise."""
+    try:
+        with open(WATCH_STATE) as f:
+            if json.load(f).get("told"):
+                return NOTED_REPLY
+    except (OSError, ValueError, AttributeError):
+        pass
+    return OFF_REPLY
 
 _lock = threading.Lock()
 _state = {"gateway": None, "loop": None, "task": None}
@@ -104,7 +121,7 @@ def _classify(status_code=None, error_code="", error_message="", error_body=None
     """The guard's "model off" is final for this turn: no retries, the guard's words to the person."""
     if status_code == 503 and is_off(error_code, error_message, json.dumps(error_body or {})):
         return {"reason": "overloaded", "retryable": False, "should_fallback": False,
-                "message": "The local model (LM Studio) is offline; this conversation will be answered when it is back."}
+                "message": off_reply()}
     return None
 
 

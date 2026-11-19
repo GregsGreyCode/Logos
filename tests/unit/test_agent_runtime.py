@@ -791,10 +791,8 @@ network_policies:
         r.ensure_jobs("alpha", agent, "logos-home-alpha")
         cmds = [c[-1] for c in runner.matching("openshell", "sandbox", "exec")]
         created = [c for c in cmds if "cron create" in c]
-        want = {"changes-homelab": ("changes_homelab.py", '"0 16 * * *"'),
-                "changes-logos": ("changes_logos.py", '"5 16 * * *"'),
-                "changes-homelab-week": ("changes_homelab_week.py", '"10 16 * * 0"'),
-                "changes-logos-week": ("changes_logos_week.py", '"15 16 * * 0"')}
+        want = {"changes-daily": ("changes_daily.py", '"0 16 * * *"'),
+                "changes-week": ("changes_week.py", '"10 16 * * 0"')}
         for job, (script, when) in want.items():
             (c,) = [c for c in created if f"--name {job} " in c]
             assert f"--script {script}" in c and when in c and "--no-agent" not in c
@@ -802,10 +800,13 @@ network_policies:
         (check,) = [c for c in created if "--name changes-check " in c]
         assert "--no-agent --script changes_check.py" in check and '"20 16 * * *"' in check
         assert set(want) | {"changes-check"} <= set(art.MANAGED_JOBS)
+        # The four retired jobs are still managed, so `up` removes them from existing sandboxes.
+        assert {"changes-homelab", "changes-logos", "changes-homelab-week", "changes-logos-week"} <= set(art.MANAGED_JOBS)
+        assert not [c for c in created if "changes-homelab" in c or "changes-logos" in c]
         assert art.changes_jobs({**agent, "matrix": {}}) == []             # nowhere to post: no jobs
         assert art.changes_jobs({**agent, "changes": {}}) == []
         assert [j for j, _, _ in art.changes_jobs({**agent, "changes": {"enabled": True, "weekly": False}})] == [
-            "changes-homelab", "changes-logos", "changes-check"]
+            "changes-daily", "changes-check"]
 
     def test_monitor_state_is_carried_across_job_recreation(self, repo):
         runner = FakeRunner()
@@ -861,6 +862,7 @@ network_policies:
                       "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
             "agent": {"auto_recovery_cycles": 0, "disabled_toolsets": ["web", "browser"]},
             "tools": {"tool_search": {"enabled": "off"}},
+            "cron": {"wrap_response": False},                                  # no "Cronjob Response" header
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
             "plugins": {"enabled": ["logos-waitlist"]},

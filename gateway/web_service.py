@@ -87,7 +87,11 @@ def weather_line(data: Dict[str, Any]) -> str:
     if lo is not None and hi is not None:
         parts.append(f"{round(lo)} to {round(hi)}°C")
     rain = first("precipitation_probability_max")
-    if rain is not None:
+    code = first("weather_code")
+    wet = code is not None and (51 <= code <= 67 or 80 <= code <= 99)
+    # Say rain once: a wet forecast that is near certain needs no percentage, and a dry day with
+    # little chance of rain needs no mention of it.
+    if rain is not None and not (wet and rain >= 80) and not (not wet and rain < 30):
         parts.append(f"{round(rain)}% chance of rain")
     wind = first("wind_speed_10m_max")
     if wind is not None and wind >= 25:

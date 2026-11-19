@@ -43,9 +43,9 @@ consolidation:                  # nightly brain tidy-up (hermes cron job `consol
   schedule: "30 1 * * *"        # staggered so the three agents do not share the local model
   # model / provider: omit to use the agent's main (local) model
 
-changes:                        # what changed in the homelab and in Logos, in the group chat (story DC2,
-  enabled: true                 # docs/daily-changes.md): 16:00 homelab, 16:05 Logos, Sunday roll-ups
-                                # 16:10 and 16:15, plain list at 16:20 for any that did not go out
+changes:                        # what changed in the agents and the home servers, in the group chat
+  enabled: true                 # (story DC2, docs/daily-changes.md): one post at 16:00, the week's
+                                # roll-up Sundays 16:10, plain list at 16:20 for any that did not go out
 
 digest:                         # weekly summary of what the brain learned, sent to the Matrix home room
   enabled: true

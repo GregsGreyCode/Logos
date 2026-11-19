@@ -1,20 +1,22 @@
 """Runs before each daily-changes job (story DC2). What it prints goes into the household agent's
-prompt: the changes to Logos or the homelab, from the web reader's ``/changes`` (which asks
-GitHub; the sandbox has no internet). When nothing changed it prints ``{"wakeAgent": false}``,
-so the model is not woken and nothing is sent.
+prompt: what changed in Logos and in the homelab, from the web reader's ``/changes`` (which asks
+GitHub; the sandbox has no internet). When nothing changed in either, it prints
+``{"wakeAgent": false}``, so the model is not woken and nothing is sent.
 
-The same file is installed under four names, and the name says which list to fetch:
-``changes_homelab.py``, ``changes_logos.py`` (the last day), ``changes_homelab_week.py``,
-``changes_logos_week.py`` (the last seven days, on Sundays). hermes passes no arguments to a
-job script, so the name is the argument. ``changes_check.py`` uses :func:`plain` for the
-version it sends when the model could not write one. Standard library only; never fails."""
+One post covers both: the same file is installed as ``changes_daily.py`` (the last day) and
+``changes_week.py`` (the last seven days, on Sundays). hermes passes no arguments to a job
+script, so the name is the argument. ``changes_check.py`` uses :func:`plain` for the version it
+sends when the model could not write one. Standard library only; never fails."""
 import json
 import os
+import re
 import sys
 import urllib.request
 
 SKIP = json.dumps({"wakeAgent": False})
-LABEL = {"logos": "Logos", "homelab": "Homelab"}
+REPOS = ("logos", "homelab")
+#: How people know each part (docs/messages.md: no repository names).
+LABEL = {"logos": "The agents", "homelab": "The home servers"}
 
 
 def env():
@@ -25,11 +27,9 @@ def env():
 
 
 def which(path):
-    """``changes_logos_week.py`` -> ("logos", 7)."""
+    """``changes_week.py`` -> 7, ``changes_daily.py`` -> 1."""
     name = os.path.basename(path).rsplit(".", 1)[0]
-    parts = name.split("_")[1:]
-    repo = parts[0] if parts and parts[0] in LABEL else "logos"
-    return repo, 7 if parts[-1:] == ["week"] else 1
+    return 7 if name.endswith("week") else 1
 
 
 def fetch(e, repo, days):
@@ -42,8 +42,8 @@ def fetch(e, repo, days):
         return None
 
 
-def period(days):
-    return "last 24 hours" if days == 1 else f"last {days} days"
+def heading(days):
+    return "What changed today" if days == 1 else "What changed this week"
 
 
 def count(data):
@@ -59,12 +59,27 @@ def live_note(prs):
     return "all live" if not not_yet else f"{len(marks) - not_yet} live, {not_yet} not yet"
 
 
-def facts(data):
-    """The lines given to the model."""
-    repo, days = data["repo"], data["days"]
+CONVENTIONAL = re.compile(r"^(feat|fix|refactor|docs|test|chore|build|ci|perf|style)(\([^)]*\))?!?:\s*", re.I)
+RENOVATE = re.compile(r"^(?:chore\(deps\):\s*)?update (?:docker tag |image |dependency )?(.+?)(?: docker tag)? to v?([\w.\-]+)$", re.I)
+
+
+def clean_title(title):
+    """A commit or PR title as a person would say it: 'chore(deps): update jellyfin docker tag to
+    v10.10.4' -> 'Jellyfin updated to 10.10.4'; 'feat(h1): lights for the agent' -> 'Lights for the agent'."""
+    t = str(title or "").strip()
+    m = RENOVATE.match(t)
+    if m:
+        app = m.group(1).rsplit("/", 1)[-1].strip()
+        return f"{app[:1].upper()}{app[1:]} updated to {m.group(2)}"
+    t = CONVENTIONAL.sub("", t)
+    return t[:1].upper() + t[1:]
+
+
+def facts_one(data):
+    """The lines given to the model for one part."""
+    repo = data["repo"]
     prs, commits = data.get("prs") or [], data.get("commits") or []
-    head = f"{LABEL[repo]}, {period(days)}"
-    lines = [f"Repository: {head}. Write the heading as \"{head}\"."]
+    lines = [f"## {LABEL[repo]} ({'Logos' if repo == 'logos' else 'homelab-infra'})"]
     if repo == "logos":
         note = live_note(prs)
         lines.append(f"{len(prs)} merged pull requests" + (f" ({note} on the Logos server)." if note else "."))
@@ -86,25 +101,45 @@ def facts(data):
     return lines
 
 
-def plain(data):
-    """The plain version: the heading and one line per change, from the titles."""
-    repo, days = data["repo"], data["days"]
-    prs, commits = data.get("prs") or [], data.get("commits") or []
-    note = live_note(prs) if repo == "logos" else ""
-    lines = [f"**{LABEL[repo]}, {period(days)}** ({count(data)} changes" + (f", {note})" if note else ")")]
-    for p in prs:
-        lines.append(f"- {p['title']}" + (" (not live yet)" if p.get("live") is False else ""))
-    lines += [f"- {c['title']}" for c in commits]
+def facts(parts, days):
+    """The lines given to the model: the heading to use, then each part that changed."""
+    head = heading(days)
+    lines = [f'Write the first line, in bold, as "{head}". Parts that changed: '
+             + ", ".join(LABEL[d["repo"]] for d in parts) + "."]
+    for d in parts:
+        lines += [""] + facts_one(d)
+    return lines
+
+
+def plain(parts, days):
+    """The plain version: the heading, then each part with one line per change."""
+    lines = [f"**{heading(days)}**"]
+    for d in parts:
+        prs, commits = d.get("prs") or [], d.get("commits") or []
+        lines += ["", LABEL[d["repo"]]]
+        lines += [f"- {clean_title(p['title'])}" + (" (not live yet)" if p.get("live") is False else "") for p in prs]
+        lines += [f"- {clean_title(c['title'])}" for c in commits]
     return "\n".join(lines)
 
 
+def gather(e, days, fetch_one=None):
+    """The parts that changed, in a fixed order; parts that could not be fetched are left out."""
+    fetch_one = fetch_one or fetch
+    out = []
+    for repo in REPOS:
+        data = fetch_one(e, repo, days)
+        if data and count(data):
+            out.append(data)
+    return out
+
+
 def main(argv0=None):
-    repo, days = which(argv0 or sys.argv[0])
-    data = fetch(env(), repo, days)
-    if not data or not count(data):
+    days = which(argv0 or sys.argv[0])
+    parts = gather(env(), days)
+    if not parts:
         print(SKIP)          # nothing changed, or the reader is down: changes_check.py tries again
         return
-    print("\n".join(facts(data)))
+    print("\n".join(facts(parts, days)))
 
 
 if __name__ == "__main__":
