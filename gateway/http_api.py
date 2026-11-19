@@ -114,12 +114,12 @@ _html_dir = (
 )
 
 
-# mtime-cached HTML loader. Previously `main_app.html` / `login.html` /
+# mtime-cached HTML loader. Previously `app.html` / `login.html` /
 # `setup.html` were read once at import time and frozen into module-
 # level strings, which meant a running gateway never picked up HTML
 # edits — every "my change isn't showing up" ticket traced back to the
 # same stale snapshot. Re-reading on mtime change is effectively free
-# (main_app.html is ~300 KB, read at most once per page navigation) and
+# (the pages are small and read at most once per page navigation) and
 # removes that whole class of foot-gun.
 _HTML_CACHE: dict[str, tuple[float, str]] = {}
 
@@ -137,7 +137,6 @@ def _read_html(filename: str) -> str:
 
 
 # Warm the cache at import time so the first hit doesn't pay the read.
-_read_html("main_app.html")
 _read_html("login.html")
 _read_html("setup.html")
 
@@ -402,18 +401,14 @@ async def _handle_setup_wipe(request: web.Request) -> web.Response:
     return resp
 
 
-async def _handle_index(request: web.Request) -> web.Response:
-    from gateway.auth.db import is_setup_completed
-    if not is_setup_completed():
-        raise web.HTTPFound("/login")
-    inject = f'<script>window.__LOGOS__={{runtimeMode:"openshell",version:"{_VERSION_LABEL}"}};window._hueEpochMs={_HUE_EPOCH_MS};</script>'
-    html = _read_html("main_app.html").replace("</head>", inject + "</head>", 1)
-    # no-store so no intermediate cache (browser, reverse proxy, CDN)
-    # can hold a stale version after an HTML edit. The ES module
-    # cache-bust query strings inside the HTML already version the
-    # JS; the HTML itself must be cheap to re-fetch.
-    return web.Response(text=html, content_type="text/html",
-                        headers={"Cache-Control": "no-store"})
+async def _handle_old_page(request: web.Request) -> web.Response:
+    """The old v1 dashboard's addresses (/classic, /agents, ...): it was removed, so go to the dashboard."""
+    raise web.HTTPFound("/")
+
+
+async def _handle_options(request: web.Request) -> web.Response:
+    """CORS preflight for /chat: nothing to add beyond what the middleware sets."""
+    return web.Response(status=204)
 
 
 async def _handle_app(request: web.Request) -> web.Response:
@@ -1976,16 +1971,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         require_csrf(require_permission("manage_platform")(_handle_setup_wipe)))
 
     app.router.add_get("/",              _handle_app)
-    app.router.add_get("/classic",       _handle_index)      # the v1-era page, until v2 covers it
     from gateway import dashboard_api as _dashboard_api
     _dashboard_api.register(app)
     from gateway import updates as _updates
     _updates.register(app)
     app.router.add_static("/ui", str(Path(__file__).parent / "ui"), show_index=False)
-    # Per-tab URL paths. Each one serves the same SPA (main_app.html);
-    # Alpine reads window.location.pathname on init and pushes state on
-    # tab changes so refresh keeps the user on the current page.
+    # Addresses of the old v1 dashboard (removed in S6.8): bookmarks lead to the dashboard.
     for _tab_path in (
+        "/classic",
         "/agents",
         "/chats",
         "/activity",
@@ -1995,7 +1988,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         "/admin/users",
         "/admin/audit",
     ):
-        app.router.add_get(_tab_path, _handle_index)
+        app.router.add_get(_tab_path, _handle_old_page)
     app.router.add_get("/auth/me",       handle_me)
     app.router.add_get("/users/me",      handle_me)
     app.router.add_patch("/users/me",    handle_users_me_patch)
@@ -2055,7 +2048,7 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_post("/chat/transcribe",    require_csrf(_handle_transcribe))
     # /tools/configure removed 2026-04-21 — per-agent keys now go via
     # /admin/agents/<id>/env-credentials (registered below).
-    app.router.add_route("OPTIONS", "/chat",   _handle_index)
+    app.router.add_route("OPTIONS", "/chat",   _handle_options)
 
     # ── Admin routes ───────────────────────────────────────────────────────
     _mm  = require_permission("manage_machines")
@@ -2222,6 +2215,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     else:
         _static_dir = _pathlib.Path(__file__).parent.parent / "assets"
     if _static_dir.exists():
+        import mimetypes as _mimetypes
+        _mimetypes.add_type("application/manifest+json", ".webmanifest")   # Add to Home screen
         app.router.add_static("/static", str(_static_dir), show_index=False)
 
     app_runner = web.AppRunner(app)

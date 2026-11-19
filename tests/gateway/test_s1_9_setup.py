@@ -344,9 +344,8 @@ def test_setup_page_only_asks_for_accounts():
     for gone in ("benchmark", "Benchmark", "sandbox", "Telegram", "Discord", "soul", "Ollama", "LM Studio"):
         assert gone not in html, gone
     # The dashboard no longer offers the "re-run wizard" action or its endpoint.
-    main = (GATEWAY_DIR / "html" / "main_app.html").read_text(encoding="utf-8")
+    main = (GATEWAY_DIR / "html" / "app.html").read_text(encoding="utf-8")
     assert "/api/setup/reset" not in main and "resetSetup" not in main
-    assert "/api/setup/wipe" in main
 
 
 # ── No default admin; setup needs this machine or the one-time token ─────────
