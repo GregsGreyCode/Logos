@@ -279,6 +279,11 @@ ul.plain code { color: var(--muted); }
 .avatar.big { width: 40px; height: 40px; font-size: 16px; }
 .conv-btn, .chat-scrim { display: none; }
 .name-short { display: none; }
+.phone-only { display: none !important; }
+.conflicts { margin: 12px 24px 0; padding: 12px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-ink); }
+.conflicts p, .conflicts ul { margin: 6px 0 0; } .conflicts ul { padding-left: 18px; }
+.conflicts a { color: inherit; } .conflicts code { margin-left: 6px; opacity: 0.8; }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 /* The microphone: an icon at rest; while recording, the red dot and the time instead. */
 .mic .mic-dot { display: none; }
 .mic[aria-pressed="true"] .mic-dot { display: inline-block; }
@@ -358,6 +363,12 @@ ul.plain code { color: var(--muted); }
   .composer .mic[aria-pressed="true"] .mic-label { display: inline; }
   .composer .mic[aria-pressed="true"] { width: auto; padding: 0 12px; }
   .side { display: none; }
+
+  /* On a phone the brain is edited in Obsidian: no Edit or New page, an Open in Obsidian link instead */
+  .wide-only { display: none !important; }
+  .phone-only { display: revert !important; }
+  a.phone-only.btn { display: inline-flex !important; }
+  .conflicts { margin: 12px 16px 0; }
 
   /* S6.9 phone fixes */
   .name-full { display: none; }                                   /* 6: short agent names */
