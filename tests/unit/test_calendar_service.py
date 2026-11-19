@@ -160,3 +160,17 @@ def test_rpc(svc):
                                                                                      "start": "2026-11-21"}}})
     assert bad["result"]["isError"] and "Not done" in bad["result"]["content"][0]["text"]
     assert svc.agent_for_token("th") == "household" and svc.agent_for_token("nope") is None
+
+
+def test_a_reader_key_reads_everything_and_changes_nothing(svc):
+    svc.agents["person:greg"] = {"token": "rg", "timezone": "Europe/London", "read_only": True, "busy": {},
+                                 "full": {"personal": {"path": "/greg/personal/", "label": "Your own calendar"},
+                                          "bere": {"path": "/bere/personal/", "label": "Béré"}}}
+    svc.dav.put("/bere/personal/b.ics", cs.build_event("b@x", "Pilates", dt.datetime(2026, 11, 21, 18, tzinfo=LONDON),
+                                                        dt.datetime(2026, 11, 21, 19, tzinfo=LONDON), False, now=NOW))
+    assert [e["title"] for e in svc.list_events("person:greg", "2026-11-21")["events"]] == ["Pilates"]
+    for change in (lambda: svc.add_event("person:greg", "personal", "x", "2026-11-21"),
+                   lambda: svc.cancel_event("person:greg", "bere/b.ics")):
+        with pytest.raises(cs.Refused, match="read-only"):
+            change()
+    assert all(c["access"] == "read only" for c in svc.calendars("person:greg")["calendars"])

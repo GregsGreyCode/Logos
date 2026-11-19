@@ -231,11 +231,45 @@ def calendars_for(agent: Mapping[str, Any], people: List[str]) -> Dict[str, dict
     return {"full": full, "busy": busy}
 
 
+READER = "person:"          # a person's read-only key, for the dashboard's Home
+
+
+def person_label(name: str, agents: Mapping[str, Mapping[str, Any]]) -> str:
+    """A person's name as people see it: "bere" -> "Béré", from their agent's display name."""
+    for a in agents.values():
+        if (a.get("calendar") or {}).get("person") == name:
+            shown = re.sub(r"(?i)['’]s agent$", "", str(a.get("display_name") or "")).strip()
+            if shown:
+                return shown
+    return name.capitalize()
+
+
+def reader_calendars(name: str, people: List[str], agents: Mapping[str, Mapping[str, Any]]) -> Dict[str, dict]:
+    """What a person sees on their phone: their own calendar, Household and everyone else's, all read-only."""
+    full = {"personal": {"path": f"/{name}/personal/", "label": "Your own calendar"},
+            "household": {"path": "/household/calendar/", "label": "Household"}}
+    for other in people:
+        if other != name:
+            full[other] = {"path": f"/{other}/personal/", "label": person_label(other, agents)}
+    return {"full": full, "busy": {}, "read_only": True}
+
+
 def service_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str], people: List[str],
-                   password: str) -> dict:
-    return {"radicale": f"http://{CONTAINER}:{PORT}", "user": SERVICE_USER, "password": password,
-            "agents": {n: {"token": tokens[n], "timezone": str(a.get("timezone") or "UTC"),
-                           **calendars_for(a, people)} for n, a in sorted(agents.items())}}
+                   password: str, readers: Optional[Mapping[str, str]] = None) -> dict:
+    out = {"radicale": f"http://{CONTAINER}:{PORT}", "user": SERVICE_USER, "password": password,
+           "agents": {n: {"token": tokens[n], "timezone": str(a.get("timezone") or "UTC"),
+                          **calendars_for(a, people)} for n, a in sorted(agents.items())}}
+    tz_of = {(a.get("calendar") or {}).get("person"): str(a.get("timezone") or "UTC") for a in agents.values()}
+    for name, token in sorted((readers or {}).items()):
+        if name in people:
+            out["agents"][READER + name] = {"token": token, "timezone": tz_of.get(name) or "UTC",
+                                            **reader_calendars(name, people, agents)}
+    return out
+
+
+def readers_file(env: Mapping[str, str]) -> Path:
+    base = env.get("XDG_CONFIG_HOME") or str(Path(env.get("HOME") or os.path.expanduser("~")) / ".config")
+    return Path(base) / "logos" / "calendar-readers.json"
 
 
 def password_file(env: Mapping[str, str], name: str) -> Path:
@@ -352,7 +386,8 @@ class CalendarHost:
         agents = {n: a for n, a in agents.items() if tokens[n]}  # joins on its first `up`
         if not agents:
             return False
-        config = json.dumps(service_config(agents, tokens, people, self._service_password), indent=1,
+        config = json.dumps(service_config(agents, tokens, people, self._service_password,
+                                           self.reader_tokens(people)), indent=1,
                             sort_keys=True, ensure_ascii=False)
         stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + IMAGE).encode()).hexdigest()[:16]
         if self._service_running() and self._service_label() == stamp:
@@ -376,6 +411,33 @@ class CalendarHost:
             except Exception:
                 self.rt.runner.sleep(1)
         raise TimeoutError("the calendar service did not start; see: docker logs " + SERVICE)
+
+    def reader_tokens(self, people: List[str]) -> Dict[str, str]:
+        """Each person's read-only key (made on first use), kept in a 0600 file on this machine."""
+        path = readers_file(self.rt.env)
+        try:
+            tokens = json.loads(path.read_text())
+        except (OSError, ValueError):
+            tokens = {}
+        missing = [p for p in people if not tokens.get(p)]
+        if missing:
+            for p in missing:
+                tokens[p] = secrets.token_urlsafe(32)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            old = os.umask(0o077)
+            try:
+                path.write_text(json.dumps(tokens, indent=1, sort_keys=True))
+            finally:
+                os.umask(old)
+            path.chmod(0o600)
+        return {p: tokens[p] for p in people}
+
+    def reader_token(self, name: str) -> str:
+        """The person's read-only key, if the calendar service knows them (Home reads with it)."""
+        try:
+            return str(json.loads(readers_file(self.rt.env).read_text()).get(name) or "")
+        except (OSError, ValueError):
+            return ""
 
     def down(self) -> None:
         self.rt.run(["docker", "rm", "-f", SERVICE], check=False)
