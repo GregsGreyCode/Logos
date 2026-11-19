@@ -57,7 +57,7 @@ export async function updatesView(root, _args, state) {
       h('ul', { class: 'plain' }, p.commits.map((c) => h('li', {}, h('code', {}, c.sha), ' ', c.subject))),
       h('h3', {}, 'What will happen'),
       h('ul', {}, p.steps.map((s) => h('li', {}, s))),
-      h('p', { class: 'when' }, `Agents running here: ${p.running.join(', ') || 'none'}. Brains, memory and Telegram connections are kept.`),
+      h('p', { class: 'when' }, `Agents running here: ${p.running.join(', ') || 'none'}. Brains, memory and Matrix logins are kept.`),
       h('div', { class: 'row' }, go, recheck), note);
   }
 
@@ -66,7 +66,8 @@ export async function updatesView(root, _args, state) {
     if (!s && !d.output.length) { lastBox.hidden = true; return; }
     lastBox.hidden = false;
     const [label, cls] = STATE_TEXT[d.running ? 'running' : s?.state] || ['Last update', ''];
-    lastBox.replaceChildren(
+    // replaceChildren() prints a null as the word "null", so the parts left out are filtered away.
+    lastBox.replaceChildren(...[
       h('div', { class: 'card-head' }, h('h2', {}, label), cls ? h('span', { class: `status ${cls}` }, '') : null),
       s ? h('p', { class: 'when' },
         [s.before && s.after ? `${s.before.slice(0, 7)} → ${s.after.slice(0, 7)}` : '',
@@ -74,7 +75,8 @@ export async function updatesView(root, _args, state) {
           .filter(Boolean).join(' · ')) : null,
       s?.error ? h('p', { class: 'notice', style: 'white-space: pre-wrap' }, s.error) : null,
       d.output.length ? h('details', { open: d.running || (s && s.state !== 'done') },
-        h('summary', {}, 'Output'), h('pre', { class: 'log-output' }, d.output.join('\n'))) : null);
+        h('summary', {}, 'Output'), h('pre', { class: 'log-output' }, d.output.join('\n'))) : null,
+    ].filter(Boolean));
   }
 
   async function refresh(check = true, fresh = false) {
