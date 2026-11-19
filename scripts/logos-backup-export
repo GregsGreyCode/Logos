@@ -77,12 +77,17 @@ def main(argv):
     base = Path(argv[argv.index("--dir") + 1] if "--dir" in argv else
                 os.environ.get("LOGOS_BACKUP_DIR") or Path.home() / "backup-export").expanduser()
     base.mkdir(parents=True, exist_ok=True)
+    # The helper container writes as root, which an NFS share maps to nobody. So it writes to a
+    # local staging folder, and this script (the logos user) copies the result onto the share.
+    stage = Path.home() / ".cache" / "logos-backup-export"
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir(parents=True)
     work = base / f".new-{os.getpid()}"
     shutil.rmtree(work, ignore_errors=True)
-    work.mkdir()
     try:
-        manifest = export(work)
-        (work / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
+        manifest = export(stage)
+        (stage / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
+        shutil.copytree(stage, work)
         old = base / "latest"
         if old.exists():
             old.rename(base / f".old-{os.getpid()}")
@@ -92,6 +97,8 @@ def main(argv):
         shutil.rmtree(work, ignore_errors=True)
         print(f"backup export FAILED: {e}", file=sys.stderr)
         return 1
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
     size = sum(f["bytes"] for f in manifest["files"].values())
     prom = base / "logos_backup_export.prom"
     prom.with_suffix(".tmp").write_text(
