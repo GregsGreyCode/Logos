@@ -153,6 +153,9 @@ def repo(tmp_path):
     (jobs / "noticeboard_check.md").write_text("Noticeboard check.\n")
     (jobs / "noticeboard_urgent.py").write_text("print('')\n")
     (jobs / "weekly_digest.md").write_text("Weekly digest.\n")
+    (jobs / "briefing_today.py").write_text("print('Weather: dry.')\n")
+    (jobs / "morning_briefing.md").write_text("Morning briefing.\n")
+    (jobs / "briefing_check.py").write_text("print('')\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
@@ -507,6 +510,40 @@ network_policies:
         ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["noticeboard"]["endpoints"][0]
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8090, ["172.17.0.1/32"])
 
+    POLICY_WEATHER = """
+version: 1
+network_policies:
+  lm_studio:
+    endpoints:
+      - {host: 10.0.0.5, port: 1234, allowed_ips: [10.0.0.5/32]}
+  web:
+    endpoints:
+      - {host: 192.0.2.1, port: 8096, protocol: mcp, allowed_ips: [192.0.2.1/32]}
+  weather:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8097
+        protocol: rest
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: GET, path: /weather}
+"""
+
+    def test_weather_url_and_policy_only_with_the_web_reader(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_WEATHER)
+        r = rt(repo)
+        plain = r.load("alpha")
+        assert "LOGOS_WEATHER_URL" not in r.env_file(plain, "logos-home-alpha")
+        rules = yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
+        assert "weather" not in rules and "web" not in rules
+        on = {**plain, "web": {"enabled": True}}
+        assert "LOGOS_WEATHER_URL=http://172.17.0.1:8097/weather" in r.env_file(on, "logos-home-alpha")
+        ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["weather"]["endpoints"][0]
+        assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8097, ["172.17.0.1/32"])
+        assert ep["rules"] == [{"allow": {"method": "GET", "path": "/weather"}}]
+
     POLICY_VOICE = """
 version: 1
 network_policies:
@@ -573,6 +610,37 @@ network_policies:
             r = rt(repo, runner)
             r.ensure_jobs("alpha", {**r.load("alpha"), **agent_extra}, "logos-home-alpha")
             assert not [c for c in runner.matching("openshell", "sandbox", "exec") if "weekly-digest" in c[-1]]
+
+    def test_morning_briefing_jobs(self, repo):
+        runner = FakeRunner()
+        r = rt(repo, runner)
+        agent = {**r.load("alpha"), "matrix": {"enabled": True}, "calendar": {"enabled": True, "person": "greg"}}
+        r.ensure_jobs("alpha", agent, "logos-home-alpha")
+        created = [c[-1] for c in runner.matching("openshell", "sandbox", "exec") if "cron create" in c[-1]]
+        (weekday,) = [c for c in created if "--name morning-briefing " in c]
+        (weekend,) = [c for c in created if "--name morning-briefing-weekend " in c]
+        assert '"0 7 * * 1-5"' in weekday and '"0 9 * * 0,6"' in weekend
+        for job in (weekday, weekend):
+            assert "--script briefing_today.py" in job and "--no-agent" not in job
+            assert "--catch-up off" in job and "--deliver matrix" in job and "--failure-deliver local" in job
+        (check,) = [c for c in created if "--name morning-briefing-check " in c]
+        (wcheck,) = [c for c in created if "--name morning-briefing-weekend-check " in c]
+        assert '"15 7 * * 1-5"' in check and '"15 9 * * 0,6"' in wcheck
+        for job in (check, wcheck):
+            assert "--no-agent --script briefing_check.py" in job and "--deliver matrix" in job
+        assert art.minutes_later("50 23 * * *") is None and art.minutes_later("*/5 7 * * *") is None
+        assert art.minutes_later("55 6 * * 1-5") == "10 7 * * 1-5"
+        own = {**agent, "briefing": {"weekdays": "30 6 * * 1-5"}}
+        assert art.briefing(own) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6"}
+
+    def test_no_briefing_for_household_without_matrix_or_person_or_when_off(self, repo):
+        person = {"calendar": {"enabled": True, "person": "greg"}, "matrix": {"enabled": True}}
+        for extra in ({**person, "role": "household"}, {"calendar": person["calendar"]},
+                      {"matrix": {"enabled": True}}, {**person, "briefing": {"enabled": False}}):
+            runner = FakeRunner()
+            r = rt(repo, runner)
+            r.ensure_jobs("alpha", {**r.load("alpha"), **extra}, "logos-home-alpha")
+            assert not [c for c in runner.matching("openshell", "sandbox", "exec") if "morning-briefing" in c[-1]]
 
     def test_no_providers_means_no_provider_flags(self, repo):
         r = rt(repo)
