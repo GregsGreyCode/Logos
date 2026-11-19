@@ -141,11 +141,14 @@ export async function modelsView(root) {
       const chain = a.fallbacks.length
         ? a.fallbacks.map((f) => `${f.provider} · ${f.model}${f.spent_out ? ' (limit spent)' : ''}`).join(', then ')
         : 'None';
-      return h('tr', {},
+      const who = [
         h('td', {}, h('strong', {}, a.display_name), a.test ? h('span', { class: 'when' }, ' test agent') : null),
         h('td', {}, h('span', { class: `status ${a.now.kind === 'none' ? 'down' : a.now.kind === 'local' ? 'up' : 'paid'}` }, a.now.label),
           h('div', { class: 'when' }, `Last answered by: ${last}`),
-          a.current && a.current.since ? h('div', { class: 'when' }, `On that one since ${ago(a.current.since)}`) : null),
+          a.current && a.current.since ? h('div', { class: 'when' }, `On that one since ${ago(a.current.since)}`) : null)];
+      // The brain stays local: without a paid provider there is no fallback, spend or projection to show.
+      if (!paidOn) return h('tr', {}, who);
+      return h('tr', {}, ...who,
         h('td', {}, chain),
         h('td', { class: 'num' }, h('strong', {}, usd(a.month_usd)), h('span', { class: 'when' }, ` of ${usd(a.limit_usd)}`),
           meter(a.month_usd, a.limit_usd), h('div', { class: 'when' }, `${usd(a.left_usd)} left`)),
@@ -158,14 +161,14 @@ export async function modelsView(root) {
       d.error ? h('div', { class: 'notice' }, d.error) : null,
       h('section', { 'aria-label': 'Status' }, h('div', { class: 'cards tiles' }, tiles)),
       h('section', { 'aria-label': 'Agents' },
-        h('h2', { class: 'label' }, `Who answers, and spend in ${d.month}`),
-        h('div', { class: 'table-box' }, h('table', { class: 'plain wide' },
-          h('thead', {}, h('tr', {}, ['Agent', 'Answering now', 'Paid fallback', 'Spent this month', 'Projected month end']
-            .map((t, i) => h('th', { class: i > 2 ? 'num' : '' }, t)))),
+        h('h2', { class: 'label' }, paidOn ? `Who answers, and spend in ${d.month}` : 'Who answers'),
+        h('div', { class: 'table-box' }, h('table', { class: paidOn ? 'plain wide' : 'plain' },
+          h('thead', {}, h('tr', {}, (paidOn ? ['Agent', 'Answering now', 'Paid fallback', 'Spent this month', 'Projected month end']
+            : ['Agent', 'Answering now']).map((t, i) => h('th', { class: i > 2 ? 'num' : '' }, t)))),
           h('tbody', {}, rows))),
         h('p', { class: 'when' }, paidOn
           ? 'The projection continues the last 7 days, hour by hour, since paid answers cluster when the local model is off. Costs are the figures the model gateway recorded.'
-          : 'No paid provider key is set, so nothing can be spent. Local answers are free.')),
+          : 'The brain stays local: every agent answers with the model on the home server, so nothing is sent anywhere and nothing is spent.')),
     ];
 
     if (d.all_agents && d.total) {
