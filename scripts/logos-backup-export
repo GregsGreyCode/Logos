@@ -10,9 +10,15 @@ offsite, so losing the site costs at most a day of them:
                              calendar service's password (it is recreated on the next `up`)
   brain-<agent>.bundle       each agent's brain, a git bundle with its whole history
   agent-<agent>.tar.gz       each agent's memories and scheduled jobs (cron/jobs.json)
+  state-<agent>.db.gz        each agent's hermes database: its conversations, reasoning and
+                             tool calls (a consistent SQLite copy, taken while it runs)
+  matrix.tar.gz              the Matrix server (accounts, rooms, encrypted history, media).
+                             Matrix is stopped for the few seconds the copy takes, so its
+                             database is consistent; phones and agents reconnect by themselves
+  auth.db.gz                 the dashboard's accounts and sessions (a consistent SQLite copy)
   manifest.json              when it ran, and the size and sha256 of every file
 
-Conversations, Matrix and everything else stay covered by the nightly VM backup only.
+Everything else stays covered by the nightly VM backup only.
 
 Usage:  scripts/logos-backup-export [--dir DIR]
   DIR defaults to $LOGOS_BACKUP_DIR, else ~/backup-export. The export replaces DIR/latest
@@ -31,6 +37,20 @@ import time
 from pathlib import Path
 
 HELPER = "alpine/git:latest"          # the same helper image logos-agent uses for brains
+SQLITE_HELPER = "python:3.12-alpine"  # has Python's sqlite3, for consistent copies of live databases
+MATRIX = "logos-matrix"
+AUTH_DB = Path.home() / ".logos" / "auth.db"
+
+# Copies a live SQLite database with SQLite's own backup API (safe while hermes writes to it),
+# then gzips it. argv: source destination.
+SQLITE_COPY = (
+    "import gzip, shutil, sqlite3, sys, os\n"
+    "src = sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True)\n"
+    "tmp = sys.argv[2] + '.tmp'\n"
+    "dst = sqlite3.connect(tmp)\n"
+    "src.backup(dst); dst.close(); src.close()\n"
+    "with open(tmp, 'rb') as f, gzip.open(sys.argv[2], 'wb') as g: shutil.copyfileobj(f, g)\n"
+    "os.remove(tmp)\n")
 SKIP = ("bench",)                     # test agents are not worth an offsite copy
 
 
@@ -46,6 +66,37 @@ def volumes():
     agents = sorted(v[len("logos-brain-"):] for v in names if v.startswith("logos-brain-")
                     and not v[len("logos-brain-"):].startswith(SKIP))
     return names, agents
+
+
+def sqlite_copy(src: Path, dest: Path) -> None:
+    """A consistent, gzipped copy of a live SQLite database on this machine."""
+    sh([sys.executable, "-c", SQLITE_COPY, str(src), str(dest)])
+
+
+def export_state_dbs(out: Path, agents) -> None:
+    """Each agent's hermes state.db, copied with SQLite's backup API inside a helper container.
+    The home volume is mounted writable only because SQLite readers of a WAL database need the
+    -shm file; nothing is written to it."""
+    for a in agents:
+        sh(["docker", "run", "--rm", "--network", "none", "-u", "0", "-v", f"logos-home-{a}:/h",
+            "-v", f"{out}:/out", "--entrypoint", "sh", SQLITE_HELPER, "-c",
+            f"test -f /h/state.db || exit 0; python3 -c \"$0\" /h/state.db /out/state-{a}.db.gz "
+            f"&& chown {os.getuid()}:{os.getgid()} /out/state-{a}.db.gz", SQLITE_COPY])
+
+
+def export_matrix(out: Path) -> None:
+    """The Matrix volume as a tarball. Its embedded database (RocksDB) is only consistent at
+    rest, so the server is stopped for the copy and always started again afterwards."""
+    running = sh(["docker", "inspect", "-f", "{{.State.Running}}", MATRIX], check=False).strip() == "true"
+    if running:
+        sh(["docker", "stop", "-t", "30", MATRIX])
+    try:
+        sh(["docker", "run", "--rm", "--network", "none", "-v", f"{MATRIX}:/m:ro", "-v", f"{out}:/out",
+            "--entrypoint", "sh", HELPER, "-c",
+            f"tar -czf /out/matrix.tar.gz -C /m . && chown {os.getuid()}:{os.getgid()} /out/matrix.tar.gz"])
+    finally:
+        if running:
+            sh(["docker", "start", MATRIX])
 
 
 def export(out: Path) -> dict:
@@ -65,6 +116,11 @@ def export(out: Path) -> dict:
     script.append(f"chown -R {os.getuid()}:{os.getgid()} /out")
     sh(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", *mounts,
         "-v", f"{out}:/out", HELPER, "-c", " && ".join(script)])
+    export_state_dbs(out, [a for a in agents if f"logos-home-{a}" in names])
+    if MATRIX in names:
+        export_matrix(out)
+    if AUTH_DB.exists():
+        sqlite_copy(AUTH_DB, out / "auth.db.gz")
     files = {}
     for f in sorted(out.iterdir()):
         files[f.name] = {"bytes": f.stat().st_size, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
