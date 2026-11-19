@@ -7,7 +7,7 @@ import { peopleView } from './people.js';
 import { modelsView } from './models.js';
 import { updatesView } from './updates.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
-import { h, api, getJSON, working } from './util.js';
+import { h, api, getJSON, working, labelTables } from './util.js';
 
 const views = { chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView };
@@ -81,6 +81,8 @@ async function route() {
 }
 
 const state = { me: null };
+// Screens redraw their tables as data arrives; label the cells each time (used by the phone layout).
+new MutationObserver(() => labelTables(root)).observe(root, { childList: true, subtree: true });
 
 function paintTheme() {
   const light = document.documentElement.dataset.theme === 'light';

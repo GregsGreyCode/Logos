@@ -278,6 +278,17 @@ ul.plain code { color: var(--muted); }
   font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .avatar.big { width: 40px; height: 40px; font-size: 16px; }
 .conv-btn, .chat-scrim { display: none; }
+.name-short { display: none; }
+.phone-only { display: none !important; }
+.conflicts { margin: 12px 24px 0; padding: 12px 14px; border-radius: 10px; background: var(--warn-bg); color: var(--warn-ink); }
+.conflicts p, .conflicts ul { margin: 6px 0 0; } .conflicts ul { padding-left: 18px; }
+.conflicts a { color: inherit; } .conflicts code { margin-left: 6px; opacity: 0.8; }
+a.btn { display: inline-flex; align-items: center; text-decoration: none; }
+/* The microphone: an icon at rest; while recording, the red dot and the time instead. */
+.mic .mic-dot { display: none; }
+.mic[aria-pressed="true"] .mic-dot { display: inline-block; }
+.mic[aria-pressed="true"] .icon { display: none; }
+.mic .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 /* The model server is off: a line under the chat header, on every screen size. */
 .model-line { padding: 8px 24px; font-size: 13px; background: var(--raised); color: var(--muted);
   border-bottom: 1px solid var(--line); }
@@ -352,7 +363,57 @@ ul.plain code { color: var(--muted); }
   .composer .mic[aria-pressed="true"] .mic-label { display: inline; }
   .composer .mic[aria-pressed="true"] { width: auto; padding: 0 12px; }
   .side { display: none; }
+
+  /* On a phone the brain is edited in Obsidian: no Edit or New page, an Open in Obsidian link instead */
+  .wide-only { display: none !important; }
+  .phone-only { display: revert !important; }
+  a.phone-only.btn { display: inline-flex !important; }
+  .conflicts { margin: 12px 16px 0; }
+
+  /* S6.9 phone fixes */
+  .name-full { display: none; }                                   /* 6: short agent names */
+  .name-short { display: inline; }
+  .page > header h1, .page > h1 { display: none; }               /* 10: the top bar already names it */
+  .page > header .lead { margin-top: 0; }
+  .composer textarea:focus-visible { outline: 0; border-color: var(--accent-text); }   /* 13 */
+  /* 7: tables become a block per row, each value under its column's name */
+  .table-box, .table-inline { overflow: visible; background: none; border: 0; }
+  .table-box table, .table-inline table, table.plain, table.wide { min-width: 0; }
+  .page table thead { display: none; }
+  .page table, .page table tbody, .page table tr, .page table td { display: block; width: 100%; }
+  .page table tr { padding: 12px 14px; margin-bottom: 10px; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; }
+  .page table td { padding: 4px 0; border: 0; text-align: left; }
+  .page table td.num { text-align: left; }
+  .page table td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 600;
+    color: var(--muted); }
+  .page table td:first-child::before { content: none; }
+  .page table td:first-child { font-size: 15px; }
+  .meter { margin-left: 0; }
+  /* 9: the agents as a compact row, the chosen one's details straight below */
+  .agent-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .agent-cards .agent-card { flex: 1 0 auto; min-width: 0; padding: 10px 12px; gap: 2px; }
+  .agent-cards .agent-card.picked { padding: 9px 11px; }
+  .agent-cards .agent-card > .when { display: none; }
+  /* Brain until S6.10: the page first, the list below; search on its own line; changes visible */
+  .brain .chat-head { flex-wrap: wrap; }
+  .brain .chat-head input[type="search"] { flex: 1 1 100%; }
+  .brain .chat-head .tabs { flex: 1 1 100%; }
+  .brain .doc { order: -1; flex-basis: 100%; }
+  .brain .tree { order: 1; border-bottom: 0; border-top: 1px solid var(--line); }
+  .brain .side { display: flex; flex-basis: 100%; border-left: 0; border-top: 1px solid var(--line); }
   .side.open { gap: 10px; border-left: 0; }
   .side .toggle { min-height: 44px; font-size: 15px; color: var(--ink); }
   .side .toggle input { width: 20px; height: 20px; }
 }
+
+/* Markdown in replies and brain pages: tables, to-dos, numbered lists */
+.md-table { overflow-x: auto; margin: 0 0 10px; }
+.md-table table { min-width: 0; width: auto; border-collapse: collapse; font-size: 14px; }
+.md-table th, .md-table td { padding: 6px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.md-table th { background: var(--raised); color: var(--ink); }
+li.todo { list-style: none; margin-left: -18px; }
+li.todo .box { color: var(--muted); }
+li.todo.done { color: var(--muted); text-decoration: line-through; }
+.msg ol, .doc ol { margin: 0 0 10px; padding-left: 22px; }
+.md-table th, .md-table td { overflow-wrap: normal; word-break: normal; min-width: 5em; }

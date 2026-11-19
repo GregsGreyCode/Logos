@@ -16,10 +16,13 @@ from typing import Any, Dict, List
 HELPER = "alpine/git:latest"            # has sh, find and git; already used to seed brains
 MAX_PAGE_BYTES = 400_000
 _SAFE_PATH = re.compile(r"^[^/\x00][^\x00]*\.md$")
+# Syncthing keeps both versions when a page changed in two places before they synced: the other
+# one as "<name>.sync-conflict-<date>-<time>-<device>.md" next to it.
+_CONFLICT = re.compile(r"\.sync-conflict-\d{8}-\d{6}-[A-Z0-9]+(?=\.md$)")
 
 _LIST = r'''
 cd /v 2>/dev/null || exit 0
-find . -name '*.md' -not -path './.git/*' -not -path './.obsidian/*' -not -path './.stfolder/*' | while read -r f; do
+find . -name '*.md' -not -path './.*/*' | while read -r f; do
   printf 'P\t%s\t%s\t%s\n' "${f#./}" "$(stat -c %Y "$f")" "$(grep -m1 '^# ' "$f" | cut -c3-120)"
 done
 git config --global --add safe.directory /v 2>/dev/null
@@ -27,7 +30,7 @@ git log --since='7 days ago' --name-only --pretty=format:'C%x09%ct' 2>/dev/null 
 '''
 _SEARCH = r'''
 cd /v 2>/dev/null || exit 0
-find . -name '*.md' -not -path './.git/*' -not -path './.obsidian/*' -exec grep -ilF -- "$Q" {} + 2>/dev/null | head -40 | while read -r f; do
+find . -name '*.md' -not -path './.*/*' -exec grep -ilF -- "$Q" {} + 2>/dev/null | head -40 | while read -r f; do
   printf '%s\t%s\n' "${f#./}" "$(grep -m1 -iF -- "$Q" "$f" | cut -c1-160)"
 done
 '''
@@ -70,12 +73,16 @@ def title_of(path: str, heading: str = "") -> str:
 
 def parse_listing(out: str) -> Dict[str, list]:
     """Turn the listing script's output into ``{"pages": [...], "changes": [...]}``."""
-    pages, changes, seen = [], [], set()
+    pages, changes, conflicts, seen = [], [], [], set()
     stamp = 0
     for line in out.splitlines():
         if line.startswith("P\t"):
             _, path, mtime, heading = (line.split("\t", 3) + [""])[:4]
             folder = path.split("/", 1)[0] if "/" in path else ""
+            if _CONFLICT.search(path):
+                conflicts.append({"path": path, "of": _CONFLICT.sub("", path),
+                                  "modified": int(mtime) if mtime.isdigit() else 0})
+                continue
             pages.append({"path": path, "folder": folder, "title": title_of(path, heading),
                           "modified": int(mtime) if mtime.isdigit() else 0})
         elif line.startswith("C\t"):
@@ -86,7 +93,9 @@ def parse_listing(out: str) -> Dict[str, list]:
     known = {p["path"]: p["title"] for p in pages}
     changes = [{**c, "title": known[c["path"]]} for c in changes if c["path"] in known]
     pages.sort(key=lambda p: (p["folder"], -p["modified"] if p["folder"] in ("daily", "inbox") else 0, p["title"].lower()))
-    return {"pages": pages, "changes": changes[:12]}
+    for c in conflicts:
+        c["title"] = known.get(c["of"], title_of(c["of"]))
+    return {"pages": pages, "changes": changes[:12], "conflicts": conflicts}
 
 
 def list_pages(runtime: Any, agent: str) -> Dict[str, list]:

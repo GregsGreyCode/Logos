@@ -31,7 +31,7 @@ export async function agentsView(root, [agentArg]) {
   const agent = data.agents.find((a) => a.name === agentArg) || data.agents[0];
   const detail = h('div', { class: 'two-col' });
 
-  const cards = h('div', { class: 'cards' },
+  const cards = h('div', { class: 'cards agent-cards' },
     data.agents.map((a) => h('a', { href: `#/agents/${a.name}`, class: `card agent-card ${agent && a.name === agent.name ? 'picked' : ''}` },
       h('div', { class: 'card-head' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), h('strong', {}, a.display_name)),
       h('span', { class: `status ${a.running ? 'up' : ''}` }, a.running ? 'Running' : 'Not running'),
