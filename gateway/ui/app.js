@@ -49,14 +49,20 @@ const moreBtn = document.getElementById('more-btn');
 const acctBtn = document.getElementById('acct-btn');
 moreBtn.addEventListener('click', () => toggleSheet(moreBtn, document.getElementById('more-sheet')));
 acctBtn.addEventListener('click', () => toggleSheet(acctBtn, document.getElementById('acct-sheet')));
-for (const a of document.querySelectorAll('.sheet a')) a.addEventListener('click', () => {
-  if (openSheet) { openSheet.sheet.hidden = true; scrim.hidden = true; openSheet.opener.setAttribute('aria-expanded', 'false'); openSheet = null; }
-});
+// Leaving the screen (a link in the panel, the Back button) closes an open panel.
+function dropSheet() {
+  if (!openSheet) return;
+  openSheet.sheet.hidden = true; scrim.hidden = true;
+  openSheet.opener.setAttribute('aria-expanded', 'false');
+  openSheet = null;
+}
+for (const a of document.querySelectorAll('.sheet a')) a.addEventListener('click', dropSheet);
 
 let visit = 0;
 async function route() {
   const [, name = 'chat', ...rest] = location.hash.split('/');
   const mine = ++visit;
+  dropSheet();
   if (cleanup) { cleanup(); cleanup = null; }
   for (const a of document.querySelectorAll('.nav-links a, .tabbar a, .sheet a')) {
     if (a.dataset.view === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
