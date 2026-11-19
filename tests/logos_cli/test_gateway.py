@@ -167,7 +167,7 @@ def test_run_passes_replace_and_exits_1_on_failure(monkeypatch):
     import gateway.run as gateway_run
     seen = {}
 
-    async def fake_start_gateway(config=None, replace=False):
+    async def fake_start_gateway(replace=False, **_):
         seen["replace"] = replace
         return False
 
