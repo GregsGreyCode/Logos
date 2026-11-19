@@ -1,6 +1,6 @@
 """Run the household's own Matrix server and give agents accounts on it.
 
-Matrix replaces Telegram as the way to talk to agents: the server runs here, the phones
+Matrix is the way to talk to agents: the server runs here, the phones
 reach it only over Tailscale, it never federates with other servers, and hermes's Matrix
 adapter speaks end-to-end encrypted. People use the Element app.
 
@@ -20,7 +20,7 @@ The server name never has to resolve: with federation off, nothing looks it up. 
 the client URL into Element; the server's /.well-known answers with that same URL.
 
 An agent with ``matrix: {enabled: true}`` gets its own account (``@<name>-agent``) on its
-first ``up``. The login is kept in the agent's home volume, like the Telegram token.
+first ``up``. The login is kept in the agent's home volume.
 """
 
 from __future__ import annotations

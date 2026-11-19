@@ -1,7 +1,6 @@
 # Agent definition for the Household agent (story S5.2). Create or recreate with:
 #   scripts/logos-agent up household
-# Secrets are not stored here. The Telegram bot token is read from the environment
-# (LOGOS_TELEGRAM_BOT_TOKEN) the first time and kept in the agent's private home volume.
+# Secrets are not stored here. The Matrix login is kept in the agent's private home volume.
 name: household
 display_name: Household agent
 role: household                # the only agent that can be asked for a shared change
@@ -35,18 +34,12 @@ matrix:                           # the household's own Matrix server (docs/matr
   require_mention: false          # in the household room it answers every message (voice notes too)
   display_name: "Household \U0001F916"   # its name in Element (others default to "<display_name> 🤖")
 
-telegram:
-  enabled: false                  # off since 19 Nov 2026: Matrix only (docs/matrix.md)
-  allowed_users: []               # set in agents/household.local.yaml (untracked): both people's Telegram IDs
-  group_chats: []                 # set there too: the household group's chat ID (a negative number)
-  require_mention: true           # in the group it answers only when @mentioned
-
 consolidation:                  # nightly brain tidy-up (hermes cron job `consolidate`)
   enabled: true
   schedule: "30 1 * * *"        # staggered so the three agents do not share the local model
   # model / provider: omit to use the agent's main (local) model
 
-digest:                         # weekly summary of what the brain learned, sent on Telegram
+digest:                         # weekly summary of what the brain learned, sent to the Matrix home room
   enabled: true
   schedule: "0 18 * * 0"        # Sunday 18:00 in the agent's timezone
 
