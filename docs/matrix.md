@@ -36,7 +36,7 @@ On its first `up`, the agent gets its own account, `@<name>-agent`. Its login is
 
 - **Encryption:** the agent sets up cross-signing on first connect. It writes a recovery key to `/opt/data/matrix-recovery-key` (mode 0600) and is given that key on every later start, so it stays verified when its sandbox is rebuilt.
 - **Sandbox policy:** the `matrix` rule in `infra/agent-image/policy.yaml` allows encoded slashes in request paths. Matrix secret-storage key IDs need them; without this, cross-signing fails with "Server disconnected".
-- **Reminders and digests:** while an agent also has Telegram, scheduled messages still go there first (`delivery()` in `gateway/agent_runtime.py`).
+- **Reminders and digests:** Telegram is off for every agent since 19 Nov 2026, so scheduled messages (reminders, digests, urgent noticeboard alerts) go to the agent's Matrix `home_room` (`delivery()` in `gateway/agent_runtime.py`).
 
 ## Adding a person
 

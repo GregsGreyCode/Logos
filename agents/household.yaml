@@ -32,11 +32,11 @@ matrix:                           # the household's own Matrix server (docs/matr
   enabled: true
   e2ee: required
   allowed_users: []               # set in agents/household.local.yaml (untracked): both people, @name:gregandbere.com
-  require_mention: true           # in the household room it answers only when @mentioned
+  require_mention: false          # in the household room it answers every message (voice notes too)
   display_name: "Household \U0001F916"   # its name in Element (others default to "<display_name> 🤖")
 
 telegram:
-  enabled: true
+  enabled: false                  # off since 19 Nov 2026: Matrix only (docs/matrix.md)
   allowed_users: []               # set in agents/household.local.yaml (untracked): both people's Telegram IDs
   group_chats: []                 # set there too: the household group's chat ID (a negative number)
   require_mention: true           # in the group it answers only when @mentioned
