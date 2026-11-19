@@ -373,7 +373,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   /* S6.9 phone fixes */
   .name-full { display: none; }                                   /* 6: short agent names */
   .name-short { display: inline; }
-  .page > header h1, .page > h1 { display: none; }               /* 10: the top bar already names it */
+  .page:not(.home) > header h1, .page > h1 { display: none; }    /* 10: the top bar already names it */
   .page > header .lead { margin-top: 0; }
   .composer textarea:focus-visible { outline: 0; border-color: var(--accent-text); }   /* 13 */
   /* 7: tables become a block per row, each value under its column's name */
@@ -417,3 +417,21 @@ li.todo .box { color: var(--muted); }
 li.todo.done { color: var(--muted); text-decoration: line-through; }
 .msg ol, .doc ol { margin: 0 0 10px; padding-left: 22px; }
 .md-table th, .md-table td { overflow-wrap: normal; word-break: normal; min-width: 5em; }
+
+/* Home (S6.11) */
+.home { max-width: 760px; }
+.home section { gap: 10px; }
+.home-head { display: flex; flex-direction: column; gap: 4px; }
+.home-date { margin: 0; font-size: 26px; }
+.home-ask { display: flex; gap: 8px; }
+.home-ask input { flex: 1; min-width: 0; min-height: 44px; padding: 0 16px; border: 1px solid var(--line);
+  border-radius: 22px; background: var(--surface); }
+.home-ask .btn { border-radius: 22px; }
+.home-list { display: flex; flex-direction: column; }
+.home-row { display: flex; align-items: center; gap: 12px; min-height: 44px; border-bottom: 1px solid var(--line); }
+.home-row:last-child { border-bottom: 0; }
+.home-time { width: 64px; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 14px; }
+.home-title { flex: 1; min-width: 0; }
+.home-done { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.home-done:last-child { border-bottom: 0; }
+.home-waiting .card { gap: 10px; }

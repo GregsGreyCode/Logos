@@ -92,3 +92,17 @@ def test_service_config_and_rights():
     assert "W" not in rights["service"]["permissions"]              # cannot create or delete calendars
     with pytest.raises(ch.CalendarError):
         ch.CalendarHost(FakeRuntime()).add_person("logos-service")
+
+
+def test_people_get_read_only_reader_keys():
+    agents = {"greg": {"display_name": "Greg's agent", "calendar": {"enabled": True, "person": "greg"}, "timezone": "Europe/London"},
+              "bere": {"display_name": "Béré's agent", "calendar": {"enabled": True, "person": "bere"}}}
+    cfg = ch.service_config(agents, {"greg": "tg", "bere": "tb"}, ["bere", "greg"], "pw", {"greg": "rg", "nobody": "x"})
+    reader = cfg["agents"]["person:greg"]
+    assert reader["token"] == "rg" and reader["read_only"] is True and reader["busy"] == {}
+    assert reader["timezone"] == "Europe/London"
+    assert {k: v["path"] for k, v in reader["full"].items()} == {
+        "personal": "/greg/personal/", "household": "/household/calendar/", "bere": "/bere/personal/"}
+    assert reader["full"]["bere"]["label"] == "Béré"
+    assert "person:nobody" not in cfg["agents"]                      # only people with a calendar account
+    assert "read_only" not in cfg["agents"]["greg"]                  # the agents keep what they had
