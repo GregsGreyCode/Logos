@@ -1,5 +1,38 @@
 // Small helpers shared by every screen.
 
+// "Greg's agent" -> "Greg's", "Household agent" -> "Household": for a phone's narrow switches.
+export const shortName = (name) => String(name || '').replace(/\s+agent$/i, '') || name;
+
+// The full name for wide screens and the short one for phones; CSS shows one of the two.
+export function agentLabel(name) {
+  return [h('span', { class: 'name-full' }, name), h('span', { class: 'name-short', 'aria-hidden': 'true' }, shortName(name))];
+}
+
+// SVG icons (h() makes HTML elements, which cannot draw SVG).
+export function icon(paths) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('class', 'icon');
+  for (const d of paths) {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', d);
+    svg.append(p);
+  }
+  return svg;
+}
+
+// On a phone a table becomes a list of small blocks; each cell is labelled with its column.
+export function labelTables(root) {
+  for (const table of root.querySelectorAll('table')) {
+    const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+    for (const row of table.querySelectorAll('tbody tr')) {
+      [...row.children].forEach((td, i) => { if (heads[i] && !td.dataset.label) td.dataset.label = heads[i]; });
+    }
+  }
+}
+
 // The Logos mark is grey at rest and cycles through colours while an agent is working.
 const busy = new Set();
 export function working(who, on) {
