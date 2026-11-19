@@ -53,11 +53,13 @@ RESET_PLUGIN = "hermes-session-reset-policy"
 LOGOS_PLUGINS = ("logos-waitlist",)
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
-                "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-homelab",
-                "changes-logos", "changes-homelab-week", "changes-logos-week", "changes-check")
-# Story DC2: the daily changes. One script under four names (it reads its own name), so each job
-# fetches its own list. Spaced five minutes apart so LM Studio writes one at a time.
-CHANGES_SCRIPTS = ("changes_homelab.py", "changes_logos.py", "changes_homelab_week.py", "changes_logos_week.py")
+                "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
+                "changes-week", "changes-check",
+                # Retired (one post now covers both): still listed so `up` removes them from sandboxes.
+                "changes-homelab", "changes-logos", "changes-homelab-week", "changes-logos-week")
+# Story DC2: the daily changes. One script under two names (it reads its own name): the day, and
+# on Sundays the week. Each post covers both the agents (Logos) and the home servers (homelab).
+CHANGES_SCRIPTS = ("changes_daily.py", "changes_week.py")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -103,17 +105,15 @@ def changes_jobs(agent: Mapping[str, Any]) -> list:
     """[(job, script, schedule)] for the daily changes, or [] (story DC2).
 
     Only for an agent with ``changes: {enabled: true}`` that can post to Matrix (the household
-    agent, in the group chat). Daily at 16:00 (homelab) and 16:05 (Logos); the week's roll-up on
-    Sundays at 16:10 and 16:15 (``weekly: false`` turns it off). ``changes-check`` at 16:20 sends
-    the plain list for any that did not go out."""
+    agent, in the group chat). One post daily at 16:00 for both Logos and the homelab; the week's
+    roll-up as one more post on Sundays at 16:10 (``weekly: false`` turns it off). ``changes-check``
+    at 16:20 sends the plain list for any that did not go out."""
     cfg = agent.get("changes") or {}
     if not cfg.get("enabled") or delivery(agent) == "local":
         return []
-    jobs = [("changes-homelab", "changes_homelab.py", cfg.get("homelab", "0 16 * * *")),
-            ("changes-logos", "changes_logos.py", cfg.get("logos", "5 16 * * *"))]
+    jobs = [("changes-daily", "changes_daily.py", cfg.get("daily", "0 16 * * *"))]
     if cfg.get("weekly", True):
-        jobs += [("changes-homelab-week", "changes_homelab_week.py", cfg.get("homelab_week", "10 16 * * 0")),
-                 ("changes-logos-week", "changes_logos_week.py", cfg.get("logos_week", "15 16 * * 0"))]
+        jobs += [("changes-week", "changes_week.py", cfg.get("week", "10 16 * * 0"))]
     return jobs + [("changes-check", "changes_check.py", cfg.get("check", "20 16 * * *"))]
 
 
@@ -355,6 +355,9 @@ class AgentRuntime:
         # behind a tool_search step, which the local model often skips, so it never sees them.
         # Our agents have about a dozen MCP tools, so the extra context is small.
         cfg["tools"] = {"tool_search": {"enabled": "off"}}
+        # Scheduled messages arrive as written: no "Cronjob Response: <name> (job_id: ...)" header and
+        # "To stop or manage this job..." footer around them in the chat.
+        cfg["cron"] = {"wrap_response": False}
         # Nothing in the sandbox may call home: no update checks, no model catalogue download.
         cfg["updates"] = {"check": False}
         cfg["model_catalog"] = {"enabled": False}
