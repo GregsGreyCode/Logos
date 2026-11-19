@@ -7,6 +7,10 @@ Usage:
   scripts/logos-deploy --yes        deploy without asking
   scripts/logos-deploy --check      only run the health checks
   scripts/logos-deploy --plan-json  print the plan as JSON (the dashboard's Updates screen)
+  scripts/logos-deploy --to <ref>   deploy that commit of v2 instead of the newest one: a
+                                    rollback (or a step forward). <ref> is a commit, a
+                                    deploy-* tag, or "previous" (where the last deploy started)
+  scripts/logos-deploy --history    list the recent deploys and their tags
 
 The dashboard's "Update now" button runs `--yes` as its own systemd user unit
 (logos-deploy), so the deploy carries on while it restarts the dashboard. Progress is
@@ -34,8 +38,11 @@ Steps:
      these restarts only if its own config or code changed.
   5. Health checks: dashboard answers, every agent that was running is Ready again.
 
-Each deploy is logged to ~/.logos/deploy.log with the commit before and after. To go
-back, revert the change on GitHub (a revert PR into v2) and deploy again.
+Each deploy is logged to ~/.logos/deploy.log with the commit before and after, and the commit
+it deployed gets a local tag deploy-YYYYMMDD-HHMMSS (this machine only; the deploy key cannot
+push). To go back: `--to previous` or `--to <tag>`, which restarts what that step changes.
+The next plain deploy moves forward to the newest v2 again, so a lasting undo is still a
+revert PR into v2.
 """
 import argparse
 import datetime as _dt
@@ -152,8 +159,33 @@ def write_status(**fields):
 
 # --- steps --------------------------------------------------------------------------------
 
-def prepare(rt):
-    """Fetch and work out the plan. Raises Refused when this checkout cannot be deployed."""
+def last_deploy_start(log=None):
+    """The commit the most recent deploy started from (its "before"), from deploy.log."""
+    log = log or LOG
+    try:
+        lines = [l for l in log.read_text().splitlines() if " -> " in l]
+    except OSError:
+        lines = []
+    if not lines:
+        raise Refused("No deploy has been logged here yet, so there is no previous commit.")
+    return lines[-1].split()[1]
+
+
+def resolve_target(to):
+    """The full commit id for --to: a commit, a tag, or "previous". It must be on origin/v2."""
+    ref = last_deploy_start() if to == "previous" else to
+    sha = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False)
+    if not sha:
+        raise Refused(f"{to!r} is not a commit here (try --history, or git fetch).")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", sha, f"origin/{BRANCH}"], cwd=REPO).returncode != 0:
+        raise Refused(f"{to!r} ({sha[:7]}) is not part of origin/{BRANCH}; only merged commits are deployed.")
+    return sha
+
+
+def prepare(rt, to=None):
+    """Fetch and work out the plan. Raises Refused when this checkout cannot be deployed.
+
+    ``to``: deploy that commit of v2 instead of origin/v2 (backwards or forwards)."""
     branch = git("rev-parse", "--abbrev-ref", "HEAD")
     if branch != BRANCH:
         raise Refused(f"This checkout is on {branch!r}; updates run from {BRANCH!r} (git switch {BRANCH}).")
@@ -161,16 +193,21 @@ def prepare(rt):
     if dirty:
         raise Refused("Tracked files have local changes; commit or discard them first:\n" + dirty)
     git("fetch", "--quiet", "origin", BRANCH)
-    before, after = git("rev-parse", "HEAD"), git("rev-parse", f"origin/{BRANCH}")
-    if before != after and subprocess.run(["git", "merge-base", "--is-ancestor", before, after],
-                                          cwd=REPO).returncode != 0:
+    before = git("rev-parse", "HEAD")
+    after = resolve_target(to) if to else git("rev-parse", f"origin/{BRANCH}")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", before, f"origin/{BRANCH}"],
+                      cwd=REPO).returncode != 0:
         raise Refused(f"Local {BRANCH} has commits that origin/{BRANCH} does not; not updating.")
+    backwards = before != after and subprocess.run(
+        ["git", "merge-base", "--is-ancestor", after, before], cwd=REPO).returncode == 0
     running = running_agents(rt)
     commits, changed = [], []
     if before != after:
-        for line in git("log", "--no-decorate", "--format=%h%x09%s", f"{before}..{after}").splitlines():
+        # Going back lists the commits being taken off; going forward, the ones being added.
+        span = f"{after}..{before}" if backwards else f"{before}..{after}"
+        for line in git("log", "--no-decorate", "--format=%h%x09%s", span).splitlines():
             sha, _, subject = line.partition("\t")
-            commits.append({"sha": sha, "subject": subject})
+            commits.append({"sha": sha, "subject": ("Undo: " if backwards else "") + subject})
         changed = git("diff", "--name-only", before, after).splitlines()
     p = plan(changed, running)
     return {"before": before, "after": after, "commits": commits, "changed": len(changed),
@@ -259,8 +296,12 @@ def health(expect_agents, port):
 def deploy(info):
     """Fast-forward and restart what the plan says. Returns True when everything is healthy."""
     p, before, after = info["plan"], info["before"], info["after"]
-    git("merge", "--ff-only", "--quiet", f"origin/{BRANCH}")
-    print(f"Now at {after[:7]}.", flush=True)
+    # --keep moves v2 to the commit (forwards or back) and leaves untracked files such as
+    # agents/*.local.yaml alone; the checkout is clean, so nothing local can be lost.
+    git("reset", "--keep", "--quiet", after)
+    tag = "deploy-" + _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    git("tag", "-f", tag, after, check=False)
+    print(f"Now at {after[:7]} (tagged {tag}).", flush=True)
     rt = runtime()                      # reload: agent_runtime.py itself may have changed
     if p["package"]:
         print("Reinstalling the Python package…", flush=True)
@@ -298,9 +339,19 @@ def deploy(info):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    for flag in ("--dry-run", "--yes", "--check", "--plan-json"):
+    for flag in ("--dry-run", "--yes", "--check", "--plan-json", "--history"):
         ap.add_argument(flag, action="store_true")
+    ap.add_argument("--to", metavar="REF", help='a commit of v2, a deploy-* tag, or "previous"')
     args = ap.parse_args(argv)
+
+    if args.history:
+        try:
+            print("\n".join(LOG.read_text().splitlines()[-15:]) or "No deploys logged yet.")
+        except OSError:
+            print("No deploys logged yet.")
+        tags = git("tag", "--list", "deploy-*", "--sort=-creatordate", "--format=%(refname:short) %(objectname:short)")
+        print("\nTags (newest first):\n" + ("\n".join(tags.splitlines()[:15]) or "none"))
+        return 0
     rt = runtime()
 
     if args.check:
@@ -308,14 +359,14 @@ def main(argv=None):
 
     if args.plan_json:
         try:
-            out = prepare(rt)
+            out = prepare(rt, args.to)
         except (Refused, RuntimeError) as e:
             out = {"refused": str(e)}
         print(json.dumps(out))
         return 0
 
     try:
-        info = prepare(rt)
+        info = prepare(rt, args.to)
     except (Refused, RuntimeError) as e:
         if args.yes:
             write_status(state="failed", finished=now(), error=str(e))
