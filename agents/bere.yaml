@@ -29,6 +29,11 @@ matrix:                           # the household's own Matrix server (docs/matr
   e2ee: required
   allowed_users: []               # set in agents/bere.local.yaml (untracked): @name:example.org
 
+house:                          # the lights and their scenes, through the house service (docs/house.md)
+  enabled: true
+  domains: [light, scene]
+  exclude: []                   # entity ids it must leave alone, e.g. light.balcony_balcony
+
 web:                              # web search through the web reader (docs/web-reader.md)
   enabled: true
 
