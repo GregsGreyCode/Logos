@@ -1,4 +1,4 @@
-"""The Logos house service: how the household agent works the lights (story H1).
+"""The Logos house service: how the agents work the lights (story H1).
 
 The agent never holds a Home Assistant login. It calls this service (MCP over HTTP, one bearer
 token per agent), and the service calls Home Assistant with its own non-admin account. What the

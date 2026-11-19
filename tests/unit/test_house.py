@@ -220,8 +220,8 @@ def test_tokens():
 def test_only_the_household_agent_uses_it():
     assert hh.uses_house({"role": "household", "house": {"enabled": True}})
     assert not hh.uses_house({"role": "household"})
-    assert not hh.uses_house({"house": {"enabled": True}})                  # a person's agent: never
-    assert not hh.uses_house({"role": "person", "house": {"enabled": True}})
+    assert hh.uses_house({"house": {"enabled": True}})                      # a person's agent, when asked
+    assert not hh.uses_house({"role": "person"})
 
 
 def test_agent_settings():
@@ -307,8 +307,9 @@ def test_up_starts_a_locked_down_container(tmp_path):
     assert hh.HouseHost(rt).up() is True
     (config,) = [i for i in rt.inputs if i]
     cfg = json.loads(config)
-    assert list(cfg["agents"]) == ["household"]                         # greg's agent is not in it
+    assert sorted(cfg["agents"]) == ["greg", "household"]               # each with its own token
     assert cfg["ha_token"] == "ha-secret" and cfg["agents"]["household"]["token"] == "tok"
+    assert cfg["agents"]["greg"]["token"] == "gtok"
     (start,) = [c for c in rt.calls if c[:3] == ["docker", "run", "-d"]]
     for flag in ("--read-only", "--cap-drop", "ALL", "--user", "1000:1000", "--memory", "64m", "--dns", "127.0.0.1",
                  "--network", "logos-house", "172.17.0.1:8098:8098"):

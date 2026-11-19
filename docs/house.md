@@ -1,12 +1,16 @@
 # House: the lights, through Home Assistant
 
-The household agent can work the lights and their scenes (story H1). Home Assistant runs on its
+The household agent, and Greg's and Béré's own agents, can work the lights and their scenes (story H1). Home Assistant runs on its
 own VM on the home network and talks to the Hue Bridge. Logos does not replace it: schedules and automations stay in Home Assistant, and the
 agent is one more way to ask.
 
-**Only the household agent.** `gateway/house_host.py` gives the service to an agent only when
-its definition has `house: {enabled: true}` **and** `role: household`. A person's agent never
-gets it, whatever its definition says.
+**Which agents.** `gateway/house_host.py` gives the service to any agent whose definition has
+`house: {enabled: true}`: the household agent (Home chat) and Greg's and Béré's agents (their
+own chats), each with its own token. First decided household-only; on 19 Nov Greg asked for
+direct light control from both people's own chats, so "turn the lights off" works wherever
+they ask. Every agent has the same limits below. Home Assistant's logbook shows the one
+`logos-household` account for all of them; the service's log (`docker logs logos-house`) says
+which agent made each change.
 
 ## How it fits together
 
