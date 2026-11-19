@@ -154,6 +154,3 @@ def get_running_pid() -> Optional[int]:
     return pid
 
 
-def is_gateway_running() -> bool:
-    """Check if the gateway daemon is currently running."""
-    return get_running_pid() is not None

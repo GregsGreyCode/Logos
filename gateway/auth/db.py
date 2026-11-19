@@ -1445,66 +1445,6 @@ def delete_agent(agent_id: str) -> None:
 # enabled row; inbound messages carry the owning agent_id so no
 # platform_routing lookup is needed on the receive path.
 
-def upsert_agent_channel_credential(
-    agent_id: str,
-    platform: str,
-    token: str,
-    label: str = "default",
-    enabled: bool = True,
-    metadata: Optional[dict] = None,
-) -> dict:
-    """Create or update a credential row. Returns the stored row as a dict.
-
-    Idempotent on (agent_id, platform, label) — re-calling with the same
-    key rotates the token / flips enabled / replaces metadata.
-    """
-    import json as _json
-    cid = _new_id("acc")
-    now = int(time.time() * 1000)
-    meta_json = _json.dumps(metadata) if metadata else None
-    with _conn() as conn:
-        conn.execute(
-            """INSERT INTO agent_channel_credentials
-                   (id, agent_id, platform, label, token, enabled, metadata, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(agent_id, platform, label) DO UPDATE SET
-                   token      = excluded.token,
-                   enabled    = excluded.enabled,
-                   metadata   = excluded.metadata,
-                   updated_at = excluded.updated_at""",
-            (cid, agent_id, platform, label, token, 1 if enabled else 0, meta_json, now, now),
-        )
-        row = conn.execute(
-            """SELECT * FROM agent_channel_credentials
-               WHERE agent_id = ? AND platform = ? AND label = ?""",
-            (agent_id, platform, label),
-        ).fetchone()
-        return dict(row) if row else {}
-
-
-def list_agent_channel_credentials(
-    agent_id: Optional[str] = None,
-    platform: Optional[str] = None,
-    enabled_only: bool = False,
-) -> list[dict]:
-    """Fetch credential rows with optional filters. Token values are
-    included verbatim — callers must not log these rows."""
-    clauses: list[str] = []
-    args: list = []
-    if agent_id:
-        clauses.append("agent_id = ?")
-        args.append(agent_id)
-    if platform:
-        clauses.append("platform = ?")
-        args.append(platform)
-    if enabled_only:
-        clauses.append("enabled = 1")
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = f"SELECT * FROM agent_channel_credentials {where} ORDER BY agent_id, platform, label"
-    with _conn() as conn:
-        return [dict(r) for r in conn.execute(sql, args).fetchall()]
-
-
 # ── Per-agent env credentials (cloud-tool API keys) ─────────────────────────
 # See the agent_env_credentials table definition above for rationale.
 # Read path: the v1 sandbox runtime merged rows from here with rows from
@@ -1559,15 +1499,6 @@ def reset_setup_completed() -> None:
 # ── Evolution ──────────────────────────────────────────────────────────────────
 
 # ── MCP managed servers ─────────────────────────────────────────────────────
-
-
-def list_mcp_servers() -> list[dict]:
-    """Return all managed MCP servers ordered by name."""
-    with _conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM mcp_servers ORDER BY name"
-        ).fetchall()
-    return [dict(r) for r in rows]
 
 
 # ── Dispatch ledger (M8 Phase B) ───────────────────────────────────────────
