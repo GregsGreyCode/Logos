@@ -1,5 +1,5 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
-import { h, api, getJSON, when, markdown } from './util.js';
+import { h, api, getJSON, when, markdown, agentLabel } from './util.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -257,7 +257,8 @@ export async function brainView(root, [agentArg, ...pathParts]) {
 
   const tabs = agents.length > 1 ? h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Whose brain' },
     agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
-      onclick: () => { location.hash = `#/brain/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name))) : null;
+      onclick: () => { location.hash = `#/brain/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }),
+      ...agentLabel(a.display_name)))) : null;
 
   root.replaceChildren(h('div', { class: 'brain' },
     h('header', { class: 'chat-head' }, h('h1', {}, 'Brain'), tabs,

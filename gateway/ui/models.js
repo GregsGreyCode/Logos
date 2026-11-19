@@ -128,7 +128,11 @@ export async function modelsView(root) {
         : ['LM Studio is closed or that machine is busy.',
           paidOn ? 'Agents with a paid fallback keep answering.' : 'No paid fallback is switched on, so agents cannot answer.']));
     }
-    for (const s of d.status.services) tiles.push(statusTile(s.name, s.up, [s.what]));
+    // Problems get a card each; everything that is up shares one, so "all fine" is one glance.
+    const upNow = d.status.services.filter((s) => s.up);
+    for (const s of d.status.services.filter((x) => !x.up)) tiles.push(statusTile(s.name, false, [s.what]));
+    if (upNow.length) tiles.push(statusTile(`${upNow.length} of ${d.status.services.length} services`, true,
+      [upNow.map((s) => s.name).join(', ')]));
 
     const rows = d.agents.map((a) => {
       const last = a.current
