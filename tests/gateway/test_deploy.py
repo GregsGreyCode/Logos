@@ -51,7 +51,7 @@ def test_package_change_reinstalls_and_restarts_the_dashboard(deploy):
 def test_docs_change_restarts_nothing(deploy):
     p = deploy.plan(["docs/model-gateway.md", "README.md"], RUNNING)
     assert p == {"package": False, "image": False, "units": False, "dashboard": False, "agents": []}
-    assert deploy.describe(p) == ["Update the model gateway, noticeboard, voice, calendar and web reader where they changed"]
+    assert deploy.describe(p) == ["Update the model gateway, noticeboard, voice, calendar, web reader and house service where they changed"]
 
 
 def test_unit_changes_update_installed_units(deploy):

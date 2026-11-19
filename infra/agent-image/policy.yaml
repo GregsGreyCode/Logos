@@ -124,6 +124,30 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
+  house:                           # the lights, through the Logos house service (gateway/house_service.py).
+                                   # Household agent only. Inspected as MCP: the handshake, the tool
+                                   # list and the tools for its domains. logos-agent fills in the
+                                   # address and the tools, or removes this rule.
+    endpoints:
+      - host: 192.0.2.1
+        port: 8098
+        protocol: mcp
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        mcp:
+          versions: ["2025-03-26", "2025-06-18", "2025-11-25"]
+        rules:
+          - allow: {method: initialize}
+          - allow: {method: notifications/initialized}
+          - allow: {method: ping}
+          - allow: {method: tools/list}
+          - allow:
+              method: tools/call
+              tool:
+                any: [list_lights, set_lights, list_scenes, activate_scene]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   weather:                         # today's forecast for the morning briefing, from the web reader
                                    # (which asks Open-Meteo). One request only. Removed for agents
                                    # without `web: {enabled: true}`.

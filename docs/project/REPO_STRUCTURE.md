@@ -37,7 +37,8 @@ logos/
 ├── souls/
 │   ├── general/              the person agents' persona (Greg, Béré, dev, bench)
 │   ├── household/            the household agent's persona
-│   └── _shared/              rules added to every soul: brain, noticeboard, voice, calendar, web
+│   └── _shared/              rules added to every soul: brain, noticeboard, voice, calendar, web,
+│                             house (lights; household agent only)
 │
 ├── gateway/                  the Logos gateway (aiohttp) and the services it runs
 │   ├── run.py                process entry point (`logos gateway run`): env, logs, HTTP server
@@ -47,8 +48,8 @@ logos/
 │   ├── auth/                 accounts, passwords, JWT cookies, middleware, roles
 │   ├── agent_runtime.py      builds sandboxes from agents/<name>.yaml (shared with scripts)
 │   ├── *_host.py             one per service container: model gateway, noticeboard, voice,
-│   │                         calendar, Matrix, web reader
-│   ├── calendar_service.py, web_service.py, model_guard.py
+│   │                         calendar, Matrix, web reader, house
+│   ├── calendar_service.py, web_service.py, house_service.py, model_guard.py
 │   │                         the code those containers run (stdlib only)
 │   └── lib/                  shared helpers (state DB, redaction)
 │
@@ -58,7 +59,7 @@ logos/
 ├── assets/                   logo, icons, web app manifest, login stylesheet
 │
 ├── docs/
-│   ├── *.md                  one page per service (calendar, matrix, web-reader, backups, …)
+│   ├── *.md                  one page per service (calendar, matrix, web-reader, house, backups, …)
 │   ├── adr/, architecture/   decisions and architecture notes
 │   ├── project/              this file
 │   └── archive/v1/           v1 planning, design and migration documents, history only
