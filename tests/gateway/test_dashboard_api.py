@@ -412,10 +412,19 @@ CRON = """
 def test_parse_jobs():
     jobs = dashboard_api.parse_jobs(CRON)
     assert [(j["label"], j["managed"]) for j in jobs] == [
-        ("birthday restaurant booking", False), ("Save brain history", True), ("Tidy the brain", True)]
+        ("birthday restaurant booking", False), ("Save brain history", True), ("Tidy the brain (nightly)", True)]
     assert jobs[0]["id"] == "ea3114aa4471" and jobs[0]["last_run"] is None
     assert jobs[1]["last_ok"] is True and jobs[1]["last_run"].startswith("2026-11-16T14:00")
     assert jobs[2]["last_ok"] is False
+
+
+def test_every_job_logos_installs_has_a_label_and_cannot_be_cancelled():
+    from gateway import agent_runtime
+    assert dashboard_api.MANAGED == set(agent_runtime.MANAGED_JOBS)       # in step with the runtime
+    retired = {"changes-homelab", "changes-logos", "changes-homelab-week", "changes-logos-week"}
+    for name in set(agent_runtime.MANAGED_JOBS) - retired:
+        label = dashboard_api.JOB_LABELS[name]
+        assert label and label != name and "-" not in label.split()[0]      # words, not a job id
 
 
 class StatusRuntime(Runtime):

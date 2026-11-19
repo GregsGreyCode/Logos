@@ -1,5 +1,5 @@
 """Household agent only, every minute, no model (story D2, decided 19 Nov): tell the household
-group chat when LM Studio has been offline for more than two minutes, and again when it is
+group chat when the AI computer (LM Studio) has been off for more than two minutes, and again when it is
 back. Prints only on those two changes (printing nothing sends nothing). Standard library only."""
 import json
 import os
@@ -9,9 +9,9 @@ import urllib.request
 HOME = "/opt/data"
 STATE = os.path.join(HOME, ".model_watch")
 QUIET = 120                      # a reload, or D1's minute of waiting, never causes a message
-OFFLINE = ("LM Studio is offline, so the agents can't reply for now. "
-           "Messages will be answered when it's back.")
-BACK = "LM Studio is back; the agents are answering what was waiting."
+OFFLINE = ("**The AI computer is off.** The agents can't reply until it's back on; "
+           "anything you send now will be answered then.")
+BACK = "**The AI computer is back on.** The agents are answering what was waiting."
 
 
 def step(off: bool, now: float, state: dict):

@@ -135,8 +135,8 @@ class TestRules:
         q = board.send("greg", "bere", "question", "Locked out, do you have keys?", urgent=True)
         assert q["urgent"] is True and "being told now" in q["note"]
         lines = board.urgent("bere")
-        assert lines == [f"Urgent from Greg's agent: Locked out, do you have keys? "
-                         f"(request {q['id']}: tell your agent what to answer)"]
+        assert lines == ["**Urgent, from Greg's agent:** Locked out, do you have keys? Reply here with your answer."]
+        assert str(q["id"]) not in lines[0]                                    # no request ids for people
         assert board.urgent("bere") == [] and board.urgent("greg") == []      # once, and only the recipient
         assert [m["id"] for m in board.read("bere")["messages"]][-1] == q["id"]   # still handled normally
         for i in range(nb.URGENT_DAILY_LIMIT - 1):
