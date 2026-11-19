@@ -25,6 +25,21 @@ agent (sandbox) --MCP, own token--> logos-reader --private network--> logos-sear
   (one line from Open-Meteo, cached for an hour; see `docs/briefing.md`). The `weather` rule
   allows only that request.
 
+- **Daily changes (story DC1):** `GET /changes/<repo>/<days>` on the same port 8097, `repo` =
+  `logos` or `homelab`, `days` = 1 to 14. Logos: the merged PRs into `v2`, each marked `live`
+  (true, false, or null when unknown). The reader reads the commit this machine runs from the
+  checkout's `.git` (mounted read-only) and asks GitHub which commits of `v2` are not in it.
+  Homelab: the commits on `main` plus merged PRs (Renovate), without listing a PR twice. One
+  day carries each PR description (cut to 600 characters); longer periods carry titles only.
+  Answers are cached for ten minutes.
+  - Only agents with `changes: {enabled: true}` (the household agent) get it, with their own
+    token (`LOGOS_CHANGES_TOKEN`) that opens `/changes` and nothing else. Their `changes`
+    sandbox rule allows only `GET /changes/**`. Web tokens do not open it.
+  - GitHub token: `~/.config/logos/github-changes-token` on the machine (mode 0600), a
+    fine-grained token with read access to Contents and Pull requests of `Logos` and
+    `homelab-infra` only. `up` copies it into the reader's volume; it never enters a sandbox.
+    Without it `/changes` answers 503 and the rest of the reader works as before.
+
 ## The privacy filter
 
 Every query is checked before it leaves. Refused, with the reason, so the agent can rephrase:
