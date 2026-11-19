@@ -579,16 +579,17 @@ network_policies:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.POLICY_WEB)
         (repo / "souls/_shared/requests.md").write_text("## Noting feature requests\n")
+        (repo / "souls/_shared/changes.md").write_text("## What changed\n")
         r = rt(repo)
         house = {**r.load("alpha"), "role": "household", "changes": {"enabled": True}}
         rules = yaml.safe_load(r.policy_path("alpha", house).read_text())["network_policies"]
         assert "weather" not in rules
         assert rules["web"]["endpoints"][0]["rules"][-1] == {"allow": {"method": "tools/call",
-                                                                       "tool": {"any": ["file_request"]}}}
+                                                                       "tool": {"any": ["file_request", "recent_changes"]}}}
         assert [x["allow"]["method"] for x in rules["web"]["endpoints"][0]["rules"]].count("tools/call") == 1
         cfg = yaml.safe_load(r.config_text("alpha", house, changes_token="th"))
         assert cfg["mcp_servers"]["logos_web"]["headers"] == {"Authorization": "Bearer th"}
-        assert "Noting feature requests" in r.soul_text(house)
+        assert "Noting feature requests" in r.soul_text(house) and "## What changed" in r.soul_text(house)
         person = {**r.load("alpha"), "web": {"enabled": True}}
         rules = yaml.safe_load(r.policy_path("alpha", person).read_text())["network_policies"]
         assert rules["web"]["endpoints"][0]["rules"][1]["allow"]["tool"]["any"] == [
@@ -664,7 +665,7 @@ network_policies:
         assert "LOGOS_WEB_TOKEN" not in env                     # still no web search
         rules = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]
         assert "weather" not in rules
-        assert rules["web"]["endpoints"][0]["rules"][-1]["allow"]["tool"] == {"any": ["file_request"]}  # FR1 only
+        assert rules["web"]["endpoints"][0]["rules"][-1]["allow"]["tool"] == {"any": ["file_request", "recent_changes"]}
         ep = rules["changes"]["endpoints"][0]
         assert (ep["host"], ep["port"]) == ("172.17.0.1", 8097)
         assert ep["rules"] == [{"allow": {"method": "GET", "path": "/changes/**"}}]

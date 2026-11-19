@@ -22,3 +22,12 @@ group chat (stories DC1 and DC2; designed in the spec doc's "Daily changes" tab)
 - **Access:** see `docs/web-reader.md` (the `/changes`-only token, the read-only GitHub token).
 - **Settings** (`changes:` in `agents/household.yaml`): `enabled`, and optionally `homelab`,
   `logos`, `homelab_week`, `logos_week`, `check` (cron times) and `weekly: false`.
+
+## On demand
+
+Any agent of the web reader (Greg's, Béré's and the household agent) has the `recent_changes`
+tool: ask "what changed in Logos today?" or "what changed in the homelab this week?" and it
+answers in that chat from the same list (1 to 14 days; titles, live marks and short
+descriptions). The household agent gets it next to `file_request`, still with no search.
+Instructions in `souls/_shared/changes.md`.
+

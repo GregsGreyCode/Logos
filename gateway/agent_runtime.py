@@ -436,8 +436,9 @@ class AgentRuntime:
         if _sibling("house_host").uses_house(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/house.md").read_text()
         wh = _sibling("web_host")
-        if (wh.uses_web(agent) or wh.uses_changes(agent)) and (self.repo / "souls/_shared/requests.md").exists():
-            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/requests.md").read_text()
+        for part in ("requests.md", "changes.md"):       # feature requests; what changed (on the web reader)
+            if (wh.uses_web(agent) or wh.uses_changes(agent)) and (self.repo / "souls/_shared" / part).exists():
+                text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared" / part).read_text()
         return text
 
     MATRIX_EXPORTED = ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID",
@@ -762,14 +763,14 @@ class AgentRuntime:
             point("web", wh.WebHost(self).url())
             point("weather", wh.WebHost(self).weather_url(), rest_rules=[("GET", "/weather")])
         elif wh.uses_changes(agent) and "web" in rules:
-            # Story FR1: the household agent may call file_request on the reader, and nothing else there.
+            # Story FR1: the household agent may call file_request and recent_changes on the reader, nothing else.
             # The whole rule list is written here, so nothing else on the reader is ever open to it.
             point("web", wh.WebHost(self).url())
             for e in rules["web"].get("endpoints") or []:
                 e.pop("access", None)
                 e["rules"] = [{"allow": {"method": m}} for m in
                               ("initialize", "notifications/initialized", "ping", "tools/list")] + [
-                    {"allow": {"method": "tools/call", "tool": {"any": ["file_request"]}}}]
+                    {"allow": {"method": "tools/call", "tool": {"any": ["file_request", "recent_changes"]}}}]
             rules.pop("weather", None)
         else:
             rules.pop("web", None)
