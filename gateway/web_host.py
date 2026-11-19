@@ -15,6 +15,11 @@ asks GitHub with the read-only token in ``~/.config/logos/github-changes-token``
 its own volume, mode 0600) and reads which commit this machine runs from the checkout's
 ``.git``, mounted read-only.
 
+Feature requests (story FR1): with ``~/.config/logos/docmost`` (``DOCMOST_EMAIL``,
+``DOCMOST_PASSWORD``, ``DOCMOST_URL``, ``DOCMOST_REQUESTS_PAGE``; mode 0600) every agent of the
+reader gets ``file_request``, which adds an entry to that page. The login is copied into the
+reader's volume and never enters a sandbox.
+
 The private names the filter refuses come from three places, gathered on every ``up``:
 the people's and agents' own names, the titles of the pages in each brain's ``people/``
 folder, the names the agents added (``add_private_name``, kept in the ``logos-reader-names``
@@ -47,6 +52,7 @@ TOKEN_ENV = "LOGOS_WEB_TOKEN"
 WEATHER_ENV = "LOGOS_WEATHER_URL"
 CHANGES_TOKEN_ENV = "LOGOS_CHANGES_TOKEN"
 CHANGES_ENV = "LOGOS_CHANGES_URL"
+DOCMOST_FILE = "docmost"                     # in ~/.config/logos: the reader's own Docmost login and page
 GITHUB_TOKEN_FILE = "github-changes-token"   # in ~/.config/logos; read-only, Logos + homelab-infra only
 # What /changes can report. live_git: the checkout this machine runs, to mark PRs live or not.
 REPOS = {"logos": {"repo": "GregsGreyCode/Logos", "branch": "v2", "live_git": "/repo-git"},
@@ -101,6 +107,18 @@ def uses_changes(agent: Mapping[str, Any]) -> bool:
     return bool((agent.get("changes") or {}).get("enabled"))
 
 
+def parse_env(text: str) -> dict:
+    return dict(l.strip().split("=", 1) for l in text.splitlines() if "=" in l and not l.strip().startswith("#"))
+
+
+def person_for(agent: Mapping[str, Any], name: str) -> str:
+    """Who a request comes from: "Greg" for Greg's agent, "the household chat" for the household agent."""
+    if agent.get("role") == "household":
+        return "the household chat"
+    shown = re.sub(r"(?i)['’]s agent$", "", str(agent.get("display_name") or "")).strip()
+    return shown or name
+
+
 def config_dir(env: Mapping[str, str]) -> Path:
     base = env.get("XDG_CONFIG_HOME") or str(Path(env.get("HOME") or os.path.expanduser("~")) / ".config")
     return Path(base) / "logos"
@@ -150,7 +168,7 @@ def own_names(agents: Mapping[str, Mapping[str, Any]]) -> List[str]:
 
 def reader_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str],
                   names: List[str], exact: List[str], place: Optional[dict] = None,
-                  changes_tokens: Optional[Mapping[str, str]] = None) -> dict:
+                  changes_tokens: Optional[Mapping[str, str]] = None, docmost: Optional[Mapping[str, str]] = None) -> dict:
     config = {"searxng": f"http://{SEARXNG}:8080",
               "agents": {n: {"token": tokens[n]} for n in sorted(agents) if uses_web(agents[n]) and tokens.get(n)},
               "names": sorted(set(names)), "capital_only": sorted(set(exact))}
@@ -160,6 +178,10 @@ def reader_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, 
                if t and n in agents and uses_changes(agents[n])}
     if changes:
         config["changes"] = {"agents": changes, "repos": REPOS}
+    if docmost and docmost.get("DOCMOST_URL") and docmost.get("DOCMOST_REQUESTS_PAGE"):
+        config["requests"] = {"url": docmost["DOCMOST_URL"], "page": docmost["DOCMOST_REQUESTS_PAGE"],
+                              "people": {n: person_for(agents[n], n) for n in sorted(agents)
+                                         if uses_web(agents[n]) or uses_changes(agents[n])}}
     return config
 
 
@@ -182,6 +204,10 @@ class WebHost:
 
     def changes_url(self) -> str:
         return f"http://{self.bind_address()}:{WEATHER_PORT}/changes"
+
+    def docmost(self) -> dict:
+        path = config_dir(self.rt.env) / DOCMOST_FILE
+        return parse_env(path.read_text()) if path.exists() else {}
 
     def github_token(self) -> str:
         path = config_dir(self.rt.env) / GITHUB_TOKEN_FILE
@@ -252,15 +278,18 @@ class WebHost:
         tokens = {n: self.token_for(n) for n in web_agents}
         changes_tokens = {n: self.token_for(n, CHANGES_TOKEN_ENV) for n in changes_agents}
         names, exact = self.private_names(agents)
-        config = json.dumps(reader_config(agents, tokens, names, exact, self.place(), changes_tokens), indent=1,
-                            sort_keys=True, ensure_ascii=False)
+        docmost = self.docmost()
+        config = json.dumps(reader_config(agents, tokens, names, exact, self.place(), changes_tokens, docmost),
+                            indent=1, sort_keys=True, ensure_ascii=False)
+        login = "".join(f"{k}={docmost[k]}\n" for k in ("DOCMOST_EMAIL", "DOCMOST_PASSWORD") if docmost.get(k))
         github = self.github_token() if changes_agents else ""
         git_dir = Path(self.rt.repo) / ".git"
-        stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + READER_IMAGE + github).encode()).hexdigest()[:16]
+        stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + READER_IMAGE + github + login).encode()).hexdigest()[:16]
         if self._running(READER) and self._label(READER) == stamp:
             return changed
         self._write_volume(READER_VOLUME, "config.json", config, "1000:1000")
         self._write_volume(READER_VOLUME, "github-token", github, "1000:1000")
+        self._write_volume(READER_VOLUME, "docmost", login, "1000:1000")
         if changes_agents and not github:
             print(f"web reader: no {GITHUB_TOKEN_FILE} in {config_dir(self.rt.env)}; the daily changes are off")
         mount_git = ["-v", f"{git_dir}:/repo-git:ro"] if git_dir.is_dir() else []
@@ -278,7 +307,7 @@ class WebHost:
                      "-v", f"{SERVICE_FILE}:/app/web_service.py:ro",
                      "-e", "WEB_CONFIG=/data/config.json", "-e", f"WEB_PORT={PORT}",
                      "-e", f"WEB_WEATHER_PORT={WEATHER_PORT}",
-                     "-e", "WEB_ADDED_NAMES=/names/added.txt", "-e", "WEB_GITHUB_TOKEN=/data/github-token",
+                     "-e", "WEB_ADDED_NAMES=/names/added.txt", "-e", "WEB_GITHUB_TOKEN=/data/github-token", "-e", "WEB_DOCMOST=/data/docmost",
                      *mount_git,
                      "--entrypoint", "python3", READER_IMAGE, "/app/web_service.py"])
         self._wait()
