@@ -950,6 +950,7 @@ HOUSE_SERVICES = (
     ("logos-matrix", "Matrix", "chat with the agents (Element X)", "http://127.0.0.1:6167/_matrix/client/versions"),
     ("logos-calendar", "Calendar server", "the calendars the phones sync", "http://127.0.0.1:5232/"),
     ("logos-calendar-service", "Calendar service", "how agents use the calendars", "http://{bind}:8095/health"),
+    ("logos-house", "House service", "how the household agent works the lights", "http://{bind}:8098/health"),
     ("logos-sync", "Syncthing", "brains to the phones for Obsidian", "http://127.0.0.1:8384/rest/noauth/health"),
 )
 

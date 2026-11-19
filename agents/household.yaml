@@ -16,6 +16,10 @@ voice: true                     # voice notes are turned into text by the voice 
 calendar:                       # Household calendar in full; each person's busy times only (docs/calendar.md)
   enabled: true
   free_busy: {greg: Greg, bere: Béré}
+house:                          # the lights and their scenes, through the house service (docs/house.md)
+  enabled: true
+  domains: [light, scene]
+  exclude: []                   # entity ids it must leave alone, e.g. light.balcony_balcony
 
 model:
   provider: lmstudio
