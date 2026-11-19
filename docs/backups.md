@@ -5,7 +5,7 @@ Logos data is protected in two ways.
 | What | How | Offsite |
 | --- | --- | --- |
 | Everything on VM 110 (agents, conversations, Matrix, calendars, dashboard) | Nightly 22:00 vzdump to TrueNAS (3 copies) | The newest VM archive goes to B2 every 28 days |
-| The small, irreplaceable parts (below) | `scripts/logos-backup-export`, nightly 01:30 | The export folder is in the nightly restic run to B2 |
+| The small, irreplaceable parts and the conversations (below) | `scripts/logos-backup-export`, nightly 01:30 | The export folder is in the nightly restic run to B2 |
 
 ## The nightly export
 
@@ -15,6 +15,9 @@ Logos data is protected in two ways.
 - `calendar-etc.tar.gz`: Radicale's settings and people (bcrypt hashes). The calendar service's password is left out; it is recreated on the next `up`.
 - `brain-<agent>.bundle`: each agent's brain, a git bundle with its whole history.
 - `agent-<agent>.tar.gz`: each agent's memories and scheduled jobs (`cron/jobs.json`).
+- `state-<agent>.db.gz`: each agent's hermes database (conversations, reasoning, tool calls), a consistent SQLite copy taken while the agent runs.
+- `matrix.tar.gz`: the whole Matrix server (accounts, rooms, encrypted history, media). Matrix is stopped for the few seconds the copy takes, because its database is only consistent at rest; phones and agents reconnect by themselves.
+- `auth.db.gz`: the dashboard's accounts and sessions, a consistent SQLite copy.
 - `manifest.json`: when it ran, plus each file's size and sha256.
 
 It also writes `logos_backup_export.prom` next to `latest`, for the node_exporter textfile collector. The alert fires on `logos_backup_export_last_success_timestamp_seconds`.
@@ -27,4 +30,10 @@ Installed as a systemd user timer: `infra/systemd/logos-backup-export.{service,t
 git clone calendar.bundle collections            # then copy into the logos-calendar volume
 git clone brain-greg.bundle brain                # then into logos-brain-greg
 tar -xzf agent-greg.tar.gz                       # memories/ and cron/jobs.json into logos-home-greg
+gunzip -c state-greg.db.gz > state.db            # agent stopped: replace /opt/data/state.db in logos-home-greg
+gunzip -c auth.db.gz > ~/.logos/auth.db          # gateway stopped
+# Matrix: stop logos-matrix, empty the logos-matrix volume, then
+docker run --rm -v logos-matrix:/m -v "$PWD":/in alpine:3 tar -xzf /in/matrix.tar.gz -C /m
 ```
+
+Remove any `state.db-wal` and `state.db-shm` next to a restored `state.db` before starting the agent.
