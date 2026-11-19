@@ -344,6 +344,10 @@ class ModelGateway:
     def base_url(self) -> str:
         return f"http://{self.bind_address()}:{PORT}/v1"
 
+    def health_url(self) -> str:
+        """The model guard's health check: is LM Studio answering? (story D2)"""
+        return f"http://{self.bind_address()}:{GUARD_PORT}/guard/health"
+
     def running(self) -> bool:
         out = self.rt.run(["docker", "ps", "--filter", f"name=^{CONTAINER}$", "--format", "{{.Names}}"],
                           check=False)

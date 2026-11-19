@@ -86,6 +86,7 @@ button:disabled { cursor: default; opacity: 0.55; }
 .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--line);
   border-bottom-left-radius: 4px; }
 .msg.error { align-self: flex-start; background: var(--warn-bg); color: var(--warn-ink); }
+.msg.waiting { align-self: flex-end; display: flex; gap: 8px; align-items: center; background: var(--warn-bg); color: var(--warn-ink); font-size: 0.9em; }
 .msg p { margin: 0 0 8px; } .msg p:last-child, .msg ul:last-child, .msg pre:last-child { margin-bottom: 0; }
 .msg ul { margin: 0 0 8px; padding-left: 20px; }
 .msg pre { margin: 0 0 8px; padding: 10px; border-radius: 8px; background: var(--ground); overflow-x: auto; font-size: 13px; }
