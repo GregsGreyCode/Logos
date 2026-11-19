@@ -436,8 +436,12 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/calendar.md").read_text()
         if _sibling("web_host").uses_web(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/web.md").read_text()
-        if _sibling("house_host").uses_house(agent):
+        hh = _sibling("house_host")
+        if hh.uses_house(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/house.md").read_text()
+            notes = hh.config_dir(self.env) / hh.NOTES_FILE      # facts about this home, never in git
+            if notes.exists() and notes.read_text().strip():
+                text = text.rstrip() + "\n\n### About this home's lights\n\n" + notes.read_text().strip() + "\n"
         wh = _sibling("web_host")
         for part in ("requests.md", "changes.md"):       # feature requests; what changed (on the web reader)
             if (wh.uses_web(agent) or wh.uses_changes(agent)) and (self.repo / "souls/_shared" / part).exists():
