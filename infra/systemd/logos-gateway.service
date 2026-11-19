@@ -1,6 +1,6 @@
 # Logos gateway (web dashboard and chat) as a systemd user service.
 #
-# Install:
+# Install (scripts/logos-deploy keeps an installed copy up to date after that):
 #   mkdir -p ~/.config/systemd/user
 #   sed "s#@REPO@#$HOME/logos#g" infra/systemd/logos-gateway.service > ~/.config/systemd/user/logos-gateway.service
 #   systemctl --user daemon-reload && systemctl --user enable --now logos-gateway
@@ -9,8 +9,11 @@
 # Settings live in ~/.logos/.env (for example LOGOS_SANDBOX_BACKEND=openshell, LOGOS_PORT=8091).
 [Unit]
 Description=Logos gateway (dashboard and web chat)
-After=network-online.target openshell-gateway.service docker.service
-Wants=network-online.target
+# No After=openshell-gateway.service: NVIDIA's unit is ordered After=default.target, and this
+# one is WantedBy=default.target, so ordering after it is a cycle and systemd drops this unit
+# at boot ("Found ordering cycle"). Nothing needs it: the gateway reaches the agents lazily
+# and retries, so it can start before OpenShell. (Docker and the network are system units,
+# which a user unit cannot be ordered against anyway.)
 
 [Service]
 WorkingDirectory=@REPO@
