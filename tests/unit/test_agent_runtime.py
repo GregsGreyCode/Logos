@@ -563,7 +563,7 @@ network_policies:
         on = {**plain, "voice": True}
         assert "LOGOS_VOICE_TOKEN=" in r.env_file(on, "logos-home-alpha")
         assert yaml.safe_load(r.config_text("alpha", on, voice_token="tok"))["stt"] == {
-            "enabled": True, "provider": "openai",
+            "enabled": True, "provider": "openai", "echo_transcripts": False,      # no "I heard: ..." message
             "openai": {"api_key": "tok", "base_url": "http://172.17.0.1:8093/v1", "model": "whisper-1"}}
         ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["voice"]["endpoints"][0]
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8093, ["172.17.0.1/32"])
@@ -616,6 +616,7 @@ network_policies:
             "model": {"default": "some/model", "provider": "lmstudio",
                       "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
             "agent": {"auto_recovery_cycles": 0},
+            "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
             "stt": {"enabled": False}}
 

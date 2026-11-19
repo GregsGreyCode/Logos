@@ -31,7 +31,7 @@ matrix:                           # the household's own Matrix server (docs/matr
   allowed_users: []               # set in agents/greg.local.yaml (untracked): @name:example.org
 
 telegram:
-  enabled: true
+  enabled: false                  # off since 19 Nov 2026: Matrix only (docs/matrix.md)
   allowed_users: []               # set in agents/greg.local.yaml (untracked): Telegram numeric user IDs
 
 consolidation:                  # nightly brain tidy-up (hermes cron job `consolidate`)
