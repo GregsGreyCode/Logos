@@ -31,7 +31,7 @@ git clone https://github.com/GregsGreyCode/Logos.git
 cd Logos
 git checkout v2
 python3 -m venv venv && . venv/bin/activate
-pip install -e ".[all,dev]"
+pip install -e ".[dev]"
 ```
 
 Run the gateway against a throwaway home so you never touch a real `~/.logos`:

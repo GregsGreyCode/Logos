@@ -40,7 +40,7 @@ logos/
 │   └── _shared/              rules added to every soul: brain, noticeboard, voice, calendar, web
 │
 ├── gateway/                  the Logos gateway (aiohttp) and the services it runs
-│   ├── run.py                process entry point (`logos gateway run`)
+│   ├── run.py                process entry point (`logos gateway run`): env, logs, HTTP server
 │   ├── http_api.py           app setup and routes (sign-in, setup, dashboard, chat)
 │   ├── dashboard_api.py      the dashboard's /api/v2 endpoints
 │   ├── html/, ui/            the pages (login, setup, app) and the dashboard's modules
@@ -80,6 +80,6 @@ logos/
 
 ## Still from v1
 
-The gateway's message-handling core in `run.py` (sessions, delivery, pairing, hooks and the
-platform parts of `config.py`) is v1 code that the v2 dashboard no longer reads. Removing it
-needs a refactor of `run.py` and is the second part of the v1 clean-up.
+The auth database (`~/.logos/auth.db`) still has v1 tables that nothing reads (channel
+credentials, MCP servers, approvals, evolution, dispatches). They are left in place: dropping
+them is a migration on live data, worth doing only alongside some other schema change.
