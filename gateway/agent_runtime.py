@@ -50,7 +50,8 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
-                "weekly-digest")
+                "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
+                "morning-briefing-weekend-check")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -59,6 +60,8 @@ ALL_LOCAL = "all.local.yaml"            # untracked overrides for every agent
 # Sessions opened with `openshell sandbox exec` do not inherit the image ENV, so hermes CLI calls
 # must be told where the agent's home is.
 HERMES = "export HERMES_HOME=/opt/data; hermes"
+# hermes' own Python, for the one helper that uses its job store (carry_monitor_state.py).
+HERMES_PY = "export HERMES_HOME=/opt/data; /opt/hermes/.venv/bin/python /opt/data/scripts/carry_monitor_state.py"
 # _config_version marks the file as current for the pinned hermes (v0.23.1 = 53); without it
 # hermes treats the file as pre-v12 and skips its config migrations. Bump with the image.
 CONFIG_VERSION = 53
@@ -76,6 +79,29 @@ def delivery(agent: Mapping[str, Any]) -> str:
     if (agent.get("matrix") or {}).get("enabled"):
         return "matrix"
     return "local"
+
+
+def briefing(agent: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The morning briefing settings, or {} when this agent sends none (story C4).
+
+    On by default for a person's own agent (one with ``calendar.person``) that can reach its
+    person on Matrix; never for the household agent."""
+    cfg = agent.get("briefing") or {}
+    person = ((agent.get("calendar") or {}).get("person"))
+    if not cfg.get("enabled", bool(person)) or delivery(agent) == "local" or agent.get("role") == "household":
+        return {}
+    return {"weekdays": cfg.get("weekdays", "0 7 * * 1-5"), "weekends": cfg.get("weekends", "0 9 * * 0,6")}
+
+
+def minutes_later(schedule: str, minutes: int = 15) -> Optional[str]:
+    """``"0 7 * * 1-5"`` -> ``"15 7 * * 1-5"``; None unless minute and hour are plain numbers."""
+    parts = schedule.split()
+    if len(parts) != 5 or not (parts[0].isdigit() and parts[1].isdigit()):
+        return None
+    total = int(parts[1]) * 60 + int(parts[0]) + minutes
+    if total >= 24 * 60:
+        return None                      # would move to the next day: leave it without a check
+    return " ".join([str(total % 60), str(total // 60)] + parts[2:])
 
 
 def _sibling(module: str):
@@ -443,13 +469,17 @@ class AgentRuntime:
         ch = _sibling("calendar_host")
         if ch.uses_calendar(agent):
             cur.setdefault(ch.TOKEN_ENV, secrets.token_urlsafe(32))
+            cur["LOGOS_CALENDAR_URL"] = ch.CalendarHost(self).service_url()     # for the briefing script
         else:
             cur.pop(ch.TOKEN_ENV, None)
+            cur.pop("LOGOS_CALENDAR_URL", None)
         wh = _sibling("web_host")
         if wh.uses_web(agent):
             cur.setdefault(wh.TOKEN_ENV, secrets.token_urlsafe(32))
+            cur[wh.WEATHER_ENV] = wh.WebHost(self).weather_url()
         else:
             cur.pop(wh.TOKEN_ENV, None)
+            cur.pop(wh.WEATHER_ENV, None)
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -489,11 +519,14 @@ class AgentRuntime:
     def ensure_jobs(self, name: str, agent: Mapping[str, Any], home: str) -> None:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
         for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
-                       "noticeboard_urgent.py"):
+                       "noticeboard_urgent.py", "briefing_today.py", "briefing_check.py",
+                       "carry_monitor_state.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         if not self.wait_api(name):
             print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
             return
+        # Keep what the monitor jobs last saw, or each re-created job wakes the model once for nothing.
+        self.sbx(name, f"{HERMES_PY} save")
         for jid in [i for n, i in self.job_ids(name).items() if n in MANAGED_JOBS]:
             self.sbx(name, f"{HERMES} cron remove {jid}")
         tz = agent.get("timezone", "UTC")
@@ -533,6 +566,24 @@ class AgentRuntime:
             self.sbx(name, f'{HERMES} cron create --name noticeboard-urgent --no-agent '
                            f'--script noticeboard_urgent.py --timezone {tz} --deliver {deliver} '
                            f'--failure-deliver local "* * * * *"')
+        brief = briefing(agent)
+        if brief:
+            # Story C4: the day ahead, sent in the morning. The script puts today's weather and events
+            # into the prompt; a morning missed while the machine was off is skipped, never sent late.
+            prompt = (self.jobs_dir / "morning_briefing.md").read_text()
+            for job, when in (("morning-briefing", brief["weekdays"]), ("morning-briefing-weekend", brief["weekends"])):
+                self.sbx(name, f'{HERMES} cron create --name {job} --script briefing_today.py '
+                               f'--workdir /opt/data/brain --timezone {tz} --catch-up off '
+                               f'--deliver {delivery(agent)} --failure-deliver local "{when}" "$(cat)"',
+                         input=prompt)
+                # A quarter of an hour later, no model: if the briefing did not go out (the model
+                # server busy or off), send the plain facts so a morning is never missed.
+                check = minutes_later(when)
+                if check:
+                    self.sbx(name, f'{HERMES} cron create --name {job}-check --no-agent --script briefing_check.py '
+                                   f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
+                                   f'--failure-deliver local "{check}"')
+        self.sbx(name, f"{HERMES_PY} restore")
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
 
@@ -611,8 +662,10 @@ class AgentRuntime:
         wh = _sibling("web_host")
         if wh.uses_web(agent):
             point("web", wh.WebHost(self).url())
+            point("weather", wh.WebHost(self).weather_url(), rest_rules=[("GET", "/weather")])
         else:
             rules.pop("web", None)
+            rules.pop("weather", None)
         if json.dumps(rules, sort_keys=True) == before:
             return src
         out = self.repo / ".rendered" / f"{name}.policy.yaml"

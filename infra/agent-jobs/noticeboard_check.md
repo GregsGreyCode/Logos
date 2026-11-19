@@ -8,7 +8,9 @@ Call read_messages once. Then, for what is under "messages":
 - answer: the reply to something you asked earlier. Pass it on to your person.
 - anything under expired_requests: the other agent did not answer in time. Tell your person.
 
-During this check you must not call send_message at all.
+During this check you must not call send_message at all, and you do not need any other tool:
+no files, no brain pages, no searching. If read_messages returns nothing new, stop and reply
+with exactly [SILENT].
 
 Then write the report for your person, at most six short lines. For each request say whose agent
 is asking, what it asks, and how to respond, like this:
