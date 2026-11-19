@@ -223,7 +223,9 @@ class CalDAV:
 # ── the service ──────────────────────────────────────────────────────────────
 
 class Service:
-    """``agents``: name -> {"token", "timezone", "full": {key: {"path", "label"}}, "busy": {key: {"paths", "label"}}}."""
+    """``agents``: name -> {"token", "timezone", "full": {key: {"path", "label"}}, "read": {key: {"path", "label"}},
+    "busy": {key: {"paths", "label"}}}. ``full`` calendars can be changed; ``read`` ones (another
+    person's) are seen in full but never changed; ``busy`` ones show only when someone is busy."""
 
     def __init__(self, dav: CalDAV, agents: Dict[str, Dict[str, Any]], log: Callable[[str], None] = print,
                  clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc)):
@@ -243,6 +245,9 @@ class Service:
         if self.agents[agent].get("read_only"):
             raise Refused("This is a read-only view of the calendars: nothing can be changed with it.")
         full = self.agents[agent].get("full") or {}
+        if key in (self.agents[agent].get("read") or {}):
+            raise Refused(f"'{key}' is someone else's calendar: you can see it but never change it. "
+                          "Ask their agent through the noticeboard, or tell your person.")
         if key not in full:
             raise Refused(f"'{key}' is not a calendar you can change. Yours: {', '.join(full) or 'none'}.")
         return full[key]
@@ -260,6 +265,7 @@ class Service:
         a = self.agents[agent]
         access = "read only" if a.get("read_only") else "read and change"
         return {"calendars": [{"name": k, "shows": v["label"], "access": access} for k, v in (a.get("full") or {}).items()]
+                + [{"name": k, "shows": v["label"], "access": "read only (see, never change)"} for k, v in (a.get("read") or {}).items()]
                 + [{"name": k, "shows": v["label"], "access": "busy times only"} for k, v in (a.get("busy") or {}).items()],
                 "timezone": a.get("timezone") or "UTC"}
 
@@ -267,15 +273,20 @@ class Service:
         tz = self.tz(agent)
         a, b = window(start, end, tz)
         events, busy = [], []
-        for key, cal in (self.agents[agent].get("full") or {}).items():
-            for name, ics in self.dav.query(cal["path"], a, b):
-                for ev in events_in(ics):
-                    if ev["cancelled"]:
-                        continue
-                    events.append({"id": f"{key}/{name}", "calendar": key, "title": ev["title"],
-                                   "start": show(ev["start"], tz), "end": show(ev["end"], tz),
-                                   "all_day": ev["all_day"], "location": ev["location"],
-                                   "notes": ev["notes"][:300], "repeats": ev["repeats"]})
+        me = self.agents[agent]
+        for read_only, cals in ((False, me.get("full") or {}), (True, me.get("read") or {})):
+            for key, cal in cals.items():
+                for name, ics in self.dav.query(cal["path"], a, b):
+                    for ev in events_in(ics):
+                        if ev["cancelled"]:
+                            continue
+                        item = {"id": f"{key}/{name}", "calendar": key, "title": ev["title"],
+                                "start": show(ev["start"], tz), "end": show(ev["end"], tz),
+                                "all_day": ev["all_day"], "location": ev["location"],
+                                "notes": ev["notes"][:300], "repeats": ev["repeats"]}
+                        if read_only:
+                            item["read_only"] = True        # someone else's: never change it
+                        events.append(item)
         for key, cal in (self.agents[agent].get("busy") or {}).items():
             for start_, end_ in self._busy(cal["paths"], a, b):
                 busy.append({"who": cal["label"], "busy_from": show(start_, tz), "busy_until": show(end_, tz)})
@@ -412,7 +423,7 @@ class Service:
         except ValueError:
             raise Refused("Give minutes as a number and earliest/latest as HH:MM.")
         busy: List[Tuple[dt.datetime, dt.datetime]] = []
-        for cal in (self.agents[agent].get("full") or {}).values():
+        for cal in list((self.agents[agent].get("full") or {}).values()) + list((self.agents[agent].get("read") or {}).values()):
             busy += self._busy([cal["path"]], a, b)
         for cal in (self.agents[agent].get("busy") or {}).values():
             busy += self._busy(cal["paths"], a, b)
@@ -427,7 +438,8 @@ class Service:
             day += dt.timedelta(days=1)
         who = [v["label"] for v in (self.agents[agent].get("busy") or {}).values()]
         self.log(f"{agent} find_free_time {a:%Y-%m-%d}..{b:%Y-%m-%d}: {len(slots)} slots")
-        return {"free": slots[:12], "checked": [v["label"] for v in (self.agents[agent].get("full") or {}).values()] + who,
+        seen = list((self.agents[agent].get("full") or {}).values()) + list((self.agents[agent].get("read") or {}).values())
+        return {"free": slots[:12], "checked": [v["label"] for v in seen] + who,
                 "minutes": minutes}
 
 
