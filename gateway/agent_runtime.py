@@ -300,6 +300,10 @@ class AgentRuntime:
         # only fail, and its built-in web_search would hide the web reader's tool. Searching goes
         # through the web reader (search_web), for the agents that have it.
         cfg["agent"] = {"auto_recovery_cycles": 0, "disabled_toolsets": ["web", "browser"]}
+        # Every tool in view: hermes otherwise hides MCP tools (calendar, noticeboard, web reader)
+        # behind a tool_search step, which the local model often skips, so it never sees them.
+        # Our agents have about a dozen MCP tools, so the extra context is small.
+        cfg["tools"] = {"tool_search": {"enabled": "off"}}
         # Nothing in the sandbox may call home: no update checks, no model catalogue download.
         cfg["updates"] = {"check": False}
         cfg["model_catalog"] = {"enabled": False}

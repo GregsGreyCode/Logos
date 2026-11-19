@@ -69,10 +69,10 @@ def test_refusals_come_back_as_tool_errors_and_send_nothing(svc):
     req = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
            "params": {"name": "search_web", "arguments": {"query": "present for Mum"}}}
     out = ws.handle_rpc(svc, "greg", req)["result"]
-    assert out["isError"] and "Not searched" in out["content"][0]["text"]
+    assert out["isError"] and "Not done" in out["content"][0]["text"]
     assert not [u for u in svc.seen if isinstance(u, str)]           # nothing was sent to SearXNG
     tools = ws.handle_rpc(svc, "greg", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_web"]
+    assert [t["name"] for t in tools] == ["search_web", "add_private_name"]
     assert svc.agent_for_token("tg") == "greg" and svc.agent_for_token("nope") is None
 
 
@@ -98,3 +98,25 @@ def test_reader_config_lists_only_web_agents_with_tokens():
     assert cfg["names"] == ["Greg", "Mum"] and cfg["capital_only"] == ["Rose"]
     assert cfg["searxng"] == "http://logos-searxng:8080"
     assert "startpage" not in wh.SETTINGS and "formats: [json]" in wh.SETTINGS
+
+
+def test_agents_can_add_private_names_but_not_junk(svc, tmp_path):
+    added = tmp_path / "added.txt"
+    s = ws.Service("http://x", {"greg": {"token": "t"}}, ws.Filter(NAMES), fetch=lambda u: {"results": []},
+                   log=lambda m: None, added_file=str(added))
+    assert s.add_private_name("greg", "Aunt  Clara") == {"added": "Aunt Clara", "note": "Searches containing it are now refused."}
+    with pytest.raises(ws.Refused):
+        s.search_web("greg", "birthday ideas for aunt clara")
+    assert s.add_private_name("greg", "aunt clara") == {"already_private": "aunt clara"}
+    for junk in ("x", "1234", "drop table; --", "a b c d e f g", "", "x" * 70):
+        with pytest.raises(ws.Refused):
+            s.add_private_name("greg", junk)
+    assert added.read_text().startswith("Aunt Clara\tgreg\t")
+    again = ws.Service("http://x", {}, ws.Filter([]), log=lambda m: None, added_file=str(added))   # kept across restarts
+    with pytest.raises(ws.Refused):
+        again.filter.check("aunt clara")
+    out = ws.handle_rpc(s, "greg", {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                    "params": {"name": "add_private_name", "arguments": {"name": "St Mary's School"}}})
+    assert "added" in out["result"]["content"][0]["text"]
+    tools = ws.handle_rpc(s, "greg", {"jsonrpc": "2.0", "id": 4, "method": "tools/list"})["result"]["tools"]
+    assert [t["name"] for t in tools] == ["search_web", "add_private_name"]

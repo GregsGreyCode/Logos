@@ -64,7 +64,7 @@ network_policies:
 
   web:                             # web search through the Logos web reader (gateway/web_service.py),
                                    # which filters what leaves the house. Inspected as MCP: only the
-                                   # handshake, the tool list and search_web get through.
+                                   # handshake, the tool list, search_web and add_private_name get through.
                                    # logos-agent fills in the address, or removes this rule.
     endpoints:
       - host: 192.0.2.1
@@ -82,7 +82,7 @@ network_policies:
           - allow:
               method: tools/call
               tool:
-                any: [search_web]
+                any: [search_web, add_private_name]
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
