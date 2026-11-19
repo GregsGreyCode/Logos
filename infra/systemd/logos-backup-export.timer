@@ -1,0 +1,12 @@
+# Runs the Logos backup export every night at 01:30, after the 22:00 VM backup
+# and before the nightly restic run sends it offsite.
+[Unit]
+Description=Nightly Logos backup export
+
+[Timer]
+OnCalendar=*-*-* 01:30:00
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
