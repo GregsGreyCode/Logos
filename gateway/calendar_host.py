@@ -212,8 +212,10 @@ def uses_calendar(agent: Mapping[str, Any]) -> bool:
     return bool((agent.get("calendar") or {}).get("enabled"))
 
 
-def calendars_for(agent: Mapping[str, Any], people: List[str]) -> Dict[str, dict]:
-    """What one agent may see: ``full`` calendars (details, changes) and ``busy`` ones (times only)."""
+def calendars_for(agent: Mapping[str, Any], people: List[str],
+                  agents: Optional[Mapping[str, Mapping[str, Any]]] = None) -> Dict[str, dict]:
+    """What one agent may see: ``full`` calendars (details, changes), ``read`` ones (the other people's,
+    in full but never changed: so it can tell when they are free) and ``busy`` ones (times only)."""
     cal = agent.get("calendar") or {}
     full = {"household": {"path": "/household/calendar/", "label": "Household (shared by everyone)"}}
     busy = {}
@@ -223,12 +225,17 @@ def calendars_for(agent: Mapping[str, Any], people: List[str]) -> Dict[str, dict
             raise CalendarError(f"agent {agent.get('name')}: calendar.person {person!r} has no calendar account")
         full = {"personal": {"path": f"/{person}/personal/", "label": f"{person.capitalize()}'s own calendar"},
                 **full}
+    read = {}
+    if person:                                   # a person's agent sees the other people's calendars
+        for other in people:
+            if other != person:
+                read[other] = {"path": f"/{other}/personal/", "label": person_label(other, agents or {})}
     for who, label in (cal.get("free_busy") or {}).items():
         if who not in people:
             raise CalendarError(f"agent {agent.get('name')}: free_busy {who!r} has no calendar account")
-        if who != person:
+        if who != person and who not in read:
             busy[who] = {"paths": [f"/{who}/personal/"], "label": str(label)}
-    return {"full": full, "busy": busy}
+    return {"full": full, "read": read, "busy": busy}
 
 
 READER = "person:"          # a person's read-only key, for the dashboard's Home
@@ -251,14 +258,14 @@ def reader_calendars(name: str, people: List[str], agents: Mapping[str, Mapping[
     for other in people:
         if other != name:
             full[other] = {"path": f"/{other}/personal/", "label": person_label(other, agents)}
-    return {"full": full, "busy": {}, "read_only": True}
+    return {"full": full, "read": {}, "busy": {}, "read_only": True}
 
 
 def service_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str], people: List[str],
                    password: str, readers: Optional[Mapping[str, str]] = None) -> dict:
     out = {"radicale": f"http://{CONTAINER}:{PORT}", "user": SERVICE_USER, "password": password,
            "agents": {n: {"token": tokens[n], "timezone": str(a.get("timezone") or "UTC"),
-                          **calendars_for(a, people)} for n, a in sorted(agents.items())}}
+                          **calendars_for(a, people, agents)} for n, a in sorted(agents.items())}}
     tz_of = {(a.get("calendar") or {}).get("person"): str(a.get("timezone") or "UTC") for a in agents.values()}
     for name, token in sorted((readers or {}).items()):
         if name in people:

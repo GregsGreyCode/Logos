@@ -174,3 +174,20 @@ def test_a_reader_key_reads_everything_and_changes_nothing(svc):
         with pytest.raises(cs.Refused, match="read-only"):
             change()
     assert all(c["access"] == "read only" for c in svc.calendars("person:greg")["calendars"])
+
+
+def test_a_person_agent_sees_the_other_calendar_but_cannot_change_it(svc):
+    svc.agents["greg"]["read"] = {"bere": {"path": "/bere/personal/", "label": "Béré"}}
+    svc.dav.put("/bere/personal/p.ics", cs.build_event("p@x", "Pilates", dt.datetime(2026, 11, 21, 18, tzinfo=LONDON),
+                                                        dt.datetime(2026, 11, 21, 19, tzinfo=LONDON), False, now=NOW))
+    ev = svc.list_events("greg", "2026-11-21")["events"]
+    assert [(e["title"], e["calendar"], e.get("read_only")) for e in ev] == [("Pilates", "bere", True)]
+    with pytest.raises(cs.Refused, match="someone else"):
+        svc.add_event("greg", "bere", "Dinner", "2026-11-21 19:00")
+    with pytest.raises(cs.Refused, match="someone else"):
+        svc.cancel_event("greg", "bere/p.ics")
+    free = svc.find_free_time("greg", "2026-11-21", "2026-11-21", 60, "17:00", "21:00")
+    assert free["free"] == [{"from": "2026-11-21 17:00", "until": "2026-11-21 18:00"},     # her Pilates counts
+                            {"from": "2026-11-21 19:00", "until": "2026-11-21 21:00"}]
+    assert "Béré" in free["checked"]
+    assert {"name": "bere", "shows": "Béré", "access": "read only (see, never change)"} in svc.calendars("greg")["calendars"]

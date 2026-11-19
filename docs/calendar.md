@@ -23,9 +23,18 @@ The Logos calendar service (`gateway/calendar_service.py`) runs in the `logos-ca
 Each agent definition says what that agent sees:
 
 ```yaml
-calendar: {enabled: true, person: greg}                  # Greg's own calendar + Household, in full
+calendar: {enabled: true, person: greg}                  # Greg's own calendar + Household, in full;
+                                                         # Béré's calendar read only (seen, never changed)
 calendar: {enabled: true, free_busy: {greg: Greg, bere: Béré}}   # Household in full; each person's busy times only
 ```
+
+A person's agent sees the other people's own calendars in full but read only (decided 19 Nov),
+so it can tell when someone is free. Any change to them is refused ("someone else's
+calendar"); to get something into someone else's calendar it uses Household or asks their
+agent through the noticeboard. The household agent still sees only busy times.
+
+The dashboard's Home reads with each person's own read-only key (`person:<name>`), which
+sees what their phone sees: their calendar, Household and the other people's.
 
 | Tool | What it does |
 | --- | --- |
