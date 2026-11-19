@@ -49,9 +49,11 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
          "exec hermes gateway run")
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
+# Logos' own hermes plugins (infra/agent-plugins/<name>/), copied into the home by `up`.
+LOGOS_PLUGINS = ("logos-waitlist",)
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
-                "morning-briefing-weekend-check")
+                "morning-briefing-weekend-check", "rerun-after-outage", "model-watch")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -342,11 +344,12 @@ class AgentRuntime:
                 "tool_progress": "log", "interim_assistant_messages": False}}}
         if agent.get("brain_index", True):
             cfg["memory"] = {"memory_char_limit": MEMORY_CHAR_LIMIT}
+        cfg.setdefault("plugins", {"enabled": []})["enabled"].extend(LOGOS_PLUGINS)
         reset = agent.get("session_reset")
         if reset and str(reset.get("mode", "none")) != "none":
             # hermes no longer resets conversations on a timer; this catalog plugin (baked into the
             # image) starts a fresh session on the first message after the daily boundary.
-            cfg["plugins"] = {"enabled": [RESET_PLUGIN]}
+            cfg.setdefault("plugins", {"enabled": []})["enabled"].append(RESET_PLUGIN)
             cfg["session_reset"] = {k: reset[k] for k in ("mode", "at_hour", "idle_minutes") if k in reset}
         nb = _sibling("noticeboard_host")
         if nb.uses_noticeboard(agent) and noticeboard_token:
@@ -456,6 +459,9 @@ class AgentRuntime:
         mg = _sibling("model_gateway")
         if mg.uses_gateway(agent):
             cur.setdefault(mg.KEY_ENV, "sk-bf-" + secrets.token_urlsafe(32))
+            cur["LOGOS_MODEL_HEALTH_URL"] = mg.ModelGateway(self).health_url()   # D2: is LM Studio back?
+        else:
+            cur.pop("LOGOS_MODEL_HEALTH_URL", None)
         nb = _sibling("noticeboard_host")
         if nb.uses_noticeboard(agent):
             cur.setdefault(nb.TOKEN_ENV, secrets.token_urlsafe(32))
@@ -526,7 +532,7 @@ class AgentRuntime:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
         for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
                        "noticeboard_urgent.py", "briefing_today.py", "briefing_check.py",
-                       "carry_monitor_state.py"):
+                       "carry_monitor_state.py", "rerun_after_outage.py", "model_watch.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         if not self.wait_api(name):
             print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
@@ -589,6 +595,14 @@ class AgentRuntime:
                     self.sbx(name, f'{HERMES} cron create --name {job}-check --no-agent --script briefing_check.py '
                                    f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
                                    f'--failure-deliver local "{check}"')
+        if _sibling("model_gateway").uses_gateway(agent):
+            # Story D2: a digest or brain tidy that failed while LM Studio was off runs again when it is back.
+            self.sbx(name, f'{HERMES} cron create --name rerun-after-outage --no-agent '
+                           f'--script rerun_after_outage.py --timezone {tz} --deliver local "*/5 * * * *"')
+            if agent.get("role") == "household" and delivery(agent) != "local":
+                # The group chat hears when LM Studio is offline (over two minutes) and when it is back.
+                self.sbx(name, f'{HERMES} cron create --name model-watch --no-agent --script model_watch.py '
+                               f'--timezone {tz} --deliver {delivery(agent)} --failure-deliver local "* * * * *"')
         self.sbx(name, f"{HERMES_PY} restore")
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
@@ -641,8 +655,11 @@ class AgentRuntime:
             # Only the inference API: the gateway's admin and UI paths stay out of reach.
             point("lm_studio", mg.ModelGateway(self).base_url(),
                   rest_rules=[("GET", "/v1/**"), ("POST", "/v1/**")])
+            point("model_health", mg.ModelGateway(self).health_url(), rest_rules=[("GET", "/guard/health")])
         elif model.get("provider") == "lmstudio":
             point("lm_studio", model["base_url"])
+        if not mg.uses_gateway(agent):
+            rules.pop("model_health", None)
         nb = _sibling("noticeboard_host")
         if nb.uses_noticeboard(agent):
             point("noticeboard", nb.NoticeboardHost(self).url())
@@ -732,6 +749,10 @@ class AgentRuntime:
         web_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
                           if l.startswith(wh.TOKEN_ENV + "=")), "")
         self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token))
+        for plugin in LOGOS_PLUGINS:
+            for path in sorted((self.repo / "infra" / "agent-plugins" / plugin).iterdir()):
+                if path.is_file():
+                    self.put(home, f"plugins/{plugin}/{path.name}", path.read_text())
         self.ensure_vault(brain)
         self.ensure_model(agent["model"])
         self.put(home, "SOUL.md", self.soul_text(agent))
