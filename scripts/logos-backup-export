@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Nightly export of the small, irreplaceable Logos data, for the offsite backup.
+
+The whole VM is backed up nightly (vzdump to TrueNAS), but VM archives only reach B2 every 28
+days. This writes the parts that matter most to one folder that the nightly restic run sends
+offsite, so losing the site costs at most a day of them:
+
+  calendar.bundle            the calendars, as a git bundle with their whole history
+  calendar-etc.tar.gz        Radicale's settings and people (bcrypt hashes), without the
+                             calendar service's password (it is recreated on the next `up`)
+  brain-<agent>.bundle       each agent's brain, a git bundle with its whole history
+  agent-<agent>.tar.gz       each agent's memories and scheduled jobs (cron/jobs.json)
+  manifest.json              when it ran, and the size and sha256 of every file
+
+Conversations, Matrix and everything else stay covered by the nightly VM backup only.
+
+Usage:  scripts/logos-backup-export [--dir DIR]
+  DIR defaults to $LOGOS_BACKUP_DIR, else ~/backup-export. The export replaces DIR/latest
+  atomically; restic keeps the history. It also writes DIR/logos_backup_export.prom for the
+  node_exporter textfile collector (last success time and size). Exit status 0 = success.
+
+Restore a bundle:  git clone calendar.bundle collections
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HELPER = "alpine/git:latest"          # the same helper image logos-agent uses for brains
+SKIP = ("bench",)                     # test agents are not worth an offsite copy
+
+
+def sh(cmd, check=True):
+    p = subprocess.run(cmd, text=True, capture_output=True)
+    if check and p.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd[:4])}...: {(p.stderr or p.stdout).strip()[-400:]}")
+    return p.stdout
+
+
+def volumes():
+    names = sh(["docker", "volume", "ls", "-q"]).split()
+    agents = sorted(v[len("logos-brain-"):] for v in names if v.startswith("logos-brain-")
+                    and not v[len("logos-brain-"):].startswith(SKIP))
+    return names, agents
+
+
+def export(out: Path) -> dict:
+    names, agents = volumes()
+    mounts, script = [], ["set -e", "cd /out", "G='git -c safe.directory=*'"]
+    if "logos-calendar" in names:
+        mounts += ["-v", "logos-calendar:/cal:ro"]
+        script += ["$G -C /cal/collections bundle create /out/calendar.bundle --all",
+                   "tar -czf /out/calendar-etc.tar.gz -C /cal etc --exclude etc/service-password"]
+    for a in agents:
+        mounts += ["-v", f"logos-brain-{a}:/brain-{a}:ro"]
+        script.append(f"$G -C /brain-{a} bundle create /out/brain-{a}.bundle --all")
+        if f"logos-home-{a}" in names:
+            mounts += ["-v", f"logos-home-{a}:/home-{a}:ro"]
+            script.append(f"tar -czf /out/agent-{a}.tar.gz -C /home-{a} "
+                          f"$(cd /home-{a} && ls -d memories cron/jobs.json 2>/dev/null)")
+    script.append(f"chown -R {os.getuid()}:{os.getgid()} /out")
+    sh(["docker", "run", "--rm", "--network", "none", "--entrypoint", "sh", *mounts,
+        "-v", f"{out}:/out", HELPER, "-c", " && ".join(script)])
+    files = {}
+    for f in sorted(out.iterdir()):
+        files[f.name] = {"bytes": f.stat().st_size, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
+    if not files:
+        raise RuntimeError("nothing was exported")
+    return {"finished": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "agents": agents, "files": files}
+
+
+def main(argv):
+    base = Path(argv[argv.index("--dir") + 1] if "--dir" in argv else
+                os.environ.get("LOGOS_BACKUP_DIR") or Path.home() / "backup-export").expanduser()
+    base.mkdir(parents=True, exist_ok=True)
+    work = base / f".new-{os.getpid()}"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir()
+    try:
+        manifest = export(work)
+        (work / "manifest.json").write_text(json.dumps(manifest, indent=1) + "\n")
+        old = base / "latest"
+        if old.exists():
+            old.rename(base / f".old-{os.getpid()}")
+        work.rename(old)
+        shutil.rmtree(base / f".old-{os.getpid()}", ignore_errors=True)
+    except Exception as e:
+        shutil.rmtree(work, ignore_errors=True)
+        print(f"backup export FAILED: {e}", file=sys.stderr)
+        return 1
+    size = sum(f["bytes"] for f in manifest["files"].values())
+    prom = base / "logos_backup_export.prom"
+    prom.with_suffix(".tmp").write_text(
+        "# HELP logos_backup_export_last_success_timestamp_seconds When the Logos backup export last succeeded.\n"
+        "# TYPE logos_backup_export_last_success_timestamp_seconds gauge\n"
+        f"logos_backup_export_last_success_timestamp_seconds {int(time.time())}\n"
+        "# HELP logos_backup_export_bytes Size of the latest Logos backup export.\n"
+        "# TYPE logos_backup_export_bytes gauge\n"
+        f"logos_backup_export_bytes {size}\n")
+    prom.with_suffix(".tmp").rename(prom)
+    print(f"backup export: {len(manifest['files'])} files, {size / 1e6:.1f} MB in {base / 'latest'} "
+          f"(agents: {', '.join(manifest['agents'])})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,0 +1,18 @@
+# Nightly export of calendars, brains and agent memories for the offsite backup
+# (scripts/logos-backup-export; docs/backups.md).
+#
+# Install (with the timer):
+#   sed "s#@REPO@#$HOME/logos#g" infra/systemd/logos-backup-export.service > ~/.config/systemd/user/logos-backup-export.service
+#   cp infra/systemd/logos-backup-export.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now logos-backup-export.timer
+#
+# Where it writes: LOGOS_BACKUP_DIR in ~/.logos/.env (default ~/backup-export).
+[Unit]
+Description=Logos backup export (calendars, brains, agent memories)
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+EnvironmentFile=-%h/.logos/.env
+ExecStart=/usr/bin/python3 @REPO@/scripts/logos-backup-export
