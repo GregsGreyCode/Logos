@@ -78,8 +78,12 @@ export async function homeView(root) {
         h('p', {}, 'No agent is set up for your account.')));
       return;
     }
+    const offSince = data.model_off_since
+      ? new Date(data.model_off_since * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
     status.replaceChildren(h('span', { class: `status ${data.model_up === false ? 'down' : 'up'}` },
-      data.model_up === false ? 'Model server off: agents cannot reply until LM Studio is on' : 'Model server on'));
+      data.model_up === false
+        ? `LM Studio offline${offSince ? ` since ${offSince}` : ''}: the agents will answer what's waiting when it's back`
+        : 'Model server on'));
     setBadge(nb.waiting.length);
     waitingLabel.textContent = nb.waiting.length ? `Waiting on you · ${nb.waiting.length}` : 'Waiting on you';
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
