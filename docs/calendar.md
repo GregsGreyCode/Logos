@@ -47,6 +47,9 @@ sees what their phone sees: their calendar, Household and the other people's.
 
 **Repeating events are read-only for agents.** They are changed on the phone, so an agent can never move or delete a whole series by mistake.
 
+**Morning briefing** (story C4): each person's agent sends the day's events and weather in
+Element X at 07:00 on weekdays and 09:00 at weekends. See `docs/briefing.md`.
+
 **Agent rules** live in `souls/_shared/calendar.md`:
 - Your own person's requests go straight in.
 - Anything another agent proposes waits for your person's yes.

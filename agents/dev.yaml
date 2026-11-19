@@ -42,6 +42,11 @@ consolidation:
   enabled: true
   schedule: "30 2 * * *"
 
+briefing:                       # the day ahead + weather, sent in Element X (story C4, docs/briefing.md)
+  enabled: true
+  weekdays: "0 7 * * 1-5"       # 07:00 Monday to Friday
+  weekends: "0 9 * * 0,6"       # 09:00 Saturday and Sunday
+
 digest:
   enabled: true
   schedule: "0 18 * * 0"

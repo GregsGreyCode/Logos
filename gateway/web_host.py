@@ -23,7 +23,7 @@ import os
 import re
 import secrets
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
 NETWORK = "logos-web"
 SEARXNG = "logos-searxng"
@@ -36,7 +36,10 @@ NAMES_VOLUME = "logos-reader-names"      # names the agents added (add_private_n
 READER_IMAGE = "python@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89"  # 3.12-alpine
 SERVICE_FILE = Path(__file__).with_name("web_service.py")
 PORT = 8096
+WEATHER_PORT = 8097                      # GET /weather for the morning briefing (plain REST, same tokens)
 TOKEN_ENV = "LOGOS_WEB_TOKEN"
+WEATHER_ENV = "LOGOS_WEATHER_URL"
+LOCATION_FILE = "location"               # ~/.config/logos/location: "51.5, -0.1" (rounded to 0.1 when used)
 
 NAMES_TEMPLATE = """# Names that must never leave the house in a web search (or, later, a question to the advisor).
 # One per line. People's and agents' names and the pages in each brain's people/ folder are
@@ -86,6 +89,21 @@ def config_dir(env: Mapping[str, str]) -> Path:
     return Path(base) / "logos"
 
 
+def parse_location(text: str) -> Optional[dict]:
+    """``location`` file -> {"lat", "lon"} rounded to 0.1 degree (about 10 km), or None."""
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].replace(",", " ").split()
+        if len(line) == 2:
+            try:
+                lat, lon = float(line[0]), float(line[1])
+            except ValueError:
+                return None
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                return {"lat": round(lat, 1), "lon": round(lon, 1)}
+            return None
+    return None
+
+
 def parse_names(text: str) -> Tuple[List[str], List[str]]:
     """``home-names.txt`` -> (names matched however written, names matched only as written)."""
     names, exact = [], []
@@ -114,10 +132,13 @@ def own_names(agents: Mapping[str, Mapping[str, Any]]) -> List[str]:
 
 
 def reader_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str],
-                  names: List[str], exact: List[str]) -> dict:
-    return {"searxng": f"http://{SEARXNG}:8080",
-            "agents": {n: {"token": tokens[n]} for n in sorted(agents) if uses_web(agents[n]) and tokens.get(n)},
-            "names": sorted(set(names)), "capital_only": sorted(set(exact))}
+                  names: List[str], exact: List[str], place: Optional[dict] = None) -> dict:
+    config = {"searxng": f"http://{SEARXNG}:8080",
+              "agents": {n: {"token": tokens[n]} for n in sorted(agents) if uses_web(agents[n]) and tokens.get(n)},
+              "names": sorted(set(names)), "capital_only": sorted(set(exact))}
+    if place:
+        config["weather"] = place
+    return config
 
 
 class WebHost:
@@ -133,6 +154,13 @@ class WebHost:
 
     def url(self) -> str:
         return f"http://{self.bind_address()}:{PORT}/mcp"
+
+    def weather_url(self) -> str:
+        return f"http://{self.bind_address()}:{WEATHER_PORT}/weather"
+
+    def place(self) -> Optional[dict]:
+        path = config_dir(self.rt.env) / LOCATION_FILE
+        return parse_location(path.read_text()) if path.exists() else None
 
     def token_for(self, name: str) -> str:
         for line in self.rt.get(f"logos-home-{name}", ".env").splitlines():
@@ -193,7 +221,8 @@ class WebHost:
         changed = self._up_searxng()
         tokens = {n: self.token_for(n) for n in web_agents}
         names, exact = self.private_names(agents)
-        config = json.dumps(reader_config(agents, tokens, names, exact), indent=1, sort_keys=True, ensure_ascii=False)
+        config = json.dumps(reader_config(agents, tokens, names, exact, self.place()), indent=1, sort_keys=True,
+                            ensure_ascii=False)
         stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + READER_IMAGE).encode()).hexdigest()[:16]
         if self._running(READER) and self._label(READER) == stamp:
             return changed
@@ -207,9 +236,11 @@ class WebHost:
                      "--label", f"logos.web.stamp={stamp}", "--network", NETWORK, "--user", "1000:1000",
                      "--memory", "128m", "--read-only", "--cap-drop", "ALL",
                      "-p", f"{self.bind_address()}:{PORT}:{PORT}",
+                     "-p", f"{self.bind_address()}:{WEATHER_PORT}:{WEATHER_PORT}",
                      "-v", f"{READER_VOLUME}:/data:ro", "-v", f"{NAMES_VOLUME}:/names",
                      "-v", f"{SERVICE_FILE}:/app/web_service.py:ro",
                      "-e", "WEB_CONFIG=/data/config.json", "-e", f"WEB_PORT={PORT}",
+                     "-e", f"WEB_WEATHER_PORT={WEATHER_PORT}",
                      "-e", "WEB_ADDED_NAMES=/names/added.txt",
                      "--entrypoint", "python3", READER_IMAGE, "/app/web_service.py"])
         self._wait()
