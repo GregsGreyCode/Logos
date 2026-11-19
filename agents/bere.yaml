@@ -37,6 +37,11 @@ consolidation:                  # nightly brain tidy-up (hermes cron job `consol
   schedule: "0 2 * * *"         # staggered from Greg's 02:30 so the two do not share the local model
   # model / provider: omit to use the agent's main (local) model
 
+briefing:                       # the day ahead + weather, sent in Element X (story C4, docs/briefing.md)
+  enabled: true
+  weekdays: "0 7 * * 1-5"       # 07:00 Monday to Friday
+  weekends: "0 9 * * 0,6"       # 09:00 Saturday and Sunday
+
 digest:                         # weekly summary of what the brain learned, sent to the Matrix home room
   enabled: true
   schedule: "0 18 * * 0"        # Sunday 18:00 in the agent's timezone

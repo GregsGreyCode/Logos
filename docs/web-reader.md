@@ -20,7 +20,10 @@ agent (sandbox) --MCP, own token--> logos-reader --private network--> logos-sear
   Google often refuses automated searches ("access denied"); SearXNG then pauses it and the
   others answer.
 - **Sandbox rule:** the `web` rule in `infra/agent-image/policy.yaml` lets only the MCP
-  handshake, the tool list and `search_web` through.
+  handshake, the tool list, `search_web` and `add_private_name` through.
+- **Weather:** the reader also serves `GET /weather` on port 8097 for the morning briefing
+  (one line from Open-Meteo, cached for an hour; see `docs/briefing.md`). The `weather` rule
+  allows only that request.
 
 ## The privacy filter
 

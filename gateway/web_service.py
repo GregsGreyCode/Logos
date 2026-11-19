@@ -13,12 +13,20 @@ and our own addresses are refused with the rule that matched, so the agent can r
 Queries are not logged, only which agent searched, how many results came back, or which
 rule refused it.
 
+It also gives the agents' morning briefing today's weather (story C4): ``GET /weather`` on a
+second port (``WEB_WEATHER_PORT``), plain REST so a sandbox script can call it. The reader asks
+Open-Meteo with the household's coordinates, rounded to about 10 km and never a place name,
+at most once an hour, and returns one line of text.
+
 Stdlib only. Config (JSON, from ``WEB_CONFIG``):
-``{"searxng": url, "agents": {name: {"token"}}, "names": [...], "capital_only": [...]}``.
+``{"searxng": url, "agents": {name: {"token"}}, "names": [...], "capital_only": [...],
+"weather": {"lat": 51.5, "lon": -0.1}}`` (``weather`` optional).
 """
 from __future__ import annotations
 
 import hmac
+import threading
+import time
 import ipaddress
 import json
 import os
@@ -35,6 +43,39 @@ NAME_OK = re.compile(r"^[^\W\d_][\w'’ .-]{0,58}[\w.]$")      # a name: letters
 MAX_RESULTS = 8
 MAX_QUERY = 300
 KINDS = {"general": "general", "code": "it", "news": "news"}
+OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
+WEATHER_TTL = 3600
+# WMO weather codes (what Open-Meteo returns) in plain words.
+WEATHER_WORDS = {0: "clear sky", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "fog", 48: "freezing fog",
+                 51: "light drizzle", 53: "drizzle", 55: "heavy drizzle", 56: "freezing drizzle", 57: "freezing drizzle",
+                 61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain", 67: "freezing rain",
+                 71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains", 80: "light showers",
+                 81: "showers", 82: "heavy showers", 85: "snow showers", 86: "heavy snow showers",
+                 95: "thunderstorms", 96: "thunderstorms with hail", 99: "thunderstorms with hail"}
+
+
+def weather_url(lat: float, lon: float) -> str:
+    return OPEN_METEO + "?" + urllib.parse.urlencode({
+        "latitude": f"{round(float(lat), 1):.1f}", "longitude": f"{round(float(lon), 1):.1f}",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max",
+        "timezone": "auto", "forecast_days": 1, "wind_speed_unit": "mph"})
+
+
+def weather_line(data: Dict[str, Any]) -> str:
+    """Today's forecast in one line, e.g. "Light rain, 7 to 12°C, 70% chance of rain, windy (up to 31 mph)"."""
+    d = data["daily"]
+    first = lambda k: (d.get(k) or [None])[0]
+    lo, hi = first("temperature_2m_min"), first("temperature_2m_max")
+    parts = [WEATHER_WORDS.get(first("weather_code"), "mixed").capitalize()]
+    if lo is not None and hi is not None:
+        parts.append(f"{round(lo)} to {round(hi)}°C")
+    rain = first("precipitation_probability_max")
+    if rain is not None:
+        parts.append(f"{round(rain)}% chance of rain")
+    wind = first("wind_speed_10m_max")
+    if wind is not None and wind >= 25:
+        parts.append(f"windy (up to {round(wind)} mph)")
+    return ", ".join(parts)
 
 TOOLS = [{
     "name": "search_web",
@@ -134,6 +175,9 @@ class Service:
                  fetch: Callable[[str], Dict[str, Any]] = _fetch_json, log: Callable[[str], None] = print,
                  added_file: Optional[str] = None):
         self.searxng, self.agents, self.filter, self.fetch, self.log = searxng.rstrip("/"), agents, check, fetch, log
+        self.place: Optional[Dict[str, float]] = None      # {"lat", "lon"}: set from the config's "weather"
+        self._weather: Tuple[float, str] = (0.0, "")
+        self._weather_lock = threading.Lock()
         # Names the agents added: one per line, "name<TAB>agent<TAB>when", kept in the reader's own volume.
         self.added_file = added_file
         self.added = 0
@@ -161,6 +205,24 @@ class Service:
         self.added += 1
         self.log(f"{agent} add_private_name: added a name ({self.added} added by agents)")
         return {"added": name, "note": "Searches containing it are now refused."}
+
+    def weather(self, agent: str, now: Optional[float] = None) -> Optional[str]:
+        """Today's weather as one line, or None when no place is set or Open-Meteo cannot be reached."""
+        if not self.place:
+            return None
+        now = time.time() if now is None else now
+        with self._weather_lock:
+            at, line = self._weather
+            if line and now - at < WEATHER_TTL:
+                return line
+            try:
+                line = weather_line(self.fetch(weather_url(self.place["lat"], self.place["lon"])))
+            except Exception as e:
+                self.log(f"{agent} weather FAILED: {type(e).__name__}")
+                return line or None          # an older forecast beats none
+            self._weather = (now, line)
+            self.log(f"{agent} weather: fetched")
+            return line
 
     def agent_for_token(self, token: str) -> Optional[str]:
         for name, a in self.agents.items():
@@ -277,14 +339,51 @@ def make_handler(svc: Service):
     return Handler
 
 
+def make_weather_handler(svc: Service):
+    class WeatherHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args):
+            pass
+
+        def _send(self, status: int, body: Any):
+            data = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            if self.path != "/weather":
+                return self._send(404, {"error": "not found"})
+            auth = self.headers.get("Authorization", "")
+            agent = svc.agent_for_token(auth[7:].strip() if auth.lower().startswith("bearer ") else "")
+            if agent is None:
+                return self._send(401, {"error": "unknown or missing token"})
+            line = svc.weather(agent)
+            if line is None:
+                return self._send(503, {"error": "no forecast available"})
+            return self._send(200, {"today": line})
+
+    return WeatherHandler
+
+
 def main() -> None:
     config = json.load(open(os.environ.get("WEB_CONFIG", "/data/config.json")))
     svc = Service(config["searxng"], config["agents"], Filter(config.get("names") or [], config.get("capital_only")),
                   log=lambda m: print(m, flush=True), added_file=os.environ.get("WEB_ADDED_NAMES") or None)
+    weather = config.get("weather") or {}
+    if "lat" in weather and "lon" in weather:
+        svc.place = {"lat": float(weather["lat"]), "lon": float(weather["lon"])}
+    weather_port = int(os.environ.get("WEB_WEATHER_PORT", "0"))
+    if weather_port:
+        ws = ThreadingHTTPServer(("0.0.0.0", weather_port), make_weather_handler(svc))
+        threading.Thread(target=ws.serve_forever, daemon=True, name="weather").start()
     port = int(os.environ.get("WEB_PORT", "8096"))
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(svc))
     print(f"web reader: {len(config['agents'])} agents, {len(svc.filter.names)} private names "
-          f"({svc.added} added by agents), MCP on :{port}", flush=True)
+          f"({svc.added} added by agents), MCP on :{port}, weather {'on' if svc.place else 'off'}", flush=True)
     server.serve_forever()
 
 
