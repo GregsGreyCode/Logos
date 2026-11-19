@@ -1,5 +1,0 @@
-id: homelab-code-fix
-slug: homelab-code-fix
-name: Homelab Code Fix
-description: Reads, patches, and tests code in the homelab repo. Focused on targeted
-  fixes with minimal blast radius.

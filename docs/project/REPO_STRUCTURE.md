@@ -12,70 +12,59 @@ logos/
 ├── SECURITY.md               how to report a vulnerability
 ├── LICENSE                   MIT
 ├── pyproject.toml            Python package (`logos`), dependencies, pytest config
-├── uv.lock                   dependency lockfile (CI does not use it)
 ├── .env.example              gateway settings (LOGOS_* variables)
-├── package.json              Node dependencies left from v1 (see "Leftovers")
-├── tailwind.config.js        Tailwind build config for the dashboard stylesheet
+├── tailwind.config.js        Tailwind build config for the login and setup stylesheet
 │
 ├── agents/                   agent definitions, one YAML per agent
-│   ├── greg.yaml             Greg's agent
-│   └── bench.yaml            benchmark agent
-│                             (<name>.local.yaml files are untracked personal overrides)
+│                             (<name>.local.yaml files are untracked machine overrides)
 │
 ├── infra/
 │   ├── agent-image/          Dockerfile for logos-agent:<hermes version>, sandbox policy, README
 │   ├── openshell/            OpenShell 0.1.8 gateway config, providers, install README
 │   ├── brain-template/       starting layout and rules of a brain vault
-│   └── agent-jobs/           jobs that run inside a sandbox (consolidation, brain index, commit)
+│   ├── agent-jobs/           jobs that run inside a sandbox (consolidation, brain index, commit)
+│   └── systemd/              user units: the gateway, the nightly backup export
 │
-├── scripts/
-│   ├── logos-agent           create, inspect and remove agents (up / down / status / exec)
-│   ├── logos-sync            Syncthing for the brains, for opening one in Obsidian
-│   └── ...                   v1 helper scripts (see "Leftovers")
+├── scripts/                  commands a person (or the dashboard's Update button) runs
+│   ├── logos-agent           create, inspect and remove agents
+│   ├── logos-deploy          bring a machine up to date with v2 (plan, rollback, history)
+│   ├── logos-models          the model gateway and LM Studio
+│   ├── logos-calendar        the calendar server and people
+│   ├── logos-sync            Syncthing for the brains (Obsidian on the phones)
+│   ├── logos-eval            agent evals against the bench agent
+│   └── logos-backup-export   the nightly export for the offsite backup
 │
-├── souls/                    persona files; an agent definition points at one
-├── skills/                   skills available to agents
-├── optional-skills/          skills that are off by default
+├── souls/
+│   ├── general/              the person agents' persona (Greg, Béré, dev, bench)
+│   ├── household/            the household agent's persona
+│   └── _shared/              rules added to every soul: brain, noticeboard, voice, calendar, web
 │
-├── gateway/                  the Logos gateway (aiohttp)
+├── gateway/                  the Logos gateway (aiohttp) and the services it runs
 │   ├── run.py                process entry point (`logos gateway run`)
-│   ├── http_api.py           app setup, routes, chat endpoints
-│   ├── *_handlers.py         admin, chat, setup, MCP and other route handlers
-│   ├── auth/                 accounts, passwords, JWT cookies, middleware
-│   ├── html/                 login.html, setup.html, app.html (the dashboard; its modules are in gateway/ui/)
-│   ├── agent_runtime.py      builds sandboxes from agents/<name>.yaml (shared with scripts/logos-agent)
-│   ├── sandbox_backend.py    backend seam: NullBackend (default) and OpenShellBackend
-│   ├── hermes_client.py      client for the upstream hermes API server
-│   ├── sandbox_hooks/        hermes hooks installed into a sandbox
-│   ├── mcp_logos/            in-process MCP server exposing Logos capabilities
-│   └── lib/                  shared helpers (state DB, redaction, transcription, MCP client)
+│   ├── http_api.py           app setup and routes (sign-in, setup, dashboard, chat)
+│   ├── dashboard_api.py      the dashboard's /api/v2 endpoints
+│   ├── html/, ui/            the pages (login, setup, app) and the dashboard's modules
+│   ├── auth/                 accounts, passwords, JWT cookies, middleware, roles
+│   ├── agent_runtime.py      builds sandboxes from agents/<name>.yaml (shared with scripts)
+│   ├── *_host.py             one per service container: model gateway, noticeboard, voice,
+│   │                         calendar, Matrix, web reader
+│   ├── calendar_service.py, web_service.py, model_guard.py
+│   │                         the code those containers run (stdlib only)
+│   └── lib/                  shared helpers (state DB, redaction)
 │
 ├── logos_cli/                the `logos` command: gateway run/start/stop/status, doctor, version
-│
-├── evals/
-│   ├── agent_writes/         does an agent write its brain correctly (needs a live sandbox)
-│   └── brain_checks/         brain rule checks (needs a live sandbox)
-│
+├── evals/                    eval cases for scripts/logos-eval
 ├── tests/                    pytest suite (what CI runs)
-│   ├── gateway/              gateway and auth
-│   ├── logos_cli/            CLI
-│   ├── unit/                 agent runtime, sandbox backend, brain index
-│   ├── skills/               skill scripts
-│   └── integration/          excluded from CI
-│
-├── e2e/                      Playwright tests written for the v1 dashboard (see "Leftovers")
-├── assets/                   logo, banner, dashboard stylesheet (tailwind.css)
-├── docker/                   v1 sandbox Dockerfiles and an MCP test image (see "Leftovers")
+├── assets/                   logo, icons, web app manifest, login stylesheet
 │
 ├── docs/
-│   ├── adr/                  architecture decision records
-│   ├── architecture/         architecture notes (hermes API client)
-│   ├── brain-sync.md         opening a brain in Obsidian
+│   ├── *.md                  one page per service (calendar, matrix, web-reader, backups, …)
+│   ├── adr/, architecture/   decisions and architecture notes
 │   ├── project/              this file
 │   └── archive/v1/           v1 planning, design and migration documents, history only
 │
 └── .github/workflows/
-    └── tests.yml             pytest on pushes and pull requests to main and v2
+    └── tests.yml             pytest on pushes and pull requests
 ```
 
 ## Rules
@@ -89,15 +78,8 @@ logos/
   hermes.
 - New documents go in `docs/`. Documents about removed v1 features go in `docs/archive/v1/`.
 
-## Leftovers
+## Still from v1
 
-These survive from v1 and have not been reviewed for v2 yet. Do not build on them.
-
-- `docker/Dockerfile.hermes-sandbox`, `docker/Dockerfile.hermes-upstream`,
-  `docker/entrypoint-hermes.sh`, `docker/AGENT-IMAGES.md`: the v1 sandbox image, replaced by
-  `infra/agent-image/`. `docker/testing/mcp-echo/` is still referenced by
-  `gateway/mcp_catalogue.py`.
-- `scripts/dev-setup.sh`, `scripts/test.sh`, `scripts/smoke-test.sh`, `scripts/tag.sh`,
-  `scripts/hermes-gateway`, `scripts/whatsapp-bridge/`: v1 developer and release helpers.
-- `e2e/`: Playwright tests for dashboard tabs that were removed.
-- `package.json`, `package-lock.json`: Node dependencies for v1 browser tools.
+The gateway's message-handling core in `run.py` (sessions, delivery, pairing, hooks and the
+platform parts of `config.py`) is v1 code that the v2 dashboard no longer reads. Removing it
+needs a refactor of `run.py` and is the second part of the v1 clean-up.

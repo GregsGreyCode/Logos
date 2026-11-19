@@ -1,5 +1,0 @@
-id: homelab-investigator
-slug: homelab-investigator
-name: Homelab Investigator
-description: Diagnoses infrastructure issues, reads logs, queries metrics, and traces
-  failures across containers and Kubernetes.
