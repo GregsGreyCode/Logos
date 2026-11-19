@@ -46,6 +46,9 @@ class HouseError(Exception):
     pass
 
 
+NOTES_FILE = "house-notes.md"     # in ~/.config/logos: what the agents should know about this home's lights
+
+
 def uses_house(agent: Mapping[str, Any]) -> bool:
     """Any agent whose definition asks for it (the household agent, Greg's and Béré's agents)."""
     return bool((agent.get("house") or {}).get("enabled"))
