@@ -630,6 +630,13 @@ network_policies:
             assert "The lights" not in r.soul_text(agent)
         person = {**base, "house": {"enabled": True}}
         assert "LOGOS_HOUSE_TOKEN=" in r.env_file(person, "logos-home-alpha") and "The lights" in r.soul_text(person)
+        assert "About this home" not in r.soul_text(person)
+        cfgdir = repo / "xdg" / "logos"
+        cfgdir.mkdir(parents=True)
+        (cfgdir / "house-notes.md").write_text("The bathroom lamp is often off at the wall.\n")
+        noted = rt(repo, env={"XDG_CONFIG_HOME": str(repo / "xdg")})
+        assert "### About this home's lights\n\nThe bathroom lamp is often off at the wall." in noted.soul_text(person)
+        assert "About this home" not in noted.soul_text(base)
         house = {**base, "role": "household", "house": {"enabled": True}}
         assert "LOGOS_HOUSE_TOKEN=" in r.env_file(house, "logos-home-alpha")
         cfg = yaml.safe_load(r.config_text("alpha", house, house_token="th"))

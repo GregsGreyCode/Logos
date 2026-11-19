@@ -4,6 +4,11 @@ The household agent, and Greg's and Béré's own agents, can work the lights and
 own VM on the home network and talks to the Hue Bridge. Logos does not replace it: schedules and automations stay in Home Assistant, and the
 agent is one more way to ask.
 
+**Notes about this home.** `~/.config/logos/house-notes.md` on the machine (not in git, the
+repo is public) is added to every lights agent's instructions on `up`, under "About this home's
+lights": quirks such as a light that is often off at the wall. Edit it, then redeploy or
+`scripts/logos-agent up <agent>`.
+
 **Which agents.** `gateway/house_host.py` gives the service to any agent whose definition has
 `house: {enabled: true}`: the household agent (Home chat) and Greg's and Béré's agents (their
 own chats), each with its own token. First decided household-only; on 19 Nov Greg asked for
