@@ -84,7 +84,7 @@ You need a Linux host with Docker Engine 28 or later, systemd and Python 3.11 or
 
    ```shell
    python3 -m venv venv && . venv/bin/activate
-   pip install -e ".[all,dev]"
+   pip install -e ".[dev]"
    logos doctor                # checks Python, Docker, OpenShell and ~/.logos
    logos gateway run           # http://localhost:8091, first visit creates the admin account
    ```
