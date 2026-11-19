@@ -74,9 +74,15 @@ def test_what_each_agent_sees():
     assert greg["full"]["personal"]["path"] == "/greg/personal/"
     assert greg["full"]["household"]["path"] == "/household/calendar/"
     assert greg["busy"] == {}
+    # The other person's calendar: seen in full, never changed (it is not in "full")
+    agents = {"bere": {"display_name": "Béré's agent", "calendar": {"person": "bere"}}}
+    greg = ch.calendars_for({"name": "greg", "calendar": {"enabled": True, "person": "greg"}}, people, agents)
+    assert greg["read"] == {"bere": {"path": "/bere/personal/", "label": "Béré"}}
+    assert "bere" not in greg["full"]
     house = ch.calendars_for({"name": "household", "calendar": {"enabled": True,
                                                                 "free_busy": {"greg": "Greg", "bere": "Béré"}}}, people)
     assert list(house["full"]) == ["household"]                     # no one's personal calendar in full
+    assert house["read"] == {}                                       # the household agent: busy times only
     assert house["busy"]["bere"] == {"paths": ["/bere/personal/"], "label": "Béré"}
     with pytest.raises(ch.CalendarError):
         ch.calendars_for({"name": "x", "calendar": {"enabled": True, "person": "nobody"}}, people)
