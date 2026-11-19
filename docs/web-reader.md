@@ -40,6 +40,18 @@ agent (sandbox) --MCP, own token--> logos-reader --private network--> logos-sear
     `homelab-infra` only. `up` copies it into the reader's volume; it never enters a sandbox.
     Without it `/changes` answers 503 and the rest of the reader works as before.
 
+- **Feature requests (story FR1):** the `file_request` tool (kind `feature` | `issue`, area
+  `logos` | `homelab` | `other`, title, details) adds a dated entry at the bottom of the
+  "Requests from agents" page in Docmost (HomeLab → Logos), as the reader's own Docmost user
+  `Logos`. A Claude session moves each into the backlog or Outstanding Fixes and Changes.
+  - Every agent of the reader has it. The household agent reaches the reader's MCP port with
+    its changes token, and both the reader and its sandbox rule let only `file_request` through.
+  - Login and page: `~/.config/logos/docmost` on the machine (mode 0600): `DOCMOST_EMAIL`,
+    `DOCMOST_PASSWORD`, `DOCMOST_URL`, `DOCMOST_REQUESTS_PAGE`. `up` copies the login into the
+    reader's volume; it never enters a sandbox. Without the file the tool is not offered.
+  - At most 20 requests per agent a day; a request that looks like it holds a key is refused.
+    The agents' instructions are in `souls/_shared/requests.md`.
+
 ## The privacy filter
 
 Every query is checked before it leaves. Refused, with the reason, so the agent can rephrase:

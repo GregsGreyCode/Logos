@@ -554,6 +554,49 @@ network_policies:
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8097, ["172.17.0.1/32"])
         assert ep["rules"] == [{"allow": {"method": "GET", "path": "/weather"}}]
 
+    POLICY_WEB = """
+version: 1
+network_policies:
+  lm_studio:
+    endpoints:
+      - {host: 10.0.0.5, port: 1234, allowed_ips: [10.0.0.5/32]}
+  web:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8096
+        protocol: mcp
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: tools/list}
+          - allow: {method: tools/call, tool: {any: [search_web, add_private_name, file_request]}}
+  weather:
+    endpoints:
+      - {host: 192.0.2.1, port: 8097, protocol: rest, allowed_ips: [192.0.2.1/32]}
+"""
+
+    def test_household_reaches_the_reader_for_file_request_only(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_WEB)
+        (repo / "souls/_shared/requests.md").write_text("## Noting feature requests\n")
+        r = rt(repo)
+        house = {**r.load("alpha"), "role": "household", "changes": {"enabled": True}}
+        rules = yaml.safe_load(r.policy_path("alpha", house).read_text())["network_policies"]
+        assert "weather" not in rules
+        assert rules["web"]["endpoints"][0]["rules"][-1] == {"allow": {"method": "tools/call",
+                                                                       "tool": {"any": ["file_request"]}}}
+        assert [x["allow"]["method"] for x in rules["web"]["endpoints"][0]["rules"]].count("tools/call") == 1
+        cfg = yaml.safe_load(r.config_text("alpha", house, changes_token="th"))
+        assert cfg["mcp_servers"]["logos_web"]["headers"] == {"Authorization": "Bearer th"}
+        assert "Noting feature requests" in r.soul_text(house)
+        person = {**r.load("alpha"), "web": {"enabled": True}}
+        rules = yaml.safe_load(r.policy_path("alpha", person).read_text())["network_policies"]
+        assert rules["web"]["endpoints"][0]["rules"][1]["allow"]["tool"]["any"] == [
+            "search_web", "add_private_name", "file_request"]
+        plain = r.load("alpha")
+        assert "web" not in yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
+        assert "Noting feature requests" not in r.soul_text(plain)
+
     def test_changes_token_url_and_policy_only_when_asked(self, repo):
         path = repo / "infra/agent-image/policy.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -575,7 +618,8 @@ network_policies:
         assert "LOGOS_CHANGES_URL=http://172.17.0.1:8097/changes" in env and "LOGOS_CHANGES_TOKEN=" in env
         assert "LOGOS_WEB_TOKEN" not in env                     # still no web search
         rules = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]
-        assert "weather" not in rules and "web" not in rules
+        assert "weather" not in rules
+        assert rules["web"]["endpoints"][0]["rules"][-1]["allow"]["tool"] == {"any": ["file_request"]}  # FR1 only
         ep = rules["changes"]["endpoints"][0]
         assert (ep["host"], ep["port"]) == ("172.17.0.1", 8097)
         assert ep["rules"] == [{"allow": {"method": "GET", "path": "/changes/**"}}]

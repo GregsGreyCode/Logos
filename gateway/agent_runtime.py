@@ -327,7 +327,8 @@ class AgentRuntime:
             print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 
     def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "",
-                    voice_token: str = "", calendar_token: str = "", web_token: str = "") -> str:
+                    voice_token: str = "", calendar_token: str = "", web_token: str = "",
+                    changes_token: str = "") -> str:
         """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` and
         ``voice_token`` are the agent's own tokens for those services (the file lives in its
         private home volume, next to ``.env``)."""
@@ -393,6 +394,12 @@ class AgentRuntime:
             cfg.setdefault("mcp_servers", {})["logos_web"] = {
                 "url": wh.WebHost(self).url(),
                 "headers": {"Authorization": f"Bearer {web_token}"}}
+        elif wh.uses_changes(agent) and changes_token:
+            # Story FR1: the household agent reaches the reader only to file requests. Its changes
+            # token gets file_request alone, from the reader and from the sandbox rule.
+            cfg.setdefault("mcp_servers", {})["logos_web"] = {
+                "url": wh.WebHost(self).url(),
+                "headers": {"Authorization": f"Bearer {changes_token}"}}
         vh = _sibling("voice_host")
         if vh.uses_voice(agent) and voice_token:
             # Voice notes are turned into text by the shared voice service (docs/voice.md).
@@ -420,6 +427,9 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/calendar.md").read_text()
         if _sibling("web_host").uses_web(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/web.md").read_text()
+        wh = _sibling("web_host")
+        if (wh.uses_web(agent) or wh.uses_changes(agent)) and (self.repo / "souls/_shared/requests.md").exists():
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/requests.md").read_text()
         return text
 
     MATRIX_EXPORTED = ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID",
@@ -724,6 +734,16 @@ class AgentRuntime:
         if wh.uses_web(agent):
             point("web", wh.WebHost(self).url())
             point("weather", wh.WebHost(self).weather_url(), rest_rules=[("GET", "/weather")])
+        elif wh.uses_changes(agent) and "web" in rules:
+            # Story FR1: the household agent may call file_request on the reader, and nothing else there.
+            # The whole rule list is written here, so nothing else on the reader is ever open to it.
+            point("web", wh.WebHost(self).url())
+            for e in rules["web"].get("endpoints") or []:
+                e.pop("access", None)
+                e["rules"] = [{"allow": {"method": m}} for m in
+                              ("initialize", "notifications/initialized", "ping", "tools/list")] + [
+                    {"allow": {"method": "tools/call", "tool": {"any": ["file_request"]}}}]
+            rules.pop("weather", None)
         else:
             rules.pop("web", None)
             rules.pop("weather", None)
@@ -786,7 +806,10 @@ class AgentRuntime:
         wh = _sibling("web_host")
         web_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
                           if l.startswith(wh.TOKEN_ENV + "=")), "")
-        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token))
+        changes_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
+                              if l.startswith(wh.CHANGES_TOKEN_ENV + "=")), "")
+        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token,
+                                                       changes_token))
         for plugin in LOGOS_PLUGINS:
             for path in sorted((self.repo / "infra" / "agent-plugins" / plugin).iterdir()):
                 if path.is_file():
