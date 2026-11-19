@@ -20,6 +20,9 @@ Steps:
        pyproject.toml                      reinstall the Python package into venv/
        infra/agent-image/                  rebuild the agent image
        gateway/, pyproject.toml            restart the dashboard (logos-gateway service)
+       infra/systemd/                      update the installed copies of these user units
+                                           (only units already installed here), then
+                                           systemctl --user daemon-reload
        agents/<name>.yaml                  recreate that agent
        souls/, infra/agent-image/, infra/brain-template/, infra/agent-jobs/,
        infra/openshell/, gateway/agent_runtime.py
@@ -60,6 +63,8 @@ ALL_AGENT_PATHS = ("souls/", "infra/agent-image/", "infra/brain-template/", "inf
 IMAGE_PATHS = ("infra/agent-image/",)
 DASHBOARD_PATHS = ("gateway/", "pyproject.toml")
 PACKAGE_PATHS = ("pyproject.toml",)
+UNIT_PATHS = ("infra/systemd/",)
+UNIT_DIR = Path.home() / ".config" / "systemd" / "user"
 
 
 class Refused(Exception):
@@ -80,8 +85,10 @@ def plan(changed, running):
     for p in changed:
         if p.startswith("agents/") and p.endswith(".yaml") and Path(p).stem in running:
             agents.add(Path(p).stem)
-    return {"package": hit(PACKAGE_PATHS), "image": hit(IMAGE_PATHS),
-            "dashboard": hit(DASHBOARD_PATHS), "agents": sorted(agents)}
+    units = hit(UNIT_PATHS)
+    return {"package": hit(PACKAGE_PATHS), "image": hit(IMAGE_PATHS), "units": units,
+            "dashboard": hit(DASHBOARD_PATHS) or any(p == f"infra/systemd/{SERVICE}.service" for p in changed),
+            "agents": sorted(agents)}
 
 
 def describe(p):
@@ -91,6 +98,8 @@ def describe(p):
         steps.append("Reinstall the Python package")
     if p["image"]:
         steps.append("Rebuild the agent image (several minutes)")
+    if p.get("units"):
+        steps.append("Update the installed systemd units")
     if p["dashboard"]:
         steps.append("Restart the dashboard (a few seconds)")
     steps.append("Update the model gateway, noticeboard, voice and calendar where they changed")
@@ -168,6 +177,28 @@ def prepare(rt):
             "plan": p, "steps": describe(p) if commits else [], "running": running}
 
 
+def render_unit(src: Path, repo: Path = REPO) -> str:
+    """A unit file from infra/systemd/ as installed: @REPO@ replaced by this checkout's path."""
+    return src.read_text().replace("@REPO@", str(repo))
+
+
+def install_units(unit_dir: Path = UNIT_DIR, repo: Path = REPO) -> list:
+    """Rewrite the installed copy of every unit in infra/systemd/ that differs from the repo.
+
+    Only units that are already installed are touched: installing and enabling a new one is
+    a deliberate step (see the unit's own header). Returns the names that changed."""
+    changed = []
+    for src in sorted((repo / "infra" / "systemd").glob("*")):
+        if src.suffix not in (".service", ".timer"):
+            continue
+        dest = unit_dir / src.name
+        text = render_unit(src, repo)
+        if dest.exists() and dest.read_text() != text:
+            dest.write_text(text)
+            changed.append(src.name)
+    return changed
+
+
 def images_for(rt, names):
     return sorted({str(rt.load(n)["image"]) for n in names if rt.load(n).get("image")})
 
@@ -241,6 +272,11 @@ def deploy(info):
         for image in images_for(rt, info["running"]) or images_for(rt, rt.defined()):
             print(f"Building {image}…", flush=True)
             sh("docker", "build", "-q", "-t", image, "infra/agent-image", capture=False)
+    if p.get("units"):
+        changed = install_units()
+        if changed:
+            sh("systemctl", "--user", "daemon-reload")
+        print(f"Systemd units: {', '.join(changed) if changed else 'unchanged'}", flush=True)
     if p["dashboard"]:
         print("Restarting the dashboard…", flush=True)
         sh("systemctl", "--user", "restart", SERVICE)
