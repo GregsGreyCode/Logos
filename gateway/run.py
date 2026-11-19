@@ -197,26 +197,6 @@ if _cfg:
 # Gateway runs in quiet mode - suppress debug output and use cwd directly (no temp dirs)
 os.environ["LOGOS_QUIET"] = "1"
 
-# ── Mirror-hook secret + gateway URL (used by in-sandbox logos-mirror hook) ──
-# The sandbox's logos-mirror handler POSTs each completed `agent:end`
-# turn back to this gateway, so Telegram/Discord/Slack chats appear in
-# the Logos Chats sidebar. Both values flow into the sandbox's .env via
-# the sandbox runtime's forwarded host env. Generated once per gateway
-# process (token) — persistence isn't needed because sandboxes re-read
-# the env on every spawn/refresh, so even across gateway restarts the
-# sandboxes pick up the current token on the next hermes respawn.
-if not os.environ.get("LOGOS_MIRROR_TOKEN"):
-    import secrets as _secrets
-    os.environ["LOGOS_MIRROR_TOKEN"] = _secrets.token_urlsafe(32)
-if not os.environ.get("LOGOS_GATEWAY_URL"):
-    # Sandbox pods resolve host.openshell.internal → the docker bridge
-    # IP the gateway listens on. Port matches LOGOS_GATEWAY_PORT.
-    _mirror_port = (
-        os.environ.get("LOGOS_GATEWAY_PORT")
-        or "8091"
-    )
-    os.environ["LOGOS_GATEWAY_URL"] = f"http://host.openshell.internal:{_mirror_port}"
-
 # Enable interactive exec approval for dangerous commands on messaging platforms
 os.environ["LOGOS_EXEC_ASK"] = "1"
 
@@ -1267,13 +1247,6 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # Stop cron ticker cleanly
     cron_stop.set()
     cron_thread.join(timeout=5)
-
-    # Close MCP server connections
-    try:
-        from gateway.lib.mcp_client import shutdown_mcp_servers
-        shutdown_mcp_servers()
-    except Exception:
-        pass
 
     return True
 

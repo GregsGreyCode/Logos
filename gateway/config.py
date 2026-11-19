@@ -334,15 +334,6 @@ def load_gateway_config() -> GatewayConfig:
     except Exception:
         pass
 
-    # Inject DB-stored credentials (messaging tokens, tool keys) into os.environ
-    # so _apply_env_overrides picks them up. Only sets keys NOT already in env,
-    # preserving .env / k8s secret / Docker env priority.
-    try:
-        from gateway.services import inject_credentials
-        inject_credentials()
-    except Exception:
-        pass
-
     # Override with environment variables
     _apply_env_overrides(config)
     
@@ -510,10 +501,3 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
             pass
 
 
-def save_gateway_config(config: GatewayConfig) -> None:
-    """Save gateway configuration to ~/.hermes/gateway.json."""
-    gateway_config_path = get_hermes_home() / "gateway.json"
-    gateway_config_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(gateway_config_path, "w", encoding="utf-8") as f:
-        json.dump(config.to_dict(), f, indent=2)
