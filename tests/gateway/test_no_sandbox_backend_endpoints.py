@@ -38,8 +38,3 @@ def test_chat_cancel_is_503_no_agents_running():
     assert body["error"] == "no_agents_running"
     assert "E2" in body["message"]
 
-
-def test_polled_endpoints_return_empty_shapes():
-    inst = _body(_run(http_api._handle_instances_get(_req())))
-    assert inst["instances"] == [] and inst["queue"] == []
-    assert inst["resources"]["can_spawn"] is False

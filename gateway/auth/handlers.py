@@ -54,43 +54,6 @@ def _settings_public(settings: dict | None) -> dict:
 
 # ── Auth endpoints ─────────────────────────────────────────────────────────
 
-async def handle_platform_settings_get(request: web.Request) -> web.Response:
-    """GET /admin/platform-settings — admin-only full read of
-    platform_settings. The public /auth/registration-status subset is
-    fine for un-authed pages; admins need to see require_approval and
-    any future flags too (LOG-25.7)."""
-    settings = auth_db.get_platform_settings()
-    return web.json_response({
-        "allow_registration": bool(settings.get("allow_registration")),
-        "require_approval":   bool(settings.get("require_approval", 1)),
-    })
-
-
-async def handle_platform_settings_patch(request: web.Request) -> web.Response:
-    """PATCH /admin/platform-settings — admin-only toggle of
-    platform_settings flags. Audit-logged (LOG-25.7)."""
-    caller = request.get("current_user") or {}
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid_json"}, status=400)
-    updates: dict = {}
-    if "allow_registration" in body:
-        updates["allow_registration"] = 1 if body["allow_registration"] else 0
-    if "require_approval" in body:
-        updates["require_approval"]   = 1 if body["require_approval"]   else 0
-    if not updates:
-        return await handle_platform_settings_get(request)
-    auth_db.set_platform_settings(**updates)
-    auth_db.write_audit_log(
-        caller.get("sub") or caller.get("id") or "",
-        "update_platform_settings",
-        target_type="platform_settings", target_id="1",
-        metadata=updates, ip_address=request.remote,
-    )
-    return await handle_platform_settings_get(request)
-
-
 async def handle_registration_status(request: web.Request) -> web.Response:
     """Public — returns whether self-service registration is enabled.
 
@@ -465,19 +428,3 @@ async def handle_users_patch(request: web.Request) -> web.Response:
     return web.json_response({"user": _user_public(auth_db.get_user_by_id(target_id))})
 
 
-async def handle_audit_logs(request: web.Request) -> web.Response:
-    try:
-        page = max(1, int(request.rel_url.query.get("page", 1)))
-    except (TypeError, ValueError):
-        page = 1
-    try:
-        limit = min(max(1, int(request.rel_url.query.get("limit", 25))), 200)
-    except (TypeError, ValueError):
-        limit = 25
-    user_id = request.rel_url.query.get("user_id") or None
-    action  = request.rel_url.query.get("action") or None
-    q       = (request.rel_url.query.get("q") or "").strip() or None
-    logs, total = auth_db.list_audit_logs(
-        page=page, limit=limit, user_id=user_id, action=action, q=q,
-    )
-    return web.json_response({"logs": logs, "total": total, "page": page, "limit": limit})
