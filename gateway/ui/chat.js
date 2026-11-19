@@ -25,6 +25,24 @@ function listIcon() {
   return svg;
 }
 
+// A tool's result as a person reads it: tools answer in JSON, often one text field ("content",
+// "output") holding a whole file or command output with its newlines escaped. Show that text.
+export function readable(result) {
+  if (result == null) return '(no result recorded)';
+  try {
+    const v = JSON.parse(result);
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const key = ['content', 'output', 'stdout', 'text', 'result'].find((k) => typeof v[k] === 'string');
+      if (key) {
+        const rest = Object.keys(v).filter((k) => k !== key && v[k] !== null && v[k] !== '' && v[k] !== 0);
+        return v[key] + (rest.length ? `\n\n${JSON.stringify(Object.fromEntries(rest.map((k) => [k, v[k]])))}` : '');
+      }
+      return JSON.stringify(v, null, 2);
+    }
+  } catch (e) { /* not JSON (or cut short): show as it is */ }
+  return result;
+}
+
 // One model call's reasoning and tool calls, folded away under a one-line summary.
 export function stepsView(steps) {
   if (!steps || !steps.length) return null;
@@ -38,7 +56,7 @@ export function stepsView(steps) {
       s.calls.map((c) => h('div', { class: 'call' },
         h('div', { class: 'call-name' }, c.name),
         c.args ? h('pre', { class: 'call-args' }, c.args) : null,
-        h('pre', { class: 'call-result' }, c.result == null ? '(no result recorded)' : c.result))))));
+        h('pre', { class: 'call-result' }, readable(c.result)))))));
 }
 
 // A message whose reply has not been seen yet, kept per agent in this browser. If the

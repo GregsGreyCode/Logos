@@ -115,8 +115,24 @@ export function markdown(text) {
     for (const block of part.split(/\n{2,}/)) {
       const lines = block.split('\n').filter((l) => l.trim());
       if (!lines.length) continue;
-      if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
-        nodes.push(h('ul', {}, lines.map((l) => h('li', {}, inline(l.replace(/^\s*[-*]\s+/, ''))))));
+      // A table: rows of |cells|, the second row the |---| line under the header.
+      if (lines.length >= 2 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l)) && /^[\s|:-]+$/.test(lines[1])) {
+        const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+        nodes.push(h('div', { class: 'md-table' }, h('table', {},
+          h('thead', {}, h('tr', {}, cells(lines[0]).map((c) => h('th', {}, inline(c))))),
+          h('tbody', {}, lines.slice(2).map((l) => h('tr', {}, cells(l).map((c) => h('td', {}, inline(c)))))))));
+      } else if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
+        // Bullets; "- [ ] thing" and "- [x] thing" are to-dos.
+        nodes.push(h('ul', {}, lines.map((l) => {
+          const item = l.replace(/^\s*[-*]\s+/, '');
+          const todo = item.match(/^\[( |x|X)\]\s+(.*)$/);
+          if (!todo) return h('li', {}, inline(item));
+          const done = todo[1] !== ' ';
+          return h('li', { class: `todo${done ? ' done' : ''}` },
+            h('span', { class: 'box', role: 'img', 'aria-label': done ? 'Done' : 'To do' }, done ? '\u2611' : '\u2610'), ' ', inline(todo[2]));
+        })));
+      } else if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
+        nodes.push(h('ol', {}, lines.map((l) => h('li', {}, inline(l.replace(/^\s*\d+[.)]\s+/, ''))))));
       } else {
         // Headings become real headings; other lines of a block stay one paragraph.
         let p = null;
