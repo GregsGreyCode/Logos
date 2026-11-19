@@ -165,9 +165,13 @@ their local model, and the gateway does the rest.
 - **Which model answered.** Every reply carries it: `model` in the body, and the
   `x-bifrost-provider` / `x-bifrost-resolved-model` / `x-bifrost-routing-info-is-fallback`
   headers. The gateway's log (`logs.db` on the `logos-models` volume) records it with the cost.
-- **Speed.** While LM Studio is off the guard refuses instantly (it remembers for 15 seconds
-  that the server did not answer), so a fallback reply does not start late. A server that has
-  just come back is used again within those 15 seconds.
+- **Waiting for LM Studio** (story D1). When LM Studio does not accept a model request, the
+  guard tries again every 5 seconds for up to a minute before answering "switched off" (503,
+  `model_server_off`), so a reload or a short close only makes the reply slower. The same goes
+  for LM Studio's "Context size has been exceeded" refusal when other requests fill its shared
+  context: the guard holds the reply until its first bytes arrive, and if they are that refusal
+  it sends the request again. Lookups (model lists, health) never wait. Tune with `GUARD_WAIT`
+  (seconds). `GET /guard/health` says whether LM Studio is off and since when.
 - **`model.fallbacks` replaces `model.allow`** for that agent: with a chain, only the models in
   it can be reached.
 

@@ -1,4 +1,4 @@
-"""gateway/model_guard.py: pass traffic through when the model server answers, refuse at once when it does not."""
+"""gateway/model_guard.py: pass traffic through; wait up to a minute for a model server that is off or full."""
 import http.client
 import json
 import socket
@@ -85,50 +85,121 @@ def test_a_streamed_reply_arrives_piece_by_piece(guard):
     assert Upstream.seen == [("/v1/chat/completions", "Bearer local", {"model": "qwen/q", "stream": True})]
 
 
-def test_a_server_that_is_off_is_refused_at_once_in_plain_words():
-    with socket.socket() as s:                    # a port nothing listens on
-        s.bind(("127.0.0.1", 0))
-        dead = s.getsockname()[1]
-    g = serve(model_guard.make_handler(f"http://127.0.0.1:{dead}", connect_timeout=1))
+def free_port():
+    with socket.socket() as sk:                   # a port nothing listens on (yet)
+        sk.bind(("127.0.0.1", 0))
+        return sk.getsockname()[1]
+
+
+def post(port, timeout=10):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    conn.request("POST", "/v1/chat/completions", body=json.dumps({"model": "qwen/q", "stream": True}),
+                 headers={"Content-Type": "application/json"})
+    return conn.getresponse()
+
+
+def test_a_server_that_stays_off_is_refused_in_plain_words_after_the_wait():
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{free_port()}", connect_timeout=0.2,
+                                       wait=0.5, retry_every=0.1))
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
         started = time.monotonic()
-        conn.request("POST", "/v1/chat/completions", body="{}", headers={"Content-Type": "application/json"})
-        r = conn.getresponse()
+        r = post(g.server_address[1])
         error = json.loads(r.read())["error"]
-        assert r.status == 503 and time.monotonic() - started < 2
+        waited = time.monotonic() - started
+        assert r.status == 503 and 0.3 < waited < 2
         assert error["code"] == "model_server_off" and "switched off" in error["message"]
     finally:
         g.shutdown()
 
 
-def test_a_server_that_was_off_is_refused_without_waiting_again_for_a_while():
-    """With paid fallbacks every call would otherwise start with the full connection wait."""
-    # 10.255.255.1 is not routable, so a connection attempt hangs until the timeout.
-    g = serve(model_guard.make_handler("http://10.255.255.1:9", connect_timeout=0.6, off_memory=30))
+def test_lookups_do_not_wait_for_a_server_that_is_off():
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{free_port()}", connect_timeout=0.2, wait=5, retry_every=0.1))
     try:
-        times = []
-        for _ in range(3):
-            conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
-            started = time.monotonic()
-            conn.request("POST", "/v1/chat/completions", body="{}", headers={"Content-Type": "application/json"})
-            assert conn.getresponse().status == 503
-            times.append(time.monotonic() - started)
-        assert times[1] < 0.2 and times[2] < 0.2
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+        started = time.monotonic()
+        conn.request("GET", "/v1/models")
+        assert conn.getresponse().status == 503 and time.monotonic() - started < 1
     finally:
         g.shutdown()
 
 
-def test_the_guard_reports_its_own_health_without_asking_the_model_server():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        dead = s.getsockname()[1]
-    g = serve(model_guard.make_handler(f"http://127.0.0.1:{dead}", connect_timeout=1))
+def test_a_request_waits_for_a_server_that_comes_back():
+    port = free_port()
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{port}", connect_timeout=0.2, wait=5, retry_every=0.1))
+    up = None
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
-        conn.request("GET", "/guard/health")
-        r = conn.getresponse()
-        assert r.status == 200 and json.loads(r.read()) == {"ok": True, "model_server_off": False}
+        def start_later():
+            nonlocal up
+            time.sleep(0.4)
+            up = ThreadingHTTPServer(("127.0.0.1", port), Upstream)
+            up.daemon_threads = True
+            threading.Thread(target=up.serve_forever, daemon=True).start()
+        threading.Thread(target=start_later, daemon=True).start()
+        r = post(g.server_address[1])
+        assert r.status == 200 and r.read() == b"data: one\n\ndata: two\n\ndata: three\n\n"
+    finally:
+        g.shutdown()
+        if up:
+            up.shutdown()
+
+
+class FullOnce(Upstream):
+    """LM Studio with its shared context in use: refuses the first ``refusals`` requests inside the stream."""
+    refusals, calls = 1, 0
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        FullOnce.calls += 1
+        if FullOnce.calls <= FullOnce.refusals:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            data = b'data: {"error":{"code":500,"message":"Context size has been exceeded.","type":"server_error"}}\n\n'
+            self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(data), data))
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        data = b"data: answer\n\n"
+        self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(data), data))
+
+
+def test_a_full_context_is_waited_out_and_the_request_sent_again():
+    FullOnce.refusals, FullOnce.calls = 2, 0
+    up = serve(FullOnce)
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{up.server_address[1]}", wait=5, retry_every=0.1))
+    try:
+        r = post(g.server_address[1])
+        assert r.status == 200 and r.read() == b"data: answer\n\n" and FullOnce.calls == 3
+    finally:
+        g.shutdown(); up.shutdown()
+
+
+def test_a_context_that_stays_full_is_passed_on_after_the_wait():
+    FullOnce.refusals, FullOnce.calls = 99, 0
+    up = serve(FullOnce)
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{up.server_address[1]}", wait=0.35, retry_every=0.1))
+    try:
+        r = post(g.server_address[1])
+        assert b"Context size has been exceeded" in r.read() and 2 <= FullOnce.calls <= 5
+    finally:
+        g.shutdown(); up.shutdown()
+
+
+def test_the_guard_reports_its_own_health_without_asking_the_model_server():
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{free_port()}", connect_timeout=0.2,
+                                       wait=0.1, retry_every=0.1))
+    try:
+        def health():
+            conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+            conn.request("GET", "/guard/health")
+            return json.loads(conn.getresponse().read())
+        assert health() == {"ok": True, "model_server_off": False, "off_since": None}
+        assert post(g.server_address[1]).status == 503
+        h = health()
+        assert h["model_server_off"] is True and h["off_since"] > 0
     finally:
         g.shutdown()
 
