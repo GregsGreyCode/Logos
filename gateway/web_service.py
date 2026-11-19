@@ -1,6 +1,7 @@
 """The web reader: how agents search the web without the web reaching them (story W1).
 
-An MCP server with one tool for now, ``search_web``. It runs in its own container
+An MCP server with two tools: ``search_web``, and ``add_private_name`` (an agent that learns
+about someone new adds their name to the private list; it can add, never remove or read). It runs in its own container
 (``logos-reader``) next to a private SearXNG (``logos-searxng``), which asks Google, Bing,
 Brave and Wikipedia (GitHub and Stack Overflow for coding questions) at once.
 Agents never talk to the web or to SearXNG themselves; they get back titles, addresses and
@@ -29,6 +30,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 PROTOCOL_VERSION = "2025-06-18"
+MAX_ADDED_NAMES = 500
+NAME_OK = re.compile(r"^[^\W\d_][\w'’ .-]{0,58}[\w.]$")      # a name: letters, spaces, ' - .; 2 to 60 long
 MAX_RESULTS = 8
 MAX_QUERY = 300
 KINDS = {"general": "general", "code": "it", "news": "news"}
@@ -44,6 +47,15 @@ TOOLS = [{
     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["query"], "properties": {
         "query": {"type": "string", "description": "What to search for, in plain words, at most 300 characters."},
         "kind": {"type": "string", "enum": sorted(KINDS), "description": "general (default), code or news."}}},
+}, {
+    "name": "add_private_name",
+    "description": ("Add a name to the household's private list, so it never leaves the house in a web search. "
+                    "Use it when your person mentions someone (or a pet, school, employer, street or town) "
+                    "that should stay private and is not already a page in your brain's people/ folder. "
+                    "One name per call, as it is written (\"Aunt Clara\", \"St Mary's School\"). Names can only be "
+                    "added; Greg can remove them on the server."),
+    "inputSchema": {"type": "object", "additionalProperties": False, "required": ["name"], "properties": {
+        "name": {"type": "string", "description": "The name, 2 to 60 characters."}}},
 }]
 
 
@@ -83,6 +95,12 @@ class Filter:
         # Names that are also everyday words ("Rose", "Bill") only count with a capital letter.
         self.capital_only = sorted({n.strip() for n in capital_only or [] if len(n.strip()) >= 2})
 
+    def knows(self, name: str) -> bool:
+        return fold(name.strip()) in self.names
+
+    def add(self, name: str) -> None:
+        self.names = sorted(set(self.names) | {fold(name.strip())}, key=len, reverse=True)
+
     def check(self, query: str) -> None:
         for label, pattern in PATTERNS:
             if pattern.search(query):
@@ -113,8 +131,36 @@ def _fetch_json(url: str, timeout: float = 12.0) -> Dict[str, Any]:
 
 class Service:
     def __init__(self, searxng: str, agents: Dict[str, Dict[str, Any]], check: Filter,
-                 fetch: Callable[[str], Dict[str, Any]] = _fetch_json, log: Callable[[str], None] = print):
+                 fetch: Callable[[str], Dict[str, Any]] = _fetch_json, log: Callable[[str], None] = print,
+                 added_file: Optional[str] = None):
         self.searxng, self.agents, self.filter, self.fetch, self.log = searxng.rstrip("/"), agents, check, fetch, log
+        # Names the agents added: one per line, "name<TAB>agent<TAB>when", kept in the reader's own volume.
+        self.added_file = added_file
+        self.added = 0
+        if added_file and os.path.exists(added_file):
+            for line in open(added_file, encoding="utf-8"):
+                name = line.split("\t", 1)[0].strip()
+                if name:
+                    self.filter.add(name)
+                    self.added += 1
+
+    def add_private_name(self, agent: str, name: str) -> Dict[str, Any]:
+        name = " ".join(str(name or "").split())
+        if not NAME_OK.match(name) or len(name.split()) > 6:
+            raise Refused("that does not look like a name (2 to 60 letters, spaces, - ' or .; at most six words).")
+        if self.filter.knows(name):
+            return {"already_private": name}
+        if self.added >= MAX_ADDED_NAMES:
+            raise Refused("the list of names added by agents is full; ask Greg to add it on the server.")
+        if not self.added_file:
+            raise Refused("names cannot be added on this machine.")
+        import datetime as _dt
+        with open(self.added_file, "a", encoding="utf-8") as f:
+            f.write(f"{name}\t{agent}\t{_dt.datetime.now(_dt.timezone.utc):%Y-%m-%dT%H:%MZ}\n")
+        self.filter.add(name)
+        self.added += 1
+        self.log(f"{agent} add_private_name: added a name ({self.added} added by agents)")
+        return {"added": name, "note": "Searches containing it are now refused."}
 
     def agent_for_token(self, token: str) -> Optional[str]:
         for name, a in self.agents.items():
@@ -167,17 +213,19 @@ def handle_rpc(svc: Service, agent: str, req: Dict[str, Any]) -> Optional[Dict[s
     elif method == "tools/call":
         params = req.get("params") or {}
         args = params.get("arguments") or {}
-        if params.get("name") != "search_web":
-            return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool: {params.get('name')}"}}
+        tool = params.get("name")
+        if tool not in ("search_web", "add_private_name"):
+            return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool: {tool}"}}
         try:
-            out = svc.search_web(agent, args.get("query"), args.get("kind") or "general")
+            out = (svc.search_web(agent, args.get("query"), args.get("kind") or "general") if tool == "search_web"
+                   else svc.add_private_name(agent, args.get("name")))
             result = {"content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}]}
         except Refused as e:
-            svc.log(f"{agent} search_web refused: {str(e).split(',')[0]}")
-            result = {"content": [{"type": "text", "text": f"Not searched: {e}"}], "isError": True}
+            svc.log(f"{agent} {tool} refused: {str(e).split(',')[0]}")
+            result = {"content": [{"type": "text", "text": f"Not done: {e}"}], "isError": True}
         except Exception as e:                       # never leak a traceback to the agent
-            svc.log(f"{agent} search_web FAILED: {type(e).__name__}")
-            result = {"content": [{"type": "text", "text": "Not searched: the web reader hit an error."}], "isError": True}
+            svc.log(f"{agent} {tool} FAILED: {type(e).__name__}")
+            result = {"content": [{"type": "text", "text": "Not done: the web reader hit an error."}], "isError": True}
     else:
         return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32601, "message": f"method not found: {method}"}}
     return {"jsonrpc": "2.0", "id": rid, "result": result}
@@ -232,10 +280,11 @@ def make_handler(svc: Service):
 def main() -> None:
     config = json.load(open(os.environ.get("WEB_CONFIG", "/data/config.json")))
     svc = Service(config["searxng"], config["agents"], Filter(config.get("names") or [], config.get("capital_only")),
-                  log=lambda m: print(m, flush=True))
+                  log=lambda m: print(m, flush=True), added_file=os.environ.get("WEB_ADDED_NAMES") or None)
     port = int(os.environ.get("WEB_PORT", "8096"))
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(svc))
-    print(f"web reader: {len(config['agents'])} agents, {len(svc.filter.names)} private names, MCP on :{port}", flush=True)
+    print(f"web reader: {len(config['agents'])} agents, {len(svc.filter.names)} private names "
+          f"({svc.added} added by agents), MCP on :{port}", flush=True)
     server.serve_forever()
 
 
