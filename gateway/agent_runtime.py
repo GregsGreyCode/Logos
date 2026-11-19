@@ -277,7 +277,7 @@ class AgentRuntime:
             print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 
     def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "",
-                    voice_token: str = "", calendar_token: str = "") -> str:
+                    voice_token: str = "", calendar_token: str = "", web_token: str = "") -> str:
         """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` and
         ``voice_token`` are the agent's own tokens for those services (the file lives in its
         private home volume, next to ``.env``)."""
@@ -296,7 +296,10 @@ class AgentRuntime:
         # When the model cannot be reached, say so after the normal three attempts (about
         # twenty seconds). hermes would otherwise keep trying in the background for some
         # eight more minutes, during which the person hears nothing.
-        cfg["agent"] = {"auto_recovery_cycles": 0}
+        # hermes's own web and browser tools are off: an agent has no network of its own, so they can
+        # only fail, and its built-in web_search would hide the web reader's tool. Searching goes
+        # through the web reader (search_web), for the agents that have it.
+        cfg["agent"] = {"auto_recovery_cycles": 0, "disabled_toolsets": ["web", "browser"]}
         # Nothing in the sandbox may call home: no update checks, no model catalogue download.
         cfg["updates"] = {"check": False}
         cfg["model_catalog"] = {"enabled": False}
@@ -327,6 +330,14 @@ class AgentRuntime:
             cfg.setdefault("mcp_servers", {})["calendar"] = {
                 "url": ch.CalendarHost(self).service_url(),
                 "headers": {"Authorization": f"Bearer {calendar_token}"}}
+        wh = _sibling("web_host")
+        if wh.uses_web(agent) and web_token:
+            # Web search through the web reader, which filters what leaves the house (docs/web-reader.md).
+            # Named logos_web: hermes groups an MCP server's tools under its name, and "web" is its own
+            # (disabled) built-in web toolset.
+            cfg.setdefault("mcp_servers", {})["logos_web"] = {
+                "url": wh.WebHost(self).url(),
+                "headers": {"Authorization": f"Bearer {web_token}"}}
         vh = _sibling("voice_host")
         if vh.uses_voice(agent) and voice_token:
             # Voice notes are turned into text by the shared voice service (docs/voice.md).
@@ -352,6 +363,8 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/voice.md").read_text()
         if _sibling("calendar_host").uses_calendar(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/calendar.md").read_text()
+        if _sibling("web_host").uses_web(agent):
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/web.md").read_text()
         return text
 
     MATRIX_EXPORTED = ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID",
@@ -428,6 +441,11 @@ class AgentRuntime:
             cur.setdefault(ch.TOKEN_ENV, secrets.token_urlsafe(32))
         else:
             cur.pop(ch.TOKEN_ENV, None)
+        wh = _sibling("web_host")
+        if wh.uses_web(agent):
+            cur.setdefault(wh.TOKEN_ENV, secrets.token_urlsafe(32))
+        else:
+            cur.pop(wh.TOKEN_ENV, None)
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -586,6 +604,11 @@ class AgentRuntime:
             point("calendar", ch.CalendarHost(self).service_url())
         else:
             rules.pop("calendar", None)
+        wh = _sibling("web_host")
+        if wh.uses_web(agent):
+            point("web", wh.WebHost(self).url())
+        else:
+            rules.pop("web", None)
         if json.dumps(rules, sort_keys=True) == before:
             return src
         out = self.repo / ".rendered" / f"{name}.policy.yaml"
@@ -638,7 +661,10 @@ class AgentRuntime:
         ch = _sibling("calendar_host")
         calendar_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
                                if l.startswith(ch.TOKEN_ENV + "=")), "")
-        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token))
+        wh = _sibling("web_host")
+        web_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
+                          if l.startswith(wh.TOKEN_ENV + "=")), "")
+        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token))
         self.ensure_vault(brain)
         self.ensure_model(agent["model"])
         self.put(home, "SOUL.md", self.soul_text(agent))
@@ -660,6 +686,12 @@ class AgentRuntime:
                     print("calendar: started with the current agents")
             except (ch.CalendarError, ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"calendar: {e}")
+        if wh.uses_web(agent):
+            try:
+                if wh.WebHost(self).up():
+                    print("web reader: started with the current agents")
+            except (wh.WebError, ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"web reader: {e}")
         mg = _sibling("model_gateway")
         if mg.uses_gateway(agent):
             try:
