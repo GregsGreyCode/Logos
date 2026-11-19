@@ -5,14 +5,16 @@ Everything here answers for the signed-in user only:
 * an agent is visible when its definition's ``owners`` allows the user
   (:func:`gateway.agent_chat.may_use`); anything else is a 404;
 * a conversation is visible when it is one of the user's own web
-  conversations, or, for an agent that belongs to that one person alone, one
-  of its Telegram conversations. On a shared agent (the household one) other
-  people's direct conversations are never listed.
+  conversations, or, for an agent that belongs to that one person alone, any
+  of its Matrix (or old Telegram) conversations and scheduled jobs. On a shared
+  agent (the household one) a person sees their own Matrix conversations and
+  the scheduled jobs, never anyone else's conversations.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -22,6 +24,7 @@ import gateway.auth.db as auth_db
 from gateway import agent_chat
 from gateway.agent_links import AgentLinkError
 from gateway.hermes_client import HermesError
+from gateway.lib.redact import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +45,42 @@ def conversation_prefix(user_id: str) -> str:
     return agent_chat.session_id_for(user_id, "")[: -len("default")]
 
 
-def visible_conversation(session: Mapping[str, Any], user_id: str, sole_owner: bool) -> Optional[str]:
-    """``"web"`` / ``"telegram"`` when the user may see this hermes session, else ``None``."""
+# Where a hermes session came from, as the dashboard names it.
+CHAT_SOURCES = {"matrix": "matrix", "telegram": "telegram"}
+SCHEDULED_SOURCE = "cron"
+MAX_REASONING = 8000       # characters of one step's reasoning shown in the viewer
+MAX_TOOL_TEXT = 4000       # characters of one tool call's arguments or result
+
+
+def _matrix_localpart(user_id: Any) -> str:
+    """``@greg:example.org`` -> ``greg``; anything else -> ``""``."""
+    text = str(user_id or "")
+    return text[1:].split(":", 1)[0] if text.startswith("@") and ":" in text else ""
+
+
+def visible_conversation(session: Mapping[str, Any], user_id: str, sole_owner: bool,
+                         username: str = "") -> Optional[str]:
+    """Where the session happened (``web``, ``matrix``, ``telegram``, ``scheduled``) when the user
+    may see it, else ``None``.
+
+    * Web conversations: only the person who had them.
+    * Matrix and Telegram: everything on an agent that is the user's alone. On a shared agent, only
+      the user's own (hermes keeps one session per person, in direct chats and in the Household room
+      alike), matched by Matrix id; Telegram has no such match, so none.
+    * Scheduled jobs (hermes cron): visible to everyone the agent belongs to.
+    """
     sid = str(session.get("id") or "")
     if sid.startswith(conversation_prefix(user_id)):
         return "web"
-    if sole_owner and session.get("source") == "telegram":
-        return "telegram"
+    source = str(session.get("source") or "")
+    if source in CHAT_SOURCES:
+        if sole_owner:
+            return CHAT_SOURCES[source]
+        if source == "matrix" and username and _matrix_localpart(session.get("user_id")) == username:
+            return "matrix"
+        return None
+    if source == SCHEDULED_SOURCE:
+        return "scheduled"
     return None
 
 
@@ -146,22 +178,28 @@ async def _client(request: web.Request, name: str):
 
 
 async def handle_conversations(request: web.Request) -> web.Response:
-    """GET /api/v2/agents/{name}/conversations — newest first."""
+    """GET /api/v2/agents/{name}/conversations — newest first, chats and scheduled jobs."""
     name, info, user = await _agent_or_404(request)
     sole_owner = info["owners"] is not None and len(info["owners"]) == 1
     client = await _client(request, name)
+    sessions: List[dict] = []
     try:
-        listing = await client.list_sessions(limit=200)
+        # One listing per kind: hundreds of scheduled-job sessions would otherwise push the
+        # chats out of a single page of 200.
+        for source, limit in (("api_server", 200), ("matrix", 200), ("telegram", 100),
+                              (SCHEDULED_SOURCE, 100)):
+            sessions += (await client.list_sessions(limit=limit, source=source)).get("data") or []
     except HermesError as e:
         logger.warning("conversations: %s unreachable: %s", name, e)
         return web.json_response({"error": "agent_unreachable"}, status=503)
     prefix = conversation_prefix(user["id"])
-    out = []
-    for s in listing.get("data") or []:
-        where = visible_conversation(s, user["id"], sole_owner)
-        if not where or not s.get("message_count"):
+    out, seen = [], set()
+    for s in sessions:
+        sid = str(s.get("id") or "")
+        where = visible_conversation(s, user["id"], sole_owner, user["username"])
+        if not where or not s.get("message_count") or sid in seen:
             continue
-        sid = str(s["id"])
+        seen.add(sid)
         out.append({
             "id": sid, "where": where,
             # A web conversation can be continued: this is the id the page sends back to /chat.
@@ -182,8 +220,75 @@ def _text_of(content: Any) -> str:
     return "" if content is None else str(content)
 
 
+def _clip(text: str, limit: int) -> str:
+    text = redact_sensitive_text(text)
+    return text if len(text) <= limit else text[:limit] + f"\n… ({len(text) - limit} more characters)"
+
+
+def _tool_calls(raw: Any) -> List[dict]:
+    """hermes stores an assistant message's tool calls as a JSON list (OpenAI shape)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return []
+    calls = []
+    for c in raw if isinstance(raw, list) else []:
+        fn = (c or {}).get("function") or {}
+        args = fn.get("arguments")
+        if not isinstance(args, str):
+            args = json.dumps(args, ensure_ascii=False) if args is not None else ""
+        calls.append({"id": str(c.get("id") or c.get("call_id") or ""),
+                      "name": str(fn.get("name") or c.get("name") or "tool"), "args": args})
+    return calls
+
+
+def fold_messages(raw: List[Mapping[str, Any]]) -> List[dict]:
+    """hermes messages -> the turns of a conversation.
+
+    Each assistant turn keeps what it said (``text``), the names of the tools it used (``tools``) and,
+    for the viewer, its ``steps``: per model call, the reasoning and each tool call with its
+    arguments and result. Secrets that look like keys or tokens are masked."""
+    out: List[dict] = []
+    by_call: Dict[str, dict] = {}
+    for m in sorted(raw, key=lambda m: float(m.get("timestamp") or 0)):
+        role = m.get("role")
+        if role == "tool":
+            result = _clip(_text_of(m.get("content")), MAX_TOOL_TEXT)
+            call = by_call.get(str(m.get("tool_call_id") or ""))
+            if call is not None:
+                call["result"] = result
+            elif out and out[-1]["role"] == "assistant":      # no id to match: keep it with its turn
+                out[-1]["steps"].append({"reasoning": "", "calls": [
+                    {"name": str(m.get("tool_name") or "tool"), "args": "", "result": result}]})
+            if out and out[-1]["role"] == "assistant":
+                out[-1]["tools"].append(str(m.get("tool_name") or "tool"))
+            continue
+        text = _text_of(m.get("content")).strip()
+        if role == "assistant":
+            reasoning = str(m.get("reasoning") or m.get("reasoning_content") or "").strip()
+            step = {"reasoning": _clip(reasoning, MAX_REASONING) if reasoning else "", "calls": []}
+            for c in _tool_calls(m.get("tool_calls")):
+                call = {"name": c["name"], "args": _clip(c["args"], MAX_TOOL_TEXT), "result": None}
+                step["calls"].append(call)
+                if c["id"]:
+                    by_call[c["id"]] = call
+            if out and out[-1]["role"] == "assistant" and not out[-1]["text"]:
+                turn = out[-1]                 # the turn's tool calls came first, then its words
+                turn["text"] = text
+            else:
+                turn = {"role": "assistant", "text": text, "tools": [], "steps": []}
+                out.append(turn)
+            if step["reasoning"] or step["calls"]:
+                turn["steps"].append(step)
+        elif role == "user" and text:
+            out.append({"role": "user", "text": text, "tools": [], "steps": []})
+    return [m for m in out if m["text"] or m["tools"] or m["steps"]]
+
+
 async def handle_conversation_messages(request: web.Request) -> web.Response:
-    """GET /api/v2/agents/{name}/conversations/{sid} — what was said, plus which tools ran."""
+    """GET /api/v2/agents/{name}/conversations/{sid} — what was said, which tools ran, and how the
+    agent got there (its reasoning and each tool call)."""
     name, info, user = await _agent_or_404(request)
     sid = request.match_info["sid"]
     sole_owner = info["owners"] is not None and len(info["owners"]) == 1
@@ -192,28 +297,17 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
         session = await client.get_session(sid)
         if isinstance(session.get("session"), dict):
             session = session["session"]
-        if not visible_conversation({**session, "id": sid}, user["id"], sole_owner):
+        where = visible_conversation({**session, "id": sid}, user["id"], sole_owner, user["username"])
+        if not where:
             raise web.HTTPNotFound(text='{"error":"not_found"}', content_type="application/json")
         raw = await client.get_session_messages(sid)
     except HermesError as e:
         status = 404 if getattr(e, "status", None) == 404 else 503
         return web.json_response({"error": "not_found" if status == 404 else "agent_unreachable"}, status=status)
-    out: List[dict] = []
-    for m in sorted(raw.get("data") or [], key=lambda m: float(m.get("timestamp") or 0)):
-        role = m.get("role")
-        if role == "tool":
-            if out and out[-1]["role"] == "assistant":
-                out[-1]["tools"].append(str(m.get("tool_name") or "tool"))
-            continue
-        text = _text_of(m.get("content")).strip()
-        if role == "assistant":
-            if out and out[-1]["role"] == "assistant" and not out[-1]["text"]:
-                out[-1]["text"] = text          # the turn's tool calls came first, then its words
-            else:
-                out.append({"role": "assistant", "text": text, "tools": []})
-        elif role == "user" and text:
-            out.append({"role": "user", "text": text, "tools": []})
-    return web.json_response({"messages": [m for m in out if m["text"] or m["tools"]]})
+    usage = {k: session.get(k) for k in ("model", "input_tokens", "output_tokens", "reasoning_tokens",
+                                          "tool_call_count", "api_call_count") if session.get(k) is not None}
+    return web.json_response({"where": where, "usage": usage,
+                              "messages": fold_messages(raw.get("data") or [])})
 
 
 # ── agent status ─────────────────────────────────────────────────────────────

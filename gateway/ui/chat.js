@@ -3,6 +3,32 @@ import { h, api, getJSON, when, markdown } from './util.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
+// Per-browser view settings: show the agent's reasoning and tool calls; list scheduled jobs too.
+const pref = (key) => { try { return localStorage.getItem(`logos-${key}`) === '1'; } catch (e) { return false; } };
+const setPref = (key, on) => { try { localStorage.setItem(`logos-${key}`, on ? '1' : '0'); } catch (e) { /* private window */ } };
+const WHERE = { web: 'web', matrix: 'Matrix', telegram: 'Telegram', scheduled: 'Scheduled job' };
+const READ_ONLY_NOTE = {
+  matrix: 'This conversation happened in Element X. Continue it there, or start a new one here.',
+  telegram: 'This conversation happened on Telegram, which is no longer used. Start a new one here.',
+  scheduled: 'This is a scheduled job the agent ran on its own. It is shown to see what it did.',
+};
+
+// One model call's reasoning and tool calls, folded away under a one-line summary.
+export function stepsView(steps) {
+  if (!steps || !steps.length) return null;
+  const tools = steps.flatMap((s) => s.calls.map((c) => c.name));
+  const thought = steps.some((s) => s.reasoning);
+  const summary = [thought ? 'Thinking' : null, tools.length ? `${tools.length} tool call${tools.length > 1 ? 's' : ''}: ${[...new Set(tools)].join(', ')}` : null]
+    .filter(Boolean).join(' · ');
+  return h('details', { class: 'steps' }, h('summary', {}, summary),
+    steps.map((s) => h('div', { class: 'step' },
+      s.reasoning ? h('p', { class: 'reasoning' }, s.reasoning) : null,
+      s.calls.map((c) => h('div', { class: 'call' },
+        h('div', { class: 'call-name' }, c.name),
+        c.args ? h('pre', { class: 'call-args' }, c.args) : null,
+        h('pre', { class: 'call-result' }, c.result == null ? '(no result recorded)' : c.result))))));
+}
+
 // A message whose reply has not been seen yet, kept per agent in this browser. If the
 // connection drops or the page is reloaded mid-reply, the agent carries on regardless, and
 // this is how the chat knows to wait for the reply and fetch it from the agent's history.
@@ -43,6 +69,9 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const agent = agents.find((a) => a.name === agentArg) || agents[0];
   let chatId = chatArg || newId();
   let readOnly = false;
+  let showThinking = pref('show-thinking');
+  let showJobs = pref('show-jobs');
+  let lastConversations = [];
   let running = null;            // { taskId } while a reply is streaming
 
   const log = h('div', { class: 'log', role: 'log', 'aria-live': 'polite' });
@@ -121,11 +150,13 @@ export async function chatView(root, [agentArg, chatArg], state) {
     try {
       const { conversations } = await getJSON(`/api/v2/agents/${agent.name}/conversations`);
       if (!alive) return;
-      convs.replaceChildren(...conversations.map((c) => h('button', {
+      lastConversations = conversations;
+      const shown = conversations.filter((c) => showJobs || c.where !== 'scheduled' || c.id === chatId);
+      convs.replaceChildren(...shown.map((c) => h('button', {
         type: 'button', 'aria-current': String(c.chat_id === chatId || c.id === chatId),
         onclick: () => { location.hash = `#/chat/${agent.name}/${c.chat_id || c.id}`; },
-      }, c.title, h('span', { class: 'when' }, `${when(c.last_active)} · ${c.where === 'web' ? 'web' : 'Telegram'}`))));
-      if (!conversations.length) convs.replaceChildren(h('span', { class: 'when' }, 'Nothing yet.'));
+      }, c.title, h('span', { class: 'when' }, `${when(c.last_active)} · ${WHERE[c.where] || c.where}`))));
+      if (!shown.length) convs.replaceChildren(h('span', { class: 'when' }, 'Nothing yet.'));
       return conversations;
     } catch (e) {
       convs.replaceChildren(h('span', { class: 'when' }, 'Could not load earlier conversations.'));
@@ -142,10 +173,11 @@ export async function chatView(root, [agentArg, chatArg], state) {
       if (!alive) return;
       log.replaceChildren();
       for (const m of messages) {
+        if (showThinking && m.role === 'assistant') { const s = stepsView(m.steps); if (s) log.append(s); }
         if (m.text) bubble(m.role, m.text);
-        chips(m.tools.map((t) => `Used ${t}`));
+        if (!showThinking) chips(m.tools.map((t) => `Used ${t}`));
       }
-      if (readOnly) log.append(h('div', { class: 'notice' }, 'This conversation happened on Telegram. Continue it there, or start a new one here.'));
+      if (readOnly) log.append(h('div', { class: 'notice' }, READ_ONLY_NOTE[c.where] || 'This conversation can only be read here.'));
       scroll();
     } catch (e) {
       log.replaceChildren(h('div', { class: 'msg error' }, 'Could not load this conversation.'));
@@ -233,7 +265,9 @@ export async function chatView(root, [agentArg, chatArg], state) {
     input.focus();
     scroll();
     if (location.hash !== `#/chat/${agent.name}/${chatId}`) history.replaceState(null, '', `#/chat/${agent.name}/${chatId}`);
-    loadConversations();
+    const conversations = await loadConversations();
+    // With thinking shown, redraw from the agent's history so this reply's steps appear too.
+    if (showThinking && !failed && alive && conversations) await openConversation(conversations);
   }
 
   // Microphone: record, turn the recording into text at the voice service, and put the words
@@ -322,17 +356,30 @@ export async function chatView(root, [agentArg, chatArg], state) {
     agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
       onclick: () => { location.hash = `#/chat/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name))) : null;
 
+  const thinkingBtn = h('button', { type: 'button', class: 'btn quiet small', 'aria-pressed': String(showThinking),
+    title: "Show the agent's reasoning and each tool it used, with what went in and what came back",
+    onclick: async () => {
+      showThinking = !showThinking;
+      setPref('show-thinking', showThinking);
+      thinkingBtn.setAttribute('aria-pressed', String(showThinking));
+      if (lastConversations.some((x) => x.chat_id === chatId || x.id === chatId)) await openConversation(lastConversations);
+    } }, 'Show thinking');
+  const jobsBox = h('input', { type: 'checkbox', id: 'show-jobs', checked: showJobs ? '' : null,
+    onchange: () => { showJobs = jobsBox.checked; setPref('show-jobs', showJobs); loadConversations(); } });
+
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
       h('header', { class: 'chat-head' },
         h('h1', {}, agent.display_name), tabs,
         h('span', { class: `status ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
         modelStatus,
-        h('span', { class: 'status' }, agent.shared ? 'Shared with the household' : 'Private to you')),
+        h('span', { class: 'status' }, agent.shared ? 'Shared with the household' : 'Private to you'),
+        thinkingBtn),
       log, micNote, form),
     h('aside', { class: 'side', 'aria-label': 'Conversations' },
       h('button', { type: 'button', class: 'btn quiet', onclick: () => { location.hash = `#/chat/${agent.name}/${newId()}`; } }, 'New conversation'),
-      h('h2', { class: 'label' }, 'Earlier conversations'), convs));
+      h('h2', { class: 'label' }, 'Earlier conversations'),
+      h('label', { class: 'toggle', for: 'show-jobs' }, jobsBox, ' Show scheduled jobs'), convs));
 
   emptyState();
   if (!agent.running) log.replaceChildren(h('div', { class: 'notice' }, `${agent.display_name} is not running. Start it on the server with: scripts/logos-agent up ${agent.name}`));
