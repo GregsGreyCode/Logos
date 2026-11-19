@@ -35,8 +35,8 @@ class Client:
     def __init__(self, sessions, messages):
         self.sessions, self.messages = sessions, messages
 
-    async def list_sessions(self, limit=None):
-        return {"data": self.sessions}
+    async def list_sessions(self, limit=None, source=None):
+        return {"data": [s for s in self.sessions if source is None or s["source"] == source]}
 
     async def get_session(self, sid):
         return next(s for s in self.sessions if s["id"] == sid)
@@ -71,13 +71,19 @@ SESSIONS = [
     {"id": "web-u-greg-abc", "source": "api_server", "title": "Dinner plans", "message_count": 4, "last_active": 30},
     {"id": "web-u-bere-zzz", "source": "api_server", "title": "Hers", "message_count": 2, "last_active": 40},
     {"id": "tg-1", "source": "telegram", "title": None, "preview": "From Telegram", "message_count": 6, "last_active": 20},
-    {"id": "local-1", "source": "cron", "title": "job", "message_count": 3, "last_active": 50},
+    {"id": "local-1", "source": "cron", "title": "consolidate", "message_count": 3, "last_active": 50},
+    {"id": "local-2", "source": "cron", "title": "nothing said", "message_count": 0, "last_active": 55},
+    {"id": "mx-greg", "source": "matrix", "user_id": "@greg:example.org", "title": "Bins", "message_count": 2, "last_active": 25},
+    {"id": "mx-bere", "source": "matrix", "user_id": "@bere:example.org", "title": "Hers too", "message_count": 2, "last_active": 26},
     {"id": "web-u-greg-empty", "source": "api_server", "title": "Empty", "message_count": 0, "last_active": 60},
 ]
 MESSAGES = [
     {"role": "user", "content": "Add milk", "timestamp": "1"},
-    {"role": "assistant", "content": "", "tool_calls": "[...]", "timestamp": "2"},
-    {"role": "tool", "content": "{}", "tool_name": "write_file", "timestamp": "3"},
+    {"role": "assistant", "content": "", "reasoning": "The list is in the brain.", "timestamp": "2",
+     "tool_calls": '[{"id": "c1", "type": "function", "function": {"name": "write_file", '
+                   '"arguments": "{\\"path\\": \\"lists/shopping.md\\"}"}}]'},
+    {"role": "tool", "content": "{\"ok\": true, \"key\": \"sk-abcdefghijklmnopqrstuvwxyz123456\"}",
+     "tool_name": "write_file", "tool_call_id": "c1", "timestamp": "3"},
     {"role": "assistant", "content": "Added.", "timestamp": "4"},
 ]
 
@@ -124,25 +130,45 @@ def test_someone_elses_agent_is_a_404(run):
 def test_conversations_on_a_private_agent(run):
     convs = run("u-greg", "/api/v2/agents/greg/conversations")[1]["conversations"]
     assert [(c["id"], c["where"], c["chat_id"]) for c in convs] == [
-        ("web-u-greg-abc", "web", "abc"), ("tg-1", "telegram", None)]
-    assert convs[1]["title"] == "From Telegram"
+        ("local-1", "scheduled", None), ("web-u-greg-abc", "web", "abc"), ("mx-bere", "matrix", None),
+        ("mx-greg", "matrix", None), ("tg-1", "telegram", None)]
+    assert convs[-1]["title"] == "From Telegram"
 
 
 def test_shared_agent_shows_only_your_own_web_conversations(run):
     mine = run("u-greg", "/api/v2/agents/household/conversations")[1]["conversations"]
-    assert [c["id"] for c in mine] == ["web-u-greg-abc"]
+    assert [c["id"] for c in mine] == ["local-1", "web-u-greg-abc", "mx-greg"]
     hers = run("u-bere", "/api/v2/agents/household/conversations")[1]["conversations"]
-    assert [c["id"] for c in hers] == ["web-u-bere-zzz"]
+    assert [c["id"] for c in hers] == ["local-1", "web-u-bere-zzz", "mx-bere"]
     assert run("u-bere", "/api/v2/agents/household/conversations/web-u-greg-abc")[0] == 404
+    assert run("u-bere", "/api/v2/agents/household/conversations/mx-greg")[0] == 404
     assert run("u-greg", "/api/v2/agents/household/conversations/tg-1")[0] == 404
+    assert run("u-bere", "/api/v2/agents/household/conversations/local-1")[0] == 200
 
 
 def test_messages_fold_tool_calls_into_the_reply(run):
     status, body = run("u-greg", "/api/v2/agents/greg/conversations/web-u-greg-abc")
     assert status == 200
-    assert body["messages"] == [
-        {"role": "user", "text": "Add milk", "tools": []},
-        {"role": "assistant", "text": "Added.", "tools": ["write_file"]}]
+    assert [(m["role"], m["text"], m["tools"]) for m in body["messages"]] == [
+        ("user", "Add milk", []), ("assistant", "Added.", ["write_file"])]
+    assert body["where"] == "web"
+    (step,) = body["messages"][1]["steps"]
+    assert step["reasoning"] == "The list is in the brain."
+    (call,) = step["calls"]
+    assert call["name"] == "write_file" and "lists/shopping.md" in call["args"]
+    assert '"ok": true' in call["result"]
+    assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in call["result"]     # keys are masked
+
+
+def test_long_tool_output_is_cut():
+    msgs = [{"role": "assistant", "content": "", "timestamp": 1,
+             "tool_calls": [{"id": "x", "function": {"name": "terminal", "arguments": {"command": "ls"}}}]},
+            {"role": "tool", "content": "a" * 10000, "tool_call_id": "x", "tool_name": "terminal", "timestamp": 2},
+            {"role": "assistant", "content": "Done", "timestamp": 3}]
+    (turn,) = dashboard_api.fold_messages(msgs)
+    call = turn["steps"][0]["calls"][0]
+    assert call["args"] == '{"command": "ls"}'
+    assert len(call["result"]) < 4100 and call["result"].endswith("more characters)")
 
 
 def test_conversation_prefix():
