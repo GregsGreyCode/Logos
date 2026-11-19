@@ -29,6 +29,9 @@ matrix:                           # the household's own Matrix server (docs/matr
   e2ee: required
   allowed_users: []               # set in agents/bere.local.yaml (untracked): @name:gregandbere.com
 
+web:                              # web search through the web reader (docs/web-reader.md)
+  enabled: true
+
 consolidation:                  # nightly brain tidy-up (hermes cron job `consolidate`)
   enabled: true
   schedule: "0 2 * * *"         # staggered from Greg's 02:30 so the two do not share the local model
