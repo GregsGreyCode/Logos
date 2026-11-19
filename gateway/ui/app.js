@@ -7,7 +7,7 @@ import { peopleView } from './people.js';
 import { modelsView } from './models.js';
 import { updatesView } from './updates.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
-import { h, api, getJSON } from './util.js';
+import { h, api, getJSON, working } from './util.js';
 
 const views = { chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView };
@@ -107,5 +107,19 @@ acctBtn.setAttribute('aria-label', `Your account (${shown})`);
 const badge = () => getJSON('/api/v2/noticeboard').then((d) => setBadge(d.waiting.length)).catch(() => {});
 badge();
 setInterval(badge, 60000);
+// The logo cycles while any of your agents is working, in Element X or on a scheduled job too.
+// Checked every 10 seconds while this page is on screen.
+const activity = async () => {
+  if (document.visibilityState !== 'visible') return;
+  try {
+    const { working: names } = await getJSON('/api/v2/activity');
+    working('agents', names.length > 0);
+    const label = names.length ? `Working: ${names.join(', ')}` : '';
+    for (const el of document.querySelectorAll('.logo')) { el.title = label; }
+  } catch (e) { /* the dashboard restarting: try again next time */ }
+};
+activity();
+setInterval(activity, 10000);
+document.addEventListener('visibilitychange', activity);
 window.addEventListener('hashchange', route);
 route();

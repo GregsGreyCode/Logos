@@ -310,6 +310,69 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
                               "messages": fold_messages(raw.get("data") or [])})
 
 
+# ── which agents are working right now (the logo cycles while one is) ────────
+
+ACTIVITY_CACHE_SECONDS = 8
+ACTIVITY_WINDOW_SECONDS = 15 * 60     # an unanswered message older than this is not "working"
+
+
+def owes_a_reply(last: Optional[Mapping[str, Any]]) -> bool:
+    """True when a conversation's newest message means the agent is still at it: the person (or
+    a scheduled job's prompt) spoke last, a tool just returned, or the agent asked for a tool."""
+    if not last:
+        return False
+    role = last.get("role")
+    if role in ("user", "tool"):
+        return True
+    return role == "assistant" and bool(last.get("tool_calls")) and not _text_of(last.get("content")).strip()
+
+
+async def agent_is_working(client: Any, now: float) -> bool:
+    """Is this agent in the middle of something (a chat on any channel, or a scheduled job)?
+
+    hermes's own count of active work is not reliable for this (its heartbeat file can stay at 1
+    while idle), so look at what it does keep exactly: the newest message of the most recently
+    active conversation."""
+    sessions = (await client.list_sessions(limit=20)).get("data") or []
+    latest = max(sessions, key=lambda s: float(s.get("last_active") or s.get("started_at") or 0), default=None)
+    if not latest or now - float(latest.get("last_active") or latest.get("started_at") or 0) > ACTIVITY_WINDOW_SECONDS:
+        return False
+    msgs = (await client.get_session_messages(str(latest["id"]), limit=1, order="latest")).get("data") or []
+    return owes_a_reply(msgs[-1] if msgs else None)
+
+
+async def handle_activity(request: web.Request) -> web.Response:
+    """GET /api/v2/activity — {"working": [names]}: the user's agents that are working right now."""
+    import time as _time
+    user = _user(request)
+    links = request.app.get("agent_links")
+    if links is None:
+        return web.json_response({"working": []})
+    cache = request.app.setdefault("activity_cache", {})
+    now = _time.time()
+    backend = request.app.get("sandbox_backend")
+    try:
+        states = {st.name: st for st in await asyncio.to_thread(backend.list)} if backend else {}
+    except Exception:
+        states = {}
+    working = []
+    for name in await _visible_agents(request, user["username"]):
+        if not (states.get(name) and states[name].running):
+            continue
+        hit = cache.get(name)
+        if hit and now - hit[0] < ACTIVITY_CACHE_SECONDS:
+            busy = hit[1]
+        else:
+            try:
+                busy = await agent_is_working(await links.client(name), now)
+            except (HermesError, AgentLinkError, KeyError, ValueError, TypeError):
+                busy = False
+            cache[name] = (now, busy)
+        if busy:
+            working.append(name)
+    return web.json_response({"working": sorted(working)})
+
+
 # ── agent status ─────────────────────────────────────────────────────────────
 
 JOB_LABELS = {
@@ -924,6 +987,7 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
     app.router.add_get("/api/v2/people", handle_people)
+    app.router.add_get("/api/v2/activity", handle_activity)
     app.router.add_get("/api/v2/models", handle_models)
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
