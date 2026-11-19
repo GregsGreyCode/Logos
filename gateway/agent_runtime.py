@@ -60,6 +60,8 @@ ALL_LOCAL = "all.local.yaml"            # untracked overrides for every agent
 # Sessions opened with `openshell sandbox exec` do not inherit the image ENV, so hermes CLI calls
 # must be told where the agent's home is.
 HERMES = "export HERMES_HOME=/opt/data; hermes"
+# hermes' own Python, for the one helper that uses its job store (carry_monitor_state.py).
+HERMES_PY = "export HERMES_HOME=/opt/data; /opt/hermes/.venv/bin/python /opt/data/scripts/carry_monitor_state.py"
 # _config_version marks the file as current for the pinned hermes (v0.23.1 = 53); without it
 # hermes treats the file as pre-v12 and skips its config migrations. Bump with the image.
 CONFIG_VERSION = 53
@@ -517,11 +519,14 @@ class AgentRuntime:
     def ensure_jobs(self, name: str, agent: Mapping[str, Any], home: str) -> None:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
         for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
-                       "noticeboard_urgent.py", "briefing_today.py", "briefing_check.py"):
+                       "noticeboard_urgent.py", "briefing_today.py", "briefing_check.py",
+                       "carry_monitor_state.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         if not self.wait_api(name):
             print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
             return
+        # Keep what the monitor jobs last saw, or each re-created job wakes the model once for nothing.
+        self.sbx(name, f"{HERMES_PY} save")
         for jid in [i for n, i in self.job_ids(name).items() if n in MANAGED_JOBS]:
             self.sbx(name, f"{HERMES} cron remove {jid}")
         tz = agent.get("timezone", "UTC")
@@ -578,6 +583,7 @@ class AgentRuntime:
                     self.sbx(name, f'{HERMES} cron create --name {job}-check --no-agent --script briefing_check.py '
                                    f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
                                    f'--failure-deliver local "{check}"')
+        self.sbx(name, f"{HERMES_PY} restore")
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
 
