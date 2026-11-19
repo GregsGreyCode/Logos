@@ -392,8 +392,11 @@ class TestCreate:
             "--policy", str(repo / "infra/agent-image/policy.yaml"),
             "--driver-config-json", mounts,
             "--provider", "github",
+            "--cpu", "2", "--memory", "2Gi",
             "--", "sh", "-c", art.START,
         ]
+        small = r.create_argv("alpha", {**r.load("alpha"), "resources": {"memory": "1Gi"}})
+        assert small[small.index("--cpu") + 1] == "2" and small[small.index("--memory") + 1] == "1Gi"
         assert json.loads(mounts) == {"docker": {"mounts": [
             {"type": "volume", "source": "logos-home-alpha", "target": "/opt/data", "read_only": False},
             {"type": "volume", "source": "logos-brain-alpha", "target": "/opt/data/brain", "read_only": False},
