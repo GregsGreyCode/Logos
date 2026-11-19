@@ -551,6 +551,32 @@ network_policies:
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8097, ["172.17.0.1/32"])
         assert ep["rules"] == [{"allow": {"method": "GET", "path": "/weather"}}]
 
+    def test_changes_token_url_and_policy_only_when_asked(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_WEATHER + """  changes:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8097
+        protocol: rest
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: GET, path: "/changes/**"}
+""")
+        r = rt(repo)
+        plain = r.load("alpha")
+        assert "LOGOS_CHANGES" not in r.env_file(plain, "logos-home-alpha")
+        assert "changes" not in yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
+        on = {**plain, "role": "household", "changes": {"enabled": True}}
+        env = r.env_file(on, "logos-home-alpha")
+        assert "LOGOS_CHANGES_URL=http://172.17.0.1:8097/changes" in env and "LOGOS_CHANGES_TOKEN=" in env
+        assert "LOGOS_WEB_TOKEN" not in env                     # still no web search
+        rules = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]
+        assert "weather" not in rules and "web" not in rules
+        ep = rules["changes"]["endpoints"][0]
+        assert (ep["host"], ep["port"]) == ("172.17.0.1", 8097)
+        assert ep["rules"] == [{"allow": {"method": "GET", "path": "/changes/**"}}]
+
     POLICY_HEALTH = """
 version: 1
 network_policies:

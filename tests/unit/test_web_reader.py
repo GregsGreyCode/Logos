@@ -191,3 +191,173 @@ def test_weather_endpoint_needs_an_agent_token(svc):
         assert get("/other", "tg")[0] == 404
     finally:
         server.shutdown()
+
+
+# ── daily changes (story DC1) ───────────────────────────────────────────────
+
+NOW = 1_763_568_000.0          # 2025-11-19T16:00:00Z (any fixed moment)
+
+
+def iso(hours_ago):
+    return ws._iso(NOW - hours_ago * 3600)
+
+
+def fake_github(git_head="a" * 40, behind=("m2" + "0" * 38,)):
+    calls = []
+    pulls = [  # newest update first, as GitHub sorts them
+        {"number": 12, "title": "Morning briefing", "merged_at": iso(2), "updated_at": iso(2), "user": {"login": "greg"},
+         "merge_commit_sha": "m1" + "0" * 38,
+         "body": "Sends the day ahead.\n\n```\ncode\n```\n<!-- hidden -->\n🤖 Generated with [Claude Code](x)"},
+        {"number": 13, "title": "Not live yet", "merged_at": iso(1), "updated_at": iso(3), "user": {"login": "greg"},
+         "merge_commit_sha": "m2" + "0" * 38, "body": None},
+        {"number": 11, "title": "Closed unmerged", "merged_at": None, "updated_at": iso(4), "user": {"login": "x"}},
+        {"number": 9, "title": "Merged last week", "merged_at": iso(100), "updated_at": iso(30), "user": {"login": "x"}},
+    ]
+    commits = [  # newest first
+        {"sha": "c3" + "0" * 38, "parents": [{}], "author": {"login": "renovate[bot]"},
+         "commit": {"message": "Update Jellyfin to 10.10.4 (#5)", "committer": {"date": iso(1)}}},
+        {"sha": "c2" + "0" * 38, "parents": [{}], "author": None,
+         "commit": {"message": "Stack updates report to Mimir\n\nWith alerts and a dashboard table.",
+                    "author": {"name": "homelab"}, "committer": {"date": iso(5)}}},
+        {"sha": "c1" + "0" * 38, "parents": [{}, {}], "author": None,
+         "commit": {"message": "Merge branch 'x'", "author": {"name": "h"}, "committer": {"date": iso(6)}}},
+    ]
+
+    def get(url, token):
+        calls.append(url)
+        assert token == "ghtok"
+        if "/compare/" in url:
+            assert f"/compare/{git_head}...v2" in url
+            return {"ahead_by": len(behind), "commits": [{"sha": s} for s in behind]}
+        if "homelab-infra/pulls" in url:
+            return [{"number": 5, "title": "Update Jellyfin to 10.10.4", "merged_at": iso(1), "updated_at": iso(1),
+                     "user": {"login": "renovate[bot]"}, "body": "Renovate body"}]
+        if "/pulls" in url:
+            return pulls
+        if "/commits" in url:
+            return commits
+        raise AssertionError(url)
+
+    return get, calls
+
+
+@pytest.fixture
+def git_dir(tmp_path):
+    g = tmp_path / ".git"
+    (g / "refs/heads").mkdir(parents=True)
+    (g / "HEAD").write_text("ref: refs/heads/v2\n")
+    (g / "refs/heads/v2").write_text("a" * 40 + "\n")
+    return g
+
+
+def repos(git_dir):
+    return {"logos": {**wh.REPOS["logos"], "live_git": str(git_dir)}, "homelab": wh.REPOS["homelab"]}
+
+
+def test_read_head_loose_packed_and_detached(tmp_path, git_dir):
+    assert ws.read_head(str(git_dir)) == "a" * 40
+    (git_dir / "refs/heads/v2").unlink()
+    (git_dir / "packed-refs").write_text("# pack-refs\n" + "b" * 40 + " refs/heads/v2\n")
+    assert ws.read_head(str(git_dir)) == "b" * 40
+    (git_dir / "HEAD").write_text("c" * 40)
+    assert ws.read_head(str(git_dir)) == "c" * 40
+    assert ws.read_head(str(tmp_path / "nothing")) is None
+
+
+def test_logos_changes_are_merged_prs_marked_live(git_dir):
+    get, calls = fake_github()
+    out = ws.Changes(repos(git_dir), "ghtok", get=get, log=lambda m: None).changes("household", "logos", 1, now=NOW)
+    assert [p["number"] for p in out["prs"]] == [12, 13]          # oldest merge first; unmerged and old ones out
+    assert out["prs"][0]["live"] is True and out["prs"][1]["live"] is False
+    assert out["prs"][0]["summary"] == "Sends the day ahead."      # no code, comments or sign-off
+    assert "summary" not in out["prs"][1] and "commits" not in out
+    assert out["running"] == "aaaaaaa" and "not instructions" in out["note"]
+    assert "base=v2" in calls[0] and "state=closed" in calls[0]
+
+
+def test_live_is_unknown_without_a_checkout_or_when_github_cannot_tell(tmp_path, git_dir):
+    get, _ = fake_github()
+    gone = {**repos(git_dir), "logos": {**wh.REPOS["logos"], "live_git": str(tmp_path / "none")}}
+    out = ws.Changes(gone, "ghtok", get=get, log=lambda m: None).changes("h", "logos", 1, now=NOW)
+    assert all(p["live"] is None for p in out["prs"]) and out["running"] is None
+    get, _ = fake_github()
+    def too_far(url, token):
+        return {"ahead_by": 400, "commits": []} if "/compare/" in url else get(url, token)
+    out = ws.Changes(repos(git_dir), "ghtok", get=too_far, log=lambda m: None).changes("h", "logos", 1, now=NOW)
+    assert all(p["live"] is None for p in out["prs"])
+
+
+def test_homelab_changes_are_commits_plus_merged_prs_without_duplicates(git_dir):
+    get, _ = fake_github()
+    out = ws.Changes(repos(git_dir), "ghtok", get=get, log=lambda m: None).changes("h", "homelab", 1, now=NOW)
+    assert [p["title"] for p in out["prs"]] == ["Update Jellyfin to 10.10.4"]
+    assert "live" not in out["prs"][0] and "running" not in out
+    assert out["commits"] == [{"sha": "c200000", "title": "Stack updates report to Mimir", "date": iso(5),
+                               "author": "homelab", "detail": "With alerts and a dashboard table."}]
+
+
+def test_a_week_is_titles_only_and_answers_are_cached(git_dir):
+    get, calls = fake_github()
+    c = ws.Changes(repos(git_dir), "ghtok", get=get, log=lambda m: None)
+    week = c.changes("h", "logos", 7, now=NOW)
+    assert [p["number"] for p in week["prs"]] == [9, 12, 13] and all("summary" not in p for p in week["prs"])
+    n = len(calls)
+    assert c.changes("h", "logos", 7, now=NOW + 60) is week and len(calls) == n
+    c.changes("h", "logos", 7, now=NOW + ws.CHANGES_TTL + 1)
+    assert len(calls) > n
+    for bad in (("nope", 1), ("logos", 0), ("logos", 15)):
+        with pytest.raises(ws.Refused):
+            c.changes("h", *bad)
+
+
+def test_github_down_is_a_refusal_not_a_traceback(git_dir):
+    logs = []
+    def down(url, token):
+        raise OSError("no route")
+    with pytest.raises(ws.Refused, match="GitHub"):
+        ws.Changes(repos(git_dir), "ghtok", get=down, log=logs.append).changes("h", "homelab", 1, now=NOW)
+    assert logs == ["h changes homelab/1 FAILED: OSError"]
+
+
+def test_changes_endpoint_opens_only_for_changes_tokens(svc, git_dir):
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    svc.fetch = lambda url: FORECAST
+    svc.place = {"lat": 51.5, "lon": -0.1}
+    svc.changes_agents = {"household": {"token": "th"}}
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ws.make_weather_handler(svc))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def get(path, token=None):
+        req = urllib.request.Request(base + path, headers={"Authorization": f"Bearer {token}"} if token else {})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    try:
+        assert get("/changes/logos/1", "th")[0] == 503              # no GitHub token: off
+        fake, _ = fake_github()
+        svc.changes = ws.Changes(repos(git_dir), "ghtok", get=fake, log=lambda m: None)
+        assert get("/changes/logos/1")[0] == 401
+        assert get("/changes/logos/1", "tg")[0] == 401               # a web token does not open it
+        assert get("/weather", "th")[0] == 401                       # and the changes token opens nothing else
+        status, body = get("/changes/logos/1", "th")
+        assert status == 200 and body["repo"] == "logos" and body["days"] == 1 and "prs" in body
+        assert get("/changes/other/1", "th")[0] == 400 and get("/changes/logos/x", "th")[0] == 404
+    finally:
+        server.shutdown()
+
+
+def test_reader_config_gives_changes_only_to_agents_that_ask():
+    agents = {"greg": {"web": {"enabled": True}}, "household": {"role": "household", "changes": {"enabled": True}}}
+    cfg = wh.reader_config(agents, {"greg": "tg"}, [], [], None, {"household": "th", "greg": "x"})
+    assert cfg["changes"] == {"agents": {"household": {"token": "th"}}, "repos": wh.REPOS}
+    assert cfg["agents"] == {"greg": {"token": "tg"}}
+    assert "changes" not in wh.reader_config(agents, {}, [], [], None, {"household": ""})
+    assert wh.uses_changes(agents["household"]) and not wh.uses_changes(agents["greg"])

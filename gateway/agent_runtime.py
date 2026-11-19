@@ -486,6 +486,12 @@ class AgentRuntime:
         else:
             cur.pop(wh.TOKEN_ENV, None)
             cur.pop(wh.WEATHER_ENV, None)
+        if wh.uses_changes(agent):         # story DC1: a token that opens only /changes on the web reader
+            cur.setdefault(wh.CHANGES_TOKEN_ENV, secrets.token_urlsafe(32))
+            cur[wh.CHANGES_ENV] = wh.WebHost(self).changes_url()
+        else:
+            cur.pop(wh.CHANGES_TOKEN_ENV, None)
+            cur.pop(wh.CHANGES_ENV, None)
         cur["GATEWAY_ALLOW_ALL_USERS"] = "false"
         return "".join(f"{k}={v}\n" for k, v in sorted(cur.items()))
 
@@ -683,6 +689,10 @@ class AgentRuntime:
         else:
             rules.pop("web", None)
             rules.pop("weather", None)
+        if wh.uses_changes(agent):
+            point("changes", wh.WebHost(self).changes_url(), rest_rules=[("GET", "/changes/**")])
+        else:
+            rules.pop("changes", None)
         if json.dumps(rules, sort_keys=True) == before:
             return src
         out = self.repo / ".rendered" / f"{name}.policy.yaml"
