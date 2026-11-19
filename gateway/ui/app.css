@@ -251,3 +251,18 @@ table.plain td { vertical-align: top; }
   font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 ul.plain { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 4px; }
 ul.plain code { color: var(--muted); }
+
+/* the agent's thinking: reasoning and tool calls under each reply (chat, "Show thinking") */
+.btn.small[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.steps { align-self: stretch; max-width: 100%; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--raised); font-size: 13px; }
+.steps > summary { cursor: pointer; padding: 8px 12px; color: var(--muted); }
+.steps[open] > summary { border-bottom: 1px solid var(--line); }
+.step { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.step + .step { border-top: 1px dashed var(--line); }
+.reasoning { margin: 0; color: var(--muted); font-style: italic; white-space: pre-wrap; overflow-wrap: anywhere; }
+.call-name { font-weight: 600; font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
+.call-args, .call-result { margin: 4px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--ground);
+  font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; }
+.call-args { border-left: 3px solid var(--accent); }
+.side .toggle { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
