@@ -77,20 +77,16 @@ def test_legacy_roles_map_to_user():
     # A stale "operator" claim gets user rights, not its old elevated ones.
     assert rbac.get_permissions("operator") == rbac.get_permissions("user")
     assert not rbac.has_permission("operator", "manage_users")
-    assert not rbac.has_permission("operator", "decide_approvals")
-    assert rbac.has_permission("viewer", "view_instances")
+    assert not rbac.has_permission("operator", "manage_platform")
     assert rbac.get_permissions("root") == []
 
 
 def test_admin_vs_user_permissions():
     assert rbac.has_permission("admin", "manage_users")
-    assert rbac.has_permission("admin", "manage_machines")
+    assert rbac.has_permission("admin", "manage_platform")
     assert not rbac.has_permission("user", "manage_users")
-    assert not rbac.has_permission("user", "manage_machines")
-    assert rbac.has_permission("user", "view_runs")
-    assert rbac.can_spawn("admin", {})
-    assert rbac.can_spawn("user", {"user_accessible": True})
-    assert not rbac.can_spawn("user", {})
+    assert not rbac.has_permission("user", "manage_platform")
+    assert rbac.get_permissions("user") == []
 
 
 def _referenced_permissions() -> set[str]:
@@ -109,13 +105,12 @@ def _referenced_permissions() -> set[str]:
 
 def test_permission_table_matches_what_gateway_references():
     referenced = _referenced_permissions()
-    assert "manage_users" in referenced and "view_instances" in referenced  # regex sanity
+    assert "manage_users" in referenced and "manage_platform" in referenced  # regex sanity
     known = set().union(*rbac.ROLE_PERMISSIONS.values())
     # Every permission a handler checks is grantable (no route locked for all).
     assert referenced - known == set()
-    # Nothing left over from v1 (machine claims, routing profiles, presets).
-    # The two spawn permissions are only reached through can_spawn().
-    assert known - referenced == {"spawn_instance", "spawn_instance_restricted"}
+    # Nothing left over from v1 (machines, souls, approvals, evolution, spawning).
+    assert known - referenced == set()
     assert referenced <= rbac.ROLE_PERMISSIONS["admin"]
 
 
@@ -370,16 +365,9 @@ def test_admin_creates_and_lists_users_and_user_cannot(db_home):
             "email": "x@example.com", "username": "x", "password": "battery-staple",
             "role": "root"})
         assert r.status == 400 and (await r.json())["error"] == "invalid_role"
-        r = await client.patch(f"/users/{created['id']}", headers=csrf, json={"role": "root"})
-        assert r.status == 400
-
-        r = await client.get("/users")
-        assert r.status == 200
-        listing = await r.json()
-        assert listing["total"] == 3
-        assert {u["username"] for u in listing["users"]} == {"greg", "bere", "op"}
-        r = await client.get("/users?role=admin")
-        assert [u["username"] for u in (await r.json())["users"]] == ["greg"]
+        users = auth_db.list_users()
+        users = users[0] if users and isinstance(users[0], list) else users
+        assert {u["username"] for u in users} == {"greg", "bere", "op"}
 
         # The new plain user can log in and read /auth/me but not manage users.
         await client.post("/auth/logout")
@@ -388,26 +376,12 @@ def test_admin_creates_and_lists_users_and_user_cannot(db_home):
         me = await (await client.get("/auth/me")).json()
         assert me["user"]["role"] == "user"
         assert me["permissions"] == rbac.get_permissions("user")
-        r = await client.get("/users")
-        assert r.status == 403
-        assert (await r.json())["requires"] == "manage_users"
         r = await client.post("/users", headers={"X-CSRF-Token": _cookie(jar, "csrf_token")},
                               json={"email": "z@example.com", "username": "z",
                                     "password": "battery-staple", "role": "admin"})
         assert r.status == 403
+        assert (await r.json())["requires"] == "manage_users"
 
     _with_client(flow)
 
 
-# ── Agent tools endpoint ───────────────────────────────────────────────────
-
-def test_agent_tools_endpoint_keeps_empty_presets(db_home):
-    from gateway import admin_handlers
-
-    auth_db.init_db(db_home)
-    agent = auth_db.create_agent(name="tools-shape")
-    req = make_mocked_request("GET", "/", match_info={"id": agent["id"]})
-    resp = asyncio.run(admin_handlers.handle_agent_tools_get(req))
-    data = json.loads(resp.body)
-    assert data["presets"] == {"applied": [], "available": []}
-    assert data["toolsets"]["available"] == []

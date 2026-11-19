@@ -109,7 +109,7 @@ export async function noticeboardView(root) {
       h('div', { class: 'table-box' }, h('table', {},
         h('thead', {}, h('tr', {}, ['When', 'From, to', 'Kind', 'Message', 'Outcome'].map((t) => h('th', { scope: 'col' }, t)))),
         tbody)),
-      h('p', { class: 'when' }, 'Each agent can send another ten requests a day. Urgent ones reach the person on Telegram within a minute.'))));
+      h('p', { class: 'when' }, 'Each agent can send another ten requests a day. Urgent ones reach the person in Element X within a minute.'))));
   await load();
   timer = setInterval(load, 15000);
   return () => { alive = false; clearInterval(timer); };

@@ -99,7 +99,6 @@ agents/           agent definitions (one YAML per agent)
 infra/            agent image, OpenShell config, brain template, in-sandbox jobs
 scripts/          logos-agent (lifecycle), logos-sync (Syncthing)
 souls/            persona files an agent definition can point at
-skills/           skills available to agents (optional-skills/ are off by default)
 gateway/          the Logos gateway: HTTP API, auth, dashboard HTML
 logos_cli/        the `logos` command (gateway control, doctor)
 evals/            checks that run against a live sandbox
