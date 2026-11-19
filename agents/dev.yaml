@@ -1,12 +1,11 @@
 # The dev agent: a real agent on a development machine, for trying features end to end,
-# including the parts only Telegram shows (voice notes, scheduled messages, replies to
+# including the parts only chat shows (voice notes, scheduled messages, replies to
 # "X's agent asks" prompts). Create or recreate with:
 #   scripts/logos-agent up dev
 #
-# It has its OWN Telegram bot. Never give it a bot that a production agent uses: two
-# machines polling one bot take each other's messages.
+# It has its own Matrix account on the dev machine's own Matrix server.
 #
-# Unlike the bench agent, nothing wipes its storage, so its bot token and brain survive
+# Unlike the bench agent, nothing wipes its storage, so its Matrix login and brain survive
 # test runs. On the production machine it is defined but never started.
 name: dev
 display_name: Dev agent
@@ -35,10 +34,6 @@ matrix:                           # the household's own Matrix server (gateway/m
   enabled: true
   e2ee: required
   allowed_users: []               # set in agents/dev.local.yaml (untracked): @name:<server name>
-
-telegram:
-  enabled: false                  # off since 19 Nov 2026: Matrix only (docs/matrix.md)
-  allowed_users: []               # set in agents/dev.local.yaml (untracked): Telegram numeric user IDs
 
 consolidation:
   enabled: true

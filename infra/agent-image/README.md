@@ -10,7 +10,7 @@ unmodified, plus a thin layer so it runs as an OpenShell 0.1.8 sandbox.
 | Workload user | `hermes` (uid/gid 10000) |
 | Workspace | `/sandbox`, with the brain volume at `/opt/data/brain` |
 | Hermes home | `/opt/data` (its own volume) |
-| Bundled extras | upstream's image already includes messaging (Telegram), Anthropic, OTLP, documents |
+| Bundled extras | upstream's image already includes messaging (Telegram, unused: no token and no network rule), Anthropic, OTLP, documents |
 
 ## Build
 
@@ -62,7 +62,6 @@ connect, and only to:
 | --- | --- | --- |
 | `lm_studio` | `192.0.2.117:1234` (HTTP) | Private address, so pinned with `allowed_ips` |
 | `anthropic` | `api.anthropic.com:443` | Nightly consolidation on Claude |
-| `telegram` | `api.telegram.org:443` | The agent's own bot |
 
 `192.0.2.117` is a placeholder. Put the real LM Studio address in the untracked
 `agents/<name>.local.yaml` (`model.base_url`); `scripts/logos-agent up` then rewrites the `lm_studio`

@@ -97,12 +97,3 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
-  telegram:                        # the agent's own bot
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: read-write
-    binaries:
-      - path: /opt/hermes/tools/python-*/bin/python3*

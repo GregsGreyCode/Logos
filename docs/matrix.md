@@ -1,6 +1,6 @@
 # Matrix: talking to agents privately
 
-Matrix is replacing Telegram as the way people talk to their agents. Unlike Telegram, every message stays on our own machines and is end-to-end encrypted.
+Matrix is how people talk to their agents. Every message stays on our own machines and is end-to-end encrypted. (Telegram, used until 19 Nov 2026, has been removed.)
 
 - **Server:** Continuwuity, in the `logos-matrix` container and volume (`gateway/matrix_host.py`).
   - It listens on localhost, so `tailscale serve` can give it an HTTPS address on the tailnet.
@@ -36,7 +36,7 @@ On its first `up`, the agent gets its own account, `@<name>-agent`. Its login is
 
 - **Encryption:** the agent sets up cross-signing on first connect. It writes a recovery key to `/opt/data/matrix-recovery-key` (mode 0600) and is given that key on every later start, so it stays verified when its sandbox is rebuilt.
 - **Sandbox policy:** the `matrix` rule in `infra/agent-image/policy.yaml` allows encoded slashes in request paths. Matrix secret-storage key IDs need them; without this, cross-signing fails with "Server disconnected".
-- **Reminders and digests:** Telegram is off for every agent since 19 Nov 2026, so scheduled messages (reminders, digests, urgent noticeboard alerts) go to the agent's Matrix `home_room` (`delivery()` in `gateway/agent_runtime.py`).
+- **Reminders and digests:** scheduled messages (reminders, digests, urgent noticeboard alerts) go to the agent's Matrix `home_room` (`delivery()` in `gateway/agent_runtime.py`).
 
 ## Adding a person
 
