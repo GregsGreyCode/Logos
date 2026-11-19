@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import Any, Dict, List, Mapping, Optional
 
 from aiohttp import web
@@ -122,10 +123,36 @@ async def model_server_up(request: web.Request, definition: Mapping[str, Any]) -
     if not base or runtime is None:
         return None
     cache = request.app.setdefault("model_server_up", {})
+    since = request.app.setdefault("model_server_off_since", {})
     now = asyncio.get_running_loop().time()
     if base not in cache or now - cache[base][0] > MODEL_CHECK_SECONDS:
-        cache[base] = (now, await asyncio.to_thread(local_models.reachable, runtime.runner.http, base))
+        up = await asyncio.to_thread(local_models.reachable, runtime.runner.http, base)
+        cache[base] = (now, up)
+        if up:
+            since.pop(base, None)
+        else:
+            since.setdefault(base, time.time())         # first seen off (story D2: "offline since 19:40")
     return cache[base][1]
+
+
+def model_off_since(request: web.Request, definition: Mapping[str, Any]) -> Optional[float]:
+    """When this agent's model server was first seen off (epoch seconds), or None while it is on."""
+    from gateway import local_models
+    base = local_models.server(definition.get("model") or {})
+    return (request.app.get("model_server_off_since") or {}).get(base)
+
+
+async def handle_model(request: web.Request) -> web.Response:
+    """GET /api/v2/model?agent=<name> — is this agent's model server answering? Polled by web chat
+    while a message waits for LM Studio (story D2). Checked at most every 20 seconds."""
+    user = _user(request)
+    agents = await _visible_agents(request, user["username"])
+    name = request.query.get("agent", "")
+    if name not in agents:
+        return web.json_response({"error": "not_found"}, status=404)
+    definition = agents[name]["definition"]
+    up = await model_server_up(request, definition)
+    return web.json_response({"model_up": up, "off_since": model_off_since(request, definition)})
 
 
 async def handle_agents(request: web.Request) -> web.Response:
@@ -329,6 +356,7 @@ async def handle_home(request: web.Request) -> web.Response:
     out: Dict[str, Any] = {"me": user["username"], "agent": {"name": name, "display_name": str(definition.get("display_name") or name),
                                      "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}")},
                            "model_up": await model_server_up(request, definition)}
+    out["model_off_since"] = model_off_since(request, definition)
     if runtime is None:
         out.update(today={"error": "no_backend"}, brain_changes=[])
         return web.json_response(out)
@@ -1019,6 +1047,7 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/people", handle_people)
     app.router.add_get("/api/v2/activity", handle_activity)
     app.router.add_get("/api/v2/home", handle_home)
+    app.router.add_get("/api/v2/model", handle_model)
     app.router.add_get("/api/v2/models", handle_models)
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)

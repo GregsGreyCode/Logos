@@ -107,7 +107,22 @@ def test_a_server_that_stays_off_is_refused_in_plain_words_after_the_wait():
         error = json.loads(r.read())["error"]
         waited = time.monotonic() - started
         assert r.status == 503 and 0.3 < waited < 2
-        assert error["code"] == "model_server_off" and "switched off" in error["message"]
+        assert error["code"] == "model_server_off" and "offline" in error["message"]
+    finally:
+        g.shutdown()
+
+
+def test_after_one_full_wait_the_next_requests_are_answered_at_once():
+    """hermes retries and probes a failed call; those must not each wait another minute."""
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{free_port()}", connect_timeout=0.1,
+                                       wait=0.6, retry_every=0.1))
+    try:
+        times = []
+        for _ in range(3):
+            started = time.monotonic()
+            assert post(g.server_address[1]).status == 503
+            times.append(time.monotonic() - started)
+        assert times[0] > 0.4 and times[1] < 0.3 and times[2] < 0.3
     finally:
         g.shutdown()
 
@@ -188,7 +203,18 @@ def test_a_context_that_stays_full_is_passed_on_after_the_wait():
         g.shutdown(); up.shutdown()
 
 
-def test_the_guard_reports_its_own_health_without_asking_the_model_server():
+def test_health_finds_a_server_that_is_back():
+    up = serve(Upstream)
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{up.server_address[1]}", connect_timeout=0.5))
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+        conn.request("GET", "/guard/health")
+        assert json.loads(conn.getresponse().read()) == {"ok": True, "model_server_off": False, "off_since": None}
+    finally:
+        g.shutdown(); up.shutdown()
+
+
+def test_the_guard_health_reports_an_off_server():
     g = serve(model_guard.make_handler(f"http://127.0.0.1:{free_port()}", connect_timeout=0.2,
                                        wait=0.1, retry_every=0.1))
     try:
@@ -196,10 +222,10 @@ def test_the_guard_reports_its_own_health_without_asking_the_model_server():
             conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
             conn.request("GET", "/guard/health")
             return json.loads(conn.getresponse().read())
-        assert health() == {"ok": True, "model_server_off": False, "off_since": None}
+        h = health()                              # the health check itself finds the server off
+        assert h["ok"] and h["model_server_off"] is True and h["off_since"] > 0
         assert post(g.server_address[1]).status == 503
-        h = health()
-        assert h["model_server_off"] is True and h["off_since"] > 0
+        assert health()["off_since"] == h["off_since"]
     finally:
         g.shutdown()
 

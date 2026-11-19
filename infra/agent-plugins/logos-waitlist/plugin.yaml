@@ -1,0 +1,13 @@
+name: logos-waitlist
+label: Logos waitlist
+kind: standalone
+version: 1.0.0
+description: >
+  Story D2. When the local model (LM Studio) is offline, the person is told at once, the
+  conversation is remembered, and it is answered with hermes' own /retry as soon as the model
+  is back (oldest first, one at a time). Messages older than 12 hours get a short note instead.
+author: Logos
+provides_hooks:
+  - transform_api_error_classification
+  - api_request_error
+  - pre_gateway_dispatch
