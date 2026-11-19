@@ -11,7 +11,8 @@ never does, whatever its definition says (decided 19 Nov).
 
 The private names the filter refuses come from three places, gathered on every ``up``:
 the people's and agents' own names, the titles of the pages in each brain's ``people/``
-folder, and ``~/.config/logos/home-names.txt`` (one name per line; a line starting with
+folder, the names the agents added (``add_private_name``, kept in the ``logos-reader-names``
+volume), and ``~/.config/logos/home-names.txt`` (one name per line; a line starting with
 ``=`` is matched only as written, for names that are also words, like ``=Rose``).
 """
 from __future__ import annotations
@@ -31,6 +32,7 @@ SEARXNG_IMAGE = "searxng/searxng@sha256:ffad724acd87b8dd312328d18da88ddd42e5c4b1
 SEARXNG_UID = "977:977"
 READER = "logos-reader"
 READER_VOLUME = "logos-reader"
+NAMES_VOLUME = "logos-reader-names"      # names the agents added (add_private_name); the only writable place
 READER_IMAGE = "python@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89"  # 3.12-alpine
 SERVICE_FILE = Path(__file__).with_name("web_service.py")
 PORT = 8096
@@ -196,13 +198,19 @@ class WebHost:
         if self._running(READER) and self._label(READER) == stamp:
             return changed
         self._write_volume(READER_VOLUME, "config.json", config, "1000:1000")
+        if self.rt.runner.run(["docker", "volume", "inspect", NAMES_VOLUME]).returncode != 0:
+            self.rt.run(["docker", "volume", "create", NAMES_VOLUME])
+            self.rt.run(["docker", "run", "--rm", "--network", "none", "-v", f"{NAMES_VOLUME}:/v", "alpine:3",
+                         "sh", "-c", "touch /v/added.txt && chown -R 1000:1000 /v && chmod 0600 /v/added.txt"])
         self.rt.run(["docker", "rm", "-f", READER], check=False)
         self.rt.run(["docker", "run", "-d", "--name", READER, "--restart", "unless-stopped",
                      "--label", f"logos.web.stamp={stamp}", "--network", NETWORK, "--user", "1000:1000",
                      "--memory", "128m", "--read-only", "--cap-drop", "ALL",
                      "-p", f"{self.bind_address()}:{PORT}:{PORT}",
-                     "-v", f"{READER_VOLUME}:/data:ro", "-v", f"{SERVICE_FILE}:/app/web_service.py:ro",
+                     "-v", f"{READER_VOLUME}:/data:ro", "-v", f"{NAMES_VOLUME}:/names",
+                     "-v", f"{SERVICE_FILE}:/app/web_service.py:ro",
                      "-e", "WEB_CONFIG=/data/config.json", "-e", f"WEB_PORT={PORT}",
+                     "-e", "WEB_ADDED_NAMES=/names/added.txt",
                      "--entrypoint", "python3", READER_IMAGE, "/app/web_service.py"])
         self._wait()
         return True

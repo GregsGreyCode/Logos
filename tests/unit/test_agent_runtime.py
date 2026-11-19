@@ -588,6 +588,7 @@ network_policies:
             "model": {"default": "some/model", "provider": "lmstudio",
                       "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
             "agent": {"auto_recovery_cycles": 0, "disabled_toolsets": ["web", "browser"]},
+            "tools": {"tool_search": {"enabled": "off"}},
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
             "stt": {"enabled": False}}
