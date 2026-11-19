@@ -361,3 +361,93 @@ def test_reader_config_gives_changes_only_to_agents_that_ask():
     assert cfg["agents"] == {"greg": {"token": "tg"}}
     assert "changes" not in wh.reader_config(agents, {}, [], [], None, {"household": ""})
     assert wh.uses_changes(agents["household"]) and not wh.uses_changes(agents["greg"])
+
+
+# ── feature requests into Docmost (story FR1) ───────────────────────────────
+
+class FakePage:
+    def __init__(self, fail=False):
+        self.entries, self.fail = [], fail
+
+    def append(self, markdown):
+        if self.fail:
+            raise OSError("down")
+        self.entries.append(markdown)
+
+
+ASK = {"kind": "feature", "area": "logos", "title": "Shopping list  in the\nhousehold chat",
+       "details": "Béré wants to add things to a shared shopping list by voice.\n# not a heading"}
+
+
+def test_a_request_becomes_one_entry_at_the_bottom():
+    page = FakePage()
+    r = ws.Requests(page, {"bere": "Béré"}, log=lambda m: None)
+    out = r.file("bere", ASK, now=NOW)
+    assert out["filed"] == "Shopping list in the household chat" and "Requests from agents" in out["where"]
+    (entry,) = page.entries
+    assert entry.startswith("### Shopping list in the household chat\n\n**Feature** · **Logos** · ")
+    assert "asked by Béré (via the bere agent)" in entry
+    assert "\\# not a heading" in entry and entry.endswith("Status: New")
+
+
+def test_requests_refuse_junk_keys_and_floods():
+    page = FakePage()
+    r = ws.Requests(page, {}, log=lambda m: None)
+    for bad in ({**ASK, "kind": "wish"}, {**ASK, "area": "garden"}, {**ASK, "title": ""},
+                {**ASK, "details": "x" * 1600}, {**ASK, "details": "the token is ghp_abcdefghijklmnop"}):
+        with pytest.raises(ws.Refused):
+            r.file("greg", bad, now=NOW)
+    for _ in range(ws.MAX_REQUESTS_A_DAY):
+        r.file("greg", ASK, now=NOW)
+    with pytest.raises(ws.Refused, match="today"):
+        r.file("greg", ASK, now=NOW)
+    r.file("greg", ASK, now=NOW + 86400)                      # a new day
+    with pytest.raises(ws.Refused, match="not saved"):
+        ws.Requests(FakePage(fail=True), {}, log=lambda m: None).file("greg", ASK, now=NOW)
+
+
+def test_the_household_token_lists_and_calls_only_file_request(svc):
+    svc.changes_agents = {"household": {"token": "th"}}
+    assert svc.mcp_agent("th") == (None, False)               # no Docmost: the token opens nothing here
+    page = FakePage()
+    svc.requests = ws.Requests(page, {"household": "the household chat"}, log=lambda m: None)
+    assert svc.mcp_agent("th") == ("household", False) and svc.mcp_agent("tg") == ("greg", True)
+    listed = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, False)
+    assert [t["name"] for t in listed["result"]["tools"]] == ["file_request"]
+    search = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "search_web", "arguments": {"query": "boiler"}}}, False)
+    assert search["error"]["message"] == "unknown tool: search_web" and not svc.seen
+    filed = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+        "name": "file_request", "arguments": ASK}}, False)
+    assert "filed" in filed["result"]["content"][0]["text"] and len(page.entries) == 1
+    tools = ws.handle_rpc(svc, "greg", {"jsonrpc": "2.0", "id": 4, "method": "tools/list"})["result"]["tools"]
+    assert [t["name"] for t in tools] == ["search_web", "add_private_name", "file_request"]
+
+
+def test_docmost_logs_in_again_when_the_session_expires():
+    import urllib.error
+    d = ws.Docmost("https://docs.example", "page1", "logos@example", "pw")
+    calls = []
+
+    def post(path, body):
+        calls.append(path)
+        if path == "/api/pages/update" and calls.count(path) == 2:      # the second append: session expired
+            raise urllib.error.HTTPError(path, 401, "expired", {}, None)
+        return {}
+
+    d._post = post
+    d.append("one")
+    assert calls == ["/api/auth/login", "/api/pages/update"]
+    d.append("two")                                       # session expired: log in, then add it
+    assert calls[2:] == ["/api/pages/update", "/api/auth/login", "/api/pages/update"]
+
+
+def test_reader_config_requests_and_people():
+    agents = {"greg": {"web": {"enabled": True}, "display_name": "Greg's agent"},
+              "household": {"role": "household", "changes": {"enabled": True}}, "dev": {}}
+    dm = {"DOCMOST_URL": "https://docs.example", "DOCMOST_REQUESTS_PAGE": "p1", "DOCMOST_PASSWORD": "secret"}
+    cfg = wh.reader_config(agents, {"greg": "tg"}, [], [], None, {"household": "th"}, dm)
+    assert cfg["requests"] == {"url": "https://docs.example", "page": "p1",
+                               "people": {"greg": "Greg", "household": "the household chat"}}
+    assert "secret" not in json.dumps(cfg)                    # the login goes in its own file, not the config
+    assert "requests" not in wh.reader_config(agents, {}, [], [], None, {}, {"DOCMOST_URL": "x"})
