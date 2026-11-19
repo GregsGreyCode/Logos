@@ -328,7 +328,7 @@ class AgentRuntime:
 
     def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "",
                     voice_token: str = "", calendar_token: str = "", web_token: str = "",
-                    changes_token: str = "") -> str:
+                    changes_token: str = "", house_token: str = "") -> str:
         """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` and
         ``voice_token`` are the agent's own tokens for those services (the file lives in its
         private home volume, next to ``.env``)."""
@@ -386,6 +386,12 @@ class AgentRuntime:
             cfg.setdefault("mcp_servers", {})["calendar"] = {
                 "url": ch.CalendarHost(self).service_url(),
                 "headers": {"Authorization": f"Bearer {calendar_token}"}}
+        hh = _sibling("house_host")
+        if hh.uses_house(agent) and house_token:
+            # The lights, through the Logos house service (docs/house.md). Household agent only.
+            cfg.setdefault("mcp_servers", {})["house"] = {
+                "url": hh.HouseHost(self).url(),
+                "headers": {"Authorization": f"Bearer {house_token}"}}
         wh = _sibling("web_host")
         if wh.uses_web(agent) and web_token:
             # Web search through the web reader, which filters what leaves the house (docs/web-reader.md).
@@ -427,6 +433,8 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/calendar.md").read_text()
         if _sibling("web_host").uses_web(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/web.md").read_text()
+        if _sibling("house_host").uses_house(agent):
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/house.md").read_text()
         wh = _sibling("web_host")
         if (wh.uses_web(agent) or wh.uses_changes(agent)) and (self.repo / "souls/_shared/requests.md").exists():
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/requests.md").read_text()
@@ -511,6 +519,11 @@ class AgentRuntime:
         else:
             cur.pop(ch.TOKEN_ENV, None)
             cur.pop("LOGOS_CALENDAR_URL", None)
+        hh = _sibling("house_host")
+        if hh.uses_house(agent):
+            cur.setdefault(hh.TOKEN_ENV, secrets.token_urlsafe(32))
+        else:
+            cur.pop(hh.TOKEN_ENV, None)
         wh = _sibling("web_host")
         if wh.uses_web(agent):
             cur.setdefault(wh.TOKEN_ENV, secrets.token_urlsafe(32))
@@ -675,6 +688,8 @@ class AgentRuntime:
         * ``noticeboard``: the noticeboard's address, or removed when the agent is not on it.
         * ``voice``: the voice service's address, or removed when the agent has no voice.
         * ``calendar``: the calendar service's address, or removed when the agent has no calendar.
+        * ``house``: the house service's address, or removed unless this is the household agent with
+          ``house`` on. Only the tools for its domains are let through.
         """
         src = self.repo / agent["policy"]
         if not src.exists():
@@ -730,6 +745,18 @@ class AgentRuntime:
             point("calendar", ch.CalendarHost(self).service_url())
         else:
             rules.pop("calendar", None)
+        hh = _sibling("house_host")
+        if hh.uses_house(agent) and "house" in rules:
+            point("house", hh.HouseHost(self).url())
+            domains = hh.agent_settings(agent)["domains"]
+            tools = ([t for t in ("list_lights", "set_lights") if "light" in domains]
+                     + [t for t in ("list_scenes", "activate_scene") if "scene" in domains])
+            for e in rules["house"].get("endpoints") or []:
+                e["rules"] = [{"allow": {"method": m}} for m in
+                              ("initialize", "notifications/initialized", "ping", "tools/list")] + [
+                    {"allow": {"method": "tools/call", "tool": {"any": tools}}}]
+        else:
+            rules.pop("house", None)
         wh = _sibling("web_host")
         if wh.uses_web(agent):
             point("web", wh.WebHost(self).url())
@@ -808,8 +835,11 @@ class AgentRuntime:
                           if l.startswith(wh.TOKEN_ENV + "=")), "")
         changes_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
                               if l.startswith(wh.CHANGES_TOKEN_ENV + "=")), "")
+        hh = _sibling("house_host")
+        house_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
+                            if l.startswith(hh.TOKEN_ENV + "=")), "")
         self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token,
-                                                       changes_token))
+                                                       changes_token, house_token))
         for plugin in LOGOS_PLUGINS:
             for path in sorted((self.repo / "infra" / "agent-plugins" / plugin).iterdir()):
                 if path.is_file():
@@ -835,6 +865,12 @@ class AgentRuntime:
                     print("calendar: started with the current agents")
             except (ch.CalendarError, ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"calendar: {e}")
+        if hh.uses_house(agent):
+            try:
+                if hh.HouseHost(self).up():
+                    print("house: started with the current agents")
+            except (hh.HouseError, ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"house: {e}")
         if wh.uses_web(agent) or wh.uses_changes(agent):     # DC1: the household's /changes token too
             try:
                 if wh.WebHost(self).up():

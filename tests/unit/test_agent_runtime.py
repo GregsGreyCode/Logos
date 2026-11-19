@@ -597,6 +597,51 @@ network_policies:
         assert "web" not in yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
         assert "Noting feature requests" not in r.soul_text(plain)
 
+    POLICY_HOUSE = """
+version: 1
+network_policies:
+  lm_studio:
+    endpoints:
+      - {host: 10.0.0.5, port: 1234, allowed_ips: [10.0.0.5/32]}
+  house:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8098
+        protocol: mcp
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: tools/list}
+          - allow: {method: tools/call, tool: {any: [list_lights, set_lights, list_scenes, activate_scene]}}
+"""
+
+    def test_house_only_for_the_household_agent(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_HOUSE)
+        (repo / "souls/_shared/house.md").write_text("## The lights\n")
+        r = rt(repo)
+        base = r.load("alpha")
+        # A person's agent never gets it, even when its definition asks.
+        for agent in (base, {**base, "house": {"enabled": True}}, {**base, "role": "household"}):
+            assert "LOGOS_HOUSE_TOKEN" not in r.env_file(agent, "logos-home-alpha")
+            assert "house" not in (yaml.safe_load(r.config_text("alpha", agent, house_token="th")).get("mcp_servers") or {})
+            assert "house" not in yaml.safe_load(r.policy_path("alpha", agent).read_text())["network_policies"]
+            assert "The lights" not in r.soul_text(agent)
+        house = {**base, "role": "household", "house": {"enabled": True}}
+        assert "LOGOS_HOUSE_TOKEN=" in r.env_file(house, "logos-home-alpha")
+        cfg = yaml.safe_load(r.config_text("alpha", house, house_token="th"))
+        assert cfg["mcp_servers"]["house"] == {"url": "http://172.17.0.1:8098/mcp",
+                                               "headers": {"Authorization": "Bearer th"}}
+        assert "The lights" in r.soul_text(house)
+        ep = yaml.safe_load(r.policy_path("alpha", house).read_text())["network_policies"]["house"]["endpoints"][0]
+        assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8098, ["172.17.0.1/32"])
+        assert ep["rules"][-1] == {"allow": {"method": "tools/call", "tool": {"any": [
+            "list_lights", "set_lights", "list_scenes", "activate_scene"]}}}
+        # Lights only: the scene tools are not let through the sandbox rule either.
+        lights = {**house, "house": {"enabled": True, "domains": ["light"]}}
+        ep = yaml.safe_load(r.policy_path("alpha", lights).read_text())["network_policies"]["house"]["endpoints"][0]
+        assert ep["rules"][-1]["allow"]["tool"] == {"any": ["list_lights", "set_lights"]}
+
     def test_changes_token_url_and_policy_only_when_asked(self, repo):
         path = repo / "infra/agent-image/policy.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)
