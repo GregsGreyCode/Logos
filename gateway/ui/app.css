@@ -395,3 +395,14 @@ ul.plain code { color: var(--muted); }
   .side .toggle { min-height: 44px; font-size: 15px; color: var(--ink); }
   .side .toggle input { width: 20px; height: 20px; }
 }
+
+/* Markdown in replies and brain pages: tables, to-dos, numbered lists */
+.md-table { overflow-x: auto; margin: 0 0 10px; }
+.md-table table { min-width: 0; width: auto; border-collapse: collapse; font-size: 14px; }
+.md-table th, .md-table td { padding: 6px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+.md-table th { background: var(--raised); color: var(--ink); }
+li.todo { list-style: none; margin-left: -18px; }
+li.todo .box { color: var(--muted); }
+li.todo.done { color: var(--muted); text-decoration: line-through; }
+.msg ol, .doc ol { margin: 0 0 10px; padding-left: 22px; }
+.md-table th, .md-table td { overflow-wrap: normal; word-break: normal; min-width: 5em; }
