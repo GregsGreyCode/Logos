@@ -157,6 +157,9 @@ def repo(tmp_path):
     (jobs / "morning_briefing.md").write_text("Morning briefing.\n")
     (jobs / "briefing_check.py").write_text("print('')\n")
     (jobs / "carry_monitor_state.py").write_text("print('')\n")
+    (jobs / "changes_facts.py").write_text("# facts\n")
+    (jobs / "changes_check.py").write_text("# check\n")
+    (jobs / "changes_summary.md").write_text("Daily changes.\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
@@ -659,6 +662,29 @@ network_policies:
         assert art.minutes_later("55 6 * * 1-5") == "10 7 * * 1-5"
         own = {**agent, "briefing": {"weekdays": "30 6 * * 1-5"}}
         assert art.briefing(own) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6"}
+
+    def test_daily_changes_jobs(self, repo):
+        runner = FakeRunner()
+        r = rt(repo, runner)
+        agent = {**r.load("alpha"), "role": "household", "matrix": {"enabled": True}, "changes": {"enabled": True}}
+        r.ensure_jobs("alpha", agent, "logos-home-alpha")
+        cmds = [c[-1] for c in runner.matching("openshell", "sandbox", "exec")]
+        created = [c for c in cmds if "cron create" in c]
+        want = {"changes-homelab": ("changes_homelab.py", '"0 16 * * *"'),
+                "changes-logos": ("changes_logos.py", '"5 16 * * *"'),
+                "changes-homelab-week": ("changes_homelab_week.py", '"10 16 * * 0"'),
+                "changes-logos-week": ("changes_logos_week.py", '"15 16 * * 0"')}
+        for job, (script, when) in want.items():
+            (c,) = [c for c in created if f"--name {job} " in c]
+            assert f"--script {script}" in c and when in c and "--no-agent" not in c
+            assert "--catch-up off" in c and "--deliver matrix" in c and "--failure-deliver local" in c
+        (check,) = [c for c in created if "--name changes-check " in c]
+        assert "--no-agent --script changes_check.py" in check and '"20 16 * * *"' in check
+        assert set(want) | {"changes-check"} <= set(art.MANAGED_JOBS)
+        assert art.changes_jobs({**agent, "matrix": {}}) == []             # nowhere to post: no jobs
+        assert art.changes_jobs({**agent, "changes": {}}) == []
+        assert [j for j, _, _ in art.changes_jobs({**agent, "changes": {"enabled": True, "weekly": False}})] == [
+            "changes-homelab", "changes-logos", "changes-check"]
 
     def test_monitor_state_is_carried_across_job_recreation(self, repo):
         runner = FakeRunner()

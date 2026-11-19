@@ -51,7 +51,11 @@ MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the br
 RESET_PLUGIN = "hermes-session-reset-policy"
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
-                "morning-briefing-weekend-check")
+                "morning-briefing-weekend-check", "changes-homelab", "changes-logos", "changes-homelab-week",
+                "changes-logos-week", "changes-check")
+# Story DC2: the daily changes. One script under four names (it reads its own name), so each job
+# fetches its own list. Spaced five minutes apart so LM Studio writes one at a time.
+CHANGES_SCRIPTS = ("changes_homelab.py", "changes_logos.py", "changes_homelab_week.py", "changes_logos_week.py")
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -91,6 +95,24 @@ def briefing(agent: Mapping[str, Any]) -> Mapping[str, Any]:
     if not cfg.get("enabled", bool(person)) or delivery(agent) == "local" or agent.get("role") == "household":
         return {}
     return {"weekdays": cfg.get("weekdays", "0 7 * * 1-5"), "weekends": cfg.get("weekends", "0 9 * * 0,6")}
+
+
+def changes_jobs(agent: Mapping[str, Any]) -> list:
+    """[(job, script, schedule)] for the daily changes, or [] (story DC2).
+
+    Only for an agent with ``changes: {enabled: true}`` that can post to Matrix (the household
+    agent, in the group chat). Daily at 16:00 (homelab) and 16:05 (Logos); the week's roll-up on
+    Sundays at 16:10 and 16:15 (``weekly: false`` turns it off). ``changes-check`` at 16:20 sends
+    the plain list for any that did not go out."""
+    cfg = agent.get("changes") or {}
+    if not cfg.get("enabled") or delivery(agent) == "local":
+        return []
+    jobs = [("changes-homelab", "changes_homelab.py", cfg.get("homelab", "0 16 * * *")),
+            ("changes-logos", "changes_logos.py", cfg.get("logos", "5 16 * * *"))]
+    if cfg.get("weekly", True):
+        jobs += [("changes-homelab-week", "changes_homelab_week.py", cfg.get("homelab_week", "10 16 * * 0")),
+                 ("changes-logos-week", "changes_logos_week.py", cfg.get("logos_week", "15 16 * * 0"))]
+    return jobs + [("changes-check", "changes_check.py", cfg.get("check", "20 16 * * *"))]
 
 
 def minutes_later(schedule: str, minutes: int = 15) -> Optional[str]:
@@ -526,8 +548,10 @@ class AgentRuntime:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
         for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
                        "noticeboard_urgent.py", "briefing_today.py", "briefing_check.py",
-                       "carry_monitor_state.py"):
+                       "carry_monitor_state.py", "changes_facts.py", "changes_check.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
+        for script in CHANGES_SCRIPTS:
+            self.put(home, f"scripts/{script}", (self.jobs_dir / "changes_facts.py").read_text(), mode="0750")
         if not self.wait_api(name):
             print("warning: hermes API did not come up; brain jobs not installed", file=sys.stderr)
             return
@@ -589,6 +613,19 @@ class AgentRuntime:
                     self.sbx(name, f'{HERMES} cron create --name {job}-check --no-agent --script briefing_check.py '
                                    f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
                                    f'--failure-deliver local "{check}"')
+        for job, script, when in changes_jobs(agent):
+            # Story DC2: what changed in the homelab and in Logos, in the group chat. The script puts
+            # the list into the prompt, or skips the model when nothing changed; changes-check sends
+            # the plain list for any that did not go out. Missed while the machine was off: skipped.
+            if job == "changes-check":
+                self.sbx(name, f'{HERMES} cron create --name {job} --no-agent --script {script} '
+                               f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
+                               f'--failure-deliver local "{when}"')
+            else:
+                self.sbx(name, f'{HERMES} cron create --name {job} --script {script} --workdir /opt/data/brain '
+                               f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
+                               f'--failure-deliver local "{when}" "$(cat)"',
+                         input=(self.jobs_dir / "changes_summary.md").read_text())
         self.sbx(name, f"{HERMES_PY} restore")
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
