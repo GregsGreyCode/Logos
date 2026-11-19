@@ -294,6 +294,9 @@ class AgentRuntime:
         # twenty seconds). hermes would otherwise keep trying in the background for some
         # eight more minutes, during which the person hears nothing.
         cfg["agent"] = {"auto_recovery_cycles": 0}
+        # Nothing in the sandbox may call home: no update checks, no model catalogue download.
+        cfg["updates"] = {"check": False}
+        cfg["model_catalog"] = {"enabled": False}
         # No "gateway shutting down / back online" messages to the person on every rebuild.
         for platform in ("telegram", "matrix"):
             if (agent.get(platform) or {}).get("enabled"):
@@ -329,7 +332,8 @@ class AgentRuntime:
         if vh.uses_voice(agent) and voice_token:
             # Voice notes are turned into text by the shared voice service (docs/voice.md).
             # hermes calls it as an OpenAI-style transcription endpoint.
-            cfg["stt"] = {"enabled": True, "provider": "openai",
+            # echo_transcripts off: the agent answers a voice note without first posting what it heard.
+            cfg["stt"] = {"enabled": True, "provider": "openai", "echo_transcripts": False,
                           "openai": {"api_key": voice_token, "base_url": vh.VoiceHost(self).base_url(),
                                      "model": "whisper-1"}}
         else:
