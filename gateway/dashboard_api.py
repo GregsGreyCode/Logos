@@ -724,8 +724,33 @@ def models_status(runtime: Any, definitions: Mapping[str, Mapping[str, Any]]) ->
             {"name": "Noticeboard", "what": "messages between agents",
              "up": _alive(http, f"http://{bind}:{noticeboard_host.PORT}/health")},
             {"name": "Dashboard", "what": "this page and web chat", "up": True},
-        ],
+        ] + _house_services(runtime, http, bind),
+        # Which agents' sandboxes are Ready: an agent whose sandbox is gone answers nobody.
+        "sandboxes": _sandboxes(runtime, definitions),
     }
+
+
+#: Services checked only where their container exists (dev may not run them all).
+HOUSE_SERVICES = (
+    ("logos-matrix", "Matrix", "chat with the agents (Element X)", "http://127.0.0.1:6167/_matrix/client/versions"),
+    ("logos-calendar", "Calendar server", "the calendars the phones sync", "http://127.0.0.1:5232/"),
+    ("logos-calendar-service", "Calendar service", "how agents use the calendars", "http://{bind}:8095/health"),
+    ("logos-sync", "Syncthing", "brains to the phones for Obsidian", "http://127.0.0.1:8384/rest/noauth/health"),
+)
+
+
+def _house_services(runtime: Any, http, bind: str) -> List[dict]:
+    names = set(runtime.run(["docker", "ps", "-a", "--format", "{{.Names}}"], check=False).split())
+    return [{"name": label, "what": what, "up": _alive(http, url.format(bind=bind))}
+            for container, label, what, url in HOUSE_SERVICES if container in names]
+
+
+def _sandboxes(runtime: Any, definitions: Mapping[str, Any]) -> Dict[str, bool]:
+    try:
+        phases = runtime.phases()
+    except Exception:
+        phases = {}
+    return {name: phases.get(name) == "Ready" for name in sorted(definitions)}
 
 
 def answering_now(agent: dict, server_up: Optional[bool]) -> dict:
