@@ -34,7 +34,14 @@ button:disabled { cursor: default; opacity: 0.55; }
   border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 22px; }
 .brand { font-weight: 600; font-size: 20px; letter-spacing: -0.01em; }
 .brand-row { display: flex; align-items: center; gap: 10px; padding: 0 10px; }
-.logo { width: 28px; height: 28px; object-fit: contain; flex: none; }
+/* The Logos mark: grey at rest; while an agent works on a reply it cycles through colours,
+   like the login page's logo. With Reduce motion it just shows its colour, without cycling. */
+.logo { width: 28px; height: 28px; object-fit: contain; flex: none; filter: grayscale(1) brightness(1.5);
+  transition: filter 0.6s ease; }
+:root[data-theme="light"] .logo { filter: grayscale(1) brightness(0.55); }
+.logo.busy { filter: none; animation: logo-cycle 6s linear infinite; }
+@keyframes logo-cycle { from { filter: hue-rotate(0deg) brightness(1.15); } to { filter: hue-rotate(360deg) brightness(1.15); } }
+@media (prefers-reduced-motion: reduce) { .logo.busy { animation: none; } }
 .nav-links { display: flex; flex-direction: column; gap: 2px; }
 .nav-links a { display: flex; align-items: center; justify-content: space-between; min-height: 44px;
   padding: 0 10px; border-radius: 8px; color: var(--ink); text-decoration: none; }
@@ -264,7 +271,8 @@ ul.plain code { color: var(--muted); }
 /* ── the frame on a phone (S6.8): top bar, bottom tab bar, panels ─────────────── */
 .topbar, .tabbar, .sheet, .scrim { display: none; }
 .empty::before { content: ""; display: block; width: 56px; height: 56px; margin: 0 auto 14px;
-  background: url("/static/logo.svg") center / contain no-repeat; }
+  background: url("/static/logo.svg") center / contain no-repeat; filter: grayscale(1) brightness(1.5); opacity: 0.7; }
+:root[data-theme="light"] .empty::before { filter: grayscale(1) brightness(0.55); }
 .danger-text { color: var(--bad) !important; }
 .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--brand-gradient); color: #ffffff;
   font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; flex: none; }
