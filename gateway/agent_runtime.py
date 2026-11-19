@@ -812,7 +812,7 @@ class AgentRuntime:
                     print("calendar: started with the current agents")
             except (ch.CalendarError, ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"calendar: {e}")
-        if wh.uses_web(agent):
+        if wh.uses_web(agent) or wh.uses_changes(agent):     # DC1: the household's /changes token too
             try:
                 if wh.WebHost(self).up():
                     print("web reader: started with the current agents")

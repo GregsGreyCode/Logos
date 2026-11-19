@@ -815,6 +815,20 @@ network_policies:
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out
 
+    def test_up_starts_the_web_reader_for_a_changes_only_agent(self, repo, monkeypatch):
+        # DC1: the household agent has no web search but needs the reader for /changes, and the
+        # reader must start after the agent's .env (with its changes token) is written.
+        web_host = art._sibling("web_host")          # the copy the runtime itself uses
+        runner = FakeRunner()
+        r = rt(repo, runner)
+        started = []
+        monkeypatch.setattr(web_host.WebHost, "up", lambda self: started.append(len(runner.calls)) or False)
+        (repo / "agents" / "alpha.yaml").write_text((repo / "agents" / "alpha.yaml").read_text()
+                                                    + "changes:\n  enabled: true\n")
+        assert r.up("alpha") == 0
+        env_written = next(i for i, c in enumerate(runner.calls) if c[:2] == ["docker", "run"] and "cat > /v/.env" in c[-1])
+        assert started and started[0] > env_written
+
     def test_up_replaces_an_existing_sandbox(self, repo):
         runner = FakeRunner("alpha  openshell  then  Ready\n", volumes=["logos-home-alpha", "logos-brain-alpha"])
         assert rt(repo, runner).up("alpha") == 0
