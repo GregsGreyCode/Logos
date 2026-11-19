@@ -62,6 +62,30 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
+  web:                             # web search through the Logos web reader (gateway/web_service.py),
+                                   # which filters what leaves the house. Inspected as MCP: only the
+                                   # handshake, the tool list and search_web get through.
+                                   # logos-agent fills in the address, or removes this rule.
+    endpoints:
+      - host: 192.0.2.1
+        port: 8096
+        protocol: mcp
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        mcp:
+          versions: ["2025-03-26", "2025-06-18", "2025-11-25"]
+        rules:
+          - allow: {method: initialize}
+          - allow: {method: notifications/initialized}
+          - allow: {method: ping}
+          - allow: {method: tools/list}
+          - allow:
+              method: tools/call
+              tool:
+                any: [search_web]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   calendar:                        # the household's calendars, through the Logos calendar service
                                    # (gateway/calendar_service.py). Inspected as MCP: only the
                                    # handshake, the tool list and its six tools get through.
