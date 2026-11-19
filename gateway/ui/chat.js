@@ -1,5 +1,5 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
-import { h, api, getJSON, when, markdown } from './util.js';
+import { h, api, getJSON, when, markdown, working } from './util.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
@@ -122,6 +122,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
 
   let waiting = false;           // true while waiting for a reply the stream did not deliver
   function setBusy(busy) {
+    working('chat', busy);
     send.disabled = busy || waiting || readOnly || !agent.running;
     input.disabled = readOnly || !agent.running;
     mic.disabled = readOnly || !agent.running;
@@ -434,5 +435,5 @@ export async function chatView(root, [agentArg, chatArg], state) {
     }
   }
   input.focus();
-  return () => { alive = false; stopRecording(); document.removeEventListener('keydown', onKey); };
+  return () => { alive = false; stopRecording(); working('chat', false); document.removeEventListener('keydown', onKey); };
 }
