@@ -29,7 +29,7 @@ def sent_today(jobs, today):
 
 def plain(today, e):
     sky, evs = bt.weather(e), bt.events(e, today)
-    first = f"{today:%A} {today.day} {today:%B}." + (f" {sky}." if sky else "")
+    first = f"**{today:%A} {today.day} {today:%B}.**" + (f" {sky}." if sky else "")
     lines = [first]
     if evs is None:
         lines.append("I couldn't read the calendar this morning.")
@@ -40,7 +40,6 @@ def plain(today, e):
             lines.append(f"{t}{ev['title']}" + (f", {ev['location']}" if ev.get("location") else ""))
         if not mine:
             lines.append("Nothing in the calendar today.")
-    lines.append("(Plain version: I couldn't write this morning's briefing.)")
     return "\n".join(lines)
 
 

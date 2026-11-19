@@ -95,11 +95,11 @@ def test_plain_version(bt):
     bc = load("briefing_check")
     bc.bt = bt
     assert bc.plain(TODAY, ENV).splitlines() == [
-        "Thursday 19 November. Rain, 6 to 10°C, 100% chance of rain.",
+        "**Thursday 19 November.** Rain, 6 to 10°C, 100% chance of rain.",
         "Holiday", "16:30 Dentist, Smile Clinic", "18:00 Boiler service",
-        "(Plain version: I couldn't write this morning's briefing.)"]
+        ]
     bt.state["events"], bt.state["weather"] = [], None
-    assert bc.plain(TODAY, ENV).splitlines()[:2] == ["Thursday 19 November.", "Nothing in the calendar today."]
+    assert bc.plain(TODAY, ENV).splitlines()[:2] == ["**Thursday 19 November.**", "Nothing in the calendar today."]
     bt.state["events"] = None
     assert "I couldn't read the calendar this morning." in bc.plain(TODAY, ENV)
 

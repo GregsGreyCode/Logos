@@ -143,6 +143,11 @@ def test_weather_line():
     assert ws.weather_line(FORECAST) == "Light rain, 7 to 12°C, 70% chance of rain, windy (up to 31 mph)"
     calm = {"daily": {**FORECAST["daily"], "weather_code": [0], "wind_speed_10m_max": [8]}}
     assert ws.weather_line(calm) == "Clear sky, 7 to 12°C, 70% chance of rain"
+    certain = {"daily": {**FORECAST["daily"], "weather_code": [63], "precipitation_probability_max": [100]}}
+    assert ws.weather_line(certain).startswith("Rain, 7 to 12°C") and "chance" not in ws.weather_line(certain)
+    dry = {"daily": {**FORECAST["daily"], "weather_code": [1], "precipitation_probability_max": [10],
+                     "wind_speed_10m_max": [5]}}
+    assert ws.weather_line(dry) == "Mostly clear, 7 to 12°C"
 
 
 def test_weather_is_cached_for_an_hour_and_survives_an_outage():

@@ -3,20 +3,21 @@
 Stories D1 and D2 (the **Model downtime** tab of the spec doc). All agents think with LM Studio
 on Greg's PC. The PC is usually on, but LM Studio is closed while Greg is gaming, and two large
 requests at once can fill its shared context. The brain stays local, so there is no cloud
-fallback: agents wait, and nothing is lost.
+fallback: agents wait, and nothing is lost. People see this as "the AI computer is off"
+(docs/messages.md).
 
 ## What happens
 
 | Moment | What happens |
 | --- | --- |
 | LM Studio reloads, closes briefly, or its context is full | The model guard waits up to a minute and sends the request again. The reply is just slower. |
-| Still offline after that minute | The person gets one line at once: "My model is offline right now (LM Studio isn't running), so I can't reply yet. I'll answer this as soon as it's back." |
-| Offline for over 2 minutes | The household agent tells the household group chat; again when it is back. |
+| Still offline after that minute | The person gets one line at once: "I can't answer right now: the AI computer is off. I'll reply here as soon as it's back on." Once the group chat has been told (next row), the household agent answers in the group with one short line instead: "Noted. I'll answer this when the AI computer is back on." |
+| Offline for over 2 minutes | The household agent tells the household group chat ("**The AI computer is off.** ..."); again when it is back on. |
 | LM Studio is back | Each agent answers its waiting conversations by itself, oldest first, one at a time (within about 30 seconds). |
 | A message waited over 12 hours | A short note instead of an answer: ask again if you still need it. |
 | Scheduled jobs | The weekly digest runs again the same day; the nightly brain tidy before 09:00. The morning briefing has already sent its plain version at 07:15. |
 | Noticeboard requests | Checked again every half hour until the agent has read them. |
-| Web chat (dashboard) | The message waits on the page (keep it open) and is sent by itself when LM Studio is back. Home says "LM Studio offline since 19:40". |
+| Web chat (dashboard) | The message waits on the page (keep it open) and is sent by itself when LM Studio is back. Home says "The AI computer is off since 19:40". |
 
 ## The parts
 
