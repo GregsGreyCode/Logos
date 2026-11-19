@@ -65,6 +65,11 @@ CONFIG_VERSION = 53
 
 Data = Union[str, bytes]
 
+# Each sandbox's ceiling (OpenShell --cpu / --memory). The VM has 4 cores and 8 GB; an agent
+# normally uses well under 0.5 GB, so these only stop one runaway agent starving the others.
+# Override per agent with `resources: {cpu: "1", memory: "1Gi"}` in its definition.
+DEFAULT_LIMITS = {"cpu": "2", "memory": "2Gi"}
+
 
 def delivery(agent: Mapping[str, Any]) -> str:
     """Where scheduled jobs send what they have to say: Matrix, else nowhere."""
@@ -597,6 +602,8 @@ class AgentRuntime:
                "--driver-config-json", json.dumps(mounts_config(name))]
         for p in agent.get("providers") or []:
             cmd += ["--provider", p]
+        limits = {**DEFAULT_LIMITS, **(agent.get("resources") or {})}
+        cmd += ["--cpu", str(limits["cpu"]), "--memory", str(limits["memory"])]
         return cmd + ["--", "sh", "-c", START]
 
     def down(self, name: str) -> None:
