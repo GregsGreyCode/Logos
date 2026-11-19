@@ -156,6 +156,7 @@ def repo(tmp_path):
     (jobs / "briefing_today.py").write_text("print('Weather: dry.')\n")
     (jobs / "morning_briefing.md").write_text("Morning briefing.\n")
     (jobs / "briefing_check.py").write_text("print('')\n")
+    (jobs / "carry_monitor_state.py").write_text("print('')\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
@@ -632,6 +633,17 @@ network_policies:
         assert art.minutes_later("55 6 * * 1-5") == "10 7 * * 1-5"
         own = {**agent, "briefing": {"weekdays": "30 6 * * 1-5"}}
         assert art.briefing(own) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6"}
+
+    def test_monitor_state_is_carried_across_job_recreation(self, repo):
+        runner = FakeRunner()
+        r = rt(repo, runner)
+        r.ensure_jobs("alpha", {**r.load("alpha"), "noticeboard": True}, "logos-home-alpha")
+        cmds = [c[-1] for c in runner.matching("openshell", "sandbox", "exec")]
+        save = next(i for i, c in enumerate(cmds) if "carry_monitor_state.py save" in c)
+        restore = next(i for i, c in enumerate(cmds) if "carry_monitor_state.py restore" in c)
+        created = [i for i, c in enumerate(cmds) if "cron create" in c]
+        assert save < min(created) and restore > max(created)
+        assert "/opt/hermes/.venv/bin/python" in cmds[save]
 
     def test_no_briefing_for_household_without_matrix_or_person_or_when_off(self, repo):
         person = {"calendar": {"enabled": True, "person": "greg"}, "matrix": {"enabled": True}}
