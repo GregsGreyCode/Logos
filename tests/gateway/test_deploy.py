@@ -106,3 +106,45 @@ def test_start_refuses_while_an_update_runs(monkeypatch):
     monkeypatch.setattr(updates, "unit_active", lambda: True)
     monkeypatch.setattr(updates, "_run", lambda *a, **k: pytest.fail("must not start a second update"))
     assert "already running" in updates.start()
+
+
+def _repo(tmp_path):
+    import subprocess
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    run("init", "-q", "-b", "v2")
+    run("config", "user.email", "t@example.org"); run("config", "user.name", "t")
+    shas = []
+    for i in range(3):
+        (repo / "f.txt").write_text(str(i))
+        run("add", "f.txt"); run("commit", "-q", "-m", f"c{i}")
+        shas.append(run("rev-parse", "HEAD"))
+    run("update-ref", "refs/remotes/origin/v2", shas[2])
+    run("checkout", "-q", "-b", "other", shas[0])
+    (repo / "f.txt").write_text("x"); run("commit", "-qam", "off v2")
+    stray = run("rev-parse", "HEAD")
+    run("checkout", "-q", "v2")
+    return repo, shas, stray
+
+
+def test_resolve_target_accepts_only_commits_of_v2(deploy, tmp_path, monkeypatch):
+    repo, shas, stray = _repo(tmp_path)
+    monkeypatch.setattr(deploy, "REPO", repo)
+    assert deploy.resolve_target(shas[1][:7]) == shas[1]
+    with pytest.raises(deploy.Refused, match="not part of origin/v2"):
+        deploy.resolve_target(stray)
+    with pytest.raises(deploy.Refused, match="not a commit"):
+        deploy.resolve_target("nonsense")
+
+
+def test_previous_is_where_the_last_deploy_started(deploy, tmp_path, monkeypatch):
+    repo, shas, _ = _repo(tmp_path)
+    monkeypatch.setattr(deploy, "REPO", repo)
+    log = tmp_path / "deploy.log"
+    monkeypatch.setattr(deploy, "LOG", log)
+    with pytest.raises(deploy.Refused, match="No deploy"):
+        deploy.resolve_target("previous")
+    log.write_text(f"2026-11-18T10:00:00Z {shas[0][:7]} -> {shas[1][:7]} x\n"
+                   f"2026-11-19T10:00:00Z {shas[1][:7]} -> {shas[2][:7]} y\n")
+    assert deploy.resolve_target("previous") == shas[1]
