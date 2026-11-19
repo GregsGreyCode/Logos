@@ -35,8 +35,8 @@ HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", 
        "transfer-encoding", "upgrade", "host", "content-length"}
 HEALTH_PATH = "/guard/health"
 # What the person reads when a reply cannot be written (story D2: the agent answers later by itself).
-OFF_MESSAGE = ("My model is offline right now (LM Studio isn't running), so I can't reply yet. "
-               "I'll answer this as soon as it's back.")
+OFF_MESSAGE = ("I can't answer right now: the AI computer is off. "
+               "I'll reply here as soon as it's back on.")
 
 
 OPTIONS_TTL = 600.0                     # how long a model's reasoning options are remembered

@@ -59,7 +59,7 @@ logos/
 ├── assets/                   logo, icons, web app manifest, login stylesheet
 │
 ├── docs/
-│   ├── *.md                  one page per service (calendar, matrix, web-reader, house, backups, …)
+│   ├── *.md                  one page per service (calendar, matrix, web-reader, house, messages, backups, …)
 │   ├── adr/, architecture/   decisions and architecture notes
 │   ├── project/              this file
 │   └── archive/v1/           v1 planning, design and migration documents, history only

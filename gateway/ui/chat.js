@@ -94,7 +94,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
   try { agents = (await getJSON('/api/v2/agents')).agents; } catch (e) { /* shown below */ }
   if (!agents.length) {
     root.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'No agents yet'),
-      h('p', {}, 'No agent is set up for your account. On the server, an agent is created with scripts/logos-agent up <name>.')));
+      h('p', {}, 'No agent is set up for your account yet. Ask Greg to set one up.')));
     return () => {};
   }
   const agent = agents.find((a) => a.name === agentArg) || agents[0];
@@ -118,9 +118,9 @@ export async function chatView(root, [agentArg, chatArg], state) {
   // Shown while the local model server is not answering (LM Studio closed, or that machine off).
   // With a paid fallback the agent still answers while the local model is off.
   const modelStatus = agent.has_backup
-    ? h('div', { class: 'model-line', role: 'status', hidden: true }, 'Local model off: a backup model replies')
+    ? h('div', { class: 'model-line', role: 'status', hidden: true }, 'The AI computer is off: a backup model is replying')
     : h('div', { class: 'model-line down', role: 'status', hidden: true },
-      'LM Studio is offline: no replies until it is back.');
+      'The AI computer is off: no replies until it\'s back on.');
   const modelOff = (off) => { modelStatus.hidden = !off; };
   modelOff(agent.model_up === false);
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -226,7 +226,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
     const mine = log.lastElementChild;
     const cancel = h('button', { type: 'button', class: 'btn small' }, 'Cancel');
     const note = h('div', { class: 'msg waiting', role: 'status' },
-      h('span', {}, 'LM Studio is offline. This message will be sent when it is back (keep this page open). '), cancel);
+      h('span', {}, 'The AI computer is off. This message will be sent when it\'s back on (keep this page open). '), cancel);
     log.append(note);
     setBusy(false);
     scroll();
@@ -472,7 +472,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
     h('h2', { class: 'label' }, 'Earlier conversations'), convs);
 
   emptyState();
-  if (!agent.running) log.replaceChildren(h('div', { class: 'notice' }, `${agent.display_name} is not running. Start it on the server with: scripts/logos-agent up ${agent.name}`));
+  if (!agent.running) log.replaceChildren(h('div', { class: 'notice' }, `${agent.display_name} is not running right now, so it can't answer. Greg can start it again.`));
   setBusy(false);
   const conversations = await loadConversations();
   if (chatArg && conversations) await openConversation(conversations);

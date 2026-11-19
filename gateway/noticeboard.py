@@ -269,8 +269,9 @@ class Board:
             lines = []
             for r in rows:
                 who = self.display(r["sender"])
-                tail = (f" (request {r['id']}: tell your agent what to answer)" if r["kind"] in REQUEST_KINDS else "")
-                lines.append(f"Urgent from {who}: {r['text']}{tail}")
+                # Read by the person, from their own agent: no ids, no "tell your agent".
+                tail = " Reply here with your answer." if r["kind"] in REQUEST_KINDS else ""
+                lines.append(f"**Urgent, from {who}:** {r['text']}{tail}")
                 self.db.execute("UPDATE messages SET urgent_told_at = ? WHERE id = ?", (now, r["id"]))
                 self._event(me, "urgent_told", id=r["id"])
             self.db.commit()

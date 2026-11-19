@@ -6,13 +6,18 @@ Weekly digest for your person. Work only inside /opt/data/brain and only read; c
    pages changed. Open the changed pages under people/, projects/ and topics/ that matter.
 3. Read topics/open-questions.md if it exists.
 
-Then write the digest, in plain text for a phone screen, at most 12 short lines:
+Then write the digest for a phone screen, at most 12 short lines, no emoji:
 
-- First line: "Your week in brief" and the date range.
-- "New this week": the 3 to 5 most useful things that were learned or decided. Facts, not
-  activity ("Wedding speech: first draft outline agreed", not "edited a page").
-- "Still open": up to 3 questions or loose ends waiting on them, if any.
-- "Coming up": anything with a date in the next 7 days, if any.
+- First line, in bold: "Your week" and the date range ("**Your week, 13 to 19 November**").
+  In the household group chat (the household agent) say "**The household's week, ...**".
+- "New this week" on a line of its own, then "- " bullets: the 3 to 5 most useful things that
+  were learned or decided. Facts, not activity ("Wedding speech: first draft outline agreed",
+  not "edited a page").
+- "Still open": up to 3 questions or loose ends, saying who each one waits on ("Greg: book the
+  boiler service"), if any.
+- "Coming up": anything with a date in the next 7 days, with the day ("Saturday 21: dinner at
+  Sam's"), if any.
 
+Never mention the brain, pages, files or folders by name; say what they contain.
 Use only what is written in the brain. Do not invent or pad. Leave out a section that has
 nothing in it. If nothing at all was added this week, reply with exactly [SILENT].

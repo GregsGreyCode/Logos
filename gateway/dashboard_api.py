@@ -434,13 +434,25 @@ async def handle_activity(request: web.Request) -> web.Response:
 # ── agent status ─────────────────────────────────────────────────────────────
 
 JOB_LABELS = {
-    "consolidate": "Tidy the brain",
+    "consolidate": "Tidy the brain (nightly)",
     "brain-commit": "Save brain history",
     "brain-index": "Refresh the list of pages it knows",
-    "noticeboard-check": "Check the noticeboard",
+    "noticeboard-check": "Check messages from the other agents",
     "noticeboard-urgent": "Watch for urgent messages",
-    "weekly-digest": "Weekly digest",
+    "weekly-digest": "Sunday summary of the week",
+    "morning-briefing": "Morning briefing (weekdays)",
+    "morning-briefing-weekend": "Morning briefing (weekends)",
+    "morning-briefing-check": "Send a plain briefing if the weekday one failed",
+    "morning-briefing-weekend-check": "Send a plain briefing if the weekend one failed",
+    "rerun-after-outage": "Catch up on jobs missed while the AI computer was off",
+    "model-watch": "Tell the group when the AI computer goes off or comes back",
+    "changes-daily": "What changed today (16:00)",
+    "changes-week": "What changed this week (Sundays)",
+    "changes-check": "Send a plain list if the changes post failed",
 }
+#: Jobs Logos installs and replaces on every update. Anything else is a reminder an agent set,
+#: which its person may cancel. Kept in step with gateway/agent_runtime.py MANAGED_JOBS (tested).
+MANAGED = set(JOB_LABELS) | {"changes-homelab", "changes-logos", "changes-homelab-week", "changes-logos-week"}
 
 
 def parse_jobs(listing: str) -> List[dict]:
@@ -470,7 +482,7 @@ def parse_jobs(listing: str) -> List[dict]:
             stamp, _, result = value.partition("  ")
             job["last_run"], job["last_ok"] = stamp.strip(), result.strip() == "ok"
     for j in jobs:
-        j["managed"] = j["name"] in JOB_LABELS
+        j["managed"] = j["name"] in MANAGED
         j["label"] = JOB_LABELS.get(j["name"], j["name"])
     jobs.sort(key=lambda j: (j["managed"], j["label"].lower()))
     return jobs

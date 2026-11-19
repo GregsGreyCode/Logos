@@ -35,69 +35,78 @@ cf = load("changes_facts")
 cc = load("changes_check")
 
 
-def test_the_script_name_says_which_list():
-    assert cf.which("/opt/data/scripts/changes_logos.py") == ("logos", 1)
-    assert cf.which("changes_homelab.py") == ("homelab", 1)
-    assert cf.which("changes_logos_week.py") == ("logos", 7)
-    assert cf.which("changes_homelab_week.py") == ("homelab", 7)
+def test_the_script_name_says_how_many_days():
+    assert cf.which("/opt/data/scripts/changes_daily.py") == 1
+    assert cf.which("changes_week.py") == 7
 
 
-def test_logos_facts_carry_live_marks_and_descriptions():
-    lines = cf.facts(LOGOS)
-    assert lines[0] == 'Repository: Logos, last 24 hours. Write the heading as "Logos, last 24 hours".'
-    assert lines[1] == "2 merged pull requests (1 live, 1 not yet on the Logos server)."
+def test_facts_cover_both_parts_with_live_marks_and_descriptions():
+    lines = cf.facts([LOGOS, HOMELAB], 1)
+    assert lines[0] == ('Write the first line, in bold, as "What changed today". '
+                        "Parts that changed: The agents, The home servers.")
+    assert "## The agents (Logos)" in lines and "## The home servers (homelab-infra)" in lines
+    assert "2 merged pull requests (1 live, 1 not yet on the Logos server)." in lines
     assert "- #104 Morning briefing in Element X [live]" in lines
     assert "    Sends the day ahead at 07:00." in lines
     assert "- #106 Model downtime D2 [NOT live yet]" in lines
+    assert cf.facts([HOMELAB], 7)[0].startswith('Write the first line, in bold, as "What changed this week"')
 
 
 def test_homelab_facts_mark_renovate():
-    lines = cf.facts(HOMELAB)
+    lines = cf.facts_one(HOMELAB)
     assert lines[1] == "1 commits and 1 merged pull requests."
     assert "- PR #5 Update Jellyfin to 10.10.4 (Renovate: an automatic image update)" in lines
     assert "- stack-update: automatic rollback" in lines and "    One service at a time." in lines
 
 
+def test_clean_titles():
+    assert cf.clean_title("chore(deps): update jellyfin/jellyfin docker tag to v10.10.4") == "Jellyfin updated to 10.10.4"
+    assert cf.clean_title("Update Jellyfin to 10.10.4") == "Jellyfin updated to 10.10.4"
+    assert cf.clean_title("feat(h1): household agent works the lights") == "Household agent works the lights"
+    assert cf.clean_title("Morning briefing in Element X") == "Morning briefing in Element X"
+
+
 def test_plain_version():
-    assert cf.plain(LOGOS) == ("**Logos, last 24 hours** (2 changes, 1 live, 1 not yet)\n"
-                               "- Morning briefing in Element X\n- Model downtime D2 (not live yet)")
-    assert cf.plain({**LOGOS, "prs": LOGOS["prs"][:1]}).startswith("**Logos, last 24 hours** (1 changes, all live)")
-    assert cf.plain({**HOMELAB, "days": 7}).startswith("**Homelab, last 7 days** (2 changes)")
+    assert cf.plain([LOGOS, HOMELAB], 1) == (
+        "**What changed today**\n\nThe agents\n- Morning briefing in Element X\n- Model downtime D2 (not live yet)"
+        "\n\nThe home servers\n- Jellyfin updated to 10.10.4\n- Stack-update: automatic rollback")
+    assert cf.plain([HOMELAB], 7).startswith("**What changed this week**\n\nThe home servers")
 
 
 def test_nothing_changed_or_reader_down_skips_the_model(monkeypatch, capsys):
     monkeypatch.setattr(cf, "env", lambda: {})
     for answer in (None, {"repo": "logos", "days": 1, "prs": []}):
         monkeypatch.setattr(cf, "fetch", lambda e, r, d, a=answer: a)
-        cf.main("changes_logos.py")
+        cf.main("changes_daily.py")
         assert json.loads(capsys.readouterr().out) == {"wakeAgent": False}
-    monkeypatch.setattr(cf, "fetch", lambda e, r, d: LOGOS)
-    cf.main("changes_logos.py")
-    assert "#104" in capsys.readouterr().out
+    monkeypatch.setattr(cf, "fetch", lambda e, r, d: {"logos": LOGOS, "homelab": None}[r])
+    cf.main("changes_daily.py")
+    out = capsys.readouterr().out
+    assert "#104" in out and "home servers" not in out           # a part that could not be fetched is left out
 
 
 def job(name, status="ok", when="2026-11-19T16:01:00+00:00", err=None):
     return {"name": name, "last_status": status, "last_run_at": when, "last_delivery_error": err}
 
 
-def test_check_sends_the_plain_list_only_for_jobs_that_did_not_go_out():
+def test_check_sends_the_plain_list_only_for_posts_that_did_not_go_out():
     asked = []
 
     def fetch(e, repo, days):
         asked.append((repo, days))
         return {"logos": LOGOS, "homelab": HOMELAB}[repo]
 
-    ok = [job("changes-homelab"), job("changes-logos")]
-    assert cc.report(ok, THURSDAY, {}, fetch) == "" and not asked
-    out = cc.report([job("changes-homelab"), job("changes-logos", "error")], THURSDAY, {}, fetch)
-    assert asked == [("logos", 1)] and out.startswith("**Logos, last 24 hours**")
-    assert out.endswith("(Plain list: I couldn't write the summary this afternoon.)")
+    assert cc.report([job("changes-daily")], THURSDAY, {}, fetch) == "" and not asked
+    out = cc.report([job("changes-daily", "error")], THURSDAY, {}, fetch)
+    assert asked == [("logos", 1), ("homelab", 1)] and out.startswith("**What changed today**")
+    assert "Plain" not in out and "couldn't" not in out             # no system-speak footer
     asked.clear()
-    stale = [job("changes-homelab", when="2026-11-18T16:01:00+00:00"), job("changes-logos", err="matrix down")]
-    cc.report(stale, THURSDAY, {}, fetch)
-    assert asked == [("homelab", 1), ("logos", 1)]
+    cc.report([job("changes-daily", when="2026-11-18T16:01:00+00:00")], THURSDAY, {}, fetch)
+    assert asked == [("logos", 1), ("homelab", 1)]                   # yesterday's run does not count
     asked.clear()
-    cc.report([job("changes-homelab", when="2026-11-22T16:01:00+00:00"),
-               job("changes-logos", when="2026-11-22T16:06:00+00:00")], SUNDAY, {}, fetch)
-    assert asked == [("homelab", 7), ("logos", 7)]          # Sunday: the week's roll-ups count too
+    cc.report([job("changes-daily", err="matrix down")], THURSDAY, {}, fetch)
+    assert asked == [("logos", 1), ("homelab", 1)]
+    asked.clear()
+    cc.report([job("changes-daily", when="2026-11-22T16:01:00+00:00")], SUNDAY, {}, fetch)
+    assert asked == [("logos", 7), ("homelab", 7)]                   # Sunday: the week's post counts too
     assert cc.report([], THURSDAY, {}, lambda e, r, d: None) == ""
