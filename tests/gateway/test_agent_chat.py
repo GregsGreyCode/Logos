@@ -295,7 +295,7 @@ def test_wake_model_reports_a_server_that_is_off_instead_of_starting_a_run():
 
     got = asyncio.run(events())
     assert [(p["type"], p["error_type"]) for p in got] == [("error", "model_off")]
-    assert "switched off" in got[0]["error_title"] and "not sent" in got[0]["error_title"]
+    assert "AI computer is off" in got[0]["error_title"] and "will be sent" in got[0]["error_title"]
 
 
 def test_wake_model_survives_a_server_that_answers_but_will_not_load():

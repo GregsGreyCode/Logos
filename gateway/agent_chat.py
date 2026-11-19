@@ -103,7 +103,7 @@ def translate(ev: HermesEvent, state: TurnState) -> List[Dict[str, Any]]:
         })
         return out
     if t in ("run_failed", "run_interrupted"):
-        return [{"type": "error", "error_type": t, "error_title": "The agent could not finish",
+        return [{"type": "error", "error_type": t, "error_title": "Something went wrong and the agent couldn't finish. Try sending it again.",
                  "content": ev.error or "The run ended without a reply."}]
     return []
 
@@ -128,7 +128,8 @@ async def stream_run(
     except HermesError as e:
         logger.warning("chat: could not start run: %s", e)
         yield {"type": "error", "error_type": "agent_unreachable",
-               "error_title": "Could not reach the agent", "content": str(e)}
+               "error_title": "Couldn't reach the agent. It may be restarting; try again in a minute.",
+               "content": str(e)}
         return
     if on_started:
         on_started(run_id)
@@ -143,11 +144,11 @@ async def stream_run(
     except HermesError as e:
         logger.warning("chat: stream for run %s broke: %s", run_id, e)
         yield {"type": "error", "error_type": "stream_broken",
-               "error_title": "Lost the connection to the agent", "content": str(e)}
+               "error_title": "The connection to the agent dropped. Try sending it again.", "content": str(e)}
         return
     if not finished:
         yield {"type": "error", "error_type": "stream_ended",
-               "error_title": "The agent stopped without finishing", "content": ""}
+               "error_title": "The agent stopped before finishing. Try sending it again.", "content": ""}
 
 
 # ── agents table <- agents/<name>.yaml ───────────────────────────────────────
@@ -234,11 +235,11 @@ async def keep_alive(write, every: float = KEEP_ALIVE_S) -> None:
 
 
 MODEL_OFF = "model_off"
-MODEL_OFF_MESSAGE = ("The model server is switched off, so there is no one to answer right now. "
-                     "Your message was not sent. Try again when it is back on.")
+MODEL_OFF_MESSAGE = ("The AI computer is off, so no one can answer right now. "
+                     "Your message will be sent when it's back on.")
 
 
-BACKUP_MESSAGE = "The local model is switched off, so a backup model is answering."
+BACKUP_MESSAGE = "The AI computer is off, so a backup model is answering."
 
 
 def has_backup(definition: Mapping[str, Any]) -> bool:

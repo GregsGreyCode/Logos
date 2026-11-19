@@ -24,7 +24,7 @@ def wl(tmp_path, monkeypatch):
     return load(ROOT / "infra/agent-plugins/logos-waitlist/__init__.py", "logos_waitlist", monkeypatch, tmp_path)
 
 
-OFF = "My model is offline right now (LM Studio isn't running) ... model_server_off"
+OFF = "I can't answer right now: the AI computer is off ... model_server_off"
 
 
 def test_model_off_is_final_for_the_turn_and_other_errors_are_left_alone(wl):
@@ -33,6 +33,19 @@ def test_model_off_is_final_for_the_turn_and_other_errors_are_left_alone(wl):
     assert wl._classify(status_code=503, error_body={"error": {"code": "model_server_off"}})["retryable"] is False
     assert wl._classify(status_code=503, error_message="Service Unavailable") is None
     assert wl._classify(status_code=500, error_message="model_server_off") is None
+
+
+def test_the_full_reply_until_the_group_was_told_then_one_short_line(wl, tmp_path):
+    got = wl._classify(status_code=503, error_code="model_server_off")
+    assert got["message"] == wl.OFF_REPLY and "AI computer is off" in got["message"]
+    (tmp_path / ".model_watch").write_text('{"off_since": 1, "told": true}')     # model-watch posted it
+    assert wl._classify(status_code=503, error_code="model_server_off")["message"] == wl.NOTED_REPLY
+    (tmp_path / ".model_watch").write_text('{"off_since": null, "told": false}')
+    assert wl._classify(status_code=503, error_code="model_server_off")["message"] == wl.OFF_REPLY
+    (tmp_path / ".model_watch").write_text("not json")
+    assert wl._classify(status_code=503, error_code="model_server_off")["message"] == wl.OFF_REPLY
+    for text in (wl.OFF_REPLY, wl.NOTED_REPLY, wl.EXPIRED_NOTE):
+        assert "LM Studio" not in text and "model" not in text.lower()
 
 
 def test_only_chat_conversations_wait_and_only_once(wl):
