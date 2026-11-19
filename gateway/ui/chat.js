@@ -120,7 +120,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const modelStatus = agent.has_backup
     ? h('div', { class: 'model-line', role: 'status', hidden: true }, 'Local model off: a backup model replies')
     : h('div', { class: 'model-line down', role: 'status', hidden: true },
-      'Model server off: no replies until LM Studio is on.');
+      'LM Studio is offline: no replies until it is back.');
   const modelOff = (off) => { modelStatus.hidden = !off; };
   modelOff(agent.model_up === false);
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -218,6 +218,39 @@ export async function chatView(root, [agentArg, chatArg], state) {
     setBusy(false);
   }
 
+  // Story D2: a message the model could not take (LM Studio offline) waits here and is sent by
+  // itself when LM Studio is back, as the agents do in Element X. It waits only while this page
+  // is open; "Cancel" puts the words back in the box instead.
+  async function sendWhenBack(text, reply, used) {
+    reply.remove(); used.remove();
+    const mine = log.lastElementChild;
+    const cancel = h('button', { type: 'button', class: 'btn small' }, 'Cancel');
+    const note = h('div', { class: 'msg waiting', role: 'status' },
+      h('span', {}, 'LM Studio is offline. This message will be sent when it is back (keep this page open). '), cancel);
+    log.append(note);
+    setBusy(false);
+    scroll();
+    let cancelled = false;
+    cancel.addEventListener('click', () => {
+      cancelled = true;
+      note.remove();
+      if (mine && mine.classList.contains('user')) mine.remove();
+      if (!input.value.trim()) { input.value = text; input.dispatchEvent(new Event('input')); }
+    });
+    while (alive && !cancelled) {
+      await new Promise((ok) => setTimeout(ok, 30000));
+      if (!alive || cancelled) return;
+      const r = await api(`/api/v2/model?agent=${encodeURIComponent(agent.name)}`).catch(() => null);
+      const s = r && r.ok ? await r.json().catch(() => ({})) : {};
+      if (s.model_up === true) {
+        note.remove();
+        if (mine && mine.classList.contains('user')) mine.remove();
+        modelOff(false);
+        return sendMessage(text);
+      }
+    }
+  }
+
   async function sendMessage(text) {
     if (log.querySelector('.empty')) log.replaceChildren();
     bubble('user', text);
@@ -285,7 +318,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
       return waitForReply(text);
     }
     setPending(agent.name, null);
-    if (unsent && !input.value.trim()) { input.value = text; input.dispatchEvent(new Event('input')); }
+    if (unsent) return sendWhenBack(text, reply, used);
     if (failed) {
       if (!body) reply.remove();
       log.append(h('div', { class: 'msg error' }, failed));

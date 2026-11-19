@@ -157,6 +157,12 @@ def repo(tmp_path):
     (jobs / "morning_briefing.md").write_text("Morning briefing.\n")
     (jobs / "briefing_check.py").write_text("print('')\n")
     (jobs / "carry_monitor_state.py").write_text("print('')\n")
+    (jobs / "rerun_after_outage.py").write_text("print('')\n")
+    (jobs / "model_watch.py").write_text("print('')\n")
+    plugin = tmp_path / "infra" / "agent-plugins" / "logos-waitlist"
+    plugin.mkdir(parents=True)
+    (plugin / "plugin.yaml").write_text("name: logos-waitlist\n")
+    (plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
@@ -545,6 +551,32 @@ network_policies:
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8097, ["172.17.0.1/32"])
         assert ep["rules"] == [{"allow": {"method": "GET", "path": "/weather"}}]
 
+    POLICY_HEALTH = """
+version: 1
+network_policies:
+  lm_studio:
+    endpoints:
+      - {host: 192.0.2.117, port: 1234, allowed_ips: [192.0.2.117/32]}
+  model_health:
+    endpoints:
+      - {host: 192.0.2.1, port: 8094, protocol: rest, allowed_ips: [192.0.2.1/32],
+         rules: [{allow: {method: GET, path: /guard/health}}]}
+"""
+
+    def test_model_health_url_and_rule_only_behind_the_gateway(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_HEALTH)
+        r = rt(repo)
+        plain = r.load("alpha")
+        assert "LOGOS_MODEL_HEALTH_URL" not in r.env_file(plain, "logos-home-alpha")
+        assert "model_health" not in yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
+        gw = {**plain, "model": {**plain["model"], "gateway": True}}
+        assert "LOGOS_MODEL_HEALTH_URL=http://172.17.0.1:8094/guard/health" in r.env_file(gw, "logos-home-alpha")
+        ep = yaml.safe_load(r.policy_path("alpha", gw).read_text())["network_policies"]["model_health"]["endpoints"][0]
+        assert (ep["host"], ep["port"]) == ("172.17.0.1", 8094)
+        assert ep["rules"] == [{"allow": {"method": "GET", "path": "/guard/health"}}]
+
     POLICY_VOICE = """
 version: 1
 network_policies:
@@ -645,6 +677,25 @@ network_policies:
         assert save < min(created) and restore > max(created)
         assert "/opt/hermes/.venv/bin/python" in cmds[save]
 
+    def test_outage_jobs(self, repo):
+        for extra, rerun, watch in (({}, False, False),
+                                    ({"model": {"gateway": True}}, True, False),
+                                    ({"model": {"gateway": True}, "role": "household", "matrix": {"enabled": True}}, True, True),
+                                    ({"model": {"gateway": True}, "role": "household"}, True, False)):
+            runner = FakeRunner()
+            r = rt(repo, runner)
+            agent = {**r.load("alpha"), **extra}
+            agent["model"] = {**r.load("alpha")["model"], **extra.get("model", {})}
+            r.ensure_jobs("alpha", agent, "logos-home-alpha")
+            created = [c[-1] for c in runner.matching("openshell", "sandbox", "exec") if "cron create" in c[-1]]
+            reruns = [c for c in created if "--name rerun-after-outage " in c]
+            watches = [c for c in created if "--name model-watch " in c]
+            assert bool(reruns) == rerun and bool(watches) == watch, extra
+            if reruns:
+                assert "--no-agent --script rerun_after_outage.py" in reruns[0] and "--deliver local" in reruns[0]
+            if watches:
+                assert '"* * * * *"' in watches[0] and "--deliver matrix" in watches[0]
+
     def test_no_briefing_for_household_without_matrix_or_person_or_when_off(self, repo):
         person = {"calendar": {"enabled": True, "person": "greg"}, "matrix": {"enabled": True}}
         for extra in ({**person, "role": "household"}, {"calendar": person["calendar"]},
@@ -671,6 +722,7 @@ network_policies:
             "tools": {"tool_search": {"enabled": "off"}},
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
+            "plugins": {"enabled": ["logos-waitlist"]},
             "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
@@ -678,10 +730,10 @@ network_policies:
         agent = r.load("alpha")
         agent["session_reset"] = {"mode": "daily", "at_hour": 3}
         cfg = art.yaml.safe_load(r.config_text("alpha", agent))
-        assert cfg["plugins"] == {"enabled": ["hermes-session-reset-policy"]}
+        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "hermes-session-reset-policy"]}
         assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
         agent["session_reset"] = {"mode": "none"}
-        assert "plugins" not in art.yaml.safe_load(r.config_text("alpha", agent))
+        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist"]}
 
     def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
         r = rt(repo)
@@ -702,10 +754,11 @@ network_policies:
         assert create == r.create_argv("alpha", r.load("alpha"))
         # nothing existed, so nothing was deleted first
         assert runner.matching("openshell", "sandbox", "delete") == []
-        # config, soul and env were written to the home volume before the sandbox was created
+        # config, Logos' plugins, soul and env were written to the home volume before the sandbox was created
         written = [c[-1] for c in runner.calls[:runner.calls.index(create)]
                    if c[:2] == ["docker", "run"] and "cat > /v/" in c[-1]]
-        assert [w.split("cat > /v/")[1].split(" ")[0] for w in written] == [".env", "config.yaml", "SOUL.md"]
+        assert [w.split("cat > /v/")[1].split(" ")[0] for w in written] == [
+            ".env", "config.yaml", "plugins/logos-waitlist/__init__.py", "plugins/logos-waitlist/plugin.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out
