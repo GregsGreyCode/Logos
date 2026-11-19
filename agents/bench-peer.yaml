@@ -8,5 +8,3 @@ noticeboard: true
 role: test
 image: logos-agent:0.23.1
 timezone: Europe/London
-telegram:
-  enabled: false

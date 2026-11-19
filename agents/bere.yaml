@@ -1,7 +1,6 @@
 # Agent definition for Béré's agent (story S5.1). Create or recreate with:
 #   scripts/logos-agent up bere
-# Secrets are not stored here. The Telegram bot token is read from the environment
-# (LOGOS_TELEGRAM_BOT_TOKEN) the first time and kept in the agent's private home volume.
+# Secrets are not stored here. The Matrix login is kept in the agent's private home volume.
 name: bere
 display_name: Béré's agent
 owners: [bere]                 # web dashboard usernames that may see and talk to this agent
@@ -30,16 +29,12 @@ matrix:                           # the household's own Matrix server (docs/matr
   e2ee: required
   allowed_users: []               # set in agents/bere.local.yaml (untracked): @name:example.org
 
-telegram:
-  enabled: false                  # off since 19 Nov 2026: Matrix only (docs/matrix.md)
-  allowed_users: []               # set in agents/bere.local.yaml (untracked): Telegram numeric user IDs
-
 consolidation:                  # nightly brain tidy-up (hermes cron job `consolidate`)
   enabled: true
   schedule: "0 2 * * *"         # staggered from Greg's 02:30 so the two do not share the local model
   # model / provider: omit to use the agent's main (local) model
 
-digest:                         # weekly summary of what the brain learned, sent on Telegram
+digest:                         # weekly summary of what the brain learned, sent to the Matrix home room
   enabled: true
   schedule: "0 18 * * 0"        # Sunday 18:00 in the agent's timezone
 

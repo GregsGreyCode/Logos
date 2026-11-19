@@ -67,9 +67,7 @@ Data = Union[str, bytes]
 
 
 def delivery(agent: Mapping[str, Any]) -> str:
-    """Where scheduled jobs send what they have to say: Telegram, else Matrix, else nowhere."""
-    if (agent.get("telegram") or {}).get("enabled"):
-        return "telegram"
+    """Where scheduled jobs send what they have to say: Matrix, else nowhere."""
     if (agent.get("matrix") or {}).get("enabled"):
         return "matrix"
     return "local"
@@ -212,7 +210,7 @@ class AgentRuntime:
         if not path.exists():
             raise AgentRuntimeError(f"no agent definition at {path}")
         agent = yaml.safe_load(path.read_text())
-        # Untracked overrides, so personal values (Telegram user IDs) stay out of git:
+        # Untracked overrides, so personal values (Matrix users and rooms) stay out of git:
         # agents/all.local.yaml applies to every agent (for example the model in use right now,
         # see `scripts/logos-models local use`), then agents/<name>.local.yaml to this one.
         for local in (path.with_name(ALL_LOCAL), path.with_suffix(".local.yaml")):
@@ -298,16 +296,12 @@ class AgentRuntime:
         cfg["updates"] = {"check": False}
         cfg["model_catalog"] = {"enabled": False}
         # No "gateway shutting down / back online" messages to the person on every rebuild.
-        for platform in ("telegram", "matrix"):
-            if (agent.get(platform) or {}).get("enabled"):
-                cfg.setdefault("platforms", {})[platform] = {"gateway_restart_notification": False}
-                # One message per answer: which tools the agent is using goes to its log only, and
-                # its "let me check..." text before a tool call is not sent as a message of its own.
-                cfg.setdefault("display", {}).setdefault("platforms", {})[platform] = {
-                    "tool_progress": "log", "interim_assistant_messages": False}
-        if (agent.get("telegram") or {}).get("group_chats"):
-            # One shared conversation per group (hermes otherwise keeps one per participant).
-            cfg["group_sessions_per_user"] = False
+        if (agent.get("matrix") or {}).get("enabled"):
+            cfg["platforms"] = {"matrix": {"gateway_restart_notification": False}}
+            # One message per answer: which tools the agent is using goes to its log only, and
+            # its "let me check..." text before a tool call is not sent as a message of its own.
+            cfg["display"] = {"platforms": {"matrix": {
+                "tool_progress": "log", "interim_assistant_messages": False}}}
         if agent.get("brain_index", True):
             cfg["memory"] = {"memory_char_limit": MEMORY_CHAR_LIMIT}
         reset = agent.get("session_reset")
@@ -405,31 +399,9 @@ class AgentRuntime:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
         cur = dict(l.split("=", 1) for l in self.get(home, ".env").splitlines()
                    if "=" in l and not l.startswith("#"))
-        tg = agent.get("telegram") or {}
-        if tg.get("enabled"):
-            token = self.env.get("LOGOS_TELEGRAM_BOT_TOKEN") or cur.get("TELEGRAM_BOT_TOKEN")
-            if not token:
-                raise AgentRuntimeError(
-                    "telegram.enabled is true but no token: set LOGOS_TELEGRAM_BOT_TOKEN for the first `up`")
-            cur["TELEGRAM_BOT_TOKEN"] = token
-            cur["TELEGRAM_ALLOWED_USERS"] = ",".join(str(u) for u in tg.get("allowed_users") or [])
-            # Group chats: which groups the bot may answer in, and whether it must be @mentioned there.
-            groups = [str(g) for g in tg.get("group_chats") or []]
-            if groups:
-                cur["TELEGRAM_GROUP_ALLOWED_CHATS"] = ",".join(groups)
-            else:
-                cur.pop("TELEGRAM_GROUP_ALLOWED_CHATS", None)
-            cur["TELEGRAM_REQUIRE_MENTION"] = "true" if tg.get("require_mention", True) else "false"
-            # Home channel: where scheduled jobs and failure notices are delivered. A person's DM chat
-            # id is their user id, so default to the first allowed user unless the definition says otherwise.
-            home_chat = (tg.get("home_channel") or next(iter(tg.get("group_chats") or []), None)
-                         or next(iter(tg.get("allowed_users") or []), None))
-            if home_chat:
-                cur["TELEGRAM_HOME_CHANNEL"] = str(home_chat)
-                cur.setdefault("TELEGRAM_HOME_CHANNEL_NAME", agent.get("display_name", agent["name"]))
-        else:
-            cur.pop("TELEGRAM_BOT_TOKEN", None)
-            cur.pop("TELEGRAM_ALLOWED_USERS", None)
+        # Telegram is no longer used: drop anything an older `up` stored, the bot token included.
+        for key in [k for k in cur if k.startswith("TELEGRAM_")]:
+            del cur[key]
         self._matrix_env(agent, cur, home)
         cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
         cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
@@ -643,6 +615,9 @@ class AgentRuntime:
             _sibling("model_gateway").require_local_only(name, agent)
         except ValueError as e:
             raise AgentRuntimeError(str(e))
+        if (agent.get("telegram") or {}).get("enabled"):
+            raise AgentRuntimeError(f"{name}: Telegram is no longer supported; people talk to agents "
+                                    "on Matrix. Remove the telegram section from the definition.")
         home, brain = volumes(name)
         for v in (home, brain):
             self.ensure_volume(v)

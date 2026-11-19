@@ -76,7 +76,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
     return el;
   };
   const emptyState = () => log.replaceChildren(h('div', { class: 'empty' },
-    h('p', {}, `Say something to ${agent.display_name}. It remembers what matters in its brain, across web and Telegram.`)));
+    h('p', {}, `Say something to ${agent.display_name}. It remembers what matters in its brain, across web and Matrix.`)));
 
   let waiting = false;           // true while waiting for a reply the stream did not deliver
   function setBusy(busy) {

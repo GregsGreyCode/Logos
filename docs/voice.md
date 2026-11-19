@@ -1,12 +1,12 @@
 # Voice notes
 
-Send an agent a voice note on Telegram and it reads it as if you had typed it. The words are
+Send an agent a voice note in Element X and it reads it as if you had typed it. The words are
 worked out on this server by one shared service; nothing goes to a cloud provider.
 
 ## How it works
 
 ```
-voice note -> Telegram -> agent (sandbox) -> voice service (logos-voice) -> text -> agent
+voice note -> Matrix -> agent (sandbox) -> voice service (logos-voice) -> text -> agent
 ```
 
 - **One service for every agent.** `logos-voice` holds one Whisper model ("small",

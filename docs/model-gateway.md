@@ -99,7 +99,7 @@ server is switched off it still switches the agents; the model loads when the se
   with too small a window. It never loads a second copy.
 - Web chat checks before each message. If the model was unloaded, it loads it with the agent's
   settings and the chat says "Loading the model" while it waits.
-- Telegram messages go straight from the agent to the gateway, so there LM Studio's own
+- Matrix messages go straight from the agent to the gateway, so there LM Studio's own
   on-demand loading applies.
 
 ## When the model server is off
@@ -111,7 +111,7 @@ wait out a fifteen-minute timeout in silence. Three things prevent that:
 | Where | What happens | How fast |
 | --- | --- | --- |
 | Model guard (`logos-model-guard`, `gateway/model_guard.py`) | Sits between the gateway and LM Studio. If LM Studio does not accept the connection in 3 seconds, the call is refused with a plain 503: "The local model server is switched off or busy". Otherwise traffic passes straight through, streamed. | 3 s |
-| Agents (hermes `agent.auto_recovery_cycles: 0`) | After the normal three attempts the agent tells the person the model is unavailable, with the guard's words, instead of retrying in the background for another eight minutes. This is what a Telegram message gets. | about 20 s |
+| Agents (hermes `agent.auto_recovery_cycles: 0`) | After the normal three attempts the agent tells the person the model is unavailable, with the guard's words, instead of retrying in the background for another eight minutes. This is what a Matrix message gets. | about 20 s |
 | Web chat | Checks the model server before handing the message to the agent. If it is off, the chat says so, gives the typed words back, and shows "Model server off" in the header and on the Agents screen. | 3 s |
 
 Scheduled jobs that need the model fail the same way while it is off and run again at their
