@@ -42,7 +42,7 @@ logos/
 │   ├── http_api.py           app setup, routes, chat endpoints
 │   ├── *_handlers.py         admin, chat, setup, MCP and other route handlers
 │   ├── auth/                 accounts, passwords, JWT cookies, middleware
-│   ├── html/                 login.html, setup.html, main_app.html (Alpine.js dashboard)
+│   ├── html/                 login.html, setup.html, app.html (the dashboard; its modules are in gateway/ui/)
 │   ├── agent_runtime.py      builds sandboxes from agents/<name>.yaml (shared with scripts/logos-agent)
 │   ├── sandbox_backend.py    backend seam: NullBackend (default) and OpenShellBackend
 │   ├── hermes_client.py      client for the upstream hermes API server

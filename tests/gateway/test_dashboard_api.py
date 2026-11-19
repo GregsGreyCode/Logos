@@ -41,7 +41,7 @@ class Client:
     async def get_session(self, sid):
         return next(s for s in self.sessions if s["id"] == sid)
 
-    async def get_session_messages(self, sid):
+    async def get_session_messages(self, sid, limit=None, order=None):
         return {"data": self.messages}
 
 
@@ -508,3 +508,38 @@ def test_answering_now_prefers_local_then_the_first_fallback_with_money_left():
     assert answering_now({"fallbacks": chain}, False) == {"kind": "paid", "label": "openrouter · google/gemini"}
     assert answering_now({"fallbacks": chain[:1]}, False)["kind"] == "none"
     assert "no paid fallback" in answering_now({"fallbacks": []}, False)["label"]
+
+
+def test_owes_a_reply():
+    f = dashboard_api.owes_a_reply
+    assert f({"role": "user", "content": "hi"}) and f({"role": "tool", "content": "{}"})
+    assert f({"role": "assistant", "content": "", "tool_calls": "[{}]"})
+    assert not f({"role": "assistant", "content": "Done."}) and not f(None)
+
+
+def test_agent_is_working_looks_at_the_newest_conversation():
+    class C:
+        def __init__(self, sessions, last):
+            self.sessions, self.last, self.asked = sessions, last, None
+
+        async def list_sessions(self, limit=None, source=None):
+            return {"data": self.sessions}
+
+        async def get_session_messages(self, sid, limit=None, order=None):
+            self.asked = (sid, limit, order)
+            return {"data": [self.last]}
+
+    now = 10_000.0
+    c = C([{"id": "old", "last_active": now - 50}, {"id": "new", "last_active": now - 5}], {"role": "user"})
+    assert asyncio.run(dashboard_api.agent_is_working(c, now)) and c.asked == ("new", 1, "latest")
+    c = C([{"id": "new", "last_active": now - 5}], {"role": "assistant", "content": "Here you go"})
+    assert not asyncio.run(dashboard_api.agent_is_working(c, now))
+    c = C([{"id": "stale", "last_active": now - 3600}], {"role": "user"})       # unanswered for an hour
+    assert not asyncio.run(dashboard_api.agent_is_working(c, now)) and c.asked is None
+    assert not asyncio.run(dashboard_api.agent_is_working(C([], None), now))
+
+
+def test_activity_lists_only_your_running_agents(run):
+    status, body = run("u-greg", "/api/v2/activity")
+    assert status == 200 and set(body) == {"working"}
+    assert set(body["working"]) <= {"greg"}          # household is not running in this fake

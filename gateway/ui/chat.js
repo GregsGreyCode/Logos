@@ -1,5 +1,5 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
-import { h, api, getJSON, when, markdown } from './util.js';
+import { h, api, getJSON, when, markdown, working } from './util.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
@@ -12,6 +12,18 @@ const READ_ONLY_NOTE = {
   telegram: 'This conversation happened on Telegram, which is no longer used. Start a new one here.',
   scheduled: 'This is a scheduled job the agent ran on its own. It is shown to see what it did.',
 };
+
+// The three-line "list" icon, drawn as SVG (it needs the SVG namespace, not h()).
+function listIcon() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', 'M4 6h16M4 12h16M4 18h10');
+  svg.append(path);
+  return svg;
+}
 
 // One model call's reasoning and tool calls, folded away under a one-line summary.
 export function stepsView(steps) {
@@ -87,8 +99,9 @@ export async function chatView(root, [agentArg, chatArg], state) {
   // Shown while the local model server is not answering (LM Studio closed, or that machine off).
   // With a paid fallback the agent still answers while the local model is off.
   const modelStatus = agent.has_backup
-    ? h('span', { class: 'status', hidden: true }, 'Local model off: a backup model replies')
-    : h('span', { class: 'status down', hidden: true }, 'Model server off: it cannot reply');
+    ? h('div', { class: 'model-line', role: 'status', hidden: true }, 'Local model off: a backup model replies')
+    : h('div', { class: 'model-line down', role: 'status', hidden: true },
+      `Model server off: ${agent.display_name} can't reply until LM Studio is on.`);
   const modelOff = (off) => { modelStatus.hidden = !off; };
   modelOff(agent.model_up === false);
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -109,6 +122,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
 
   let waiting = false;           // true while waiting for a reply the stream did not deliver
   function setBusy(busy) {
+    working('chat', busy);
     send.disabled = busy || waiting || readOnly || !agent.running;
     input.disabled = readOnly || !agent.running;
     mic.disabled = readOnly || !agent.running;
@@ -154,7 +168,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
       const shown = conversations.filter((c) => showJobs || c.where !== 'scheduled' || c.id === chatId);
       convs.replaceChildren(...shown.map((c) => h('button', {
         type: 'button', 'aria-current': String(c.chat_id === chatId || c.id === chatId),
-        onclick: () => { location.hash = `#/chat/${agent.name}/${c.chat_id || c.id}`; },
+        onclick: () => { closeSide(false); location.hash = `#/chat/${agent.name}/${c.chat_id || c.id}`; },
       }, c.title, h('span', { class: 'when' }, `${when(c.last_active)} · ${WHERE[c.where] || c.where}`))));
       if (!shown.length) convs.replaceChildren(h('span', { class: 'when' }, 'Nothing yet.'));
       return conversations;
@@ -272,7 +286,8 @@ export async function chatView(root, [agentArg, chatArg], state) {
 
   // Microphone: record, turn the recording into text at the voice service, and put the words
   // in the message box. Nothing is sent to the agent until the person presses Send.
-  const micLabel = (text) => mic.replaceChildren(h('span', { class: 'mic-dot', 'aria-hidden': 'true' }), text);
+  const micLabel = (text) => mic.replaceChildren(h('span', { class: 'mic-dot', 'aria-hidden': 'true' }),
+    h('span', { class: 'mic-label' }, text));
   const say = (text) => { micNote.textContent = text || ''; micNote.hidden = !text; };
   micLabel('Speak');
   function stopRecording() {
@@ -354,32 +369,54 @@ export async function chatView(root, [agentArg, chatArg], state) {
 
   const tabs = agents.length > 1 ? h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Agent' },
     agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
-      onclick: () => { location.hash = `#/chat/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name))) : null;
+      onclick: () => { location.hash = `#/chat/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }),
+      h('span', {}, a.display_name)))) : null;
 
-  const thinkingBtn = h('button', { type: 'button', class: 'btn quiet small', 'aria-pressed': String(showThinking),
-    title: "Show the agent's reasoning and each tool it used, with what went in and what came back",
-    onclick: async () => {
-      showThinking = !showThinking;
+  // Phone: earlier conversations and the view switches open as a panel from the bottom.
+  const side = h('aside', { class: 'side', id: 'chat-side', 'aria-label': 'Conversations' });
+  const sideScrim = h('div', { class: 'chat-scrim', hidden: true });
+  const convBtn = h('button', { type: 'button', class: 'conv-btn', 'aria-label': 'Conversations and view settings',
+    'aria-controls': 'chat-side', 'aria-expanded': 'false' }, listIcon());
+  const closeSide = (refocus = true) => {
+    if (!side.classList.contains('open')) return;
+    side.classList.remove('open'); sideScrim.hidden = true;
+    convBtn.setAttribute('aria-expanded', 'false');
+    if (refocus) convBtn.focus();
+  };
+  convBtn.addEventListener('click', () => {
+    if (side.classList.contains('open')) return closeSide();
+    side.classList.add('open'); sideScrim.hidden = false;
+    convBtn.setAttribute('aria-expanded', 'true');
+    const first = side.querySelector('button'); if (first) first.focus();
+  });
+  sideScrim.addEventListener('click', () => closeSide());
+  const onKey = (e) => { if (e.key === 'Escape') closeSide(); };
+  document.addEventListener('keydown', onKey);
+
+  const thinkingBox = h('input', { type: 'checkbox', id: 'show-thinking', checked: showThinking,
+    onchange: async () => {
+      showThinking = thinkingBox.checked;
       setPref('show-thinking', showThinking);
-      thinkingBtn.setAttribute('aria-pressed', String(showThinking));
       if (lastConversations.some((x) => x.chat_id === chatId || x.id === chatId)) await openConversation(lastConversations);
-    } }, 'Show thinking');
+    } });
   const jobsBox = h('input', { type: 'checkbox', id: 'show-jobs', checked: showJobs ? '' : null,
     onchange: () => { showJobs = jobsBox.checked; setPref('show-jobs', showJobs); loadConversations(); } });
 
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
       h('header', { class: 'chat-head' },
-        h('h1', {}, agent.display_name), tabs,
-        h('span', { class: `status ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
-        modelStatus,
-        h('span', { class: 'status' }, agent.shared ? 'Shared with the household' : 'Private to you'),
-        thinkingBtn),
-      log, micNote, form),
-    h('aside', { class: 'side', 'aria-label': 'Conversations' },
-      h('button', { type: 'button', class: 'btn quiet', onclick: () => { location.hash = `#/chat/${agent.name}/${newId()}`; } }, 'New conversation'),
-      h('h2', { class: 'label' }, 'Earlier conversations'),
-      h('label', { class: 'toggle', for: 'show-jobs' }, jobsBox, ' Show scheduled jobs'), convs));
+        h('h1', { class: tabs ? null : 'agent-solo' }, agent.display_name), tabs,
+        h('span', { class: `status running ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
+        h('span', { class: 'status scope' }, agent.shared ? 'Shared with the household' : 'Private to you'),
+        convBtn),
+      modelStatus, log, micNote, form),
+    side, sideScrim);
+  side.append(
+    h('button', { type: 'button', class: 'btn', onclick: () => { closeSide(false); location.hash = `#/chat/${agent.name}/${newId()}`; } }, 'New conversation'),
+    h('label', { class: 'toggle', for: 'show-thinking',
+      title: "Show the agent's reasoning and each tool it used, with what went in and what came back" }, thinkingBox, ' Show thinking'),
+    h('label', { class: 'toggle', for: 'show-jobs' }, jobsBox, ' Show scheduled jobs'),
+    h('h2', { class: 'label' }, 'Earlier conversations'), convs);
 
   emptyState();
   if (!agent.running) log.replaceChildren(h('div', { class: 'notice' }, `${agent.display_name} is not running. Start it on the server with: scripts/logos-agent up ${agent.name}`));
@@ -398,5 +435,5 @@ export async function chatView(root, [agentArg, chatArg], state) {
     }
   }
   input.focus();
-  return () => { alive = false; stopRecording(); };
+  return () => { alive = false; stopRecording(); working('chat', false); document.removeEventListener('keydown', onKey); };
 }

@@ -2,9 +2,13 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Logos</title>
-<link rel="icon" href="/static/logo.png">
+<link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="theme-color" content="#171a21" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/ui/app.css">
@@ -15,25 +19,61 @@ try { if (localStorage.getItem('logos-theme') === 'light') document.documentElem
 </head>
 <body>
 <div class="shell">
+  <!-- Phone: one-line top bar. The desktop shows the side menu instead. -->
+  <header class="topbar">
+    <img class="logo" src="/static/logo.svg" alt="">
+    <span class="brand">Logos</span>
+    <span class="topbar-sep" aria-hidden="true"></span>
+    <span class="screen-name" id="screen-name"></span>
+    <button type="button" class="avatar-btn" id="acct-btn" aria-label="Your account" aria-haspopup="dialog"
+      aria-controls="acct-sheet" aria-expanded="false"><span class="avatar" id="avatar"></span></button>
+  </header>
+
   <nav class="nav" aria-label="Main">
-    <div class="brand">Logos</div>
+    <div class="brand-row"><img class="logo" src="/static/logo.svg" alt=""><span class="brand">Logos</span></div>
     <div class="nav-links">
       <a href="#/chat" data-view="chat">Chat</a>
       <a href="#/brain" data-view="brain">Brain</a>
-      <a href="#/noticeboard" data-view="noticeboard">Noticeboard <span class="badge" id="nb-badge" hidden></span></a>
+      <a href="#/noticeboard" data-view="noticeboard">Noticeboard <span class="badge nb-badge" hidden></span></a>
       <a href="#/agents" data-view="agents">Agents</a>
       <a href="#/models" data-view="models">Models</a>
       <a href="#/people" data-view="people">People</a>
-      <a href="#/updates" data-view="updates" id="nav-updates" hidden>Updates</a>
+      <a href="#/updates" data-view="updates" class="admin-only" hidden>Updates</a>
     </div>
     <div class="nav-foot">
-      <span id="who"></span>
-      <button type="button" class="linkish" id="theme"></button>
-      <a href="/classic">Old dashboard</a>
-      <button type="button" class="linkish" id="logout">Sign out</button>
+      <span class="who"></span>
+      <button type="button" class="linkish theme-btn"></button>
+      <button type="button" class="linkish logout-btn">Sign out</button>
     </div>
   </nav>
+
   <main class="main" id="view"></main>
+
+  <!-- Phone: the four screens used most, and More for the rest. -->
+  <nav class="tabbar" aria-label="Main">
+    <a href="#/chat" data-view="chat">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat</a>
+    <a href="#/brain" data-view="brain">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h10l4 4v12H5z"/><path d="M9 12h6M9 16h6"/></svg>Brain</a>
+    <a href="#/noticeboard" data-view="noticeboard">
+      <span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="tab-badge nb-badge" hidden></span></span>Noticeboard</a>
+    <a href="#/agents" data-view="agents">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg>Agents</a>
+    <button type="button" id="more-btn" aria-haspopup="dialog" aria-controls="more-sheet" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>More</button>
+  </nav>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="sheet" id="more-sheet" role="dialog" aria-modal="true" aria-label="More" hidden>
+    <a class="sheet-row" href="#/models" data-view="models">Models</a>
+    <a class="sheet-row" href="#/people" data-view="people">People</a>
+    <a class="sheet-row admin-only" href="#/updates" data-view="updates" hidden>Updates</a>
+  </div>
+  <div class="sheet" id="acct-sheet" role="dialog" aria-modal="true" aria-label="Your account" hidden>
+    <div class="sheet-who"><span class="avatar big"></span><span><span class="who strong"></span><br><span class="when role"></span></span></div>
+    <button type="button" class="sheet-row theme-btn"></button>
+    <button type="button" class="sheet-row logout-btn danger-text">Sign out</button>
+  </div>
 </div>
 <script type="module" src="/ui/app.js"></script>
 </body>

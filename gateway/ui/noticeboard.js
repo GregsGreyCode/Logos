@@ -13,10 +13,13 @@ function outcome(m) {
 }
 
 export function setBadge(n) {
-  const el = document.getElementById('nb-badge');
-  if (!el) return;
-  el.textContent = n ? `${n} waiting` : '';
-  el.hidden = !n;
+  // The side menu says "2 waiting"; the phone's tab bar has room for the number only.
+  for (const el of document.querySelectorAll('.nb-badge')) {
+    const small = el.classList.contains('tab-badge');
+    el.textContent = n ? (small ? String(n) : `${n} waiting`) : '';
+    if (small) el.setAttribute('aria-label', n ? `${n} waiting` : '');
+    el.hidden = !n;
+  }
 }
 
 export async function noticeboardView(root) {
