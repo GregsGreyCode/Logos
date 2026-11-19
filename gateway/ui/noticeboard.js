@@ -22,6 +22,52 @@ export function setBadge(n) {
   }
 }
 
+async function decide(m, decision, text, card, doing, reload) {
+  for (const b of card.querySelectorAll('button')) b.disabled = true;
+  const r = await api(`/api/v2/noticeboard/${m.id}/answer`, { method: 'POST', body: { decision, text } });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    for (const b of card.querySelectorAll('button')) b.disabled = false;
+    card.querySelector('.result').textContent = d.message || d.error || `Could not send (HTTP ${r.status}).`;
+    return;
+  }
+  if (d.delegated) doing[m.id] = `${m.to_name} is doing this now and will answer when it is done.`;
+  reload();
+}
+
+// One request waiting on the person, with its answer buttons. Shared by Noticeboard and Home.
+export function requestCard(m, doing, reload) {
+  const result = h('div', { class: 'result when' });
+  const el = h('div', { class: 'card' },
+    h('div', { class: 'card-head' }, h('span', { class: `dot ${m.from}`, 'aria-hidden': 'true' }),
+      h('strong', {}, m.from_name), h('span', { class: 'when' },
+        `${ASKS[m.kind]} of ${m.to_name} · request ${m.id} · ${when(m.ts)}${m.urgent ? ' · urgent' : ''}`)),
+    h('div', { class: 'card-text' }, m.text));
+  if (doing[m.id]) {
+    el.append(h('div', { class: 'result' }, doing[m.id]));
+    return el;
+  }
+  if (m.kind === 'question') {
+    const id = `a${m.id}`;
+    const input = h('input', { id, type: 'text', placeholder: 'Your answer' });
+    el.append(h('label', { for: id, class: 'field-label' }, 'Your answer, sent in your words'), input,
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn', onclick: () => {
+          if (!input.value.trim()) { result.textContent = 'Type the answer to send, or decline.'; input.focus(); return; }
+          decide(m, 'accepted', input.value, el, doing, reload);
+        } }, 'Send answer'),
+        h('button', { type: 'button', class: 'btn quiet', onclick: () => decide(m, 'declined', input.value, el, doing, reload) }, 'Decline')));
+  } else {
+    el.append(h('div', { class: 'row' },
+      h('button', { type: 'button', class: 'btn', onclick: () => decide(m, 'accepted', '', el, doing, reload) },
+        m.kind === 'reminder' ? 'Accept and set reminder' : 'Accept and make the change'),
+      h('button', { type: 'button', class: 'btn quiet', onclick: () => decide(m, 'declined', '', el, doing, reload) }, 'Decline')));
+  }
+  el.append(result, h('div', { class: 'when' },
+    `Expires ${when(m.expires_at).toLowerCase()} if nobody decides.`));
+  return el;
+}
+
 export async function noticeboardView(root) {
   let alive = true, timer = null;
   const doing = {};             // request id -> message shown while the agent acts on an acceptance
@@ -29,50 +75,7 @@ export async function noticeboardView(root) {
   const tbody = h('tbody');
   const error = h('div', { class: 'notice', hidden: true });
 
-  async function decide(m, decision, text, card) {
-    for (const b of card.querySelectorAll('button')) b.disabled = true;
-    const r = await api(`/api/v2/noticeboard/${m.id}/answer`, { method: 'POST', body: { decision, text } });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      for (const b of card.querySelectorAll('button')) b.disabled = false;
-      card.querySelector('.result').textContent = d.message || d.error || `Could not send (HTTP ${r.status}).`;
-      return;
-    }
-    if (d.delegated) doing[m.id] = `${m.to_name} is doing this now and will answer when it is done.`;
-    load();
-  }
-
-  function card(m) {
-    const result = h('div', { class: 'result when' });
-    const el = h('div', { class: 'card' },
-      h('div', { class: 'card-head' }, h('span', { class: `dot ${m.from}`, 'aria-hidden': 'true' }),
-        h('strong', {}, m.from_name), h('span', { class: 'when' },
-          `${ASKS[m.kind]} of ${m.to_name} · request ${m.id} · ${when(m.ts)}${m.urgent ? ' · urgent' : ''}`)),
-      h('div', { class: 'card-text' }, m.text));
-    if (doing[m.id]) {
-      el.append(h('div', { class: 'result' }, doing[m.id]));
-      return el;
-    }
-    if (m.kind === 'question') {
-      const id = `a${m.id}`;
-      const input = h('input', { id, type: 'text', placeholder: 'Your answer' });
-      el.append(h('label', { for: id, class: 'field-label' }, 'Your answer, sent in your words'), input,
-        h('div', { class: 'row' },
-          h('button', { type: 'button', class: 'btn', onclick: () => {
-            if (!input.value.trim()) { result.textContent = 'Type the answer to send, or decline.'; input.focus(); return; }
-            decide(m, 'accepted', input.value, el);
-          } }, 'Send answer'),
-          h('button', { type: 'button', class: 'btn quiet', onclick: () => decide(m, 'declined', input.value, el) }, 'Decline')));
-    } else {
-      el.append(h('div', { class: 'row' },
-        h('button', { type: 'button', class: 'btn', onclick: () => decide(m, 'accepted', '', el) },
-          m.kind === 'reminder' ? 'Accept and set reminder' : 'Accept and make the change'),
-        h('button', { type: 'button', class: 'btn quiet', onclick: () => decide(m, 'declined', '', el) }, 'Decline')));
-    }
-    el.append(result, h('div', { class: 'when' },
-      `Expires ${when(m.expires_at).toLowerCase()} if nobody decides.`));
-    return el;
-  }
+  const card = (m) => requestCard(m, doing, () => load());
 
   async function load() {
     try {
