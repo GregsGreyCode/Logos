@@ -1,4 +1,11 @@
 // Small helpers shared by every screen.
+
+// The Logos mark is grey at rest and cycles through colours while an agent is working.
+const busy = new Set();
+export function working(who, on) {
+  if (on) busy.add(who); else busy.delete(who);
+  for (const el of document.querySelectorAll('.logo')) el.classList.toggle('busy', busy.size > 0);
+}
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

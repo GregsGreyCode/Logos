@@ -68,7 +68,7 @@ python -m pytest -q tests
 | Brain sync to devices | `scripts/logos-sync`, `docs/brain-sync.md` |
 | Gateway HTTP API | `gateway/http_api.py` and the `*_handlers.py` modules |
 | Login, accounts, sessions | `gateway/auth/` |
-| Dashboard | `gateway/html/main_app.html` (one Alpine.js file) |
+| Dashboard | `gateway/html/app.html` and the modules in `gateway/ui/` (no build step) |
 | How the gateway finds and controls sandboxes | `gateway/sandbox_backend.py` |
 | The `logos` command | `logos_cli/` |
 
