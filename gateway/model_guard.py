@@ -9,8 +9,9 @@ three seconds to accept the connection. If it does, the request and its streamed
 pass straight through, however long the reply takes. If it does not, the caller gets
 an immediate, plainly worded 503, so the agent can tell the person at once.
 
-It keeps nothing and changes nothing in the traffic. Stdlib only; runs in the
-``logos-model-guard`` container (see :mod:`gateway.model_gateway`).
+It keeps nothing, and changes one thing in the traffic (:func:`fix_reasoning`): models whose
+reasoning is only on or off get no ``reasoning_effort`` level they cannot take. Stdlib only;
+runs in the ``logos-model-guard`` container (see :mod:`gateway.model_gateway`).
 """
 from __future__ import annotations
 
@@ -30,6 +31,35 @@ OFF_MESSAGE = ("The local model server is switched off or busy (LM Studio is not
                "so no reply can be written right now. Try again when it is back on.")
 
 
+OPTIONS_TTL = 600.0                     # how long a model's reasoning options are remembered
+
+
+def fix_reasoning(path: str, body: bytes, options_for) -> bytes:
+    """Make a chat request's ``reasoning_effort`` one the model can take.
+
+    hermes asks for a level ("medium"). A model whose reasoning is only on or off (LM Studio
+    publishes ``["off", "on"]``) cannot take a level: LM Studio accepts the request, logs
+    "reasoning 'medium' not supported" and falls back to its default. It refuses "on" and
+    "off" in this field outright. So for such a model: "none" (off) passes, and any level is
+    dropped, which leaves the model's default (on), exactly what happened before, without the
+    warning. Anything else passes untouched. ``options_for(model)`` returns the published
+    options, or [] when unknown."""
+    if not path.split("?", 1)[0].endswith("/chat/completions") or b"reasoning_effort" not in body:
+        return body
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return body
+    effort = req.get("reasoning_effort") if isinstance(req, dict) else None
+    if not isinstance(effort, str) or effort == "none":
+        return body
+    options = set(options_for(str(req.get("model") or "")) or [])
+    if not options or not options <= {"off", "on"}:
+        return body
+    del req["reasoning_effort"]
+    return json.dumps(req).encode()
+
+
 def off_body() -> bytes:
     return json.dumps({"error": {"message": OFF_MESSAGE, "type": "model_server_off",
                                  "code": "model_server_off"}}).encode()
@@ -43,6 +73,24 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
     # waiting again: with paid fallbacks every call would otherwise start three seconds late.
     # The price is that a server that has just come back is noticed up to 15 seconds later.
     state = {"off_until": 0.0}
+    options = {"at": -OPTIONS_TTL, "by_model": {}}
+
+    def options_for(model: str) -> list:
+        """LM Studio's published reasoning options for ``model``, refreshed every ten minutes."""
+        if time.monotonic() - options["at"] > OPTIONS_TTL:
+            options["at"] = time.monotonic()
+            try:
+                conn = http.client.HTTPConnection(host, port, timeout=connect_timeout)
+                conn.request("GET", "/api/v1/models")
+                data = json.loads(conn.getresponse().read() or b"{}")
+                conn.close()
+                options["by_model"] = {
+                    str(m.get("key") or m.get("id")): list(((m.get("capabilities") or {}).get("reasoning") or {})
+                                                           .get("allowed_options") or [])
+                    for m in data.get("models", data.get("data", [])) if isinstance(m, dict)}
+            except (OSError, ValueError, http.client.HTTPException):
+                pass                                # unknown: requests pass unchanged
+        return options["by_model"].get(model, [])
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -102,6 +150,8 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP}
                 headers["Host"] = f"{host}:{port}"
                 headers["Connection"] = "close"
+                if self.command == "POST":
+                    body = fix_reasoning(self.path, body, options_for)
                 conn.request(self.command, self.path, body=body or None, headers=headers)
                 resp = conn.getresponse()
                 self.send_response(resp.status)

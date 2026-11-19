@@ -19,7 +19,12 @@ class Upstream(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        body = json.dumps({"data": [{"id": "qwen/q"}]}).encode()
+        if self.path == "/api/v1/models":          # LM Studio's own list, with reasoning options
+            body = json.dumps({"models": [
+                {"key": "qwen/q", "capabilities": {"reasoning": {"allowed_options": ["off", "on"], "default": "on"}}},
+                {"key": "graded/m", "capabilities": {"reasoning": {"allowed_options": ["off", "minimal", "low"]}}}]}).encode()
+        else:
+            body = json.dumps({"data": [{"id": "qwen/q"}]}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -126,3 +131,27 @@ def test_the_guard_reports_its_own_health_without_asking_the_model_server():
         assert r.status == 200 and json.loads(r.read()) == {"ok": True, "model_server_off": False}
     finally:
         g.shutdown()
+
+
+def test_fix_reasoning_only_touches_on_off_models():
+    opts = {"qwen/q": ["off", "on"], "graded/m": ["off", "minimal", "low"]}.get
+    path = "/v1/chat/completions"
+    def fixed(body, p=path):
+        return json.loads(model_guard.fix_reasoning(p, json.dumps(body).encode(), lambda m: opts(m) or []))
+    assert fixed({"model": "qwen/q", "reasoning_effort": "medium", "x": 1}) == {"model": "qwen/q", "x": 1}
+    assert fixed({"model": "qwen/q", "reasoning_effort": "none"})["reasoning_effort"] == "none"      # off stays off
+    assert fixed({"model": "graded/m", "reasoning_effort": "low"})["reasoning_effort"] == "low"     # it has levels
+    assert fixed({"model": "unknown", "reasoning_effort": "medium"})["reasoning_effort"] == "medium"
+    assert fixed({"model": "qwen/q", "reasoning_effort": "medium"}, "/v1/embeddings")["reasoning_effort"] == "medium"
+    assert model_guard.fix_reasoning(path, b"not json reasoning_effort", lambda m: ["off", "on"]) == b"not json reasoning_effort"
+
+
+def test_the_guard_drops_a_level_an_on_off_model_cannot_take(guard):
+    Upstream.seen.clear()
+    conn = http.client.HTTPConnection("127.0.0.1", guard, timeout=5)
+    conn.request("POST", "/v1/chat/completions", body=json.dumps({"model": "qwen/q", "reasoning_effort": "medium",
+                                                                  "messages": []}),
+                 headers={"Content-Type": "application/json"})
+    conn.getresponse().read()
+    (path, _auth, sent), = Upstream.seen
+    assert path == "/v1/chat/completions" and "reasoning_effort" not in sent and sent["model"] == "qwen/q"
