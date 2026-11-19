@@ -1,10 +1,10 @@
-"""The house service's container (story H1): the household agent's way to the lights.
+"""The house service's container (story H1): the agents' way to the lights.
 
 ``logos-house`` (:mod:`gateway.house_service`) is an MCP server on the Docker bridge, one token
 per agent, like the calendar service. It holds the Home Assistant login; the agent never does.
 
-Only the household agent gets it (``house: {enabled: true}`` in a definition with
-``role: household``). Person agents never do, whatever their definition says (decided 19 Nov).
+Agents with ``house: {enabled: true}`` get it: the household agent, and Greg's and Béré's own
+agents (decided 19 Nov, first household-only, then direct light control for both people).
 
 Home Assistant's address and token are in ``~/.config/logos/home-assistant`` (mode 0600)::
 
@@ -47,8 +47,8 @@ class HouseError(Exception):
 
 
 def uses_house(agent: Mapping[str, Any]) -> bool:
-    """The household agent, when its definition asks for it. Never a person's agent."""
-    return bool((agent.get("house") or {}).get("enabled")) and agent.get("role") == "household"
+    """Any agent whose definition asks for it (the household agent, Greg's and Béré's agents)."""
+    return bool((agent.get("house") or {}).get("enabled"))
 
 
 def config_dir(env: Mapping[str, str]) -> Path:

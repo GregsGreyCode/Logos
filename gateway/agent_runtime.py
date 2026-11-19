@@ -391,7 +391,7 @@ class AgentRuntime:
                 "headers": {"Authorization": f"Bearer {calendar_token}"}}
         hh = _sibling("house_host")
         if hh.uses_house(agent) and house_token:
-            # The lights, through the Logos house service (docs/house.md). Household agent only.
+            # The lights, through the Logos house service (docs/house.md).
             cfg.setdefault("mcp_servers", {})["house"] = {
                 "url": hh.HouseHost(self).url(),
                 "headers": {"Authorization": f"Bearer {house_token}"}}
@@ -692,8 +692,8 @@ class AgentRuntime:
         * ``noticeboard``: the noticeboard's address, or removed when the agent is not on it.
         * ``voice``: the voice service's address, or removed when the agent has no voice.
         * ``calendar``: the calendar service's address, or removed when the agent has no calendar.
-        * ``house``: the house service's address, or removed unless this is the household agent with
-          ``house`` on. Only the tools for its domains are let through.
+        * ``house``: the house service's address, or removed unless the agent has ``house`` on.
+          Only the tools for its domains are let through.
         """
         src = self.repo / agent["policy"]
         if not src.exists():
