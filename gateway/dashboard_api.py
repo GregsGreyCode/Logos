@@ -313,6 +313,33 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
                               "messages": fold_messages(raw.get("data") or [])})
 
 
+# ── Home (S6.11) ─────────────────────────────────────────────────────────────
+
+async def handle_home(request: web.Request) -> web.Response:
+    """GET /api/v2/home — for the person's own agent: today's calendar, brain pages changed in
+    the last day, and whether the model server is answering. The noticeboard has its own call."""
+    from gateway import brain_reader, home
+    user = _user(request)
+    agents = await _visible_agents(request, user["username"])
+    name = home.own_agent(agents, user["username"])
+    if not name:
+        return web.json_response({"agent": None})
+    definition = agents[name]["definition"]
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    out: Dict[str, Any] = {"agent": {"name": name, "display_name": str(definition.get("display_name") or name),
+                                     "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}")},
+                           "model_up": await model_server_up(request, definition)}
+    if runtime is None:
+        out.update(today={"error": "no_backend"}, brain_changes=[])
+        return web.json_response(out)
+    today, listing = await asyncio.gather(
+        asyncio.to_thread(home.calendar_today, runtime, name, definition),
+        asyncio.to_thread(brain_reader.list_pages, runtime, name), return_exceptions=True)
+    out["today"] = today if isinstance(today, dict) else {"error": "calendar_unavailable"}
+    out["brain_changes"] = home.recent_brain_changes(listing) if isinstance(listing, dict) else []
+    return web.json_response(out)
+
+
 # ── which agents are working right now (the logo cycles while one is) ────────
 
 ACTIVITY_CACHE_SECONDS = 8
@@ -991,6 +1018,7 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
     app.router.add_get("/api/v2/people", handle_people)
     app.router.add_get("/api/v2/activity", handle_activity)
+    app.router.add_get("/api/v2/home", handle_home)
     app.router.add_get("/api/v2/models", handle_models)
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)

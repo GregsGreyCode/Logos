@@ -1,6 +1,7 @@
 // Logos dashboard shell: sign-in handling, theme, and a tiny hash router.
 // No build step: plain ES modules served from /ui/.
 import { chatView } from './chat.js';
+import { homeView } from './home.js';
 import { brainView } from './brain.js';
 import { agentsView } from './agents.js';
 import { peopleView } from './people.js';
@@ -9,14 +10,14 @@ import { updatesView } from './updates.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, labelTables } from './util.js';
 
-const views = { chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
+const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView };
 const root = document.getElementById('view');
 let cleanup = null;
 
-const NAMES = { chat: 'Chat', brain: 'Brain', noticeboard: 'Noticeboard', agents: 'Agents', models: 'Models',
+const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Noticeboard', agents: 'Agents', models: 'Models',
   people: 'People', updates: 'Updates' };
-const IN_MORE = ['models', 'people', 'updates'];
+const IN_MORE = ['agents', 'models', 'people', 'updates'];
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },
@@ -60,7 +61,7 @@ for (const a of document.querySelectorAll('.sheet a')) a.addEventListener('click
 
 let visit = 0;
 async function route() {
-  const [, name = 'chat', ...rest] = location.hash.split('/');
+  const [, name = 'home', ...rest] = location.hash.split('/');
   const mine = ++visit;
   dropSheet();
   if (cleanup) { cleanup(); cleanup = null; }
