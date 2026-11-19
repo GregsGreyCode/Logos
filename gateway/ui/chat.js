@@ -1,5 +1,5 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
-import { h, api, getJSON, when, markdown, working } from './util.js';
+import { h, api, getJSON, when, markdown, working, agentLabel, icon } from './util.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
@@ -25,6 +25,24 @@ function listIcon() {
   return svg;
 }
 
+// A tool's result as a person reads it: tools answer in JSON, often one text field ("content",
+// "output") holding a whole file or command output with its newlines escaped. Show that text.
+export function readable(result) {
+  if (result == null) return '(no result recorded)';
+  try {
+    const v = JSON.parse(result);
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const key = ['content', 'output', 'stdout', 'text', 'result'].find((k) => typeof v[k] === 'string');
+      if (key) {
+        const rest = Object.keys(v).filter((k) => k !== key && v[k] !== null && v[k] !== '' && v[k] !== 0);
+        return v[key] + (rest.length ? `\n\n${JSON.stringify(Object.fromEntries(rest.map((k) => [k, v[k]])))}` : '');
+      }
+      return JSON.stringify(v, null, 2);
+    }
+  } catch (e) { /* not JSON (or cut short): show as it is */ }
+  return result;
+}
+
 // One model call's reasoning and tool calls, folded away under a one-line summary.
 export function stepsView(steps) {
   if (!steps || !steps.length) return null;
@@ -38,7 +56,7 @@ export function stepsView(steps) {
       s.calls.map((c) => h('div', { class: 'call' },
         h('div', { class: 'call-name' }, c.name),
         c.args ? h('pre', { class: 'call-args' }, c.args) : null,
-        h('pre', { class: 'call-result' }, c.result == null ? '(no result recorded)' : c.result))))));
+        h('pre', { class: 'call-result' }, readable(c.result)))))));
 }
 
 // A message whose reply has not been seen yet, kept per agent in this browser. If the
@@ -101,7 +119,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const modelStatus = agent.has_backup
     ? h('div', { class: 'model-line', role: 'status', hidden: true }, 'Local model off: a backup model replies')
     : h('div', { class: 'model-line down', role: 'status', hidden: true },
-      `Model server off: ${agent.display_name} can't reply until LM Studio is on.`);
+      'Model server off: no replies until LM Studio is on.');
   const modelOff = (off) => { modelStatus.hidden = !off; };
   modelOff(agent.model_up === false);
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -286,8 +304,9 @@ export async function chatView(root, [agentArg, chatArg], state) {
 
   // Microphone: record, turn the recording into text at the voice service, and put the words
   // in the message box. Nothing is sent to the agent until the person presses Send.
+  const MIC = ['M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z', 'M5 11a7 7 0 0 0 14 0', 'M12 18v3'];
   const micLabel = (text) => mic.replaceChildren(h('span', { class: 'mic-dot', 'aria-hidden': 'true' }),
-    h('span', { class: 'mic-label' }, text));
+    icon(MIC), h('span', { class: 'mic-label' }, text));
   const say = (text) => { micNote.textContent = text || ''; micNote.hidden = !text; };
   micLabel('Speak');
   function stopRecording() {
@@ -370,7 +389,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const tabs = agents.length > 1 ? h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Agent' },
     agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
       onclick: () => { location.hash = `#/chat/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }),
-      h('span', {}, a.display_name)))) : null;
+      ...agentLabel(a.display_name)))) : null;
 
   // Phone: earlier conversations and the view switches open as a panel from the bottom.
   const side = h('aside', { class: 'side', id: 'chat-side', 'aria-label': 'Conversations' });

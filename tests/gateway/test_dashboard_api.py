@@ -117,6 +117,7 @@ def test_me_and_agents_are_per_user(run):
     assert run("u-greg", "/api/v2/me")[1]["username"] == "greg"
     status, body = run("u-greg", "/api/v2/agents")
     assert status == 200
+    assert body["agents"][0]["obsidian_vault"] == "brain-greg"
     assert [(a["name"], a["running"], a["shared"]) for a in body["agents"]] == [
         ("greg", True, False), ("household", False, True)]
     assert [a["name"] for a in run("u-bere", "/api/v2/agents")[1]["agents"]] == ["household"]
@@ -319,6 +320,18 @@ def test_brain_listing_is_parsed():
         ("", "Brain"), ("daily", "2026-11-16"), ("daily", "2026-11-15"), ("projects", "Trip to Lisbon")]
     assert d["changes"] == [{"path": "daily/2026-11-16.md", "when": 190, "title": "2026-11-16"},
                             {"path": "projects/Trip.md", "when": 190, "title": "Trip to Lisbon"}]
+    assert d["conflicts"] == []
+
+
+def test_sync_conflict_copies_are_listed_apart():
+    from gateway import brain_reader as b
+    out = ("P\tprojects/Trip.md\t200\tTrip to Lisbon\n"
+           "P\tprojects/Trip.sync-conflict-20261119-101500-7RIKTYS.md\t210\tTrip to Lisbon\n")
+    d = b.parse_listing(out)
+    assert [p["path"] for p in d["pages"]] == ["projects/Trip.md"]
+    assert d["conflicts"] == [{"path": "projects/Trip.sync-conflict-20261119-101500-7RIKTYS.md",
+                               "of": "projects/Trip.md", "modified": 210, "title": "Trip to Lisbon"}]
+    assert "-not -path './.*/*'" in b._LIST                      # .trash, .stversions, .obsidian, .git
 
 
 class BrainRunner:

@@ -1,5 +1,38 @@
 // Small helpers shared by every screen.
 
+// "Greg's agent" -> "Greg's", "Household agent" -> "Household": for a phone's narrow switches.
+export const shortName = (name) => String(name || '').replace(/\s+agent$/i, '') || name;
+
+// The full name for wide screens and the short one for phones; CSS shows one of the two.
+export function agentLabel(name) {
+  return [h('span', { class: 'name-full' }, name), h('span', { class: 'name-short', 'aria-hidden': 'true' }, shortName(name))];
+}
+
+// SVG icons (h() makes HTML elements, which cannot draw SVG).
+export function icon(paths) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('class', 'icon');
+  for (const d of paths) {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', d);
+    svg.append(p);
+  }
+  return svg;
+}
+
+// On a phone a table becomes a list of small blocks; each cell is labelled with its column.
+export function labelTables(root) {
+  for (const table of root.querySelectorAll('table')) {
+    const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+    for (const row of table.querySelectorAll('tbody tr')) {
+      [...row.children].forEach((td, i) => { if (heads[i] && !td.dataset.label) td.dataset.label = heads[i]; });
+    }
+  }
+}
+
 // The Logos mark is grey at rest and cycles through colours while an agent is working.
 const busy = new Set();
 export function working(who, on) {
@@ -82,8 +115,24 @@ export function markdown(text) {
     for (const block of part.split(/\n{2,}/)) {
       const lines = block.split('\n').filter((l) => l.trim());
       if (!lines.length) continue;
-      if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
-        nodes.push(h('ul', {}, lines.map((l) => h('li', {}, inline(l.replace(/^\s*[-*]\s+/, ''))))));
+      // A table: rows of |cells|, the second row the |---| line under the header.
+      if (lines.length >= 2 && lines.every((l) => /^\s*\|.*\|\s*$/.test(l)) && /^[\s|:-]+$/.test(lines[1])) {
+        const cells = (l) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
+        nodes.push(h('div', { class: 'md-table' }, h('table', {},
+          h('thead', {}, h('tr', {}, cells(lines[0]).map((c) => h('th', {}, inline(c))))),
+          h('tbody', {}, lines.slice(2).map((l) => h('tr', {}, cells(l).map((c) => h('td', {}, inline(c)))))))));
+      } else if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
+        // Bullets; "- [ ] thing" and "- [x] thing" are to-dos.
+        nodes.push(h('ul', {}, lines.map((l) => {
+          const item = l.replace(/^\s*[-*]\s+/, '');
+          const todo = item.match(/^\[( |x|X)\]\s+(.*)$/);
+          if (!todo) return h('li', {}, inline(item));
+          const done = todo[1] !== ' ';
+          return h('li', { class: `todo${done ? ' done' : ''}` },
+            h('span', { class: 'box', role: 'img', 'aria-label': done ? 'Done' : 'To do' }, done ? '\u2611' : '\u2610'), ' ', inline(todo[2]));
+        })));
+      } else if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
+        nodes.push(h('ol', {}, lines.map((l) => h('li', {}, inline(l.replace(/^\s*\d+[.)]\s+/, ''))))));
       } else {
         // Headings become real headings; other lines of a block stay one paragraph.
         let p = null;

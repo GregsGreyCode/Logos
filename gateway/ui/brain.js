@@ -1,5 +1,5 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
-import { h, api, getJSON, when, markdown } from './util.js';
+import { h, api, getJSON, when, markdown, agentLabel } from './util.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -46,6 +46,10 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   let current = pathParts.length ? decodeURIComponent(pathParts.join('/')).replace(/\?edit$/, '') : '';
   const base = `/api/v2/agents/${agent.name}/brain`;
   const link = (path) => `#/brain/${agent.name}/${path.split('/').map(encodeURIComponent).join('/')}`;
+  // On a phone the brain is edited in Obsidian, on the copy Syncthing keeps there.
+  const obsidian = (path) => `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}`
+    + `&file=${encodeURIComponent(path.replace(/\.md$/, ''))}`;
+  const conflictsBox = h('div', { class: 'conflicts', hidden: true });
 
   const tree = h('nav', { class: 'tree', 'aria-label': 'Pages' });
   const article = h('article', { class: 'doc' });
@@ -72,7 +76,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn small-btn' }, 'Create'),
       h('button', { type: 'button', class: 'btn quiet small-btn', onclick: () => { form.hidden = true; opener.hidden = false; } }, 'Cancel')),
     note);
-    const opener = h('button', { type: 'button', class: 'btn quiet', onclick: () => { form.hidden = false; opener.hidden = true; title.focus(); } }, 'New page');
+    const opener = h('button', { type: 'button', class: 'btn quiet wide-only', onclick: () => { form.hidden = false; opener.hidden = true; title.focus(); } }, 'New page');
     return [opener, form];
   }
 
@@ -92,6 +96,16 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     if (!alive) return;
     pages = d.pages;
     showTree();
+    // Two versions of a page (changed on a phone and by the agent before they synced).
+    const conflicts = d.conflicts || [];
+    conflictsBox.hidden = !conflicts.length;
+    conflictsBox.replaceChildren(...(conflicts.length ? [
+      h('strong', {}, conflicts.length === 1 ? 'A page has two versions' : `${conflicts.length} pages have two versions`),
+      h('p', { class: 'when' }, 'It was changed on a phone and here before the two synced, so Syncthing kept both. Open both, keep what you want in the page, then delete the copy (in Obsidian, or ask the agent).'),
+      h('ul', {}, conflicts.map((c) => h('li', {}, h('a', { href: link(c.of) }, c.title), ': ',
+        h('a', { href: obsidian(c.path), class: 'phone-only' }, 'open the copy in Obsidian'),
+        h('span', { class: 'wide-only' }, 'the copy is ', h('code', {}, c.path))))),
+    ] : []));
     changes.replaceChildren(h('h2', { class: 'label' }, 'Changed this week'),
       ...(d.changes.length ? d.changes.map((c) => h('a', { href: link(c.path), class: 'hit' }, c.title, h('span', { class: 'when' }, when(c.when))))
         : [h('span', { class: 'when' }, 'Nothing changed this week.')]),
@@ -145,7 +159,8 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     article.replaceChildren(
       h('div', { class: 'doc-head' }, h('h1', {}, d.title),
         h('span', { class: 'when' }, d.path.replace(/\.md$/, '').replace(/\//g, ' / ')),
-        h('button', { type: 'button', class: 'btn quiet small', onclick: () => edit(page, d) }, 'Edit')),
+        h('button', { type: 'button', class: 'btn quiet small wide-only', onclick: () => edit(page, d) }, 'Edit'),
+        h('a', { class: 'btn quiet small phone-only obsidian-link', href: obsidian(d.path) }, 'Open in Obsidian')),
       ask || askBox(page),
       h('div', { class: 'doc-body' }, ...(body.trim() ? markdown(body) : [h('p', { class: 'when' }, 'This page is empty.')])),
       h('div', { class: 'doc-foot when' }, `Last changed ${when(d.modified).toLowerCase()}. Your edits win: ${agent.display_name} keeps what you write.`));
@@ -257,11 +272,13 @@ export async function brainView(root, [agentArg, ...pathParts]) {
 
   const tabs = agents.length > 1 ? h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Whose brain' },
     agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
-      onclick: () => { location.hash = `#/brain/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name))) : null;
+      onclick: () => { location.hash = `#/brain/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }),
+      ...agentLabel(a.display_name)))) : null;
 
   root.replaceChildren(h('div', { class: 'brain' },
     h('header', { class: 'chat-head' }, h('h1', {}, 'Brain'), tabs,
       h('label', { for: 'q', class: 'sr' }, 'Search the brain'), search),
+    conflictsBox,
     h('div', { class: 'brain-body' }, tree, article,
       h('aside', { class: 'side', 'aria-label': 'Recent changes' }, changes, results))));
 
