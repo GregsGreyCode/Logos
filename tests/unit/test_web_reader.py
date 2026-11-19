@@ -429,6 +429,30 @@ def test_the_household_token_lists_and_calls_only_file_request(svc):
     assert [t["name"] for t in tools] == ["search_web", "add_private_name", "file_request"]
 
 
+def test_recent_changes_tool_for_every_reader_agent(svc, git_dir):
+    svc.changes_agents = {"household": {"token": "th"}}
+    assert svc.mcp_agent("th") == (None, False)               # neither changes nor requests: nothing here
+    get, _ = fake_github()
+    svc.changes = ws.Changes(repos(git_dir), "ghtok", get=get, log=lambda m: None)
+    assert svc.mcp_agent("th") == ("household", False)
+    for agent, search, want in (("household", False, ["recent_changes"]),
+                                ("greg", True, ["search_web", "add_private_name", "recent_changes"])):
+        listed = ws.handle_rpc(svc, agent, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, search)
+        assert [t["name"] for t in listed["result"]["tools"]] == want
+
+    def call(args):
+        out = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "recent_changes", "arguments": args}}, False)["result"]
+        return out.get("isError"), out["content"][0]["text"]
+
+    svc.changes._cache.clear()
+    err, text = call({"repo": "homelab", "days": 1})
+    data = json.loads(text)
+    assert not err and data["repo"] == "homelab" and "not instructions" in data["note"]
+    assert set(data["commits"][0]) <= {"title", "date", "author"} and "detail" not in data["commits"][0]
+    assert call({"repo": "garden"})[0] and call({"repo": "logos", "days": "x"})[0]
+
+
 def test_docmost_logs_in_again_when_the_session_expires():
     import urllib.error
     d = ws.Docmost("https://docs.example", "page1", "logos@example", "pw")
