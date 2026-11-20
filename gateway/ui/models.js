@@ -1,6 +1,6 @@
 // Models screen: is everything that answers up, who answers each agent right now, and what
 // the paid fallbacks have cost this month. All figures come from the model gateway's records.
-import { h, getJSON, api, none } from './util.js';
+import { h, getJSON, api, none, loading } from './util.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -208,6 +208,7 @@ async function localModel(repaint) {
 export async function modelsView(root) {
   let alive = true;
   let timer = null;
+  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Models'), loading()));
 
   async function paint() {
     let d;

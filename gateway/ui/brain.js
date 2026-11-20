@@ -1,5 +1,5 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
-import { h, api, getJSON, when, markdown, agentLabel, none } from './util.js';
+import { h, api, getJSON, when, markdown, agentLabel, none, loading } from './util.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -146,7 +146,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   async function showPage(page, keepAsk = false) {
     current = page.path;
     const ask = keepAsk ? article.querySelector('.ask') : null;
-    if (!keepAsk) article.replaceChildren(h('p', { class: 'when' }, 'Loading…'));
+    if (!keepAsk) article.replaceChildren(loading());
     let d;
     try {
       d = await getJSON(`${base}/page?path=${encodeURIComponent(page.path)}`);

@@ -1,5 +1,5 @@
 // Noticeboard screen: what the agents asked each other, and the requests waiting on you.
-import { h, api, getJSON, when, none } from './util.js';
+import { h, api, getJSON, when, none, loading } from './util.js';
 
 const KIND = { fyi: 'FYI', question: 'Question', shared_change: 'Shared change', reminder: 'Reminder' };
 const ASKS = { question: 'asks a question', shared_change: 'proposes a shared change', reminder: 'asks for a reminder' };
@@ -71,10 +71,13 @@ export function requestCard(m, doing, reload) {
 export async function noticeboardView(root) {
   let alive = true, timer = null;
   const doing = {};             // request id -> message shown while the agent acts on an acceptance
-  const waitingBox = h('div', { class: 'cards' });
+  const waitingBox = h('div', { class: 'cards' }, loading());
   const tbody = h('tbody');
   const logBox = h('div', { class: 'table-box' });
   const noLog = none('No messages yet.');
+  const allNone = h('p', { class: 'none', hidden: true }, 'Nothing waiting on you, and no messages yet.');
+  const waitSec = h('section', { 'aria-label': 'Waiting on you' }, h('h2', { class: 'label' }, 'Waiting on you'), waitingBox);
+  let logSec = null;
   const error = h('div', { class: 'notice', hidden: true });
 
   const card = (m) => requestCard(m, doing, () => load());
@@ -100,6 +103,9 @@ export async function noticeboardView(root) {
           h('td', {}, h('span', { class: `pill ${tone}` }, label)));
       }));
       logBox.hidden = !log.length; noLog.hidden = !!log.length;
+      // P2: nothing anywhere is said once
+      const bare = !waiting.length && !log.length;
+      waitSec.hidden = bare; logSec.hidden = bare; allNone.hidden = !bare;
     } catch (e) {
       error.hidden = false;
       error.textContent = 'Could not load the noticeboard.';
@@ -110,10 +116,11 @@ export async function noticeboardView(root) {
     h('header', {}, h('h1', {}, 'Noticeboard'),
       h('p', { class: 'when lead' }, 'What the agents have asked each other. Another agent can only ask. Nothing is answered or done until you decide.')),
     error,
-    h('section', { 'aria-label': 'Waiting on you' }, h('h2', { class: 'label' }, 'Waiting on you'), waitingBox),
-    h('section', { 'aria-label': 'Recent messages' }, h('h2', { class: 'label' }, 'Recent messages'),
+    allNone, waitSec,
+    h('section', { 'aria-label': 'Recent messages', class: 'nb-log' }, h('h2', { class: 'label' }, 'Recent messages'),
       noLog, logBox,
       h('p', { class: 'when' }, 'Each agent can send another ten requests a day. Urgent ones reach the person in Element X within a minute.'))));
+  logSec = root.querySelector('.nb-log');
   await load();
   timer = setInterval(load, 15000);
   return () => { alive = false; clearInterval(timer); };
