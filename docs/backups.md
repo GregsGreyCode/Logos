@@ -37,3 +37,27 @@ docker run --rm -v logos-matrix:/m -v "$PWD":/in alpine:3 tar -xzf /in/matrix.ta
 ```
 
 Remove any `state.db-wal` and `state.db-shm` next to a restored `state.db` before starting the agent.
+
+### Tested on 20 Nov 2026
+
+Restore, from the 20 Nov 01:35 export, without touching anything live:
+
+- **Checksums**: all 13 files match `manifest.json`.
+- **Brains and calendars**: every bundle clones; history matches the live brains at export time.
+  (`git bundle verify` needs to run inside a repository; cloning is the real check.)
+- **Conversations and accounts**: the three `state-*.db` and `auth.db` pass `PRAGMA integrity_check`.
+- **Matrix**: the archive restored into a throwaway volume boots a throwaway server
+  (`--network none`, another name): "Services startup complete", listening.
+- **A whole agent**: the household backup restored into the `bench` agent on dev (brain, memories,
+  jobs, `state.db`) answered from its restored brain (the shopping page) and from its restored
+  conversations (the 29 Nov concert at 19:00).
+
+Two things learned: inside `alpine/git`, a brain volume owned by uid 10000 needs
+`git config --global --add safe.directory <path>` before `git checkout`; and restoring over an
+existing volume works (copy the clone over it, overwrite `state.db`, empty any `state.db-wal` /
+`state.db-shm`), so nothing has to be deleted first.
+
+Rollback, on dev: `scripts/logos-deploy --to <commit> --yes` went back one commit (dashboard, services
+and agents followed), and a plain `scripts/logos-deploy --yes` came forward again. Both are in
+`--history` and tagged `deploy-<time>`.
+
