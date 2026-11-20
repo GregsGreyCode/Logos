@@ -25,6 +25,10 @@ import importlib.util, sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+# Some modules the runtime loads import their neighbours as ``gateway.<name>``: the repo must be
+# importable however the script is started (before 20 Nov `up` crashed without PYTHONPATH).
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
 
 
 def _load(name):
