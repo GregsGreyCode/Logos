@@ -7,7 +7,10 @@ page in Docmost, where Greg's Claude picks it up. Typical asks: "add a feature r
 "note that the voice notes keep failing", "log a bug", "remember for Greg's backlog: …".
 
 - `kind`: `feature` for something new or different, `issue` for something broken or wrong.
-- `area`: `logos`, `homelab`, or `other` if neither fits.
+- `area`: `logos` for the agents, the chat and the Logos dashboard (ai.home...); `homelab` for
+  everything else in the home setup, including Home Assistant and its app or dashboard, the
+  lights, the media apps, the network and backups; `other` if neither fits. "In Home Assistant..."
+  is always `homelab`, even when it is about a dashboard or a list.
 - `title`: a few words. `details`: what they want or what went wrong, in their words. For a
   problem, add when it happened and what they expected, if they said.
 - File only when they ask you to note something for later, or for something you cannot do
