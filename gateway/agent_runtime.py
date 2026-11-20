@@ -461,7 +461,8 @@ class AgentRuntime:
 
     MATRIX_EXPORTED = ("MATRIX_HOMESERVER", "MATRIX_ACCESS_TOKEN", "MATRIX_USER_ID", "MATRIX_DEVICE_ID",
                        "MATRIX_ALLOWED_USERS", "MATRIX_E2EE_MODE", "MATRIX_HOME_ROOM",
-                       "MATRIX_RECOVERY_KEY_OUTPUT_FILE", "MATRIX_RECOVERY_KEY", "MATRIX_REQUIRE_MENTION")
+                       "MATRIX_RECOVERY_KEY_OUTPUT_FILE", "MATRIX_RECOVERY_KEY", "MATRIX_REQUIRE_MENTION",
+                       "MATRIX_SESSION_SCOPE")
     MATRIX_RECOVERY_FILE = "matrix-recovery-key"      # in the home volume (/opt/data)
 
     def _matrix_env(self, agent: Mapping[str, Any], cur: dict, home: str = "") -> None:
@@ -489,6 +490,10 @@ class AgentRuntime:
         cur["MATRIX_E2EE_MODE"] = str(mx.get("e2ee", "required"))
         # In a room with more than two people, answer only when @mentioned (DMs always answer).
         cur["MATRIX_REQUIRE_MENTION"] = "true" if mx.get("require_mention", True) else "false"
+        # One conversation per room. hermes otherwise starts a thread, and a fresh session, for every
+        # top-level message in a group room, so the household agent forgot the message before
+        # ("Try again" -> "I don't have the context"). DMs are one session already.
+        cur["MATRIX_SESSION_SCOPE"] = str(mx.get("session_scope", "room"))
         # Cross-signing recovery key, written once (0600) into the home volume, so a rebuilt
         # sandbox can prove it is the same device and still read encrypted history.
         cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] = f"/opt/data/{self.MATRIX_RECOVERY_FILE}"
