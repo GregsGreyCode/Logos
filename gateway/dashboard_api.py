@@ -1053,6 +1053,85 @@ async def handle_models(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
+# ── the local model server (LM Studio) ──────────────────────────────────────
+
+def _local_definitions(runtime: Any) -> Dict[str, Mapping[str, Any]]:
+    out = {}
+    for name in runtime.defined():
+        d = runtime.load(name)
+        if d.get("sandbox", True) is not False and d.get("dashboard") is not False:
+            out[name] = d
+    return out
+
+
+def local_model_view(runtime: Any) -> dict:
+    """Everything the "Local model" section shows. Blocking; run in a thread."""
+    from gateway import model_gateway, model_server
+    http = runtime.runner.http
+    definitions = _local_definitions(runtime)
+    want_all = model_server.wanted(definitions)
+    if not want_all:
+        return {"server": None}
+    base, want = next(iter(want_all.items()))
+    view: Dict[str, Any] = {"server": base.split("//", 1)[-1], "want": want, "up": False}
+    try:
+        listed = [model_server.describe(m) for m in model_server.models(http, base)]
+        view.update(up=True, loaded=[m for m in listed if m["instances"]],
+                    downloaded=len(listed),
+                    checks=model_server.checks(want, listed, model_server.vram_gb(runtime.env)))
+    except Exception as e:
+        view["error"] = f"LM Studio did not answer ({type(e).__name__})."
+    gw = model_gateway.ModelGateway(runtime)
+    view["queue"] = model_server.queue(http, f"http://{gw.bind_address()}:{model_gateway.GUARD_PORT}/guard/health")
+    logs = runtime.runner.run(["docker", "logs", "--since", "168h", model_gateway.GUARD_CONTAINER])
+    view["speed"] = model_server.speed(((logs.stdout or "") + (logs.stderr or "")).splitlines())
+    return view
+
+
+async def handle_local_model(request: web.Request) -> web.Response:
+    """GET /api/v2/models/local — what LM Studio has loaded, checks, the queue and reply speed."""
+    _user(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    view = await asyncio.to_thread(local_model_view, runtime)
+    view["can_change"] = _user(request)["role"] == "admin"
+    return web.json_response(view)
+
+
+async def handle_local_model_action(request: web.Request) -> web.Response:
+    """POST /api/v2/models/local/{action}: ``reload`` (the agents' model, with Logos's window) or
+    ``unload`` ({"instance": id} of a model no agent uses). Admin only."""
+    from gateway import model_server
+    if _user(request)["role"] != "admin":
+        return web.json_response({"error": "forbidden"}, status=403)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    want_all = model_server.wanted(_local_definitions(runtime))
+    if not want_all:
+        return web.json_response({"error": "no_local_model"}, status=400)
+    base, want = next(iter(want_all.items()))
+    action = request.match_info["action"]
+    try:
+        if action == "reload":
+            model, w = next(iter(sorted(want.items())))
+            config = await asyncio.to_thread(model_server.reload, runtime.runner.http, base, model, w["load"])
+            logger.info("local model reloaded by %s: %s", _user(request)["username"], model)
+            return web.json_response({"done": "reloaded", "model": model, "config": config.get("load_config")})
+        if action == "unload":
+            body = await request.json()
+            instance = str((body or {}).get("instance") or "")
+            await asyncio.to_thread(model_server.unload, runtime.runner.http, base, instance, sorted(want))
+            logger.info("local model unloaded by %s: %s", _user(request)["username"], instance)
+            return web.json_response({"done": "unloaded", "instance": instance})
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        return web.json_response({"error": f"LM Studio refused ({type(e).__name__})."}, status=502)
+    return web.json_response({"error": "unknown_action"}, status=404)
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
@@ -1063,6 +1142,8 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/home", handle_home)
     app.router.add_get("/api/v2/model", handle_model)
     app.router.add_get("/api/v2/models", handle_models)
+    app.router.add_get("/api/v2/models/local", handle_local_model)
+    app.router.add_post("/api/v2/models/local/{action}", require_csrf(handle_local_model_action))
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
     app.router.add_get("/api/v2/agents/{name}/brain/search", handle_brain_search)

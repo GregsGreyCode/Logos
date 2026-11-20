@@ -1,6 +1,6 @@
 // Models screen: is everything that answers up, who answers each agent right now, and what
 // the paid fallbacks have cost this month. All figures come from the model gateway's records.
-import { h, getJSON } from './util.js';
+import { h, getJSON, api } from './util.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -104,6 +104,95 @@ function meter(used, limit) {
     h('div', { class: `meter-fill ${pct >= 100 ? 'full' : ''}`, style: `width:${pct}%` }));
 }
 
+// ── The local model (LM Studio): what is loaded, checks, the queue, speed, app-only settings ──
+
+const yes = (v) => (v === true ? 'On' : v === false ? 'Off' : '—');
+const APP_SETTINGS = [
+  ['GPU offload', 'Max', 'Every layer the GPU can hold runs there; the rest stays in RAM.'],
+  ['Force model expert weights onto CPU', 'On, for a mixture-of-experts model bigger than the GPU',
+    'The experts sit in RAM and the always-used layers stay on the GPU: the fast way to run a 35B model on 16 GB.'],
+  ['K Cache / V Cache quantization', 'Q8_0', 'Halves the memory of the conversation window with no visible loss.'],
+  ['Flash attention', 'On', 'Less memory and faster replies. Logos turns it on when it loads the model.'],
+  ['Context length', 'Leave to Logos', 'Logos loads the window the agents need (shown above).'],
+  ['Keep model in memory', 'On', 'Stops the model being pushed out to disk while you use the PC.'],
+];
+
+async function localModel() {
+  let d;
+  try { d = await getJSON('/api/v2/models/local'); } catch (e) {
+    return h('section', { 'aria-label': 'Local model' }, h('h2', { class: 'label' }, 'Local model'),
+      h('div', { class: 'notice' }, 'Could not read the local model server.'));
+  }
+  if (!d.server) return null;
+  const parts = [h('h2', { class: 'label' }, `Local model · ${d.server}`)];
+  if (!d.up) {
+    parts.push(h('div', { class: 'notice' }, d.error || 'LM Studio is closed or that PC is busy.'));
+    return h('section', { 'aria-label': 'Local model' }, parts);
+  }
+  const want = Object.entries(d.want);
+  const cards = [];
+  for (const m of d.loaded) {
+    const ours = d.want[m.key];
+    for (const i of m.instances) {
+      const rows = [
+        ['Window', `${count(i.context_length)} tokens`, ours ? `agents use up to ${count(ours.uses)} each; Logos loads ${count(ours.load)}` : ''],
+        ['Parallel slots', i.parallel ?? '—', 'they share the one window'],
+        ['Flash attention', yes(i.flash_attention), ''],
+        ['KV cache on GPU', yes(i.offload_kv_cache_to_gpu), ''],
+        ['Experts', i.num_experts ?? '—', ''],
+        ['File', `${m.size_gb} GB · ${m.quantization}`, m.params],
+      ];
+      const unload = d.can_change && !ours ? h('button', { type: 'button', class: 'btn ghost', onclick: async (ev) => {
+        if (!confirm(`Unload ${m.key}? No agent uses it.`)) return;
+        ev.target.disabled = true;
+        const r = await api('/api/v2/models/local/unload', { method: 'POST', body: { instance: i.id } });
+        ev.target.textContent = r.ok ? 'Unloaded' : 'Could not unload';
+      } }, 'Unload') : null;
+      cards.push(h('div', { class: 'card' },
+        h('span', { class: `status ${ours ? 'up' : 'down'}` }, ours ? 'Used by the agents' : 'Not used by any agent'),
+        h('h2', {}, m.name),
+        h('dl', { class: 'facts' }, rows.flatMap(([k, v, note]) => [h('dt', {}, k),
+          h('dd', {}, String(v), note ? h('span', { class: 'when' }, ` · ${note}`) : null)])),
+        unload));
+    }
+  }
+  if (!d.loaded.length) cards.push(h('div', { class: 'card' }, h('h2', {}, 'Nothing loaded'),
+    h('p', { class: 'when' }, 'The first message loads the agents\' model, which takes about a minute.')));
+
+  const q = d.queue, s = d.speed;
+  const speedLines = [];
+  if (s && s.alone.replies) speedLines.push(`On its own: ${s.alone.median_tokens_per_s ?? '—'} tokens/s, ${s.alone.median_seconds} s per reply (median of ${s.alone.replies})`);
+  if (s && s.shared.replies) speedLines.push(`Sharing the GPU: ${s.shared.median_tokens_per_s ?? '—'} tokens/s, ${s.shared.median_seconds} s per reply (${s.shared.replies})`);
+  if (s && (s.alone.replies || s.shared.replies)) speedLines.push(`Waited in the queue ${s.queued} times; longest ${Math.round(s.longest_wait_s)} s`);
+  cards.push(h('div', { class: 'card' }, h('h2', {}, 'Replies this week'),
+    speedLines.length ? speedLines.map((l) => h('p', {}, l)) : h('p', { class: 'when' }, 'No replies recorded since the model guard last restarted.'),
+    q ? h('p', { class: 'when' }, `Now: ${q.running} running, ${q.waiting} waiting (at most ${q.slots} at once)`) : null));
+
+  parts.push(h('div', { class: 'cards' }, cards));
+  parts.push(h('ul', { class: 'checks' }, (d.checks || []).map((c) => h('li', { class: `check ${c.level}` },
+    h('span', { class: 'check-mark', 'aria-hidden': 'true' }, c.level === 'warn' ? '!' : c.level === 'ok' ? '✓' : 'i'),
+    h('span', { class: 'visually-hidden' }, c.level === 'warn' ? 'Problem: ' : c.level === 'ok' ? 'Fine: ' : 'Note: '), c.text))));
+
+  if (d.can_change && want.length) {
+    const status = h('p', { class: 'when', role: 'status' });
+    parts.push(h('div', { class: 'actions' },
+      h('button', { type: 'button', class: 'btn', onclick: async (ev) => {
+        if (!confirm('Reload the agents\' model with Logos\'s settings? The agents cannot answer for about a minute.')) return;
+        ev.target.disabled = true; status.textContent = 'Reloading… this takes about a minute.';
+        const r = await api('/api/v2/models/local/reload', { method: 'POST' });
+        const body = await r.json().catch(() => ({}));
+        status.textContent = r.ok ? `Reloaded with a ${count(body.config?.context_length)}-token window.` : (body.error || 'Could not reload.');
+        ev.target.disabled = false;
+      } }, 'Reload with Logos settings'), status));
+  }
+
+  parts.push(h('details', { class: 'card' }, h('summary', {}, 'Settings only the LM Studio app can change'),
+    h('p', { class: 'when' }, 'LM Studio does not let Logos set or read these. On the PC: My Models, the gear next to the model.'),
+    h('table', { class: 'plain' }, h('thead', {}, h('tr', {}, ['Setting', 'Set it to', 'Why'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, APP_SETTINGS.map(([a, b, c]) => h('tr', {}, h('td', {}, a), h('td', {}, h('strong', {}, b)), h('td', {}, c)))))));
+  return h('section', { 'aria-label': 'Local model' }, parts);
+}
+
 export async function modelsView(root) {
   let alive = true;
   let timer = null;
@@ -160,6 +249,7 @@ export async function modelsView(root) {
       h('h1', {}, 'Models'),
       d.error ? h('div', { class: 'notice' }, d.error) : null,
       h('section', { 'aria-label': 'Status' }, h('div', { class: 'cards tiles' }, tiles)),
+      await localModel(),
       h('section', { 'aria-label': 'Agents' },
         h('h2', { class: 'label' }, paidOn ? `Who answers, and spend in ${d.month}` : 'Who answers'),
         h('div', { class: 'table-box' }, h('table', { class: paidOn ? 'plain wide' : 'plain' },
