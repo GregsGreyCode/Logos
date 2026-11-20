@@ -40,12 +40,24 @@ def fetch(url, token):
         return None
 
 
+def line(item):
+    """One open item: its title, then its due date and details when it has them."""
+    if not isinstance(item, dict):
+        return f"- [ ] {item}\n"
+    text = f"- [ ] {item.get('item', '')}"
+    if item.get("due"):
+        text += f" (due {item['due']})"
+    if item.get("details"):
+        text += "\n" + "".join(f"    {d}\n" for d in str(item["details"]).splitlines() if d.strip()).rstrip("\n")
+    return text + "\n"
+
+
 def render(lists):
     out = [HEADER]
     for lst in lists:
         out.append(f"\n## {lst.get('list') or 'List'}\n\n")
         items = lst.get("open") or []
-        out.append("".join(f"- [ ] {i}\n" for i in items) if items else "Nothing on it.\n")
+        out.append("".join(line(i) for i in items) if items else "Nothing on it.\n")
     return "".join(out)
 
 
