@@ -979,3 +979,4 @@ a.btn.mx-new { justify-content: center; }
   .void-field .agent-mark .mark-label { opacity: 1; }
   .mark-name { font-size: 16px; }
 }
+.mx-ok { align-self: flex-start; padding: 6px 14px; border-radius: var(--r-pill); font-weight: 600; cursor: default; }
