@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import os
+import re
 import secrets
 import urllib.error
 import urllib.parse
@@ -215,6 +217,61 @@ class MatrixHost:
         if not first:
             raise MatrixError(f"@{ADMIN} cannot sign in and the server offers no first-user token")
         self.register(ADMIN, password, token=first)
+
+    def reset_password(self, localpart: str, sleep=time.sleep) -> str:
+        """Give someone a new Matrix password (they forgot theirs) and return it. Their other sign-ins stay
+        signed in (no --logout) and their encryption is untouched; the recovery key is separate.
+
+        Done as @logos-admin with Continuwuity's own admin command in the server's admin room. The command
+        and the server's answer are redacted straight after, so the password does not stay in that room's
+        history; the new password is proven by signing in with it once."""
+        if not re.fullmatch(r"[a-z0-9._=-]{1,64}", localpart or ""):
+            raise MatrixError("give the part before the colon, e.g. bere")
+        if localpart == ADMIN:
+            raise MatrixError(f"@{ADMIN}'s own password lives in the settings file, not here")
+        st = self.settings()
+        server = st["MATRIX_SERVER_NAME"]
+        admin_pw = st.get("MATRIX_ADMIN_PASSWORD")
+        if not admin_pw:
+            raise MatrixError("MATRIX_ADMIN_PASSWORD is not set, so Logos cannot act as the server's admin")
+        login = self._call("/_matrix/client/v3/login", {"type": "m.login.password",
+                                                        "identifier": {"type": "m.id.user", "user": ADMIN}, "password": admin_pw})
+        token = login.get("access_token")
+        if not token:
+            raise MatrixError(f"@{ADMIN} could not sign in: {login.get('error') or login}")
+        password = secrets.token_urlsafe(15)
+        try:
+            alias = urllib.parse.quote(f"#admins:{server}")
+            room = self._call(f"/_matrix/client/v3/directory/room/{alias}", token=token).get("room_id")
+            if not room:
+                raise MatrixError("the server's admin room (#admins) was not found")
+            rid = urllib.parse.quote(room)
+            sent = self._call(f"/_matrix/client/v3/rooms/{rid}/send/m.room.message/logos-reset-{secrets.token_hex(6)}",
+                              {"msgtype": "m.text", "body": f"!admin users reset-password {localpart} {password}"},
+                              token=token, method="PUT")
+            answer, answer_id = "", None
+            for _ in range(20):
+                sleep(0.5)
+                for ev in self._call(f"/_matrix/client/v3/rooms/{rid}/messages?dir=b&limit=5", token=token).get("chunk", []):
+                    if ev.get("sender") != login.get("user_id") and ev.get("origin_server_ts", 0) >= 0 \
+                            and ev.get("event_id") != sent.get("event_id") and ev.get("type") == "m.room.message":
+                        answer, answer_id = (ev.get("content") or {}).get("body", ""), ev.get("event_id")
+                        break
+                if answer_id:
+                    break
+            for eid in (sent.get("event_id"), answer_id):        # the password does not stay in the room
+                if eid:
+                    self._call(f"/_matrix/client/v3/rooms/{rid}/redact/{urllib.parse.quote(eid)}/logos-redact-{secrets.token_hex(6)}",
+                               {"reason": "password reset"}, token=token, method="PUT")
+        finally:
+            self._call("/_matrix/client/v3/logout", {}, token=token)
+        check = self._call("/_matrix/client/v3/login", {"type": "m.login.password",
+                                                        "identifier": {"type": "m.id.user", "user": localpart}, "password": password,
+                                                        "initial_device_display_name": "Logos password check"})
+        if "access_token" not in check:
+            raise MatrixError(f"the reset did not take: {answer.splitlines()[0] if answer else check.get('error') or check}")
+        self._call("/_matrix/client/v3/logout", {}, token=check["access_token"])
+        return password
 
     def set_display_name(self, user_id: str, token: str, name: str) -> bool:
         """Set an account's display name when it differs. True when it was changed."""

@@ -145,3 +145,60 @@ def test_agent_display_name():
     assert mh.agent_display_name({"name": "household", "display_name": "Household agent",
                                   "matrix": {"display_name": "Household \U0001F916"}}) == "Household \U0001F916"
     assert mh.agent_display_name({"name": "dev"}) == "dev \U0001F916"
+
+
+# ── reset_password: a forgotten Matrix password ─────────────────────────────────────────────
+
+class ResetServer:
+    """A pretend Matrix server: the admin room answers the reset command, and records redactions."""
+    def __init__(self, works=True):
+        self.works, self.sent, self.redacted, self.logins, self.password = works, [], [], [], None
+
+    def call(self, path, body=None, token="", method=""):
+        if path.endswith("/login"):
+            user = body["identifier"]["user"]
+            self.logins.append(user)
+            if user == "logos-admin":
+                return {"access_token": "adm", "user_id": "@logos-admin:home"}
+            return {"access_token": "u"} if self.works and body["password"] == self.password else {"errcode": "M_FORBIDDEN"}
+        if "/directory/room/" in path:
+            return {"room_id": "!admins:home"}
+        if "/send/m.room.message/" in path:
+            self.sent.append(body["body"])
+            self.password = body["body"].split()[-1]
+            return {"event_id": "$cmd"}
+        if "/messages" in path:
+            return {"chunk": [{"event_id": "$ans", "sender": "@conduit:home", "type": "m.room.message",
+                               "content": {"body": "Successfully reset the password" if self.works else "No such user"}}]}
+        if "/redact/" in path:
+            self.redacted.append(path.split("/redact/")[1].split("/")[0])
+            return {"event_id": "$r"}
+        return {}
+
+
+def reset_host(monkeypatch, server):
+    from gateway import matrix_host as mh
+    host = mh.MatrixHost.__new__(mh.MatrixHost)
+    monkeypatch.setattr(host, "settings", lambda: {"MATRIX_SERVER_NAME": "home", "MATRIX_REGISTRATION_TOKEN": "t",
+                                                    "MATRIX_ADMIN_PASSWORD": "admin-pw"}, raising=False)
+    monkeypatch.setattr(host, "_call", server.call, raising=False)
+    return host
+
+
+def test_a_reset_gives_a_working_password_and_leaves_no_trace_in_the_admin_room(monkeypatch):
+    server = ResetServer()
+    host = reset_host(monkeypatch, server)
+    password = host.reset_password("bere", sleep=lambda s: None)
+    assert server.sent == [f"!admin users reset-password bere {password}"]       # no --logout: her phone stays in
+    assert len(password) >= 16 and server.logins == ["logos-admin", "bere"]          # proven by signing in once
+    assert server.redacted == ["%24cmd", "%24ans"]                                   # command and answer redacted
+
+
+def test_a_failed_reset_says_so_and_bad_names_are_refused(monkeypatch):
+    from gateway.matrix_host import MatrixError
+    host = reset_host(monkeypatch, ResetServer(works=False))
+    with pytest.raises(MatrixError, match="did not take: No such user"):
+        host.reset_password("nobody", sleep=lambda s: None)
+    for bad in ("", "Bere Smith", "logos-admin", "../x"):
+        with pytest.raises(MatrixError):
+            host.reset_password(bad, sleep=lambda s: None)

@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Matrix housekeeping for the household's own server (docs/matrix.md).
+
+  scripts/logos-matrix reset-password <name>     give <name> a new Matrix password (forgotten)
+
+reset-password: done as @logos-admin with the server's own admin command; the command and the
+server's answer are redacted from the admin room straight after. The person's other sign-ins (Element X
+on their phone) stay signed in and their encryption is untouched (the recovery key is separate). The
+new password is printed here only, once: hand it over in person or by a private message, and they can
+keep it in their password manager.
+"""
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+
+
+def main(argv) -> int:
+    if len(argv) != 2 or argv[0] != "reset-password":
+        print(__doc__.strip())
+        return 2
+    from gateway.agent_runtime import AgentRuntime
+    from gateway.matrix_host import MatrixError, MatrixHost
+    name = argv[1].lstrip("@").split(":", 1)[0]
+    host = MatrixHost(AgentRuntime(REPO))
+    server = host.settings()["MATRIX_SERVER_NAME"]
+    answer = input(f"Give @{name}:{server} a new Matrix password? Their phone stays signed in. [y/N] ").strip().lower()
+    if answer not in ("y", "yes"):
+        print("Nothing changed.")
+        return 1
+    try:
+        password = host.reset_password(name)
+    except MatrixError as e:
+        print(f"Not done: {e}")
+        return 1
+    print(f"\n  New Matrix password for @{name}:{server}:\n\n      {password}\n")
+    print("  It works (checked by signing in once). Shown only here: hand it over privately.")
+    print("  Next: Logos > Settings > Matrix device, this password, then their Element recovery key.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
