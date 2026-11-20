@@ -433,6 +433,9 @@ class AgentRuntime:
         """The persona plus the shared rules every agent follows (brain filing, honesty)."""
         text = ((self.repo / agent["soul"]).read_text().rstrip() + "\n\n"
                 + (self.repo / "souls/_shared/brain.md").read_text())
+        judgement = self.repo / "souls/_shared/judgement.md"   # checking facts, verifying, learning from mistakes
+        if judgement.exists():
+            text = text.rstrip() + "\n\n" + judgement.read_text()
         if _sibling("noticeboard_host").uses_noticeboard(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/noticeboard.md").read_text()
         if _sibling("voice_host").uses_voice(agent):

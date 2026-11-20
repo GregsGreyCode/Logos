@@ -144,6 +144,7 @@ def repo(tmp_path):
     (tmp_path / "souls" / "general" / "soul.md").write_text("You are Alpha.\n\n")
     (tmp_path / "souls" / "_shared").mkdir()
     (tmp_path / "souls" / "_shared" / "brain.md").write_text("Shared brain rules.\n")
+    (tmp_path / "souls" / "_shared" / "judgement.md").write_text("Judgement rules.\n")
     (tmp_path / "infra" / "brain-template").mkdir(parents=True)
     jobs = tmp_path / "infra" / "agent-jobs"
     jobs.mkdir()
@@ -908,7 +909,7 @@ network_policies:
 
     def test_soul_is_persona_plus_shared_rules(self, repo):
         r = rt(repo)
-        assert r.soul_text(r.load("alpha")) == "You are Alpha.\n\nShared brain rules.\n"
+        assert r.soul_text(r.load("alpha")) == "You are Alpha.\n\nShared brain rules.\n\nJudgement rules.\n"
 
     def test_up_runs_the_whole_sequence(self, repo, capsys):
         runner = FakeRunner()
