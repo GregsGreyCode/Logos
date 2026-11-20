@@ -103,6 +103,7 @@ def test_a_written_recovery_key_is_handed_back_on_start(monkeypatch):
     assert "MATRIX_RECOVERY_KEY" not in cur                 # first start: bootstrap writes one
     assert cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] == "/opt/data/matrix-recovery-key"
     assert cur["MATRIX_REQUIRE_MENTION"] == "true"              # rooms: only when @mentioned
+    assert cur["MATRIX_SESSION_SCOPE"] == "room"                # one conversation per room, no thread per message
     assert renamed == [("@dev-agent:x", "dev \U0001F916")]        # named in Element on every up
     cur = {"MATRIX_RECOVERY_KEY": "stale"}
     art.AgentRuntime._matrix_env(RT({("logos-home-dev", "matrix-recovery-key"): "EsT abc\n"}),
@@ -111,6 +112,7 @@ def test_a_written_recovery_key_is_handed_back_on_start(monkeypatch):
     art.AgentRuntime._matrix_env(RT({}), {"name": "dev"}, cur, "logos-home-dev")
     assert "MATRIX_RECOVERY_KEY" not in cur                 # Matrix off: nothing exported
     assert "MATRIX_REQUIRE_MENTION" not in cur
+    assert "MATRIX_SESSION_SCOPE" not in cur
     art.AgentRuntime._matrix_env(RT({}), {"name": "dev", "matrix": {"enabled": True, "require_mention": False}},
                                  cur, "logos-home-dev")
     assert cur["MATRIX_REQUIRE_MENTION"] == "false"
