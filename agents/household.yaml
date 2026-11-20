@@ -18,7 +18,7 @@ calendar:                       # Household calendar in full; each person's busy
   free_busy: {greg: Greg, bere: Béré}
 house:                          # the lights and their scenes, through the house service (docs/house.md)
   enabled: true
-  domains: [light, scene]
+  domains: [light, scene, todo]   # todo: the shared shopping and to-do lists
   exclude: []                   # entity ids it must leave alone, e.g. light.balcony_balcony
 
 model:

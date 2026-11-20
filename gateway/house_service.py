@@ -1,4 +1,4 @@
-"""The Logos house service: how the agents work the lights (story H1).
+"""The Logos house service: how the agents work the lights (story H1) and the shared lists.
 
 The agent never holds a Home Assistant login. It calls this service (MCP over HTTP, one bearer
 token per agent), and the service calls Home Assistant with its own non-admin account. What the
@@ -7,11 +7,15 @@ be limited to some devices):
 
   * Only the domains in the agent's definition (``light`` and ``scene`` to start with), minus
     anything in its ``exclude`` list.
-  * Only three Home Assistant services can ever be called: ``light.turn_on``,
-    ``light.turn_off`` and ``scene.turn_on``. Nothing the agent sends is passed through as a
-    service name or as raw service data.
+  * Only these Home Assistant services can ever be called: ``light.turn_on``,
+    ``light.turn_off``, ``scene.turn_on``, and for the shared lists ``todo.get_items``,
+    ``todo.add_item``, ``todo.update_item`` and ``todo.remove_item``. Nothing the agent sends is
+    passed through as a service name or as raw service data.
   * Locks, alarms, heating, covers and cameras are refused whatever the definition says: they
     need a confirmation step this service does not have yet.
+
+The shared lists (shopping, to-do) are Home Assistant to-do lists (``todo.*``), so Greg and Béré
+see the same list in the Home Assistant app and every agent with the ``todo`` domain works on it.
 
 Rooms come from Home Assistant itself: a light whose state lists member lights (a Hue room or
 zone, or a Home Assistant light group) is a room, and Hue scenes carry their room's name.
@@ -34,7 +38,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 PROTOCOL_VERSION = "2025-06-18"
 #: Domains an agent may be given. Anything else is refused even if a definition names it.
-SUPPORTED_DOMAINS = ("light", "scene")
+SUPPORTED_DOMAINS = ("light", "scene", "todo")
+SERVICES = {("light", "turn_on"), ("light", "turn_off"), ("scene", "turn_on"),
+            ("todo", "add_item"), ("todo", "update_item"), ("todo", "remove_item")}
+MAX_ITEMS = 30                  # items in one call
 #: Never, whatever the definition says: these need a confirmation step first.
 NEVER = ("lock", "alarm_control_panel", "climate", "cover", "camera", "siren", "valve", "water_heater")
 MAX_TARGETS = 40
@@ -88,9 +95,16 @@ class HomeAssistant:
         return self._call("GET", "/api/states") or []
 
     def service(self, domain: str, service: str, data: Dict[str, Any]) -> None:
-        if (domain, service) not in (("light", "turn_on"), ("light", "turn_off"), ("scene", "turn_on")):
+        if (domain, service) not in SERVICES:
             raise Refused(f"{domain}.{service} is not something this service does.")
         self._call("POST", f"/api/services/{domain}/{service}", data)
+
+    def todo_items(self, entity_id: str) -> List[Dict[str, Any]]:
+        """Every item on one to-do list, open and done (``todo.get_items`` returns a response)."""
+        if not entity_id.startswith("todo."):
+            raise Refused("That is not a list.")
+        got = self._call("POST", "/api/services/todo/get_items?return_response", {"entity_id": entity_id}) or {}
+        return list((((got.get("service_response") or {}).get(entity_id)) or {}).get("items") or [])
 
 
 # ── what the house looks like ────────────────────────────────────────────────
@@ -118,6 +132,7 @@ class House:
             else:
                 self.lights[eid] = s
         self.scenes = {eid: s for eid, s in self.by_id.items() if eid.startswith("scene.")}
+        self.lists = {eid: s for eid, s in self.by_id.items() if eid.startswith("todo.")}
 
     @staticmethod
     def name(s: Dict[str, Any]) -> str:
@@ -196,6 +211,46 @@ class House:
             raise Refused(f"There is no scene '{scene}'{' in ' + room if room else ''}. Use list_scenes.")
         rooms = sorted({str((self.scenes[e].get("attributes") or {}).get("group_name") or "?") for e in found})
         raise Refused(f"'{scene}' is a scene in several rooms ({', '.join(rooms)}). Say which room.")
+
+
+    def resolve_list(self, name: str) -> str:
+        """'shopping' -> todo.shopping_list. With one list, an empty name means that one."""
+        if not self.lists:
+            raise Refused("There are no shared lists in Home Assistant yet. Greg can add one "
+                          "(Settings > Devices & services > Add integration > Local To-do).")
+        want = list_norm(name)
+        if not want:
+            if len(self.lists) == 1:
+                return next(iter(self.lists))
+            raise Refused(f"Say which list: {', '.join(sorted(self.name(s) for s in self.lists.values()))}.")
+        hits = [eid for eid, s in self.lists.items()
+                if want in (list_norm(self.name(s)), list_norm(eid.split(".", 1)[1].replace("_", " ")))]
+        if not hits:
+            hits = [eid for eid, s in self.lists.items() if want in list_norm(self.name(s))]
+        if len(hits) == 1:
+            return hits[0]
+        names = ", ".join(sorted(self.name(self.lists[h]) for h in hits) if hits
+                          else sorted(self.name(s) for s in self.lists.values()))
+        raise Refused(f"'{name}' could be several lists: {names}. Say which." if hits
+                      else f"There is no list called '{name}'. Lists: {names}.")
+
+
+def list_norm(text: Any) -> str:
+    """'The shopping list' -> 'shopping'; how list names are compared."""
+    s = re.sub(r"[^a-z0-9 ]+", " ", str(text or "").lower())
+    s = re.sub(r"\btodos?\b", "to do", s)                 # "todo", "to-do" and "to do" are one name
+    s = re.sub(r"\b(the|our|my|lists?)\b", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def clean_item(text: Any) -> str:
+    """One item as it goes on the list: one line, trimmed, at most 200 characters."""
+    item = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not item:
+        raise Refused("An item cannot be empty.")
+    if len(item) > 200:
+        raise Refused("An item is at most 200 characters; keep it short.")
+    return item
 
 
 def light_view(s: Dict[str, Any]) -> Dict[str, Any]:
@@ -329,6 +384,95 @@ class Service:
                               "room": str(a.get("group_name") or "")}}
 
 
+    # shared lists
+
+    def _items(self, eid: str) -> List[Dict[str, Any]]:
+        return [{"item": str(i.get("summary") or ""), "done": i.get("status") == "completed"}
+                for i in self.ha.todo_items(eid)]
+
+    def _match(self, eid: str, items: Any) -> List[str]:
+        """The items on the list as written there, for names the agent gave (case and spacing
+        ignored; a unique partial match counts)."""
+        wanted = items if isinstance(items, list) else [items]
+        if not wanted or len(wanted) > MAX_ITEMS:
+            raise Refused(f"Name between 1 and {MAX_ITEMS} items.")
+        on_list = [str(i.get("summary") or "") for i in self.ha.todo_items(eid)]
+        out = []
+        for raw in wanted:
+            want = clean_item(raw).lower()
+            hits = [s for s in on_list if s.strip().lower() == want] or [s for s in on_list if want in s.lower()]
+            if not hits:
+                raise Refused(f"'{raw}' is not on the list. Use list_items to see what is.")
+            if len(set(hits)) > 1:
+                raise Refused(f"'{raw}' could be {', '.join(sorted(set(hits)))}. Say which.")
+            out.append(hits[0])
+        return out
+
+    def list_items(self, agent: str, list_name: str = "", done: Any = False) -> Dict[str, Any]:
+        self._need(agent, "todo")
+        h = self.house(agent)
+        eids = [h.resolve_list(list_name)] if list_name or len(h.lists) == 1 else sorted(h.lists)
+        if not eids:
+            h.resolve_list("")                       # says there are no lists
+        lists = []
+        for eid in eids:
+            items = self._items(eid)
+            lists.append({"list": h.name(h.lists[eid]),
+                          "open": [i["item"] for i in items if not i["done"]],
+                          **({"done": [i["item"] for i in items if i["done"]]} if done is True else {})})
+        self.log(f"{agent} list_items {','.join(eids)}")
+        return {"lists": lists}
+
+    def add_items(self, agent: str, list_name: str, items: Any) -> Dict[str, Any]:
+        self._need(agent, "todo")
+        h = self.house(agent)
+        eid = h.resolve_list(list_name)
+        wanted = items if isinstance(items, list) else [items]
+        if not wanted or len(wanted) > MAX_ITEMS:
+            raise Refused(f"Add between 1 and {MAX_ITEMS} items.")
+        current = {i["item"].strip().lower(): i for i in self._items(eid)}
+        added, already, reopened = [], [], []
+        for raw in wanted:
+            item = clean_item(raw)
+            have = current.get(item.lower())
+            if have and not have["done"]:
+                already.append(have["item"])
+            elif have:
+                self.ha.service("todo", "update_item", {"entity_id": eid, "item": have["item"],
+                                                        "status": "needs_action"})
+                reopened.append(have["item"])
+            else:
+                self.ha.service("todo", "add_item", {"entity_id": eid, "item": item})
+                current[item.lower()] = {"item": item, "done": False}
+                added.append(item)
+        self.log(f"{agent} add_items {eid}: {len(added)} added, {len(reopened)} back, {len(already)} already")
+        out: Dict[str, Any] = {"list": h.name(h.lists[eid]), "added": added}
+        if reopened:
+            out["back_on_the_list"] = reopened
+        if already:
+            out["already_on_it"] = already
+        return out
+
+    def tick_items(self, agent: str, list_name: str, items: Any) -> Dict[str, Any]:
+        self._need(agent, "todo")
+        h = self.house(agent)
+        eid = h.resolve_list(list_name)
+        names = self._match(eid, items)
+        for name in names:
+            self.ha.service("todo", "update_item", {"entity_id": eid, "item": name, "status": "completed"})
+        self.log(f"{agent} tick_items {eid}: {len(names)}")
+        return {"list": h.name(h.lists[eid]), "ticked": names}
+
+    def remove_items(self, agent: str, list_name: str, items: Any) -> Dict[str, Any]:
+        self._need(agent, "todo")
+        h = self.house(agent)
+        eid = h.resolve_list(list_name)
+        names = self._match(eid, items)
+        self.ha.service("todo", "remove_item", {"entity_id": eid, "item": names})
+        self.log(f"{agent} remove_items {eid}: {len(names)}")
+        return {"list": h.name(h.lists[eid]), "removed": names}
+
+
 # ── MCP over HTTP ────────────────────────────────────────────────────────────
 
 TOOLS = [
@@ -359,14 +503,42 @@ TOOLS = [
          "scene": {"type": "string", "description": "e.g. 'Relax'."},
          "room": {"type": "string", "description": "e.g. 'Living Room'. Needed when several rooms have the scene."}},
          "required": ["scene"]}},
+    {"name": "list_items",
+     "description": ("What is on the shared lists in Home Assistant (shopping, to-do), the ones Greg and Béré see "
+                     "in the Home Assistant app. Without a list name: every list."),
+     "inputSchema": {"type": "object", "properties": {
+         "list": {"type": "string", "description": "e.g. 'shopping'. Default: every list."},
+         "done": {"type": "boolean", "description": "Also show ticked-off items."}}}},
+    {"name": "add_items",
+     "description": ("Put items on a shared list. Items already on it are not added twice; a ticked-off item "
+                     "goes back on."),
+     "inputSchema": {"type": "object", "properties": {
+         "list": {"type": "string", "description": "e.g. 'shopping'. Can be left out when there is one list."},
+         "items": {"type": "array", "items": {"type": "string"},
+                   "description": "One entry per item, as a person would write it: ['peas', 'pasta', '2 lemons']."}},
+         "required": ["items"]}},
+    {"name": "tick_items",
+     "description": "Tick items off a shared list (bought, or done). They stay on it as done until removed.",
+     "inputSchema": {"type": "object", "properties": {
+         "list": {"type": "string"},
+         "items": {"type": "array", "items": {"type": "string"}}},
+         "required": ["items"]}},
+    {"name": "remove_items",
+     "description": "Take items off a shared list altogether (added by mistake, no longer wanted).",
+     "inputSchema": {"type": "object", "properties": {
+         "list": {"type": "string"},
+         "items": {"type": "array", "items": {"type": "string"}}},
+         "required": ["items"]}},
 ]
+LIST_TOOLS = {"list_items", "add_items", "tick_items", "remove_items"}
 
 
 def tools_for(svc: Service, agent: str) -> List[Dict[str, Any]]:
     domains = svc.agents[agent].get("domains") or []
     light_tools, scene_tools = {"list_lights", "set_lights"}, {"list_scenes", "activate_scene"}
     return [t for t in TOOLS if (t["name"] in light_tools and "light" in domains)
-            or (t["name"] in scene_tools and "scene" in domains)]
+            or (t["name"] in scene_tools and "scene" in domains)
+            or (t["name"] in LIST_TOOLS and "todo" in domains)]
 
 
 def handle_rpc(svc: Service, agent: str, req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -392,6 +564,10 @@ def handle_rpc(svc: Service, agent: str, req: Dict[str, Any]) -> Optional[Dict[s
                                                  args.get("color") or "", args.get("transition")),
             "list_scenes": lambda: svc.list_scenes(agent, args.get("room") or ""),
             "activate_scene": lambda: svc.activate_scene(agent, args.get("scene") or "", args.get("room") or ""),
+            "list_items": lambda: svc.list_items(agent, args.get("list") or "", args.get("done")),
+            "add_items": lambda: svc.add_items(agent, args.get("list") or "", args.get("items")),
+            "tick_items": lambda: svc.tick_items(agent, args.get("list") or "", args.get("items")),
+            "remove_items": lambda: svc.remove_items(agent, args.get("list") or "", args.get("items")),
         }
         if name not in calls or name not in {t["name"] for t in tools_for(svc, agent)}:
             return {"jsonrpc": "2.0", "id": rid, "error": {"code": -32602, "message": f"unknown tool: {name}"}}

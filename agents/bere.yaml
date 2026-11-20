@@ -32,7 +32,7 @@ matrix:                           # the household's own Matrix server (docs/matr
 
 house:                          # the lights and their scenes, through the house service (docs/house.md)
   enabled: true
-  domains: [light, scene]
+  domains: [light, scene, todo]   # todo: the shared shopping and to-do lists
   exclude: []                   # entity ids it must leave alone, e.g. light.balcony_balcony
 
 web:                              # web search through the web reader (docs/web-reader.md)

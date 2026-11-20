@@ -54,7 +54,7 @@ LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
-                "changes-week", "changes-check",
+                "changes-week", "changes-check", "lists-mirror",
                 # Retired (one post now covers both): still listed so `up` removes them from sandboxes.
                 "changes-homelab", "changes-logos", "changes-homelab-week", "changes-logos-week")
 # Story DC2: the daily changes. One script under two names (it reads its own name): the day, and
@@ -117,6 +117,12 @@ def changes_jobs(agent: Mapping[str, Any]) -> list:
     if cfg.get("weekly", True):
         jobs += [("changes-week", "changes_week.py", cfg.get("week", "10 16 * * 0"))]
     return jobs + [("changes-check", "changes_check.py", cfg.get("check", "20 16 * * *"))]
+
+
+def uses_lists(agent: Mapping[str, Any]) -> bool:
+    """The agent works the shared lists in Home Assistant (house.domains includes todo)."""
+    house = agent.get("house") or {}
+    return bool(house.get("enabled")) and "todo" in (house.get("domains") or [])
 
 
 def minutes_later(schedule: str, minutes: int = 15) -> Optional[str]:
@@ -449,6 +455,8 @@ class AgentRuntime:
         hh = _sibling("house_host")
         if hh.uses_house(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/house.md").read_text()
+            if uses_lists(agent) and (self.repo / "souls/_shared/lists.md").exists():
+                text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/lists.md").read_text()
             notes = hh.config_dir(self.env) / hh.NOTES_FILE      # facts about this home, never in git
             if notes.exists() and notes.read_text().strip():
                 text = text.rstrip() + "\n\n### About this home's lights\n\n" + notes.read_text().strip() + "\n"
@@ -548,8 +556,10 @@ class AgentRuntime:
         hh = _sibling("house_host")
         if hh.uses_house(agent):
             cur.setdefault(hh.TOKEN_ENV, secrets.token_urlsafe(32))
+            cur["LOGOS_HOUSE_URL"] = hh.HouseHost(self).url()          # for the lists copy (lists_mirror.py)
         else:
             cur.pop(hh.TOKEN_ENV, None)
+            cur.pop("LOGOS_HOUSE_URL", None)
         wh = _sibling("web_host")
         if wh.uses_web(agent):
             cur.setdefault(wh.TOKEN_ENV, secrets.token_urlsafe(32))
@@ -604,7 +614,7 @@ class AgentRuntime:
         for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
                        "noticeboard_urgent.py", "briefing_today.py", "briefing_check.py",
                        "carry_monitor_state.py", "rerun_after_outage.py", "model_watch.py",
-                       "changes_facts.py", "changes_check.py"):
+                       "changes_facts.py", "changes_check.py", "lists_mirror.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         for script in CHANGES_SCRIPTS:
             self.put(home, f"scripts/{script}", (self.jobs_dir / "changes_facts.py").read_text(), mode="0750")
@@ -677,6 +687,10 @@ class AgentRuntime:
                 # The group chat hears when LM Studio is offline (over two minutes) and when it is back.
                 self.sbx(name, f'{HERMES} cron create --name model-watch --no-agent --script model_watch.py '
                                f'--timezone {tz} --deliver {delivery(agent)} --failure-deliver local "* * * * *"')
+        if agent.get("role") == "household" and uses_lists(agent):
+            # The shared lists live in Home Assistant; a copy goes in the household brain for Obsidian.
+            self.sbx(name, f'{HERMES} cron create --name lists-mirror --no-agent --script lists_mirror.py '
+                           f'--timezone {tz} --deliver local "*/15 * * * *"')
         for job, script, when in changes_jobs(agent):
             # Story DC2: what changed in the homelab and in Logos, in the group chat. The script puts
             # the list into the prompt, or skips the model when nothing changed; changes-check sends
@@ -776,7 +790,8 @@ class AgentRuntime:
             point("house", hh.HouseHost(self).url())
             domains = hh.agent_settings(agent)["domains"]
             tools = ([t for t in ("list_lights", "set_lights") if "light" in domains]
-                     + [t for t in ("list_scenes", "activate_scene") if "scene" in domains])
+                     + [t for t in ("list_scenes", "activate_scene") if "scene" in domains]
+                     + [t for t in ("list_items", "add_items", "tick_items", "remove_items") if "todo" in domains])
             for e in rules["house"].get("endpoints") or []:
                 e["rules"] = [{"allow": {"method": m}} for m in
                               ("initialize", "notifications/initialized", "ping", "tools/list")] + [
