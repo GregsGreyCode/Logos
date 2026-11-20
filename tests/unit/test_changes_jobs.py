@@ -43,8 +43,8 @@ def test_the_script_name_says_how_many_days():
 def test_facts_cover_both_parts_with_live_marks_and_descriptions():
     lines = cf.facts([LOGOS, HOMELAB], 1)
     assert lines[0] == ('Write the first line, in bold, as "What changed today". '
-                        "Parts that changed: The agents, The home servers.")
-    assert "## The agents (Logos)" in lines and "## The home servers (homelab-infra)" in lines
+                        "Parts that changed: Logos, Homelab.")
+    assert "## Logos (the agents)" in lines and "## Homelab (the home servers)" in lines
     assert "2 merged pull requests (1 live, 1 not yet on the Logos server)." in lines
     assert "- #104 Morning briefing in Element X [live]" in lines
     assert "    Sends the day ahead at 07:00." in lines
@@ -68,9 +68,9 @@ def test_clean_titles():
 
 def test_plain_version():
     assert cf.plain([LOGOS, HOMELAB], 1) == (
-        "**What changed today**\n\nThe agents\n- Morning briefing in Element X\n- Model downtime D2 (not live yet)"
-        "\n\nThe home servers\n- Jellyfin updated to 10.10.4\n- Stack-update: automatic rollback")
-    assert cf.plain([HOMELAB], 7).startswith("**What changed this week**\n\nThe home servers")
+        "**What changed today**\n\nLogos\n- Morning briefing in Element X\n- Model downtime D2 (not live yet)"
+        "\n\nHomelab\n- Jellyfin updated to 10.10.4\n- Stack-update: automatic rollback")
+    assert cf.plain([HOMELAB], 7).startswith("**What changed this week**\n\nHomelab")
 
 
 def test_nothing_changed_or_reader_down_skips_the_model(monkeypatch, capsys):
@@ -82,7 +82,7 @@ def test_nothing_changed_or_reader_down_skips_the_model(monkeypatch, capsys):
     monkeypatch.setattr(cf, "fetch", lambda e, r, d: {"logos": LOGOS, "homelab": None}[r])
     cf.main("changes_daily.py")
     out = capsys.readouterr().out
-    assert "#104" in out and "home servers" not in out           # a part that could not be fetched is left out
+    assert "#104" in out and "Homelab" not in out           # a part that could not be fetched is left out
 
 
 def job(name, status="ok", when="2026-11-19T16:01:00+00:00", err=None):
