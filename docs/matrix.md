@@ -59,10 +59,11 @@ It answers only people in its `allowed_users`, and any room they invite it to wo
 ## Someone forgot their Matrix password
 
 ```
-scripts/logos-matrix reset-password bere
+ssh logos@192.168.1.226            # or, already on the server as yourself: sudo -iu logos
+cd ~/logos && scripts/logos-matrix reset-password bere
 ```
 
-On the server, as `logos`. It asks first, then gives them a new random password using the server's own
+It runs on the server as the `logos` user (Logos lives in /home/logos/logos). It asks first, then gives them a new random password using the server's own
 admin command as `@logos-admin`. The command and the server's answer are redacted from the admin room
 straight away, so the password does not stay in its history; the new password is checked by signing in
 once, then printed in your terminal only. Their phone stays signed in (no other sign-in is logged out),
