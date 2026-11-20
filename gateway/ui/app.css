@@ -862,3 +862,30 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .mx-device .row-meta { grid-column: 1; }
 .mx-device .mx-signout { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 .row-meta.warn { color: var(--warn-ink); }
+
+/* M2: chat as your Matrix room */
+.mx-same { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px;
+  background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); font-size: var(--t-xs); font-weight: 500; }
+.mx-same::before { content: "●"; font-size: 9px; }
+.mx-turn { display: flex; flex-direction: column; gap: 4px; }
+.mx-turn.me { align-items: flex-end; }
+.mx-turn.agent { align-items: flex-start; margin-left: 30px; }
+.mx-turn .msg { max-width: min(640px, 92%); margin: 0; }
+.mx-turn.agent .msg.assistant { margin-left: 0; }
+.mx-meta { font-size: var(--t-xs); }
+.mx-reactions { display: flex; gap: 4px; }
+.mx-think { max-width: min(640px, 92%); font-size: var(--t-sm); color: var(--muted); }
+.mx-think > summary { cursor: pointer; }
+.mx-think[open] > summary { margin-bottom: 6px; }
+.mx-steps .steps { margin: 0; }
+.mx-older { align-self: center; font-size: var(--t-sm); }
+.mx-thinking { display: flex; align-items: center; gap: 10px; padding: 0 24px 8px 54px; color: var(--muted); font-size: var(--t-sm); }
+.mx-thinking[hidden] { display: none; }
+.mx-thinking-mark { width: 16px; height: 16px; flex: none; background: url("/static/logo.svg") center / contain no-repeat;
+  animation: logo-cycle 6s linear infinite; }
+[data-motion="still"] .mx-thinking-mark { animation: none; }
+.mx-note:empty { display: none; }
+.mx-note { padding: 0 24px; }
+.conv-link { display: flex; align-items: baseline; gap: 10px; min-height: 40px; padding: 10px 0; border-bottom: 1px solid var(--line);
+  color: var(--ink); text-decoration: none; }
+@media (max-width: 720px) { .mx-same { display: none; } .mx-thinking { padding-left: 46px; } }

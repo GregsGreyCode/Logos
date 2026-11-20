@@ -580,3 +580,15 @@ def test_activity_lists_only_your_running_agents(run):
     status, body = run("u-greg", "/api/v2/activity")
     assert status == 200 and set(body) == {"working"}
     assert set(body["working"]) <= {"greg"}          # household is not running in this fake
+
+
+def test_a_matrix_reply_brings_its_thinking_and_only_your_own(run):
+    # MESSAGES (shared by the fake sessions) end with the assistant's "Added." after a write_file call.
+    status, body = run("u-greg", "/api/v2/agents/greg/steps?text=Added.")
+    assert status == 200 and body["tools"] == ["write_file"]
+    assert body["steps"][0]["calls"][0]["name"] == "write_file"
+    assert "sk-abcdefghijklmnopqrstuvwxyz123456" not in str(body)          # secrets stay masked
+    assert run("u-greg", "/api/v2/agents/greg/steps?text=")[0] == 400
+    # On the shared household agent, Béré only searches her own Matrix sessions.
+    status, body = run("u-bere", "/api/v2/agents/household/steps?text=Added.")
+    assert status == 200 and body["tools"] == ["write_file"]          # her mx-bere session is hers to see

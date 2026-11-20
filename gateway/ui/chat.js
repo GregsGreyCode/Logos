@@ -1,6 +1,8 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
 import { h, api, getJSON, when, markdown, working, agentLabel, icon, none } from './util.js';
 import { getPref, setPref } from './prefs.js';
+import * as mx from './mx.js';
+import { matrixChat } from './chat-mx.js';
 import { takeAsk } from './home.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
@@ -99,6 +101,16 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const agent = agents.find((a) => a.name === agentArg) || agents[0];
   let chatId = chatArg || newId();
   let readOnly = false;
+  // M2: a connected browser chats in the Matrix room; an old web chat opened from the Archive is
+  // read-only (the conversation goes on in the room). Until the switch-over (M5), a browser that is
+  // not connected keeps the web chat, with a line saying how to connect it.
+  const connected = !!(agent.matrix_id && mx.saved());
+  const matrixMode = connected && !chatArg;
+  const archived = connected && !!chatArg;
+  const connectNote = agent.matrix_id && !connected
+    ? h('div', { class: 'model-line' }, 'Chat here can be your Element conversation itself: connect this browser in ',
+      h('a', { href: '#/settings/matrix' }, 'Settings › Matrix device'), '.')
+    : null;
   let showThinking = getPref('thinking', false);
   let showJobs = getPref('jobs', false);
   let lastConversations = [];
@@ -217,7 +229,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
   async function openConversation(conversations) {
     const c = conversations.find((x) => x.chat_id === chatId || x.id === chatId);
     if (!c) { emptyState(); return; }
-    readOnly = c.where !== 'web';
+    readOnly = c.where !== 'web' || archived;
     try {
       const { messages } = await getJSON(`/api/v2/agents/${agent.name}/conversations/${encodeURIComponent(c.id)}`);
       if (!alive) return;
@@ -229,7 +241,9 @@ export async function chatView(root, [agentArg, chatArg], state) {
         if (!showThinking) chips(m.tools.map((t) => `Used ${t}`));
       }
       placeMark(lastReply, false);
-      if (readOnly) log.append(h('div', { class: 'notice' }, READ_ONLY_NOTE[c.where] || 'This conversation can only be read here.'));
+      if (readOnly) log.append(h('div', { class: 'notice' }, archived && c.where === 'web'
+        ? h('span', {}, 'An old web chat, kept for reference. ', h('a', { href: `#/chat/${agent.name}` }, 'Continue in the main conversation'), '.')
+        : (READ_ONLY_NOTE[c.where] || 'This conversation can only be read here.')));
       scroll();
     } catch (e) {
       log.replaceChildren(h('div', { class: 'msg error' }, 'Could not load this conversation.'));
@@ -524,6 +538,19 @@ export async function chatView(root, [agentArg, chatArg], state) {
       panelPick('slide', 'Slides away'), panelPick('open', 'Stays open')));
   document.addEventListener('click', (e) => { if (viewMenu.open && !viewMenu.contains(e.target)) viewMenu.open = false; });
 
+  // M2: with this browser connected as your Matrix device, chat is your Element room itself.
+  if (matrixMode) {
+    const mxView = h('details', { class: 'view-menu wide-only' },
+      h('summary', { class: 'btn quiet small' }, 'View'),
+      h('div', { class: 'view-pop', role: 'group', 'aria-label': 'View options' },
+        h('p', { class: 'label' }, 'Conversations panel'), panelPick('slide', 'Slides away'), panelPick('open', 'Stays open')));
+    document.addEventListener('click', (e) => { if (mxView.open && !mxView.contains(e.target)) mxView.open = false; });
+    const sideTop = h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
+      title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6'])));
+    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: mxView });
+    return () => { alive = false; done(); document.removeEventListener('keydown', onKey); };
+  }
+
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
       h('header', { class: 'chat-head' },
@@ -531,7 +558,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
         h('span', { class: `status running ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
         agent.shared ? h('span', { class: 'status scope' }, 'Shared with the household') : null,
         viewMenu, convBtn),
-      modelStatus, log, micNote, form),
+      connectNote, modelStatus, log, micNote, form),
     side, sideScrim, reopen);
   side.append(
     h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',

@@ -295,6 +295,9 @@ async def handle_agents(request: web.Request) -> web.Response:
             "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}"),
             "model_up": await model_server_up(request, definition),
             "has_backup": await asyncio.to_thread(agent_chat.has_backup, definition),
+            # M2: the agent's own Matrix account (@<name>-agent:server), for finding its room
+            "matrix_id": (await asyncio.to_thread(matrix_id_of, request, f"{name}-agent"))
+            if (definition.get("matrix") or {}).get("enabled") else None,
         })
     # Agents this person cannot use are shown by name and up/down only.
     others = []
@@ -451,6 +454,35 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
                                           "tool_call_count", "api_call_count") if session.get(k) is not None}
     return web.json_response({"where": where, "usage": usage,
                               "messages": fold_messages(raw.get("data") or [])})
+
+
+def _plain(text: str) -> str:
+    return " ".join(str(text or "").split())[:240]
+
+
+async def handle_reply_steps(request: web.Request) -> web.Response:
+    """GET /api/v2/agents/{name}/steps?text=... — M2: the thinking behind one of the agent's Matrix
+    replies (its reasoning and each tool call), found by the reply's text among the newest of your
+    own Matrix conversations with it. The same rules as the conversation list say whose you may see."""
+    name, info, user = await _agent_or_404(request)
+    want = _plain(request.query.get("text", ""))
+    if len(want) < 2:
+        return web.json_response({"error": "text_required"}, status=400)
+    sole_owner = info["owners"] is not None and len(info["owners"]) == 1
+    client = await _client(request, name)
+    try:
+        sessions = (await client.list_sessions(limit=20, source="matrix")).get("data") or []
+        mine = [s for s in sessions if visible_conversation(s, user["id"], sole_owner, user["username"]) == "matrix"]
+        mine.sort(key=lambda s: s.get("last_active") or s.get("started_at") or 0, reverse=True)
+        for s in mine[:6]:
+            raw = await client.get_session_messages(str(s.get("id")))
+            for turn in reversed(fold_messages(raw.get("data") or [])):
+                if turn["role"] == "assistant" and turn["text"] and (_plain(turn["text"]) == want
+                                                                       or _plain(turn["text"]).startswith(want[:120])):
+                    return web.json_response({"steps": turn["steps"], "tools": turn["tools"]})
+    except HermesError:
+        return web.json_response({"error": "agent_unreachable"}, status=503)
+    return web.json_response({"steps": [], "tools": [], "found": False})
 
 
 # ── Home (S6.11) ─────────────────────────────────────────────────────────────
@@ -1394,4 +1426,5 @@ def register(app: web.Application) -> None:
     app.router.add_put("/api/v2/agents/{name}/colour", require_csrf(handle_agent_colour))
     app.router.add_get("/api/v2/agents", handle_agents)
     app.router.add_get("/api/v2/agents/{name}/conversations", handle_conversations)
+    app.router.add_get("/api/v2/agents/{name}/steps", handle_reply_steps)
     app.router.add_get("/api/v2/agents/{name}/conversations/{sid}", handle_conversation_messages)
