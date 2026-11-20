@@ -329,8 +329,9 @@ class AgentRuntime:
             return
         lm = _sibling("local_models")
         try:
-            if lm.ensure(self.runner.http, lm.server(model), model["default"], model["context_length"]):
-                print(f"loaded {model['default']} in LM Studio (context {model['context_length']})")
+            window = lm.load_window(model)
+            if lm.ensure(self.runner.http, lm.server(model), model["default"], window):
+                print(f"loaded {model['default']} in LM Studio (context {window})")
         except Exception as e:
             print(f"warning: could not check or load the model in LM Studio: {e}", file=sys.stderr)
 

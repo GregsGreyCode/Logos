@@ -19,7 +19,9 @@ model:
   provider: lmstudio
   base_url: http://192.0.2.117:1234/v1   # placeholder; put the real address in agents/bere.local.yaml
   default: qwen/qwen3.6-35b-a3b   # provisional; S3.4 benchmark decides
-  context_length: 65536           # must match what LM Studio loads the model with
+  context_length: 65536           # the most one conversation uses; at most load_context_length
+  load_context_length: 96512      # LM Studio's window, shared by its 4 parallel slots (Greg, 20 Nov):
+                                  # room beside a long chat. Loaded with this if LM Studio reloads it.
   gateway: true                 # model calls go through the model gateway (docs/model-gateway.md)
   # No paid fallbacks: the brain stays local (gateway/model_gateway.py BRAIN_STAYS_LOCAL).
 budget:
