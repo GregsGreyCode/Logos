@@ -238,6 +238,7 @@ class House:
 def list_norm(text: Any) -> str:
     """'The shopping list' -> 'shopping'; how list names are compared."""
     s = re.sub(r"[^a-z0-9 ]+", " ", str(text or "").lower())
+    s = re.sub(r"\btodos?\b", "to do", s)                 # "todo", "to-do" and "to do" are one name
     s = re.sub(r"\b(the|our|my|lists?)\b", " ", s)
     return re.sub(r"\s+", " ", s).strip()
 

@@ -394,6 +394,8 @@ def test_which_list():
     with pytest.raises(hs.Refused, match="Say which list"):
         svc.add_items("household", "", ["x"])
     assert svc.add_items("household", "to-do", ["call the plumber"])["list"] == "Household to-do"
+    for name in ("todo", "To Do", "the to-do list", "todo list"):
+        assert svc.list_items("household", name)["lists"][0]["list"] == "Household to-do"
     with pytest.raises(hs.Refused, match="no list called 'gifts'"):
         svc.list_items("household", "gifts")
     svc, _ = lists_service({})
