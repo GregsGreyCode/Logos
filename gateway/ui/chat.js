@@ -457,13 +457,26 @@ export async function chatView(root, [agentArg, chatArg], state) {
   // edge brings it back. Remembered on this device. (On a phone it is the Conversations panel instead.)
   const reopen = h('button', { type: 'button', class: 'side-reopen', 'aria-label': 'Show conversations',
     title: 'Show conversations', 'aria-controls': 'chat-side', onclick: () => tuck(false) }, icon(['M15 6l-6 6 6 6']));
+  // It shows for a moment when Chat opens, then slides away to its tab, so you know where it is.
+  // Reopen it and it stays (remembered) until you hide it again.
+  const wide = () => window.matchMedia('(min-width: 721px)').matches;
+  const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function slideAway(focusTab) {
+    if (side.classList.contains('tucked')) return;
+    const done = () => { side.classList.remove('sliding'); side.style.marginRight = ''; side.classList.add('tucked');
+      reopen.classList.add('shown'); if (focusTab) reopen.focus(); };
+    if (!wide() || still()) return done();
+    side.style.marginRight = `-${side.offsetWidth}px`;
+    side.classList.add('sliding');
+    setTimeout(done, 480);
+  }
   const tuck = (hide) => {
-    side.classList.toggle('tucked', hide);
-    reopen.classList.toggle('shown', hide);
-    setPref('side-tucked', hide);
-    (hide ? reopen : side.querySelector('.side-hide')).focus();
+    setPref('side-pinned', !hide);
+    if (hide) return slideAway(true);
+    side.classList.remove('tucked'); reopen.classList.remove('shown');
+    side.querySelector('.side-hide').focus();
   };
-  if (pref('side-tucked')) { side.classList.add('tucked'); reopen.classList.add('shown'); }
+  if (!pref('side-pinned')) setTimeout(() => { if (alive && side.isConnected && !side.contains(document.activeElement)) slideAway(false); }, 1200);
   const sideScrim = h('div', { class: 'chat-scrim', hidden: true });
   const convBtn = h('button', { type: 'button', class: 'conv-btn', 'aria-label': 'Conversations and view settings',
     'aria-controls': 'chat-side', 'aria-expanded': 'false' }, listIcon());
@@ -497,7 +510,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
       h('header', { class: 'chat-head' },
         h('h1', { class: tabs ? null : 'agent-solo' }, agent.display_name), tabs,
         h('span', { class: `status running ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
-        h('span', { class: 'status scope' }, agent.shared ? 'Shared with the household' : 'Private to you'),
+        agent.shared ? h('span', { class: 'status scope' }, 'Shared with the household') : null,
         convBtn),
       modelStatus, log, micNote, form),
     side, sideScrim, reopen);

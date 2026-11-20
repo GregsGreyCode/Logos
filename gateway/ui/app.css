@@ -28,7 +28,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; }
-html { scrollbar-gutter: stable; }   /* a page near one screen tall must not reflow as its scrollbar comes and goes */
+html { background: var(--ground); }   /* behind everything, scrollbar included: no dark strip at the edge */
 body { margin: 0; background: var(--ground); color: var(--ink);
   font: var(--t-md)/1.45 var(--font-body); }
 h1, h2, .brand { font-family: var(--font-display); }
@@ -663,3 +663,37 @@ dialog.appearance .label { margin: 16px 0 8px; }
     width: 28px; height: 72px; border-right: 0; border-radius: var(--r-small) 0 0 var(--r-small); background: var(--surface); }
 }
 @media (max-width: 720px) { .side-top { display: none; } }
+
+/* ── Spacing pass (21 Nov): one scale, used the same way everywhere ─────────────────────────
+   Screen edge 32/40 px (16 on a phone); 32 between sections; 12 from a section heading to its
+   content; 8 between a title and its intro; 16 between cards; 20 inside a card. The side menu's
+   logo sits in a band as tall as each screen's header band, so the two line up. */
+@media (min-width: 721px) {
+  .nav { padding: 0 12px 20px; gap: 12px; }
+  .brand-row { height: 68px; padding: 0 12px; border-bottom: 1px solid var(--line); margin: 0 -12px 4px; padding-left: 24px; }
+  .nav-links { gap: 4px; }
+  .nav-links a { min-height: 42px; padding: 0 12px; }
+  .nav-foot { padding: 12px 12px 0; border-top: 1px solid var(--line); gap: 6px; }
+  .page { padding: 32px 40px 48px; gap: 32px; }
+  .chat-head, .brain .chat-head { min-height: 68px; padding-top: 0; padding-bottom: 0; }
+}
+.page > header { gap: 8px; }
+.page section { gap: 12px; }
+.page section > .label + * { margin-top: 0; }
+.cards, .two-col { gap: 16px; }
+.card { padding: 20px; gap: 12px; }
+.agent-card { gap: 8px; }
+/* Agents: the last two columns of the jobs table keep to one line */
+.card .table-inline table.plain td:nth-child(n+2), .card .table-inline table.plain th:nth-child(n+2) { white-space: nowrap; }
+.card .table-inline table.plain td:first-child { width: 100%; }
+@media (max-width: 720px) {
+  .page { gap: 24px; }
+  .card { padding: 16px; }
+  .card .table-inline table.plain td:nth-child(n+2) { white-space: normal; }
+}
+@media (min-width: 721px) {
+  .side { transition: margin-right 0.45s ease, opacity 0.35s ease; }
+  .side.sliding { opacity: 0; pointer-events: none; }
+  .side-reopen.shown { animation: tab-in 0.3s ease both; }
+  @keyframes tab-in { from { opacity: 0; transform: translate(8px, -50%); } }
+}
