@@ -52,6 +52,18 @@ agent (sandbox) --MCP, own token--> logos-reader --private network--> logos-sear
   - At most 20 requests per agent a day; a request that looks like it holds a key is refused.
     The agents' instructions are in `souls/_shared/requests.md`.
 
+- **Homelab docs (story DM1):** `search_docs` (key words), `read_doc` (page id or exact title,
+  long pages in parts of about 6,000 characters, part 1 with the headings) and `list_docs` read
+  the Docmost pages under `DOCMOST_READ_ROOTS` (page ids in `~/.config/logos/docmost`,
+  comma separated: on prod the HomeLab page and Béré's guide), with the same `Logos` login.
+  - Read-only: the reader calls only Docmost's page info, page list and search, and drops
+    search hits outside those pages, so the rest of the space (to-do lists, plans) stays out.
+    Known key formats and `password: …`-style values are replaced before an agent sees them.
+  - Every agent of the reader has them; the household agent's sandbox rule lets them through
+    with `file_request` and `recent_changes`. The page list is cached for ten minutes.
+    Without `DOCMOST_READ_ROOTS` the tools and their instructions (`souls/_shared/docs.md`) are
+    not offered. Docs stay in the house: they go only to the agents' local model.
+
 ## The privacy filter
 
 Every query is checked before it leaves. Refused, with the reason, so the agent can rephrase:
