@@ -10,8 +10,9 @@ Write one message:
 
 - First line, in bold, exactly the heading given above ("**What changed today**" or
   "**What changed this week**"). Nothing else on that line.
-- Then, for each part that changed, its name on a line of its own ("The agents", "The home
-  servers"), followed by bullet points ("- "). Leave out a part with no changes.
+- Then, for each part that changed, its name on a line of its own, Logos first: "Logos" (the
+  agents) and "Homelab" (the home servers), followed by bullet points ("- "). Use exactly those
+  two names. Leave out a part with no changes.
 - Group by theme: several small changes to the same thing become one bullet. Say what changed
   for the people who live here, in plain words ("The household agent can now work the lights"),
   not how the code changed. One line per bullet where you can.

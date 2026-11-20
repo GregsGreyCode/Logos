@@ -16,7 +16,7 @@ import urllib.request
 SKIP = json.dumps({"wakeAgent": False})
 REPOS = ("logos", "homelab")
 #: How people know each part (docs/messages.md: no repository names).
-LABEL = {"logos": "The agents", "homelab": "The home servers"}
+LABEL = {"logos": "Logos", "homelab": "Homelab"}           # Greg, 20 Nov: the names, not "the home servers"
 
 
 def env():
@@ -79,7 +79,7 @@ def facts_one(data):
     """The lines given to the model for one part."""
     repo = data["repo"]
     prs, commits = data.get("prs") or [], data.get("commits") or []
-    lines = [f"## {LABEL[repo]} ({'Logos' if repo == 'logos' else 'homelab-infra'})"]
+    lines = [f"## {LABEL[repo]} ({'the agents' if repo == 'logos' else 'the home servers'})"]
     if repo == "logos":
         note = live_note(prs)
         lines.append(f"{len(prs)} merged pull requests" + (f" ({note} on the Logos server)." if note else "."))
