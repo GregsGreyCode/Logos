@@ -1065,31 +1065,34 @@ def _local_definitions(runtime: Any) -> Dict[str, Mapping[str, Any]]:
 
 
 def local_model_view(runtime: Any) -> dict:
-    """Everything the "Local model" section shows. Blocking; run in a thread."""
+    """Everything the "Local model" section shows, one block per LM Studio server. Blocking."""
     from gateway import model_gateway, model_server
     http = runtime.runner.http
-    definitions = _local_definitions(runtime)
-    want_all = model_server.wanted(definitions)
-    if not want_all:
-        return {"server": None}
-    base, want = next(iter(want_all.items()))
-    view: Dict[str, Any] = {"server": base.split("//", 1)[-1], "want": want, "up": False}
-    try:
-        listed = [model_server.describe(m) for m in model_server.models(http, base)]
-        view.update(up=True, loaded=[m for m in listed if m["instances"]],
-                    downloaded=len(listed),
-                    checks=model_server.checks(want, listed, model_server.vram_gb(runtime.env)))
-    except Exception as e:
-        view["error"] = f"LM Studio did not answer ({type(e).__name__})."
+    known = model_server.hardware(runtime.env)
+    servers = []
+    for base, want in sorted(model_server.wanted(_local_definitions(runtime)).items()):
+        key = model_server.server_key(base)
+        hw = known.get(key, {})
+        view: Dict[str, Any] = {"server": key, "want": want, "up": False, "hardware": hw}
+        try:
+            listed = [model_server.describe(m) for m in model_server.models(http, base)]
+            vram = float(hw.get("vram_gb") or 0)
+            ours = next((m for m in listed if m["key"] in want), None)
+            view.update(up=True, loaded=[m for m in listed if m["instances"]], downloaded=len(listed),
+                        checks=model_server.checks(want, listed, vram), advice=model_server.advice(ours, vram))
+        except Exception as e:
+            view["error"] = f"LM Studio did not answer ({type(e).__name__})."
+            view["advice"] = model_server.advice(None, float(hw.get("vram_gb") or 0))
+        servers.append(view)
     gw = model_gateway.ModelGateway(runtime)
-    view["queue"] = model_server.queue(http, f"http://{gw.bind_address()}:{model_gateway.GUARD_PORT}/guard/health")
     logs = runtime.runner.run(["docker", "logs", "--since", "168h", model_gateway.GUARD_CONTAINER])
-    view["speed"] = model_server.speed(((logs.stdout or "") + (logs.stderr or "")).splitlines())
-    return view
+    return {"servers": servers,
+            "queue": model_server.queue(http, f"http://{gw.bind_address()}:{model_gateway.GUARD_PORT}/guard/health"),
+            "speed": model_server.speed(((logs.stdout or "") + (logs.stderr or "")).splitlines())}
 
 
 async def handle_local_model(request: web.Request) -> web.Response:
-    """GET /api/v2/models/local — what LM Studio has loaded, checks, the queue and reply speed."""
+    """GET /api/v2/models/local — each LM Studio server: what is loaded, checks, advice; the queue and speed."""
     _user(request)
     runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
     if runtime is None:
@@ -1100,32 +1103,44 @@ async def handle_local_model(request: web.Request) -> web.Response:
 
 
 async def handle_local_model_action(request: web.Request) -> web.Response:
-    """POST /api/v2/models/local/{action}: ``reload`` (the agents' model, with Logos's window) or
-    ``unload`` ({"instance": id} of a model no agent uses). Admin only."""
+    """POST /api/v2/models/local/{action} with {"server": "host:port", ...}. Admin only.
+    ``reload``: the agents' model on that server, with Logos's window. ``unload``: {"instance"} of a
+    model no agent uses. ``hardware``: {"gpu", "vram_gb"} for that server (0 forgets it). Only servers
+    an agent definition names can be acted on."""
     from gateway import model_server
     if _user(request)["role"] != "admin":
         return web.json_response({"error": "forbidden"}, status=403)
     runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
     if runtime is None:
         return web.json_response({"error": "no_backend"}, status=503)
-    want_all = model_server.wanted(_local_definitions(runtime))
-    if not want_all:
-        return web.json_response({"error": "no_local_model"}, status=400)
-    base, want = next(iter(want_all.items()))
-    action = request.match_info["action"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    servers = {model_server.server_key(b): (b, w) for b, w in model_server.wanted(_local_definitions(runtime)).items()}
+    key = str(body.get("server") or "")
+    if key not in servers:
+        return web.json_response({"error": "unknown_server"}, status=400)
+    base, want = servers[key]
+    action, who = request.match_info["action"], _user(request)["username"]
     try:
         if action == "reload":
             model, w = next(iter(sorted(want.items())))
             config = await asyncio.to_thread(model_server.reload, runtime.runner.http, base, model, w["load"])
-            logger.info("local model reloaded by %s: %s", _user(request)["username"], model)
+            logger.info("local model reloaded by %s: %s on %s", who, model, key)
             return web.json_response({"done": "reloaded", "model": model, "config": config.get("load_config")})
         if action == "unload":
-            body = await request.json()
-            instance = str((body or {}).get("instance") or "")
+            instance = str(body.get("instance") or "")
             await asyncio.to_thread(model_server.unload, runtime.runner.http, base, instance, sorted(want))
-            logger.info("local model unloaded by %s: %s", _user(request)["username"], instance)
+            logger.info("local model unloaded by %s: %s on %s", who, instance, key)
             return web.json_response({"done": "unloaded", "instance": instance})
-    except ValueError as e:
+        if action == "hardware":
+            saved = await asyncio.to_thread(model_server.set_hardware, runtime.env, key,
+                                            str(body.get("gpu") or ""), body.get("vram_gb") or 0)
+            logger.info("model server hardware set by %s for %s", who, key)
+            return web.json_response({"done": "saved", "hardware": saved})
+    except (ValueError, TypeError) as e:
         return web.json_response({"error": str(e)}, status=400)
     except Exception as e:
         return web.json_response({"error": f"LM Studio refused ({type(e).__name__})."}, status=502)

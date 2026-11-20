@@ -1,5 +1,10 @@
 """The local model server (LM Studio) for the dashboard's "Local model" section.
 
+Every LM Studio server an agent definition points at is shown on its own (a new PC or an
+always-on box appears as soon as an agent uses it). Each server's GPU (a name and its memory) is
+told to Logos on the page and kept in ``~/.config/logos/model-servers.json``; the checks and the
+recommended app settings follow from it, so a new GPU needs no code change.
+
 What is loaded and with which settings, next to what the agents ask for; plain warnings when
 they disagree; how the model guard's queue is doing and how fast replies have been; and the two
 changes the dashboard may make (reload the agents' model with Logos's window, unload a model
@@ -21,7 +26,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 from gateway import local_models
 
 JSON = {"Content-Type": "application/json"}
-SETTINGS_FILE = "model-server"          # in ~/.config/logos: GPU_VRAM_GB=16 (optional, for the fit check)
+SETTINGS_FILE = "model-servers.json"    # in ~/.config/logos: {"host:port": {"gpu": "...", "vram_gb": 16}}
 
 
 def config_dir(env: Mapping[str, str]) -> Path:
@@ -29,15 +34,71 @@ def config_dir(env: Mapping[str, str]) -> Path:
     return Path(base) / "logos"
 
 
-def vram_gb(env: Mapping[str, str]) -> float:
-    """The model PC's GPU memory in GB from ~/.config/logos/model-server, or 0 when not given."""
+def server_key(base: str) -> str:
+    """'http://192.168.1.117:1234' -> '192.168.1.117:1234', how servers are named on the page."""
+    return base.split("//", 1)[-1].rstrip("/")
+
+
+def hardware(env: Mapping[str, str]) -> Dict[str, dict]:
+    """What Logos has been told about each server's GPU: {"host:port": {"gpu", "vram_gb"}}."""
     try:
-        for line in (config_dir(env) / SETTINGS_FILE).read_text().splitlines():
-            if line.strip().startswith("GPU_VRAM_GB="):
-                return float(line.split("=", 1)[1].strip())
+        data = json.loads((config_dir(env) / SETTINGS_FILE).read_text())
+        return {str(k): v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
     except (OSError, ValueError):
-        pass
-    return 0.0
+        return {}
+
+
+def set_hardware(env: Mapping[str, str], server: str, gpu: str, vram_gb: float) -> dict:
+    """Remember one server's GPU. ``vram_gb`` 0 forgets it."""
+    gpu = " ".join(str(gpu or "").split())[:80]
+    vram = float(vram_gb or 0)
+    if not 0 <= vram <= 1024:
+        raise ValueError("GPU memory is a number of GB, 0 to 1024")
+    data = hardware(env)
+    if vram:
+        data[server] = {"gpu": gpu, "vram_gb": vram}
+    else:
+        data.pop(server, None)
+    path = config_dir(env) / SETTINGS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return data.get(server, {})
+
+
+def advice(m: Optional[dict], vram: float) -> List[dict]:
+    """The settings only the LM Studio app can change, for this model on this GPU."""
+    fits = bool(vram and m and m["size_gb"] and m["size_gb"] * 1.15 <= vram)   # room for the window
+    unknown = not vram or not m
+    moe = bool(m and m["moe"])
+    if unknown:
+        offload = ("Max", "Every layer the GPU can hold runs there. Tell Logos this PC's GPU memory "
+                          "to get advice for this model.")
+        experts = ("On for a mixture-of-experts model bigger than the GPU", "Keeps the experts in RAM and "
+                   "the always-used layers on the GPU.")
+    elif fits:
+        offload = ("Max", f"The model ({m['size_gb']} GB) fits in the GPU's {vram:g} GB: all of it on the GPU.")
+        experts = ("Off", "It fits on the GPU, so nothing needs to go to RAM.")
+    else:
+        offload = ("Max", f"The model ({m['size_gb']} GB) is bigger than the GPU's {vram:g} GB: as much as "
+                          "fits goes on the GPU, the rest runs from RAM.")
+        experts = (("On", "The experts sit in RAM and the always-used layers stay on the GPU: the fast way "
+                          "to run a model this size on this GPU.") if moe else
+                   ("(not a mixture-of-experts model)", "Part of the model runs from RAM, which is slow. "
+                                                         "A smaller quantisation would fit."))
+    rows = [{"setting": "GPU offload", "value": offload[0], "why": offload[1]}]
+    if moe or unknown:
+        rows.append({"setting": "Force model expert weights onto CPU", "value": experts[0], "why": experts[1]})
+    rows += [
+        {"setting": "K Cache / V Cache quantization", "value": "Q8_0",
+         "why": "Halves the memory of the conversation window with no visible loss."},
+        {"setting": "Flash attention", "value": "On", "why": "Less memory and faster. Logos turns it on when it loads the model."},
+        {"setting": "Context length", "value": "Leave to Logos", "why": "Logos loads the window the agents need."},
+        {"setting": "Keep model in memory", "value": "On", "why": "Stops the model being pushed out of memory."},
+    ]
+    return rows
 
 
 def wanted(definitions: Mapping[str, Mapping[str, Any]]) -> Dict[str, Dict[str, dict]]:
@@ -112,7 +173,10 @@ def checks(want: Mapping[str, dict], listed: List[dict], vram: float = 0.0) -> L
         if inst.get("offload_kv_cache_to_gpu") is False:
             out.append({"level": "warn", "text": "The KV cache is kept in RAM, which slows every reply. "
                                                  "Turn on \"Offload KV cache to GPU memory\"."})
-        if vram and m["size_gb"] > vram:
+        if vram and m["size_gb"] and m["size_gb"] * 1.15 <= vram:
+            out.append({"level": "ok", "text": f"The model ({m['size_gb']} GB) fits in the GPU's {vram:g} GB with "
+                                               "room for the window: all of it can run on the GPU."})
+        elif vram and m["size_gb"] > vram:
             out.append({"level": "info", "text": (
                 f"The model file ({m['size_gb']} GB) is larger than the GPU's {vram:g} GB, so part of it runs "
                 "from RAM. " + ("Expected for this mixture-of-experts model: keep the experts on the CPU "

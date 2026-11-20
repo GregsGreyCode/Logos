@@ -447,9 +447,15 @@ li.todo.done { color: var(--muted); text-decoration: line-through; }
 .check.warn .check-mark { background: var(--warn-ink); color: var(--warn-bg); }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 8px 0 16px; }
 .btn.ghost { background: transparent; color: var(--accent-text); border: 1px solid var(--line); margin-top: 8px; }
+details.card { margin-bottom: 16px; }
 details.card summary { cursor: pointer; font-weight: 600; min-height: 32px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 12px 0 0; }
 .facts dt { color: var(--muted); font-size: 13px; font-weight: 600; }
 .facts dd { margin: 0; }
+.gpu-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 12px; }
+.gpu-form input { min-height: 40px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--raised); color: var(--ink); font: inherit; }
+.gpu-form input[type="number"] { width: 6em; }
+.gpu-form .btn.ghost { margin-top: 0; }

@@ -114,9 +114,37 @@ def test_unload_never_touches_the_agents_model():
     assert lm.calls == [("/api/v1/models/unload", {"instance_id": "google/gemma-4-31b"})]
 
 
-def test_vram_from_the_settings_file(tmp_path):
+def test_each_servers_gpu_is_remembered(tmp_path):
     env = {"XDG_CONFIG_HOME": str(tmp_path)}
-    assert ms.vram_gb(env) == 0.0
-    (tmp_path / "logos").mkdir()
-    (tmp_path / "logos" / "model-server").write_text("# the model PC\nGPU_VRAM_GB=16\n")
-    assert ms.vram_gb(env) == 16.0
+    assert ms.hardware(env) == {}
+    assert ms.set_hardware(env, "192.168.1.117:1234", "RTX 4080  Super", 16) == {"gpu": "RTX 4080 Super", "vram_gb": 16.0}
+    ms.set_hardware(env, "10.0.0.9:1234", "Always-on box", 48)
+    assert set(ms.hardware(env)) == {"192.168.1.117:1234", "10.0.0.9:1234"}
+    assert oct((tmp_path / "logos" / ms.SETTINGS_FILE).stat().st_mode & 0o777) == "0o600"
+    ms.set_hardware(env, "10.0.0.9:1234", "", 0)                       # 0 forgets it
+    assert set(ms.hardware(env)) == {"192.168.1.117:1234"}
+    with pytest.raises(ValueError):
+        ms.set_hardware(env, "x:1", "gpu", 5000)
+    assert ms.server_key("http://192.168.1.117:1234/") == "192.168.1.117:1234"
+
+
+def advice_of(rows):
+    return {r["setting"]: r["value"] for r in rows}
+
+
+def test_advice_follows_the_gpu():
+    moe = ms.describe(lm_model(QWEN, instances=[LOADED]))
+    small = advice_of(ms.advice(moe, 16))                              # 22.1 GB MoE on 16 GB: experts to RAM
+    assert small["GPU offload"] == "Max" and small["Force model expert weights onto CPU"] == "On"
+    big = advice_of(ms.advice(moe, 48))                                # a new 48 GB GPU: all on the GPU
+    assert big["Force model expert weights onto CPU"] == "Off"
+    dense = ms.describe(lm_model("dense/27b", 17.7e9, instances=[{**LOADED, "num_experts": None}], params="27B"))
+    assert "Force model expert weights onto CPU" not in advice_of(ms.advice(dense, 16))
+    unknown = ms.advice(None, 0)
+    assert "Tell Logos this PC's GPU memory" in unknown[0]["why"]
+
+
+def test_a_model_that_fits_says_so():
+    listed = [ms.describe(lm_model(QWEN, instances=[LOADED]))]
+    _, text = levels(ms.checks(ms.wanted(defs())[BASE], listed, vram=48))
+    assert "fits in the GPU's 48 GB" in text and "mixture-of-experts" not in text
