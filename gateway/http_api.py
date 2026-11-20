@@ -739,6 +739,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/",              _handle_app)
     from gateway import dashboard_api as _dashboard_api
     _dashboard_api.register(app)
+    from gateway import matrix_proxy as _matrix_proxy   # M1: the browser's Matrix device reaches the server here
+    _matrix_proxy.register(app)
     from gateway import updates as _updates
     _updates.register(app)
     app.router.add_static("/ui", str(Path(__file__).parent / "ui"), show_index=False)

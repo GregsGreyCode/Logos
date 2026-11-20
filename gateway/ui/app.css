@@ -845,3 +845,20 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .card-foot .actions { margin: 4px 0 0; }
 .lms-only summary { cursor: pointer; color: var(--muted); font-size: var(--t-sm); }
 .lms-only[open] summary { margin-bottom: 8px; }
+
+/* M1: Settings > Matrix device */
+.mx-steps { display: flex; flex-wrap: wrap; gap: 8px; }
+.mx-step { height: 32px; padding: 0 14px; border: 1px solid var(--line); border-radius: 16px; color: var(--muted);
+  font-size: var(--t-sm); line-height: 30px; }
+.mx-step.now { color: var(--ink); font-weight: 600; border-color: var(--accent-text); background: var(--accent-soft); }
+.mx-step.done { color: var(--ink); }
+.settings-body-inner { display: flex; flex-direction: column; gap: 16px; }
+.settings-form p { margin: 0; }
+.settings-form input[readonly] { color: var(--muted); }
+.settings-form input.mono { font-family: var(--font-mono); letter-spacing: 0.04em; }
+.mx-ok { padding: 14px 16px; border-radius: var(--r-card); background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent); }
+.mx-device { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.mx-device .row-meta { grid-column: 1; }
+.mx-device .mx-signout { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.row-meta.warn { color: var(--warn-ink); }

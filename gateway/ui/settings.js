@@ -1,7 +1,8 @@
 // Settings (ST1): one screen for everything you set for yourself. Sections on the left (a row of
 // tabs on a phone): Appearance, Your account, Chat, Matrix device, and Updates for whoever
 // manages Logos. Each section is its own address (#/settings/chat), so it can be linked to.
-import { h, api, getJSON } from './util.js';
+import { h, api, getJSON, when, loading } from './util.js';
+import * as mx from './mx.js';
 import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
 import { updatesView } from './updates.js';
@@ -129,10 +130,85 @@ function chat() {
   ];
 }
 
-function matrix() {
-  return [h('section', { 'aria-label': 'Matrix device' }, heading('This browser and Matrix'),
-    h('p', { class: 'none' }, 'Soon, chat here will be your Element conversation itself. You will connect this browser once '
-      + 'with your Matrix password and your recovery key, and see or sign out your devices here (story M1).'))];
+// M1: connect this browser as one of your Matrix devices, unlock it with the recovery key, and see
+// or sign out your devices. Two steps (Greg, 21 Nov): password, then recovery key.
+function matrix(state, redraw) {
+  const box = h('div', { class: 'settings-body-inner' }, loading());
+  const me = state.me.matrix_id;
+  if (!me) return [h('p', { class: 'none' }, 'Matrix is not set up on this Logos.')];
+  const steps = (n) => h('div', { class: 'mx-steps', role: 'list' }, ['Connect', 'Unlock history', 'Done'].map((t, i) =>
+    h('span', { role: 'listitem', class: `mx-step${i === n ? ' now' : ''}${i < n ? ' done' : ''}` }, `${i < n ? '✓ ' : ''}${t}`)));
+  const field = (id, label, input) => [h('label', { for: id, class: 'field-label' }, label), input];
+  const note = () => h('p', { class: 'when', role: 'status' });
+
+  function stepConnect() {
+    const pass = h('input', { id: 'mx-pass', type: 'password', autocomplete: 'current-password' });
+    const msg = note();
+    const go = h('button', { type: 'submit', class: 'btn' }, 'Connect');
+    box.replaceChildren(steps(0), h('form', { class: 'settings-form', onsubmit: async (e) => {
+      e.preventDefault();
+      go.disabled = true; msg.textContent = 'Connecting… the first time this browser fetches about 2 MB.';
+      try { await mx.connect(me, pass.value); pass.value = ''; show(); }
+      catch (err) { msg.textContent = err.httpStatus === 403 ? 'That password was not accepted.' : `Could not connect: ${err.message}`; go.disabled = false; }
+    } },
+    h('p', {}, 'Chat here becomes your Element conversation itself: the same messages, encrypted, here and on your phone. This browser becomes one of your Matrix devices.'),
+    ...field('mx-user', 'Matrix account', h('input', { id: 'mx-user', type: 'text', value: me, readonly: true })),
+    ...field('mx-pass', 'Matrix password (used once, never kept)', pass),
+    h('div', { class: 'row' }, go), msg));
+  }
+
+  function stepUnlock() {
+    const key = h('input', { id: 'mx-key', type: 'text', autocomplete: 'off', spellcheck: 'false', class: 'mono',
+      placeholder: 'EsTc 7Q2b Wd9P …' });
+    const msg = note();
+    const go = h('button', { type: 'submit', class: 'btn' }, 'Unlock');
+    box.replaceChildren(steps(1), h('form', { class: 'settings-form', onsubmit: async (e) => {
+      e.preventDefault();
+      go.disabled = true; msg.textContent = 'Unlocking, then verifying this browser… this can take up to half a minute.';
+      try {
+        const out = await mx.unlock(key.value); key.value = '';
+        if (out.verified) show(); else { msg.textContent = 'The key was accepted but this browser is not verified yet. Try again, or verify it from Element.'; go.disabled = false; }
+      } catch (err) { msg.textContent = /key|decode|checksum|parity/i.test(err.message) ? 'That recovery key was not accepted. Check it and try again.' : `Could not unlock: ${err.message}`; go.disabled = false; }
+    } },
+    h('p', {}, 'Enter the recovery key Element gave you (in Element: Settings › Security). It proves this browser is you and unlocks your earlier messages. It is used once and not kept.'),
+    ...field('mx-key', 'Recovery key', key),
+    h('div', { class: 'row' }, go), msg,
+    h('p', { class: 'when' }, 'Or verify this browser from Element on your phone: it shows up there as a new device to verify.')));
+  }
+
+  async function stepDone() {
+    const list = h('div', { class: 'rows' }, loading());
+    const msg = note();
+    box.replaceChildren(steps(2),
+      h('div', { class: 'mx-ok' }, '✓ ', `This browser is a verified device of ${me}.`),
+      h('h2', { class: 'label' }, 'Your devices'), list, msg,
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: async () => {
+        if (!confirm('Disconnect this browser? It signs out of Matrix here and forgets its keys.')) return;
+        await mx.disconnect(); show();
+      } }, 'Disconnect this browser')));
+    const devs = (await mx.devices()).sort((a, b) => Number(b.here) - Number(a.here) || b.lastSeen - a.lastSeen);
+    list.replaceChildren(...devs.map((d) => h('div', { class: 'row-item mx-device' },
+      h('span', { class: 'row-main' }, d.here ? `${d.name} (this browser)` : d.name),
+      h('span', { class: `row-meta ${d.verified ? 'ok' : 'warn'}` },
+        `${d.verified ? 'Verified' : 'Not verified: agents will not answer it'}${d.lastSeen ? ` · seen ${when(d.lastSeen / 1000)}` : ''}`),
+      d.here ? null : h('button', { type: 'button', class: 'linkish mx-signout', onclick: async (e) => {
+        const pw = prompt(`Sign out "${d.name}"? Matrix asks for your password to do it.`);
+        if (!pw) return;
+        e.target.disabled = true;
+        try { await mx.signOut(d.id, pw); stepDone(); }
+        catch (err) { msg.textContent = `Could not sign it out: ${err.message}`; e.target.disabled = false; }
+      } }, 'Sign out'))));
+  }
+
+  async function show() {
+    if (!mx.saved()) return stepConnect();
+    box.replaceChildren(loading());
+    try { (await mx.isVerified()) ? stepDone() : stepUnlock(); }
+    catch (e) { box.replaceChildren(h('div', { class: 'notice' }, `This browser's Matrix device could not start: ${e.message}`),
+      h('button', { type: 'button', class: 'btn quiet', onclick: async () => { await mx.disconnect(); show(); } }, 'Start again')); }
+  }
+  show();
+  return [h('section', { 'aria-label': 'Matrix device' }, heading('This browser and Matrix'), box)];
 }
 
 export async function settingsView(root, [section], state) {
@@ -149,7 +225,7 @@ export async function settingsView(root, [section], state) {
   if (id === 'appearance') body.replaceChildren(...appearance());
   else if (id === 'account') body.replaceChildren(...account(state));
   else if (id === 'chat') body.replaceChildren(...chat());
-  else if (id === 'matrix') body.replaceChildren(...matrix());
+  else if (id === 'matrix') body.replaceChildren(...matrix(state));
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   return () => { if (done) done(); };
 }

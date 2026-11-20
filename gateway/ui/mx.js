@@ -1,0 +1,135 @@
+// This browser as one of your encrypted Matrix devices (story M1). The Matrix files are Logos's own
+// pinned copies (gateway/ui/vendor/matrix, story M0); the server is reached through the dashboard
+// (/_matrix/..., gateway/matrix_proxy.py). The access token and the device's keys stay in this browser:
+// the session in localStorage, the encryption keys in IndexedDB. The Matrix password is used once,
+// to sign in, and for signing out other devices; it is never kept.
+const SESSION = 'logos-mx-session';
+let sdkP = null, client = null, secretKey = null, startP = null;
+
+const sdk = () => (sdkP ||= import('/ui/vendor/matrix/matrix.js'));
+const base = () => location.origin;
+// The Matrix library sends its requests without cookies; the pass-through needs the dashboard's
+// session cookie (same origin only), alongside the Matrix token in the Authorization header.
+const fetchFn = (url, opts) => fetch(url, { ...opts, credentials: 'same-origin' });
+
+export function saved() {
+  try { return JSON.parse(localStorage.getItem(SESSION) || 'null'); } catch (e) { return null; }
+}
+function remember(s) { try { localStorage.setItem(SESSION, JSON.stringify(s)); } catch (e) { /* private window */ } }
+
+async function make(s) {
+  const m = await sdk();
+  const c = m.createClient({ baseUrl: base(), fetchFn, userId: s.userId, accessToken: s.accessToken, deviceId: s.deviceId,
+    cryptoCallbacks: { getSecretStorageKey: async ({ keys }) => (secretKey ? [Object.keys(keys)[0], secretKey] : null) } });
+  await c.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: `logos-${s.userId}` });
+  return c;
+}
+
+// The running client for this browser, started once; null when this browser is not connected.
+export async function get() {
+  const s = saved();
+  if (!s) return null;
+  if (client) return client;
+  startP ||= (async () => {
+    const m = await sdk();
+    const c = await make(s);
+    await new Promise((ok) => { c.once(m.ClientEvent.Sync, () => ok()); c.startClient({ initialSyncLimit: 20 }); });
+    client = c;
+    return c;
+  })().catch((e) => { startP = null; throw e; });
+  return startP;
+}
+
+// Step 1: sign in with the Matrix password (used once) and become a new device.
+export async function connect(userId, password) {
+  const m = await sdk();
+  const tmp = m.createClient({ baseUrl: base(), fetchFn });
+  const r = await tmp.login('m.login.password', { identifier: { type: 'm.id.user', user: userId }, password,
+    initial_device_display_name: `Logos (${browserName()})` });
+  remember({ userId: r.user_id, deviceId: r.device_id, accessToken: r.access_token, at: Date.now() });
+  return get();
+}
+
+// Step 2: the recovery key proves this browser is you (cross-signs it) and unlocks earlier messages.
+export async function unlock(recoveryKey) {
+  const m = await sdk();
+  const c = await get();
+  secretKey = m.decodeRecoveryKey(recoveryKey.trim());
+  try {
+    const crypto = c.getCrypto();
+    await crypto.bootstrapCrossSigning({});
+    // Holding the keys is not enough: sign this browser with them, as Element does on "verify".
+    await crypto.crossSignDevice(c.getDeviceId());
+    let restored = null;
+    try {
+      await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
+      restored = await crypto.restoreKeyBackup();
+    } catch (e) { restored = { error: e.message }; }
+    // The new signature counts once this browser has re-read your identity and devices from the
+    // server (asking for them is what makes it look again); a few seconds, up to ~30 on a slow day.
+    let verified = false;
+    for (let i = 0; i < 40 && !verified; i++) {
+      await crypto.getUserVerificationStatus(c.getUserId());
+      await crypto.getUserDeviceInfo([c.getUserId()], true);
+      verified = await isVerified();
+      if (!verified) await new Promise((ok) => setTimeout(ok, 750));
+    }
+    if (!verified) {
+      const s = await crypto.getCrossSigningStatus();
+      console.warn('Matrix: unlocked but not verified yet', JSON.stringify(s));
+    }
+    return { verified, restored };
+  } finally {
+    secretKey = null;                     // the key itself is not kept, only what it unlocked
+  }
+}
+
+export async function isVerified() {
+  const c = await get();
+  if (!c) return false;
+  const v = await c.getCrypto().getDeviceVerificationStatus(c.getUserId(), c.getDeviceId());
+  return !!(v && v.crossSigningVerified);
+}
+
+// Your devices: name, last seen, verified or not, and which one is this browser.
+export async function devices() {
+  const c = await get();
+  const { devices: list } = await c.getDevices();
+  const crypto = c.getCrypto();
+  return Promise.all(list.map(async (d) => {
+    const v = await crypto.getDeviceVerificationStatus(c.getUserId(), d.device_id);
+    return { id: d.device_id, name: d.display_name || d.device_id, lastSeen: d.last_seen_ts || 0,
+      verified: !!(v && v.crossSigningVerified), here: d.device_id === c.getDeviceId() };
+  }));
+}
+
+// Sign out another device: the server asks for your Matrix password again.
+export async function signOut(deviceId, password) {
+  const c = await get();
+  try {
+    await c.deleteDevice(deviceId);
+  } catch (e) {
+    const flows = e.data && e.data.session;
+    if (!flows) throw e;
+    await c.deleteDevice(deviceId, { type: 'm.login.password', identifier: { type: 'm.id.user', user: c.getUserId() },
+      password, session: e.data.session });
+  }
+}
+
+// Disconnect this browser: sign this device out and forget its keys here.
+export async function disconnect() {
+  const s = saved();
+  try { const c = await get(); if (c) { c.stopClient(); await c.logout(true); } } catch (e) { /* signed out already */ }
+  client = null; startP = null;
+  try { localStorage.removeItem(SESSION); } catch (e) { /* private window */ }
+  if (s && window.indexedDB && indexedDB.databases) {
+    for (const db of await indexedDB.databases()) if (db.name && db.name.startsWith(`logos-${s.userId}`)) indexedDB.deleteDatabase(db.name);
+  }
+}
+
+function browserName() {
+  const ua = navigator.userAgent;
+  const b = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iPhone' : /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${b} on ${os}` : b;
+}
