@@ -415,8 +415,10 @@ class AgentRuntime:
         if vh.uses_voice(agent) and voice_token:
             # Voice notes are turned into text by the shared voice service (docs/voice.md).
             # hermes calls it as an OpenAI-style transcription endpoint.
-            # echo_transcripts off: the agent answers a voice note without first posting what it heard.
-            cfg["stt"] = {"enabled": True, "provider": "openai", "echo_transcripts": False,
+            # echo_transcripts: post what was heard before the answer, so the person can check it was
+            # understood. Off unless the agent's yaml says `voice_echo: true` (Béré asked for it).
+            cfg["stt"] = {"enabled": True, "provider": "openai",
+                          "echo_transcripts": bool(agent.get("voice_echo", False)),
                           "openai": {"api_key": voice_token, "base_url": vh.VoiceHost(self).base_url(),
                                      "model": "whisper-1"}}
         else:

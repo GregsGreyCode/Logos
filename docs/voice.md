@@ -42,6 +42,10 @@ the agent image is unchanged.
 Without `voice: true`, speech-to-text is switched off for that agent and a voice note is not
 understood.
 
+`voice_echo: true` also posts the text of each voice note in the chat before the answer, so the
+person can see what was understood. It is off by default (a voice note gets the answer only) and
+on for Béré, who asked for it.
+
 ## What is inside the image
 
 | Part | Version | Why |
