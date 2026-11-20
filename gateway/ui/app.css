@@ -754,3 +754,25 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .swatch-fixed { width: 24px; height: 24px; border-radius: 50%; display: inline-block; }
 @media (max-width: 720px) { .colour-row { grid-template-columns: minmax(0, 1fr); } }
 .appearance-note:empty { display: none; }
+
+/* ── P1: one page header. On a desktop every screen's title sits in a band as tall as the menu's
+   Logos band (68 px), ruled underneath, so the two line up; Chat and Brain already have one. The
+   one-line intro sits below it. On a phone the top bar names the screen, so the band is hidden. */
+@media (min-width: 721px) {
+  .page > header > h1, .page > h1 { display: flex; align-items: center; min-height: 68px; margin: -32px -40px 0;
+    padding: 0 40px; border-bottom: 1px solid var(--line); font-size: 22px; line-height: 28px; }
+  .page > header { gap: 20px; }
+  .page.home > header > h1 { margin-bottom: 0; }
+  [data-look="glass"] .page > header > h1, [data-look="glass"] .page > h1 { background: var(--glass);
+    -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
+}
+/* P2: loading looks the same everywhere */
+.loading { display: flex; flex-direction: column; gap: 12px; max-width: 560px; color: var(--muted); font-size: var(--t-md); }
+.loading .bar { display: block; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--chip) 0, var(--line) 40%, var(--chip) 80%);
+  background-size: 600px 100%; animation: shimmer 1.4s linear infinite; }
+@keyframes shimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
+@media (prefers-reduced-motion: reduce) { .loading .bar { animation: none; } }
+[data-motion="still"] .loading .bar { animation: none; }
+/* The Claude Advisor notice is a card shape, not a pill */
+.notice { border-radius: var(--r-small); }
+.home-quiet { padding: 0; }

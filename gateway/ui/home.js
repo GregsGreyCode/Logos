@@ -1,6 +1,6 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
-import { h, getJSON, when, none } from './util.js';
+import { h, getJSON, when, none, loading } from './util.js';
 import { requestCard, setBadge, outcome } from './noticeboard.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
@@ -13,11 +13,15 @@ const timeOf = (e) => (e.all_day ? 'All day' : String(e.start || '').slice(11, 1
 export async function homeView(root) {
   let alive = true, timer = null;
   const doing = {};
-  const waitingBox = h('div', { class: 'stack home-waiting' }, none('Loading…'));
-  const todayBox = h('div', { class: 'home-list' }, none('Loading…'));
-  const doneBox = h('div', { class: 'stack' }, none('Loading…'));
+  const waitingBox = h('div', { class: 'stack home-waiting' }, loading());
+  const todayBox = h('div', { class: 'home-list' });
+  const doneBox = h('div', { class: 'stack' });
+  // P2: a section with nothing in it folds into one quiet line instead of a heading over "nothing".
+  const quiet = h('p', { class: 'none home-quiet', hidden: true });
   const status = h('div', { class: 'when home-status' });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
+  const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
+  const doneSec = h('section', { 'aria-label': 'What happened' }, h('h2', { class: 'label' }, 'Since yesterday'), doneBox);
   // Terminal HUD (L6): a live strip of the same figures the Models screen shows. Hidden in the other looks.
   const strip = h('div', { class: 'hud-strip', 'aria-label': 'Live figures' });
   const cell = (label, value, unit, live) => h('div', { class: 'hud-cell' }, h('span', {}, label),
@@ -101,6 +105,7 @@ export async function homeView(root) {
         msgs.length > 6 ? h('a', { href: '#/noticeboard', class: 'done-more' }, `${msgs.length - 6} more on the Noticeboard`) : null));
     }
     doneBox.replaceChildren(...(parts.length ? parts : [none('Nothing new since yesterday.')]));
+    return parts.length > 0;
   }
 
   async function load() {
@@ -143,7 +148,12 @@ export async function homeView(root) {
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
       : [none('Nothing is waiting on you.')]));
     showToday(data.today);
-    showDone(nb.log);
+    const anyDone = showDone(nb.log);
+    const noWait = !nb.waiting.length;
+    waitingSec.hidden = noWait; doneSec.hidden = !anyDone;
+    const said = [noWait ? 'nothing waiting on you' : '', anyDone ? '' : 'nothing new since yesterday'].filter(Boolean).join(' · ');
+    quiet.textContent = said ? said[0].toUpperCase() + said.slice(1) + '.' : '';
+    quiet.hidden = !said;
     showStrip();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
@@ -163,10 +173,8 @@ export async function homeView(root) {
     h('header', { class: 'home-head' },
       h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), status),
     strip,
-    askForm,
-    h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox),
-    h('section', { 'aria-label': 'Today' }, h('h2', { class: 'label' }, 'Today'), todayBox),
-    h('section', { 'aria-label': 'What happened' }, h('h2', { class: 'label' }, 'Since yesterday'), doneBox)));
+    askForm, quiet, waitingSec,
+    h('section', { 'aria-label': 'Today' }, h('h2', { class: 'label' }, 'Today'), todayBox), doneSec));
 
   fromLast();
   await load();

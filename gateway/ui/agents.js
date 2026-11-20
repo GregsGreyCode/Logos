@@ -1,5 +1,5 @@
 // Agents screen: is each agent up, what it does on its own, what it runs on, what it can reach.
-import { h, api, getJSON, none } from './util.js';
+import { h, api, getJSON, none, loading } from './util.js';
 
 function runTime(iso) {
   if (!iso) return '';
@@ -27,6 +27,7 @@ function schedule(s) {
 export async function agentsView(root, [agentArg]) {
   let alive = true;
   let data = { agents: [], others: [] };
+  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Agents'), loading()));
   try { data = await getJSON('/api/v2/agents'); } catch (e) { /* shown below */ }
   const agent = data.agents.find((a) => a.name === agentArg) || data.agents[0];
   const detail = h('div', { class: 'two-col' });
@@ -43,7 +44,7 @@ export async function agentsView(root, [agentArg]) {
 
   async function load() {
     if (!agent) return;
-    detail.replaceChildren(h('p', { class: 'when' }, 'Loading…'));
+    detail.replaceChildren(loading());
     let st;
     try { st = await getJSON(`/api/v2/agents/${agent.name}/status`); } catch (e) {
       detail.replaceChildren(h('div', { class: 'notice' }, 'Could not load this agent.'));
