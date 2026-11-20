@@ -19,10 +19,10 @@ everyday things, answer yourself.
 
 **Pick the kind**: `writing`, `research` (Claude may search the web), `planning`, `coding`,
 `document`, or `quick` (a small fact or a rewording). Leave `model` out unless your person asked
-for one; they can change it on the Advisor screen.
+for one; they can change it on the Claude Advisor screen.
 
 **After asking**, tell your person in one line that a question is waiting for them: they can
-answer send or no in their Advisor room in Element, or on the Advisor screen of the dashboard. If the call returns "waiting for
+answer send or no in their Claude Advisor room in Element, or on the Claude Advisor screen of the dashboard. If the call returns "waiting for
 approval", fetch the answer later with `advisor_answer` and the id, when they say they approved it.
 
 **When the budget runs out**, say so, and if your person wants more, ask Greg with
