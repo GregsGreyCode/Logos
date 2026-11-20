@@ -72,19 +72,16 @@ export async function homeView(root) {
     const msgs = (log || []).filter((x) => (x.ts || 0) >= since && x.status !== 'open').sort((a, b) => b.ts - a.ts);
     const parts = [];
     if (pages.length) {
-      const folders = new Map();
-      for (const c of pages) {
-        const f = c.path.includes('/') ? c.path.split('/')[0] : 'top level';
-        if (!folders.has(f)) folders.set(f, []);
-        folders.get(f).push(c);
-      }
+      // Each page by its title, with what was added to it ("Vittorio's birthday is 3 Dec") and how much.
+      const size = (c) => [c.added ? `+${c.added}` : '', c.removed ? `−${c.removed}` : ''].filter(Boolean).join(' ');
       parts.push(h('div', { class: 'done-group' },
         h('h3', { class: 'sub-label' }, `In ${data.agent.display_name}'s brain · ${pages.length} page${pages.length > 1 ? 's' : ''}`),
-        [...folders].map(([f, cs]) => h('div', { class: 'done-row' },
-          h('span', { class: 'done-what' }, f.replace(/[-_]/g, ' ')),
-          h('span', { class: 'done-pages' }, cs.map((c, i) => [i ? ', ' : '',
-            h('a', { href: isPhone() ? obsidian(c.path) : brainLink(c.path) }, c.title)])),
-          h('span', { class: 'when done-when' }, when(Math.max(...cs.map((c) => c.when))))))));
+        pages.slice(0, 8).map((c) => h('div', { class: 'done-page' },
+          h('div', { class: 'done-page-head' },
+            h('a', { href: isPhone() ? obsidian(c.path) : brainLink(c.path) }, c.title),
+            size(c) ? h('span', { class: 'done-size', title: 'Lines added and removed' }, size(c)) : null,
+            h('span', { class: 'when done-when' }, when(c.when))),
+          c.summary ? h('p', { class: 'done-summary' }, c.summary) : null))));
     }
     if (msgs.length) {
       parts.push(h('div', { class: 'done-group' },
