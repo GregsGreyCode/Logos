@@ -34,7 +34,10 @@ model:
   provider: lmstudio
   base_url: http://192.0.2.117:1234/v1   # real address in agents/<name>.local.yaml
   default: qwen/qwen3.6-35b-a3b
-  context_length: 65536
+  context_length: 65536        # the most one conversation uses
+  load_context_length: 96512   # optional: the window Logos loads LM Studio with, if larger. LM Studio
+                               # shares one window between its parallel slots (4), so the extra is room
+                               # for a second request beside a long one. Never less than context_length.
   gateway: true
   allow: []            # paid providers this agent may use, e.g. [anthropic]
 budget:
