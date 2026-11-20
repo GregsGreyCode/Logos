@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# M0: build the Matrix client files the dashboard serves itself (gateway/ui/vendor/matrix/), so the
+# browser never loads them from a CDN. Pinned versions; run again only to upgrade them.
+#
+#   scripts/logos-vendor-matrix            build and write MANIFEST (versions + sha256)
+#   scripts/logos-vendor-matrix --check    verify the committed files against MANIFEST
+#
+# Output:
+#   matrix.js           matrix-js-sdk as one ES module (esbuild), with decodeRecoveryKey;
+#                       the encryption module stays separate (it loads its own .wasm)
+#   crypto/             @matrix-org/matrix-sdk-crypto-wasm, the version matrix-js-sdk itself pins
+#   *.gz                gzip copies, served when the browser accepts them
+# The page maps "@matrix-org/matrix-sdk-crypto-wasm" to /ui/vendor/matrix/crypto/index.mjs.
+set -euo pipefail
+SDK=45.1.0
+ESBUILD=0.24.0
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="$REPO/gateway/ui/vendor/matrix"
+
+check() {
+  cd "$OUT" && sha256sum --quiet -c <(grep -v '^#' MANIFEST) && echo "vendor/matrix: all files match MANIFEST"
+}
+if [ "${1:-}" = "--check" ]; then check; exit; fi
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+cd "$WORK"
+npm init -y >/dev/null
+npm install --no-audit --no-fund --ignore-scripts "matrix-js-sdk@$SDK" "esbuild@$ESBUILD" >/dev/null
+# The SDK's own copy if npm nested one under it, else the shared one.
+CRYPTO_DIR="$WORK/node_modules/matrix-js-sdk/node_modules/@matrix-org/matrix-sdk-crypto-wasm"
+[ -d "$CRYPTO_DIR" ] || CRYPTO_DIR="$WORK/node_modules/@matrix-org/matrix-sdk-crypto-wasm"
+CRYPTO="$(node -e "console.log(require('$CRYPTO_DIR/package.json').version)")"
+cat > entry.mjs <<'EOF'
+export * from 'matrix-js-sdk';
+export { decodeRecoveryKey, encodeRecoveryKey } from 'matrix-js-sdk/lib/crypto-api/recovery-key.js';
+EOF
+npx esbuild entry.mjs --bundle --format=esm --platform=browser --target=es2022 --minify \
+  --external:@matrix-org/matrix-sdk-crypto-wasm --legal-comments=eof --outfile=matrix.js >/dev/null
+
+rm -rf "$OUT" && mkdir -p "$OUT/crypto/pkg"
+cp matrix.js "$OUT/matrix.js"
+cp "$CRYPTO_DIR/index.mjs" "$CRYPTO_DIR/LICENSE" "$OUT/crypto/"
+cp "$CRYPTO_DIR"/pkg/matrix_sdk_crypto_wasm_bg.js "$CRYPTO_DIR"/pkg/matrix_sdk_crypto_wasm_bg.wasm "$OUT/crypto/pkg/"
+cp "$WORK/node_modules/matrix-js-sdk/LICENSE" "$OUT/LICENSE-matrix-js-sdk"
+for f in "$OUT/matrix.js" "$OUT/crypto/pkg/matrix_sdk_crypto_wasm_bg.wasm" "$OUT/crypto/pkg/matrix_sdk_crypto_wasm_bg.js"; do
+  gzip -9 -k -n "$f"
+done
+cd "$OUT"
+{
+  echo "# matrix-js-sdk $SDK, @matrix-org/matrix-sdk-crypto-wasm $CRYPTO (pinned by the SDK), esbuild $ESBUILD"
+  echo "# built by scripts/logos-vendor-matrix; check with --check"
+  find . -type f ! -name MANIFEST | sort | xargs sha256sum
+} > MANIFEST
+du -sh "$OUT"
+echo "matrix-js-sdk $SDK + crypto-wasm $CRYPTO -> $OUT"
