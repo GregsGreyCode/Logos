@@ -1,5 +1,5 @@
 // Agents screen: is each agent up, what it does on its own, what it runs on, what it can reach.
-import { h, api, getJSON } from './util.js';
+import { h, api, getJSON, none } from './util.js';
 
 function runTime(iso) {
   if (!iso) return '';
@@ -91,7 +91,7 @@ export async function agentsView(root, [agentArg]) {
   }
 
   root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Agents'),
-    data.agents.length || data.others.length ? cards : h('p', { class: 'when' }, 'No agents are set up yet.'), detail));
+    data.agents.length || data.others.length ? cards : none('No agents are set up yet.'), detail));
   await load();
   return () => { alive = false; };
 }

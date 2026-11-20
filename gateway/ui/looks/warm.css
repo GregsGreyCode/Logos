@@ -1,0 +1,75 @@
+/* Warm & personal (L7): cream by day and cocoa by night, rounded and friendly, and a colour each:
+   Greg's screens are blue, Béré's amber (data-person on <html>). */
+:root[data-look="warm"] {
+  --ground: #1c1714; --surface: #27201b; --raised: #2f2721; --line: #3d342c;
+  --ink: #f4ede4; --muted: #b9ab9a; --accent: #8ba6ff; --accent-ink: #14100d; --accent-soft: rgba(139, 166, 255, 0.16);
+  --accent-text: #b3c4ff; --ok: #8fd3a6; --warn-bg: #4a3417; --warn-ink: #ffd699; --bad: #ffaaa0;
+  --chip: #352c25; --greg: #8ba6ff; --bere: #f3b04a; --household: #8fd3a6;
+  --brand-gradient: linear-gradient(135deg, #f3b04a, #e37b4a);
+  --font-body: Nunito, system-ui, sans-serif; --font-display: Nunito, system-ui, sans-serif;
+  --card-bg: var(--surface); --card-border: 0; --card-shadow: none;
+  --r-small: 14px; --r-ctl: 22px; --r-card: 24px; --r-sheet: 28px; --r-pill: 24px; --r-bubble: 22px;
+  --t-md: 15px;
+  --bar: #1c1714;
+  color-scheme: dark;
+}
+:root[data-look="warm"][data-theme="light"] {
+  --ground: #f6f1ea; --surface: #ffffff; --raised: #fbf7f1; --line: #e8dfd2;
+  --ink: #2b2620; --muted: #6b6055; --accent: #2e5bd8; --accent-ink: #ffffff; --accent-soft: #e3ebff;
+  --accent-text: #2448b0; --ok: #24683d; --warn-bg: #ffe3b8; --warn-ink: #5c3a07; --bad: #b3261e;
+  --chip: #efe7db; --greg: #2e5bd8; --bere: #c27a10; --household: #2f7a4b;
+  --card-bg: #ffffff; --card-shadow: 0 1px 2px rgba(60, 40, 20, 0.05), 0 6px 18px rgba(60, 40, 20, 0.05);
+  --bar: #f6f1ea;
+  color-scheme: light;
+}
+/* A colour each: the accent is the signed-in person's own */
+:root[data-look="warm"][data-person="bere"] { --accent: #f3b04a; --accent-ink: #2b1d05; --accent-soft: rgba(243, 176, 74, 0.16); --accent-text: #ffc977; }
+:root[data-look="warm"][data-person="bere"][data-theme="light"] { --accent: #e39b2d; --accent-ink: #2b1d05; --accent-soft: #fdebcf; --accent-text: #8a5208; }
+:root[data-look="warm"][data-person="greg"][data-theme="light"] { --accent: #2e5bd8; }
+
+[data-look="warm"] body { font-family: var(--font-body); }
+[data-look="warm"] h1, [data-look="warm"] h2, [data-look="warm"] .brand { font-weight: 800; letter-spacing: -0.01em; }
+[data-look="warm"] .label { text-transform: none; letter-spacing: 0; font-size: 17px; font-weight: 800; color: var(--ink);
+  font-family: var(--font-display); line-height: 22px; }
+[data-look="warm"] .sub-label { font-size: 14px; font-weight: 700; color: var(--muted); }
+[data-look="warm"] .btn { font-weight: 800; border-radius: var(--r-pill); }
+[data-look="warm"] .btn.quiet, [data-look="warm"] .btn.ghost { background: transparent; border: 2px solid var(--line); }
+[data-look="warm"] .tabs { background: var(--chip); border-radius: var(--r-pill); }
+[data-look="warm"] .tabs button { border-radius: 20px; font-weight: 700; }
+[data-look="warm"] .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+[data-look="warm"] .nav, [data-look="warm"] .topbar, [data-look="warm"] .tabbar { border-color: transparent; }
+[data-look="warm"] .nav { background: var(--ground); }
+[data-look="warm"] .nav-links a { border-radius: var(--r-ctl); font-weight: 700; }
+[data-look="warm"] .nav-links a[aria-current="page"] { background: var(--accent); color: var(--accent-ink); }
+[data-look="warm"] .pill, [data-look="warm"] .badge, [data-look="warm"] .chip { border-radius: 999px; }
+[data-look="warm"] .avatar { background: var(--accent); color: var(--accent-ink); }
+
+/* Chat: big friendly bubbles in your colour */
+[data-look="warm"] .msg { font-size: 16px; line-height: 1.45; padding: 12px 16px; }
+[data-look="warm"] .msg.user { font-weight: 600; border-bottom-right-radius: 8px; }
+[data-look="warm"] .msg.assistant { border: 0; border-bottom-left-radius: 8px; box-shadow: var(--card-shadow); }
+[data-look="warm"] .composer, [data-look="warm"] .chat-head { background: var(--ground); border-color: transparent; }
+[data-look="warm"] .composer textarea, [data-look="warm"] .home-ask input { background: var(--surface); border: 0;
+  box-shadow: var(--card-shadow); }
+
+/* Home: what needs you is a bold card in your colour; today's events are cards you swipe */
+[data-look="warm"] .home-waiting .card { background: var(--accent); color: var(--accent-ink); }
+[data-look="warm"] .home-waiting .card .when, [data-look="warm"] .home-waiting .card .card-text { color: inherit; }
+[data-look="warm"] .home-waiting .card .btn { background: var(--surface); color: var(--ink); }
+[data-look="warm"] .home-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+[data-look="warm"] .home-list > .none, [data-look="warm"] .home-list > .sub-label { grid-column: 1 / -1; }
+[data-look="warm"] .home-list > .home-row { flex-direction: column; align-items: flex-start; gap: 6px; min-height: 0;
+  padding: 14px 16px; border: 0; border-radius: var(--r-card); background: var(--card-bg); box-shadow: var(--card-shadow); }
+[data-look="warm"] .home-list > .home-row .dot { display: none; }
+[data-look="warm"] .home-list .home-time { width: auto; color: var(--accent-text); font-weight: 800; font-size: 13px; }
+[data-look="warm"] .home-list .home-title > span:first-child { font-weight: 700; }
+[data-look="warm"] .done-group { padding: 6px 16px; border-radius: var(--r-card); background: var(--card-bg); box-shadow: var(--card-shadow); }
+[data-look="warm"] .done-group > .sub-label:first-child { margin-top: 10px; }
+
+@media (max-width: 720px) {
+  [data-look="warm"] .tabbar { background: var(--surface); border-radius: var(--r-sheet) var(--r-sheet) 0 0;
+    box-shadow: 0 -4px 20px rgba(60, 40, 20, 0.06); }
+  [data-look="warm"] .tabbar a, [data-look="warm"] .tabbar button { border-top: 0; font-weight: 700; font-size: 12px; }
+  [data-look="warm"] .tabbar [aria-current="page"] { border-image: none; color: var(--accent-text); }
+  [data-look="warm"] .topbar { background: var(--ground); }
+}

@@ -39,6 +39,9 @@ export function working(who, on) {
   if (on) busy.add(who); else busy.delete(who);
   for (const el of document.querySelectorAll('.logo')) el.classList.toggle('busy', busy.size > 0);
 }
+// "Nothing here" is always the same quiet line: no box, no table, no logo.
+export const none = (text) => h('p', { class: 'none' }, text);
+
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {

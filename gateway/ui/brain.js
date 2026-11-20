@@ -1,5 +1,5 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
-import { h, api, getJSON, when, markdown, agentLabel } from './util.js';
+import { h, api, getJSON, when, markdown, agentLabel, none } from './util.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -108,14 +108,14 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     ] : []));
     changes.replaceChildren(h('h2', { class: 'label' }, 'Changed this week'),
       ...(d.changes.length ? d.changes.map((c) => h('a', { href: link(c.path), class: 'hit' }, c.title, h('span', { class: 'when' }, when(c.when))))
-        : [h('span', { class: 'when' }, 'Nothing changed this week.')]),
+        : [none('Nothing changed this week.')]),
       h('p', { class: 'when' }, 'Tidied nightly. Every change is kept in history.'));
   }
 
   // ── add or change by asking the agent ──────────────────────────────────
   function askBox(page) {
     const id = 'ask-brain';
-    const input = h('textarea', { id, rows: '2', placeholder: `For example: add that the table is booked for 7:30, or note Sam's new phone number` });
+    const input = h('textarea', { id, rows: '3', placeholder: `For example: add that the table is booked for 7:30, or note Sam's new phone number` });
     const out = h('div', { class: 'result' });
     const go = h('button', { type: 'submit', class: 'btn' }, 'Add to brain');
     return h('form', { class: 'ask', onsubmit: async (e) => {
