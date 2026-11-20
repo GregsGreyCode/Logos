@@ -382,7 +382,11 @@ class AgentRuntime:
         cfg["model_catalog"] = {"enabled": False}
         # No "gateway shutting down / back online" messages to the person on every rebuild.
         if (agent.get("matrix") or {}).get("enabled"):
-            cfg["platforms"] = {"matrix": {"gateway_restart_notification": False}}
+            # Scheduled messages (the daily question, the changes post, briefings) go straight into
+            # the chat. hermes otherwise opens a "Hermes — <job>" thread for each once
+            # cron.mirror_delivery is on (20 Nov, the changes post in the household group).
+            cfg["platforms"] = {"matrix": {"gateway_restart_notification": False,
+                                           "extra": {"cron_continuable_surface": "in_channel"}}}
             # One message per answer: which tools the agent is using goes to its log only, and
             # its "let me check..." text before a tool call is not sent as a message of its own.
             cfg["display"] = {"platforms": {"matrix": {
