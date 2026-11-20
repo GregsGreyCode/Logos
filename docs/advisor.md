@@ -35,15 +35,15 @@ $0.01 per web search). Before sending, the service works out the most the reques
 its approver, model, answer and cost stays in the log for 180 days.
 
 **Asking for more (A3).** The agent's `request_more_budget(reason)`, or "Ask Greg for more" on the
-person's Advisor screen, asks the admin (`advisor: {admin: true}`, Greg). He answers **raise 10**
+person's Claude Advisor screen, asks the admin (`advisor: {admin: true}`, Greg). He answers **raise 10**
 (any amount up to $200), **reset** (this month's spending counts from zero again) or **no**, in his
-Advisor room or with the buttons in the admin part of his Advisor screen. Only the admin can change
+Claude Advisor room or with the buttons in the admin part of his Claude Advisor screen. Only the admin can change
 a limit; every change is in the budget log. The default goes back to $20 on the 1st.
 
 ## Approving from Matrix (A2)
 
 The advisor has its own Matrix account, `@advisor`, made on the first `up`, with one private,
-invite-only, unencrypted room per person called "Advisor" (unencrypted by decision: it only ever
+invite-only, unencrypted room per person called "Claude Advisor" (unencrypted by decision: it only ever
 holds text already approved for Claude, on our own server, reached over Tailscale). Each waiting
 question is posted there once: the exact text, the model, the most it can cost and the budget left.
 The person replies **send**, **no**, or **send haiku / sonnet / opus**; with several waiting, they

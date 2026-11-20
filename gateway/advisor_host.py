@@ -12,7 +12,7 @@ An agent definition opts in with ``advisor: {enabled: true, person: greg}``; ``a
 the person who may change budgets (Greg). The household agent never does (decided 18 Nov 2026).
 
 Story A2: the advisor's own Matrix account (``@advisor``) and one private, invite-only, unencrypted
-room per person ("Advisor") are made on the first ``up`` and kept in
+room per person ("Claude Advisor") are made on the first ``up`` and kept in
 ``~/.config/logos/advisor-matrix.json`` (0600). A person's own Matrix id is the first of their
 agent's ``matrix.allowed_users``; only that account can approve in their room.
 """
@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import secrets
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
@@ -39,6 +40,8 @@ KEY_FILE = "advisor.env"              # in ~/.config/logos
 DASHBOARD_TOKEN_FILE = "advisor-dashboard-token"
 MATRIX_FILE = "advisor-matrix.json"
 LOCALPART = "advisor"
+DISPLAY_NAME = "Claude Advisor"
+ROOM_NAME = "Claude Advisor"
 
 
 class AdvisorError(Exception):
@@ -129,18 +132,24 @@ class AdvisorHost:
             password = secrets.token_urlsafe(32)
             login = host.register(LOCALPART, password)
             state = {"user_id": login["user_id"], "token": login["access_token"], "password": password, "rooms": {}}
-            host.set_display_name(state["user_id"], state["token"], "Advisor (Claude, with your yes)")
+        # The name shown in Element: set each time, so a rename reaches the account and rooms already made.
+        host.set_display_name(state["user_id"], state["token"], DISPLAY_NAME)
+        for person, have in (state.get("rooms") or {}).items():
+            if have.get("room") and have.get("named") != ROOM_NAME:
+                host._call(f"/_matrix/client/v3/rooms/{urllib.parse.quote(have['room'])}/state/m.room.name",
+                           {"name": ROOM_NAME}, token=state["token"], method="PUT")
+                have["named"] = ROOM_NAME
         for person, mxid in sorted(people.items()):
             have = state["rooms"].get(person) or {}
             if have.get("room") and have.get("mxid") == mxid:
                 continue
             made = host._call("/_matrix/client/v3/createRoom", {
                 "preset": "private_chat", "visibility": "private", "is_direct": True, "invite": [mxid],
-                "name": "Advisor", "topic": "Questions your agent wants to ask Claude. Reply send or no."},
+                "name": ROOM_NAME, "topic": "Questions your agent wants to ask Claude. Reply send or no."},
                 token=state["token"])
             if not made.get("room_id"):
                 raise AdvisorError(f"could not make the advisor room for {person}: {made.get('error') or made}")
-            state["rooms"][person] = {"room": made["room_id"], "mxid": mxid}
+            state["rooms"][person] = {"room": made["room_id"], "mxid": mxid, "named": ROOM_NAME}
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, indent=1))

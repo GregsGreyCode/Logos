@@ -966,7 +966,7 @@ HOUSE_SERVICES = (
     ("logos-house", "House service", "how the household agent works the lights", "http://{bind}:8098/health"),
     ("logos-sync", "Syncthing", "brains to the phones for Obsidian", "http://127.0.0.1:8384/rest/noauth/health"),
     ("logos-mail", "Mail service", "how agents read their person's email", "http://{bind}:8099/health"),
-    ("logos-advisor", "Advisor", "questions to Claude, approved first", "http://{bind}:8100/health"),
+    ("logos-advisor", "Claude Advisor", "questions to Claude, approved first", "http://{bind}:8100/health"),
 )
 
 
