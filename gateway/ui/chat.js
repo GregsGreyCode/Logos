@@ -89,7 +89,7 @@ export function replyArrived(messages, text) {
   return last.role === 'assistant' && Boolean((last.text || '').trim());
 }
 
-export async function chatView(root, [agentArg, chatArg], state) {
+export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   let alive = true;
   let agents = [];
   try { agents = (await getJSON('/api/v2/agents')).agents; } catch (e) { /* shown below */ }
@@ -105,8 +105,10 @@ export async function chatView(root, [agentArg, chatArg], state) {
   // read-only (the conversation goes on in the room). Until the switch-over (M5), a browser that is
   // not connected keeps the web chat, with a line saying how to connect it.
   const connected = !!(agent.matrix_id && mx.saved());
-  const matrixMode = connected && !chatArg;
-  const archived = connected && !!chatArg;
+  // M3: #/chat/<agent>/thread/<root event id> is one conversation (a thread); /thread/new starts one.
+  const threadId = chatArg === 'thread' ? decodeURIComponent(threadArg || 'new') : null;
+  const matrixMode = connected && (!chatArg || !!threadId);
+  const archived = connected && !!chatArg && !threadId;
   const connectNote = agent.matrix_id && !connected
     ? h('div', { class: 'model-line' }, 'Chat here can be your Element conversation itself: connect this browser in ',
       h('a', { href: '#/settings/matrix' }, 'Settings › Matrix device'), '.')
@@ -547,7 +549,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
     document.addEventListener('click', (e) => { if (mxView.open && !mxView.contains(e.target)) mxView.open = false; });
     const sideTop = h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
       title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6'])));
-    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: mxView });
+    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: mxView }, threadId);
     return () => { alive = false; done(); document.removeEventListener('keydown', onKey); };
   }
 

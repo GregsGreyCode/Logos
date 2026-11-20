@@ -889,3 +889,28 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .conv-link { display: flex; align-items: baseline; gap: 10px; min-height: 40px; padding: 10px 0; border-bottom: 1px solid var(--line);
   color: var(--ink); text-decoration: none; }
 @media (max-width: 720px) { .mx-same { display: none; } .mx-thinking { padding-left: 46px; } }
+
+/* M3: conversations as threads */
+.mx-crumb { color: var(--muted); text-decoration: none; font-size: var(--t-md); white-space: nowrap; }
+.mx-crumb:hover { color: var(--ink); }
+.mx-conv-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-thread-link { align-self: flex-start; display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px; margin-left: 30px;
+  padding: 6px 12px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-text); text-decoration: none;
+  font-size: var(--t-sm); }
+.mx-turn .mx-thread-link { margin-left: 0; }
+.mx-turn.me .mx-thread-link { align-self: flex-end; }
+.mx-thread-start { margin: 0; text-align: center; }
+a.btn.mx-new { justify-content: center; }
+.conv-link[aria-current="true"] { font-weight: 600; color: var(--accent-text); }
+.mx-chips { display: none; }
+@media (max-width: 720px) {
+  .mx-chips.phone-only { display: flex !important; gap: 6px; padding: 8px 16px; overflow-x: auto; white-space: nowrap;
+    border-bottom: 1px solid var(--line); -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
+    mask-image: linear-gradient(90deg, #000 85%, transparent); }
+  .mx-chip { flex: none; display: inline-flex; align-items: center; height: 36px; max-width: 200px; padding: 0 14px;
+    border: 1px solid var(--line); border-radius: 18px; color: var(--ink); text-decoration: none; font-size: var(--t-sm);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mx-chip.on { border-color: var(--accent-text); background: var(--accent-soft); font-weight: 600; }
+  .mx-chip.add { width: 36px; padding: 0; justify-content: center; background: var(--accent); color: var(--accent-ink); border-color: transparent; font-size: 18px; }
+  .mx-crumb { display: none; }
+}

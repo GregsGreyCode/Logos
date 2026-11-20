@@ -19,6 +19,8 @@ function remember(s) { try { localStorage.setItem(SESSION, JSON.stringify(s)); }
 
 async function make(s) {
   const m = await sdk();
+  // Threads (conversations, M3) are grouped by the page from each message's thread mark, so they do
+  // not depend on the library's thread mode or the server's thread API.
   const c = m.createClient({ baseUrl: base(), fetchFn, userId: s.userId, accessToken: s.accessToken, deviceId: s.deviceId,
     cryptoCallbacks: { getSecretStorageKey: async ({ keys }) => (secretKey ? [Object.keys(keys)[0], secretKey] : null) } });
   await c.initRustCrypto({ useIndexedDB: true, cryptoDatabasePrefix: `logos-${s.userId}` });
