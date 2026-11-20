@@ -1,0 +1,11 @@
+name: logos-voice
+label: Logos voice transcripts
+kind: standalone
+version: 1.0.0
+description: >
+  The agent can turn on and off the transcript hermes posts before answering a voice note
+  (tool voice_transcripts). The choice is kept in the agent's home and applies from the next
+  voice note, without a restart.
+author: Logos
+provides_tools:
+  - voice_transcripts

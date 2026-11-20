@@ -167,6 +167,10 @@ def repo(tmp_path):
     plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text("name: logos-waitlist\n")
     (plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
+    voice_plugin = tmp_path / "infra" / "agent-plugins" / "logos-voice"
+    voice_plugin.mkdir(parents=True)
+    (voice_plugin / "plugin.yaml").write_text("name: logos-voice\n")
+    (voice_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
@@ -749,6 +753,8 @@ network_policies:
         assert yaml.safe_load(r.config_text("alpha", on, voice_token="tok"))["stt"] == {
             "enabled": True, "provider": "openai", "echo_transcripts": False,      # no "I heard: ..." message
             "openai": {"api_key": "tok", "base_url": "http://172.17.0.1:8093/v1", "model": "whisper-1"}}
+        echo = {**on, "voice_echo": True}                                    # the person sees what was heard
+        assert yaml.safe_load(r.config_text("alpha", echo, voice_token="tok"))["stt"]["echo_transcripts"] is True
         ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["voice"]["endpoints"][0]
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8093, ["172.17.0.1/32"])
         assert ep["rules"] == [{"allow": {"method": "POST", "path": "/v1/audio/transcriptions"}}]
@@ -888,7 +894,7 @@ network_policies:
             "cron": {"wrap_response": False, "mirror_delivery": True},         # no header; agent sees its own jobs
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
-            "plugins": {"enabled": ["logos-waitlist"]},
+            "plugins": {"enabled": ["logos-waitlist", "logos-voice"]},
             "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
@@ -896,10 +902,10 @@ network_policies:
         agent = r.load("alpha")
         agent["session_reset"] = {"mode": "daily", "at_hour": 3}
         cfg = art.yaml.safe_load(r.config_text("alpha", agent))
-        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "hermes-session-reset-policy"]}
+        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "hermes-session-reset-policy"]}
         assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
         agent["session_reset"] = {"mode": "none"}
-        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist"]}
+        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice"]}
 
     def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
         r = rt(repo)
@@ -924,7 +930,8 @@ network_policies:
         written = [c[-1] for c in runner.calls[:runner.calls.index(create)]
                    if c[:2] == ["docker", "run"] and "cat > /v/" in c[-1]]
         assert [w.split("cat > /v/")[1].split(" ")[0] for w in written] == [
-            ".env", "config.yaml", "plugins/logos-waitlist/__init__.py", "plugins/logos-waitlist/plugin.yaml", "SOUL.md"]
+            ".env", "config.yaml", "plugins/logos-waitlist/__init__.py", "plugins/logos-waitlist/plugin.yaml",
+            "plugins/logos-voice/__init__.py", "plugins/logos-voice/plugin.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out
