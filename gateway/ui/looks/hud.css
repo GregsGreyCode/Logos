@@ -1,0 +1,91 @@
+/* Terminal HUD (L6): mission control. Monospace labels and numbers, a faint grid, square edges,
+   one green for what is live and amber for what needs you. Dark only (decided 20 Nov 2026).
+   Message text stays in Inter so long replies read easily. */
+:root[data-look="hud"], :root[data-look="hud"][data-theme="light"] {
+  --ground: #05080a; --surface: #0a1013; --raised: #0f171b; --line: rgba(125, 249, 197, 0.18);
+  --ink: #d7e3dd; --muted: #85978f; --accent: #7df9c5; --accent-ink: #04120c; --accent-soft: rgba(125, 249, 197, 0.1);
+  --accent-text: #7df9c5; --ok: #7df9c5; --warn-bg: rgba(255, 181, 71, 0.12); --warn-ink: #ffc266; --bad: #ff7a7a;
+  --chip: rgba(125, 249, 197, 0.07); --greg: #7db8ff; --bere: #ffb547; --household: #7df9c5;
+  --brand-gradient: linear-gradient(135deg, #7df9c5, #3ad19a);
+  --font-display: "JetBrains Mono", var(--font-mono); --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --card-bg: rgba(10, 16, 19, 0.88); --card-border: 1px solid var(--line); --card-shadow: none;
+  --r-small: 2px; --r-ctl: 2px; --r-card: 2px; --r-sheet: 4px; --r-pill: 2px; --r-bubble: 2px;
+  --bar: #05080a;
+  color-scheme: dark;
+}
+[data-look="hud"] body { background-color: var(--ground);
+  background-image: linear-gradient(rgba(125, 249, 197, 0.035) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(125, 249, 197, 0.035) 1px, transparent 1px);
+  background-size: 24px 24px; background-attachment: fixed; }
+[data-look="hud"] .logo { filter: none; }
+
+/* Monospace for every label, heading, number, time and control */
+[data-look="hud"] .label, [data-look="hud"] .sub-label, [data-look="hud"] .page h1, [data-look="hud"] .card h2,
+[data-look="hud"] .brand, [data-look="hud"] .screen-name, [data-look="hud"] .btn, [data-look="hud"] .tabs button,
+[data-look="hud"] .nav-links a, [data-look="hud"] .tabbar a, [data-look="hud"] .tabbar button, [data-look="hud"] .when,
+[data-look="hud"] .home-time, [data-look="hud"] .pill, [data-look="hud"] .badge, [data-look="hud"] .status,
+[data-look="hud"] .figure, [data-look="hud"] .chip, [data-look="hud"] .none, [data-look="hud"] th {
+  font-family: var(--font-mono); }
+[data-look="hud"] .label, [data-look="hud"] .sub-label { letter-spacing: 0.12em; }
+[data-look="hud"] .label::before, [data-look="hud"] .sub-label::before { content: "── "; color: var(--line); }
+[data-look="hud"] .page h1, [data-look="hud"] .brand { text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+[data-look="hud"] .page h1 { font-size: 18px; }
+[data-look="hud"] .brand::after { content: " //"; color: var(--muted); }
+[data-look="hud"] .none::before { content: "> "; color: var(--accent); }
+
+/* Buttons are outlined; the main one is green, a waiting thing amber */
+[data-look="hud"] .btn { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent);
+  text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+[data-look="hud"] .btn.quiet, [data-look="hud"] .btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+[data-look="hud"] .btn.danger { color: var(--bad); border-color: var(--bad); background: transparent; }
+[data-look="hud"] .tabs { background: transparent; border: 1px solid var(--line); padding: 0; gap: 0; }
+[data-look="hud"] .tabs button { text-transform: uppercase; font-size: 12px; letter-spacing: 0.06em; }
+[data-look="hud"] .tabs button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+[data-look="hud"] .nav-links a[aria-current="page"] { background: transparent; box-shadow: inset 2px 0 0 var(--accent); }
+[data-look="hud"] .card { -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+[data-look="hud"] .home-waiting .card, [data-look="hud"] .cards .card:has(.pill.wait) { border-color: var(--warn-ink); }
+[data-look="hud"] .notice { border: 1px solid currentColor; }
+
+/* Chat reads like a console: who and when above each message, the agent's lines marked in green */
+[data-look="hud"] .msg { max-width: 100%; padding: 4px 0 4px 14px; border: 0; border-radius: 0; background: none; }
+[data-look="hud"] .msg.user { align-self: stretch; color: var(--ink); background: none; border-left: 2px solid var(--muted); }
+[data-look="hud"] .msg.assistant { align-self: stretch; border-left: 2px solid var(--accent); }
+[data-look="hud"] .msg.error { align-self: stretch; border-left: 2px solid var(--warn-ink); background: none; }
+[data-look="hud"] .msg.user::before, [data-look="hud"] .msg.assistant::before { display: block; margin-bottom: 4px;
+  font: 500 10px/12px var(--font-mono); letter-spacing: 0.1em; }
+[data-look="hud"] .msg.user::before { content: "YOU"; color: var(--muted); }
+[data-look="hud"] .msg.assistant::before { content: "AGENT"; color: var(--accent); }
+[data-look="hud"] .msg pre, [data-look="hud"] .call-args, [data-look="hud"] .call-result { background: rgba(125, 249, 197, 0.04); }
+/* The agent's tool calls as console lines */
+[data-look="hud"] .steps { background: none; border: 0; border-left: 2px solid var(--line); font-family: var(--font-mono);
+  font-size: 12px; }
+[data-look="hud"] .steps > summary { padding: 4px 12px; }
+[data-look="hud"] .call-name::before { content: "› "; color: var(--accent); }
+[data-look="hud"] .composer { border-top-color: var(--line); }
+[data-look="hud"] .composer textarea { font-family: var(--font-mono); background: transparent; }
+[data-look="hud"] .composer textarea::placeholder { text-transform: lowercase; }
+
+/* Home: the live status strip and the agents' log */
+.hud-strip { display: none; }
+[data-look="hud"] .hud-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); }
+[data-look="hud"] .hud-cell { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
+[data-look="hud"] .hud-cell + .hud-cell { border-left: 1px solid var(--line); }
+[data-look="hud"] .hud-cell span { font: 500 10px/12px var(--font-mono); letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
+[data-look="hud"] .hud-cell strong { font: 700 22px/26px var(--font-mono); color: var(--ink); }
+[data-look="hud"] .hud-cell strong.live { color: var(--accent); }
+[data-look="hud"] .hud-cell small { font: 400 12px/1 var(--font-mono); color: var(--muted); }
+[data-look="hud"] .home-row { border-bottom-style: dashed; }
+[data-look="hud"] .home-time { color: var(--accent); width: 72px; }
+[data-look="hud"] .done-what, [data-look="hud"] .done-when { font-family: var(--font-mono); font-size: 11px; text-transform: none; }
+[data-look="hud"] .done-row, [data-look="hud"] .done-msg > summary { border-bottom-style: dashed; }
+[data-look="hud"] .done-what::before { content: "› "; color: var(--accent); }
+
+@media (max-width: 720px) {
+  [data-look="hud"] .tabbar { background: rgba(5, 8, 10, 0.94); }
+  [data-look="hud"] .tabbar svg { display: none; }
+  [data-look="hud"] .tabbar a, [data-look="hud"] .tabbar button { font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; }
+  [data-look="hud"] .tabbar [aria-current="page"] { border-image: none; border-top-color: var(--accent); }
+  [data-look="hud"] .topbar { background: rgba(5, 8, 10, 0.94); }
+  [data-look="hud"] .topbar .brand { font-size: 13px; }
+}

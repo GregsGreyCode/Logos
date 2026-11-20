@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-look="glass" data-mode="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -10,11 +10,21 @@
 <meta name="theme-color" content="#171a21" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&family=JetBrains+Mono:wght@400;500;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/ui/app.css">
+<link rel="stylesheet" href="/ui/looks/glass.css">
+<link rel="stylesheet" href="/ui/looks/hud.css">
+<link rel="stylesheet" href="/ui/looks/warm.css">
 <script>
-// Theme before first paint. Dark unless this browser was switched to light.
-try { if (localStorage.getItem('logos-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch (e) {}
+// The look before first paint (L3): this device's memory of it; the one saved with the login follows.
+try {
+  var d = document.documentElement, look = localStorage.getItem('logos-look') || 'glass';
+  var mode = localStorage.getItem('logos-mode') || localStorage.getItem('logos-theme') || 'dark';
+  if (['glass', 'hud', 'warm'].indexOf(look) < 0) look = 'glass';
+  if (look === 'hud') mode = 'dark';
+  d.dataset.look = look; d.dataset.mode = mode;
+  d.dataset.theme = mode === 'auto' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : mode;
+} catch (e) {}
 </script>
 </head>
 <body>

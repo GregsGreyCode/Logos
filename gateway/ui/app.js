@@ -10,6 +10,7 @@ import { updatesView } from './updates.js';
 import { advisorView } from './advisor.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, labelTables } from './util.js';
+import { adopt, openAppearance } from './appearance.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView };
@@ -86,26 +87,18 @@ const state = { me: null };
 // Screens redraw their tables as data arrives; label the cells each time (used by the phone layout).
 new MutationObserver(() => labelTables(root)).observe(root, { childList: true, subtree: true });
 
-function paintTheme() {
-  const light = document.documentElement.dataset.theme === 'light';
-  for (const b of document.querySelectorAll('.theme-btn')) b.textContent = light ? 'Switch to dark' : 'Switch to light';
-  // The phone's own bar follows the theme too (Add to Home screen, Android's address bar).
-  for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = light ? '#ffffff' : '#171a21';
+// Appearance (L3): the look and light or dark, in a dialog on every screen size.
+for (const b of document.querySelectorAll('.theme-btn')) {
+  b.textContent = 'Appearance';
+  b.addEventListener('click', () => { dropSheet(); openAppearance(); });
 }
-
-for (const b of document.querySelectorAll('.theme-btn')) b.addEventListener('click', () => {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = next;
-  try { localStorage.setItem('logos-theme', next); } catch (e) { /* private window: not remembered */ }
-  paintTheme();
-});
 for (const b of document.querySelectorAll('.logout-btn')) b.addEventListener('click', async () => {
   await api('/auth/logout', { method: 'POST' }).catch(() => {});
   location.href = '/login';
 });
 
-paintTheme();
 state.me = await getJSON('/api/v2/me');
+adopt(state.me);
 const shown = state.me.display_name || state.me.username;
 if (state.me.role === 'admin') for (const el of document.querySelectorAll('.admin-only')) el.hidden = false;
 for (const el of document.querySelectorAll('.nav-foot .who')) el.textContent = `Signed in as ${shown}`;

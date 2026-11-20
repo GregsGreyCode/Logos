@@ -1,6 +1,6 @@
 // Models screen: is everything that answers up, who answers each agent right now, and what
 // the paid fallbacks have cost this month. All figures come from the model gateway's records.
-import { h, getJSON, api } from './util.js';
+import { h, getJSON, api, none } from './util.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -200,7 +200,7 @@ async function localModel(repaint) {
   if (s && s.shared.replies) lines.push(`Sharing the GPU: ${s.shared.median_tokens_per_s ?? '—'} tokens/s, ${s.shared.median_seconds} s per reply (${s.shared.replies})`);
   if (s && (s.alone.replies || s.shared.replies)) lines.push(`Waited in the queue ${s.queued} times; longest ${Math.round(s.longest_wait_s)} s`);
   const speed = h('section', { 'aria-label': 'Replies this week' }, h('div', { class: 'card' }, h('h2', {}, 'Replies this week'),
-    lines.length ? lines.map((l) => h('p', {}, l)) : h('p', { class: 'when' }, 'No replies recorded since the model guard last restarted.'),
+    lines.length ? lines.map((l) => h('p', {}, l)) : none('No replies recorded since the model guard last restarted.'),
     q ? h('p', { class: 'when' }, `Now: ${q.running} running, ${q.waiting} waiting (at most ${q.slots} at once)`) : null));
   return h('div', {}, d.servers.map((srv) => serverBlock(srv, d.can_change, repaint)), speed);
 }
