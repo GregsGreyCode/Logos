@@ -914,3 +914,68 @@ a.btn.mx-new { justify-content: center; }
   .mx-chip.add { width: 36px; padding: 0; justify-content: center; background: var(--accent); color: var(--accent-ink); border-color: transparent; font-size: 18px; }
   .mx-crumb { display: none; }
 }
+
+/* ── M4: the floating agents ──────────────────────────────────────────────────────────────────
+   Each agent is its Logos mark in its own colour (--mark). States: asleep (breathing), thinking
+   (cycling colour), waiting on you (pulsing, in your attention colour), off (grey, still). */
+.agent-mark { position: relative; display: inline-flex; flex-direction: column; align-items: center; text-decoration: none;
+  color: var(--ink); --glyph: 96px; }
+.agent-mark.small { --glyph: 34px; }
+.agent-mark.tiny { --glyph: 24px; opacity: 0.75; }
+.agent-mark.tiny:hover, .agent-mark.tiny:focus-visible { opacity: 1; }
+.mark-fx, .mark-fy { display: block; }
+.mark-glow { display: block; filter: drop-shadow(0 0 0 var(--mark)); transition: filter 0.6s ease; }
+.mark-glyph { display: block; width: var(--glyph); height: calc(var(--glyph) * 450 / 394); background: var(--mark);
+  -webkit-mask: url("/static/logo.svg") center / contain no-repeat; mask: url("/static/logo.svg") center / contain no-repeat; }
+.agent-mark:hover .mark-glow, .agent-mark:focus-visible .mark-glow { filter: brightness(1.3) drop-shadow(0 0 16px var(--mark)); }
+.agent-mark:focus-visible { outline: none; }
+.agent-mark:focus-visible .mark-glyph { outline: 2px solid var(--accent-text); outline-offset: 8px; }
+.mark-label { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 12px; white-space: nowrap;
+  font-size: var(--t-sm); color: var(--muted); opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
+.mark-label strong { font-size: 15px; color: var(--ink); font-weight: 600; }
+.agent-mark.big:hover .mark-label, .agent-mark.big:focus-visible .mark-label, [data-names="always"] .agent-mark.big .mark-label { opacity: 1; }
+.agent-mark.small .mark-label, .agent-mark.tiny .mark-label { display: none; }
+.mood-asleep .mark-glow { animation: mark-breathe 6s ease-in-out infinite; }
+.mood-thinking .mark-glow { animation: mark-cycle 3.5s linear infinite; }
+.mood-waiting .mark-glyph { background: var(--attn, var(--warn-ink)); }
+.mood-waiting .mark-glow { animation: mark-pulse 1.8s ease-in-out infinite; --mark: var(--attn, var(--warn-ink)); }
+.mood-off .mark-glyph { background: var(--muted); opacity: 0.45; }
+@keyframes mark-breathe { 0%, 100% { opacity: 0.45; filter: drop-shadow(0 0 0 var(--mark)); } 50% { opacity: 0.95; filter: drop-shadow(0 0 14px var(--mark)); } }
+@keyframes mark-cycle { from { filter: hue-rotate(0deg) drop-shadow(0 0 16px var(--mark)); } to { filter: hue-rotate(360deg) drop-shadow(0 0 16px var(--mark)); } }
+@keyframes mark-pulse { 0%, 100% { transform: scale(1); filter: drop-shadow(0 0 4px var(--mark)); } 50% { transform: scale(1.08); filter: drop-shadow(0 0 20px var(--mark)); } }
+
+/* The void */
+.chat.void { position: relative; overflow: hidden; }
+.void-ask { position: absolute; left: 0; right: 0; top: 40px; margin: 0; text-align: center; color: var(--muted); }
+.void-field { position: absolute; inset: 80px 0 0; }
+.void-field .agent-mark { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); }
+/* Each wanders on its own uneven path: across and up-down at different speeds, with a slight tilt */
+.void-field .mark-fx { animation: void-fx 23s ease-in-out infinite; }
+.void-field .mark-fy { animation: void-fy 13s ease-in-out infinite; }
+.void-field .drift-1 .mark-fx { animation-duration: 19s; animation-delay: -7s; }
+.void-field .drift-1 .mark-fy { animation-duration: 17s; animation-delay: -4s; }
+.void-field .drift-2 .mark-fx { animation-duration: 29s; animation-delay: -12s; }
+.void-field .drift-2 .mark-fy { animation-duration: 11s; animation-delay: -9s; }
+@keyframes void-fx { 0%, 100% { transform: translateX(0); } 22% { transform: translateX(22px); } 47% { transform: translateX(-4px); } 71% { transform: translateX(-26px); } 88% { transform: translateX(-9px); } }
+@keyframes void-fy { 0%, 100% { transform: translateY(0) rotate(0); } 18% { transform: translateY(-15px) rotate(3deg); } 43% { transform: translateY(6px) rotate(-2deg); } 64% { transform: translateY(13px) rotate(1deg); } 83% { transform: translateY(-6px) rotate(-3deg); } }
+/* Calm (default): slower and smaller; Still: nothing moves */
+[data-motion="calm"] .void-field .mark-fx { animation-duration: 34s; }
+[data-motion="calm"] .void-field .mark-fy { animation-duration: 21s; }
+[data-motion="still"] .mark-fx, [data-motion="still"] .mark-fy, [data-motion="still"] .mark-glow { animation: none !important; }
+[data-motion="still"] .mood-asleep .mark-glow { opacity: 0.7; }
+@media (prefers-reduced-motion: reduce) { .mark-fx, .mark-fy, .mark-glow { animation: none !important; } }
+
+/* In a conversation: the marks in the header */
+.mark-bar { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mark-name { font: 600 20px/24px var(--font-display); color: var(--ink); text-decoration: none; white-space: nowrap; }
+.mark-name:hover { color: var(--accent-text); }
+.mark-others { display: flex; align-items: center; gap: 10px; margin-left: 8px; padding-left: 12px; border-left: 1px solid var(--line); }
+
+@media (max-width: 720px) {
+  /* A phone: the marks in a row with their names, no drifting */
+  .void-field { position: static; display: flex; flex-wrap: wrap; justify-content: center; gap: 28px 32px; padding: 96px 16px 0; }
+  .void-field .agent-mark { position: static; transform: none; --glyph: 72px; }
+  .void-field .mark-fx, .void-field .mark-fy { animation: none; }
+  .void-field .agent-mark .mark-label { opacity: 1; }
+  .mark-name { font-size: 16px; }
+}
