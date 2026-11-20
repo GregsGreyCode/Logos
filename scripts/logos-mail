@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Connect a person's mailbox to Logos (story E1), so their agent can read it.
+
+  scripts/logos-mail connect greg --outlook --address greg@hotmail.example --client-id <Application ID>
+      Signs in on Microsoft's own page (a short code to type there); nothing is typed into this
+      terminal but the code shown. Needs the person's own "Logos mail" app registration.
+  scripts/logos-mail connect bere --gmail --address bere@gmail.example
+      Asks for a Gmail app password without showing it, and checks it with a real sign-in.
+  scripts/logos-mail exclude greg mybank.example        never copy mail from that domain or address
+  scripts/logos-mail status                              who is connected, and the service's last refresh
+
+The login goes to ~/.config/logos/mail/<person>.json (mode 0600), never into git, a sandbox or a
+chat. Then `scripts/logos-agent up <agent>` (or a deploy) starts the mail service with it.
+"""
+import argparse, getpass, imaplib, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+from gateway import mail_host  # noqa: E402
+
+LOGIN = "https://login.microsoftonline.com/consumers/oauth2/v2.0"
+SCOPES = "offline_access User.Read Mail.ReadWrite Mail.Send"
+NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+
+def post(url, fields):
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(fields).encode(),
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        return json.loads(e.read() or b"{}")
+
+
+def save(person, box):
+    folder = mail_host.config_dir(os.environ)
+    folder.mkdir(parents=True, exist_ok=True)
+    os.chmod(folder, 0o700)
+    path = folder / f"{person}.json"
+    old = {}
+    try:
+        old = json.loads(path.read_text())
+    except (OSError, ValueError):
+        pass
+    if old.get("exclude") and "exclude" not in box:
+        box["exclude"] = old["exclude"]
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(box, indent=1))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+    return path
+
+
+def connect_outlook(person, address, client_id):
+    start = post(LOGIN + "/devicecode", {"client_id": client_id, "scope": SCOPES})
+    if "device_code" not in start:
+        sys.exit(f"Microsoft refused: {start.get('error_description') or start}")
+    print(f"\nOn any device, open {start['verification_uri']} and enter the code:  {start['user_code']}")
+    print(f"Sign in as {address} and allow 'Logos mail'. Waiting...", flush=True)
+    interval, deadline = int(start.get("interval", 5)), time.time() + int(start.get("expires_in", 900))
+    while time.time() < deadline:
+        time.sleep(interval)
+        tok = post(LOGIN + "/token", {"client_id": client_id, "device_code": start["device_code"],
+                                      "grant_type": "urn:ietf:params:oauth:grant-type:device_code"})
+        if "refresh_token" in tok:
+            me = urllib.request.Request("https://graph.microsoft.com/v1.0/me/mailFolders('inbox')?$select=totalItemCount",
+                                        headers={"Authorization": "Bearer " + tok["access_token"]})
+            with urllib.request.urlopen(me, timeout=30) as r:
+                count = json.load(r).get("totalItemCount")
+            path = save(person, {"kind": "outlook", "address": address, "client_id": client_id,
+                                 "refresh_token": tok["refresh_token"]})
+            print(f"Connected: {count} emails in the Inbox. Saved to {path} (only you can read it).")
+            return
+        if tok.get("error") == "authorization_pending":
+            continue
+        if tok.get("error") == "slow_down":
+            interval += 5
+            continue
+        sys.exit(f"Not connected: {tok.get('error_description') or tok.get('error')}")
+    sys.exit("Not connected: the code expired. Run the command again.")
+
+
+def connect_gmail(person, address):
+    password = getpass.getpass(f"Gmail app password for {address} (not shown): ").replace(" ", "")
+    if len(password) != 16:
+        sys.exit("A Gmail app password is 16 letters. Make one at myaccount.google.com/apppasswords.")
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com", 993, timeout=30)
+        imap.login(address, password)
+        status, data = imap.select("INBOX", readonly=True)
+        imap.logout()
+    except imaplib.IMAP4.error as e:
+        sys.exit(f"Gmail refused it: {e}. Check the address, that 2-step verification is on, and make a new app password.")
+    path = save(person, {"kind": "gmail", "address": address, "app_password": password})
+    print(f"Connected: {data[0].decode()} emails in the Inbox. Saved to {path} (only you can read it).")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("connect")
+    c.add_argument("person")
+    kind = c.add_mutually_exclusive_group(required=True)
+    kind.add_argument("--outlook", action="store_true")
+    kind.add_argument("--gmail", action="store_true")
+    c.add_argument("--address", required=True)
+    c.add_argument("--client-id")
+    e = sub.add_parser("exclude")
+    e.add_argument("person")
+    e.add_argument("sender", help="a domain (mybank.example) or an address")
+    sub.add_parser("status")
+    args = ap.parse_args()
+    if getattr(args, "person", None) and not NAME.match(args.person):
+        sys.exit("person: lower-case letters, digits, - or _")
+    if args.cmd == "connect":
+        if args.outlook:
+            if not args.client_id:
+                sys.exit("--client-id: the Application (client) ID of your 'Logos mail' app registration")
+            connect_outlook(args.person, args.address, args.client_id)
+            rt = load_runtime()
+            mail_host.MailHost(rt).forget_token(args.person)
+        else:
+            connect_gmail(args.person, args.address)
+        print("Now run: scripts/logos-agent up <their agent>   (or deploy) to start reading it.")
+    elif args.cmd == "exclude":
+        path = mail_host.config_dir(os.environ) / f"{args.person}.json"
+        box = json.loads(path.read_text())
+        box["exclude"] = sorted(set(box.get("exclude") or []) | {args.sender.lower()})
+        save(args.person, box)
+        print(f"{args.person}: never copy mail from {', '.join(box['exclude'])}")
+    else:
+        folder = mail_host.config_dir(os.environ)
+        for path in sorted(folder.glob("*.json")) if folder.exists() else []:
+            box = json.loads(path.read_text())
+            print(f"{path.stem}: {box.get('kind')} {box.get('address')}"
+                  + (f", excluding {', '.join(box['exclude'])}" if box.get("exclude") else ""))
+        try:
+            with urllib.request.urlopen(f"http://{mail_host.MailHost(load_runtime()).bind_address()}:{mail_host.PORT}/health",
+                                        timeout=3) as r:
+                print("service:", json.dumps(json.load(r)["mailboxes"]))
+        except Exception:
+            print("service: not running")
+
+
+def load_runtime():
+    from gateway.agent_runtime import AgentRuntime
+    return AgentRuntime(REPO)
+
+
+if __name__ == "__main__":
+    main()

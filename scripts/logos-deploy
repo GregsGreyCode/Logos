@@ -250,7 +250,8 @@ def update_services(rt):
                                           ("gateway.voice_host", "VoiceHost", "logos-voice", "voice"),
                                           ("gateway.calendar_host", "CalendarHost", "logos-calendar", "calendar"),
                                           ("gateway.web_host", "WebHost", "logos-reader", "web reader"),
-                                          ("gateway.house_host", "HouseHost", "logos-house", "house")):
+                                          ("gateway.house_host", "HouseHost", "logos-house", "house"),
+                                          ("gateway.mail_host", "MailHost", "logos-mail", "mail")):
         if not container_exists(container):
             continue                    # not used on this machine
         try:

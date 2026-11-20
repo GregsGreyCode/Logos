@@ -50,6 +50,8 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
 # Logos' own hermes plugins (infra/agent-plugins/<name>/), copied into the home by `up`.
+#: The mail tools let through the sandbox rule (gateway/mail_service.py TOOL_NAMES).
+MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
@@ -338,7 +340,7 @@ class AgentRuntime:
 
     def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "",
                     voice_token: str = "", calendar_token: str = "", web_token: str = "",
-                    changes_token: str = "", house_token: str = "") -> str:
+                    changes_token: str = "", house_token: str = "", mail_token: str = "") -> str:
         """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` and
         ``voice_token`` are the agent's own tokens for those services (the file lives in its
         private home volume, next to ``.env``)."""
@@ -416,6 +418,12 @@ class AgentRuntime:
             cfg.setdefault("mcp_servers", {})["house"] = {
                 "url": hh.HouseHost(self).url(),
                 "headers": {"Authorization": f"Bearer {house_token}"}}
+        mh = _sibling("mail_host")
+        if mh.uses_mail(agent) and mail_token:
+            # The person's own email, through the Logos mail service (docs/mail.md).
+            cfg.setdefault("mcp_servers", {})["mail"] = {
+                "url": mh.MailHost(self).url(),
+                "headers": {"Authorization": f"Bearer {mail_token}"}}
         wh = _sibling("web_host")
         if wh.uses_web(agent) and web_token:
             # Web search through the web reader, which filters what leaves the house (docs/web-reader.md).
@@ -470,6 +478,8 @@ class AgentRuntime:
             notes = hh.config_dir(self.env) / hh.NOTES_FILE      # facts about this home, never in git
             if notes.exists() and notes.read_text().strip():
                 text = text.rstrip() + "\n\n### About this home's lights\n\n" + notes.read_text().strip() + "\n"
+        if _sibling("mail_host").uses_mail(agent) and (self.repo / "souls/_shared/mail.md").exists():
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/mail.md").read_text()
         wh = _sibling("web_host")
         docs = bool(wh.WebHost(self).docmost().get("DOCMOST_READ_ROOTS"))
         for part in ("requests.md", "changes.md", "docs.md"):   # requests; what changed; the homelab docs (web reader)
@@ -570,6 +580,13 @@ class AgentRuntime:
         else:
             cur.pop(hh.TOKEN_ENV, None)
             cur.pop("LOGOS_HOUSE_URL", None)
+        mh = _sibling("mail_host")
+        if mh.uses_mail(agent):
+            cur.setdefault(mh.TOKEN_ENV, secrets.token_urlsafe(32))
+            cur[mh.URL_ENV] = mh.MailHost(self).url()                  # for the morning briefing's line
+        else:
+            cur.pop(mh.TOKEN_ENV, None)
+            cur.pop(mh.URL_ENV, None)
         wh = _sibling("web_host")
         if wh.uses_web(agent):
             cur.setdefault(wh.TOKEN_ENV, secrets.token_urlsafe(32))
@@ -808,6 +825,15 @@ class AgentRuntime:
                     {"allow": {"method": "tools/call", "tool": {"any": tools}}}]
         else:
             rules.pop("house", None)
+        mh = _sibling("mail_host")
+        if mh.uses_mail(agent) and "mail" in rules:
+            point("mail", mh.MailHost(self).url())
+            for e in rules["mail"].get("endpoints") or []:
+                e["rules"] = [{"allow": {"method": m}} for m in
+                              ("initialize", "notifications/initialized", "ping", "tools/list")] + [
+                    {"allow": {"method": "tools/call", "tool": {"any": list(MAIL_TOOLS)}}}]
+        else:
+            rules.pop("mail", None)
         wh = _sibling("web_host")
         if wh.uses_web(agent):
             point("web", wh.WebHost(self).url())
@@ -890,8 +916,11 @@ class AgentRuntime:
         hh = _sibling("house_host")
         house_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
                             if l.startswith(hh.TOKEN_ENV + "=")), "")
+        mh = _sibling("mail_host")
+        mail_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
+                           if l.startswith(mh.TOKEN_ENV + "=")), "")
         self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token,
-                                                       changes_token, house_token))
+                                                       changes_token, house_token, mail_token))
         for plugin in LOGOS_PLUGINS:
             for path in sorted((self.repo / "infra" / "agent-plugins" / plugin).iterdir()):
                 if path.is_file():
@@ -927,6 +956,12 @@ class AgentRuntime:
                     print("house: started with the current agents")
             except (hh.HouseError, ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"house: {e}")
+        if mh.uses_mail(agent):
+            try:
+                if mh.MailHost(self).up():
+                    print("mail: started with the connected mailboxes")
+            except (mh.MailError, ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"mail: {e}")
         if wh.uses_web(agent) or wh.uses_changes(agent):     # DC1: the household's /changes token too
             try:
                 if wh.WebHost(self).up():

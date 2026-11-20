@@ -207,6 +207,30 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
+  mail:                            # the person's own email, through the Logos mail service
+                                   # (gateway/mail_service.py). Inspected as MCP: the handshake, the
+                                   # tool list and the read tools. logos-agent fills in the address,
+                                   # or removes this rule for an agent without mail.
+    endpoints:
+      - host: 192.0.2.1
+        port: 8099
+        protocol: mcp
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        mcp:
+          versions: ["2025-03-26", "2025-06-18", "2025-11-25"]
+        rules:
+          - allow: {method: initialize}
+          - allow: {method: notifications/initialized}
+          - allow: {method: ping}
+          - allow: {method: tools/list}
+          - allow:
+              method: tools/call
+              tool:
+                any: [mail_new, mail_needs_reply, mail_search, mail_read]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   matrix:                          # the household's own Matrix server (gateway/matrix_host.py).
                                    # Placeholder address: logos-agent fills in the real one, and
                                    # removes this rule for agents without `matrix: {enabled: true}`.
