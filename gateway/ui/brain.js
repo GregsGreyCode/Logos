@@ -57,6 +57,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   const results = h('div', { class: 'changes', hidden: true });
   const search = h('input', { id: 'q', type: 'search', placeholder: 'Search pages and notes' });
   let pages = [];
+  let recent = [];                 // pages changed this week, newest first
 
   // ── page list, with an inline "new page" form ──────────────────────────
   function newPageForm() {
@@ -76,18 +77,30 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn small-btn' }, 'Create'),
       h('button', { type: 'button', class: 'btn quiet small-btn', onclick: () => { form.hidden = true; opener.hidden = false; } }, 'Cancel')),
     note);
-    const opener = h('button', { type: 'button', class: 'btn quiet wide-only', onclick: () => { form.hidden = false; opener.hidden = true; title.focus(); } }, 'New page');
+    const opener = h('button', { type: 'button', class: 'btn quiet wide-only', hidden: true });
+    // P5: each folder has a small + that opens this form with that folder chosen.
+    form.openFor = (f) => { folder.value = f; form.hidden = false; title.focus(); };
     return [opener, form];
   }
 
   function showTree() {
     const item = (p) => h('a', { href: link(p.path), 'aria-current': p.path === current ? 'page' : null }, p.title);
+    const [opener, form] = newPageForm();
+    const canAdd = new Set(NEW_IN.map(([f]) => f));
+    const heading = (folder, label) => h('div', { class: 'tree-head' }, h('h2', { class: 'label' }, label),
+      canAdd.has(folder) ? h('button', { type: 'button', class: 'tree-add wide-only', 'aria-label': `New page in ${label}`,
+        title: `New page in ${label}`, onclick: () => form.openFor(folder) }, '+') : null);
     const groups = FOLDERS.flatMap(([folder, label]) => {
       const mine = pages.filter((p) => p.folder === folder);
-      return mine.length ? [h('h2', { class: 'label' }, label), ...mine.map(item)] : [];
+      if (!mine.length && canAdd.has(folder)) { const e = heading(folder, label); e.classList.add('wide-only'); return [e]; }
+      return mine.length ? [heading(folder, label), ...mine.map(item)] : [];
     });
     const other = pages.filter((p) => !FOLDERS.some(([f]) => f === p.folder));
-    tree.replaceChildren(...newPageForm(), ...groups,
+    // P5: on a desktop the list starts with what changed most recently (the side column is gone).
+    const seen = new Set(); const latest = recent.filter((c) => !seen.has(c.path) && seen.add(c.path)).slice(0, 5);
+    const recentGroup = latest.length ? [h('div', { class: 'wide-only tree-recent' }, h('h2', { class: 'label' }, 'Recent'),
+      ...latest.map((c) => item({ path: c.path, title: c.title })))] : [];
+    tree.replaceChildren(opener, form, ...recentGroup, ...groups,
       ...(other.length ? [h('h2', { class: 'label' }, 'Other'), ...other.map(item)] : []));
   }
 
@@ -95,6 +108,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     const d = await getJSON(base);
     if (!alive) return;
     pages = d.pages;
+    recent = d.changes || [];
     showTree();
     // Two versions of a page (changed on a phone and by the agent before they synced).
     const conflicts = d.conflicts || [];
@@ -258,18 +272,20 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       const q = search.value.trim();
-      if (q.length < 2) { changes.hidden = false; results.hidden = true; return; }
+      if (q.length < 2) { changes.hidden = false; results.hidden = true; side.classList.remove('searching'); return; }
       try {
         const { hits } = await getJSON(`${base}/search?q=${encodeURIComponent(q)}`);
         if (!alive) return;
         const title = (x) => (pages.find((p) => p.path === x.path) || x).title;
         results.replaceChildren(h('h2', { class: 'label' }, `Found in ${hits.length} page${hits.length === 1 ? '' : 's'}`),
           ...hits.map((x) => h('a', { href: link(x.path), class: 'hit' }, title(x), h('span', { class: 'when' }, x.snippet))));
-        changes.hidden = true; results.hidden = false;
+        changes.hidden = true; results.hidden = false; side.classList.add('searching');
       } catch (e) { /* keep what is shown */ }
     }, 250);
   });
 
+  // On a desktop this column shows only while searching; on a phone it carries "Changed this week".
+  const side = h('aside', { class: 'side brain-side', 'aria-label': 'Recent changes and search' }, changes, results);
   const tabs = agents.length > 1 ? h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Whose brain' },
     agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
       onclick: () => { location.hash = `#/brain/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }),
@@ -279,13 +295,14 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     h('header', { class: 'chat-head' }, h('h1', {}, 'Brain'), tabs,
       h('label', { for: 'q', class: 'sr' }, 'Search the brain'), search),
     conflictsBox,
-    h('div', { class: 'brain-body' }, tree, article,
-      h('aside', { class: 'side', 'aria-label': 'Recent changes' }, changes, results))));
+    h('div', { class: 'brain-body' }, tree, article, side)));
 
   try {
     await refresh();
     if (!alive) return () => {};
-    const page = pages.find((p) => p.path === current)
+    // P5 (Greg, 21 Nov): with no page asked for, open the one that changed most recently.
+    const newest = recent.length ? pages.find((p) => p.path === recent[0].path) : null;
+    const page = pages.find((p) => p.path === current) || newest
       || pages.find((p) => p.folder === 'projects') || pages.find((p) => p.path === 'README.md') || pages[0];
     if (page && startEditing && page.path === current) {
       current = page.path;

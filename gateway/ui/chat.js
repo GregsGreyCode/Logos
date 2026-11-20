@@ -204,7 +204,8 @@ export async function chatView(root, [agentArg, chatArg], state) {
       convs.replaceChildren(...shown.map((c) => h('button', {
         type: 'button', 'aria-current': String(c.chat_id === chatId || c.id === chatId),
         onclick: () => { closeSide(false); location.hash = `#/chat/${agent.name}/${c.chat_id || c.id}`; },
-      }, c.title, h('span', { class: 'when' }, `${when(c.last_active)} · ${WHERE[c.where] || c.where}`))));
+        title: `${c.title} · ${WHERE[c.where] || c.where}`,
+      }, h('span', { class: 'conv-title' }, c.title), h('span', { class: 'when' }, when(c.last_active)))));
       if (!shown.length) convs.replaceChildren(none('Nothing yet.'));
       return conversations;
     } catch (e) {
@@ -503,6 +504,25 @@ export async function chatView(root, [agentArg, chatArg], state) {
     } });
   const jobsBox = h('input', { type: 'checkbox', id: 'show-jobs', checked: showJobs ? '' : null,
     onchange: () => { showJobs = jobsBox.checked; setPref('jobs', showJobs); loadConversations(); } });
+  // P5: on a desktop these live in a small View menu in the header (the panel keeps them on a phone).
+  const mirror = (box, label) => {
+    const m = h('input', { type: 'checkbox', checked: box.checked ? '' : null,
+      onchange: () => { box.checked = m.checked; box.dispatchEvent(new Event('change')); } });
+    box.addEventListener('change', () => { m.checked = box.checked; });
+    return h('label', { class: 'view-item' }, m, label);
+  };
+  const panelPick = (value, label) => h('label', { class: 'view-item' },
+    h('input', { type: 'radio', name: 'panel-mode', checked: getPref('panel', 'slide') === value ? '' : null, onchange: () => {
+      setPref('panel', value);
+      if (value === 'open' && side.classList.contains('tucked')) { side.classList.remove('tucked'); reopen.classList.remove('shown'); }
+    } }), label);
+  const viewMenu = h('details', { class: 'view-menu wide-only' },
+    h('summary', { class: 'btn quiet small' }, 'View'),
+    h('div', { class: 'view-pop', role: 'group', 'aria-label': 'View options' },
+      mirror(thinkingBox, 'Show thinking'), mirror(jobsBox, 'Show scheduled jobs'),
+      h('p', { class: 'label' }, 'Conversations panel'),
+      panelPick('slide', 'Slides away'), panelPick('open', 'Stays open')));
+  document.addEventListener('click', (e) => { if (viewMenu.open && !viewMenu.contains(e.target)) viewMenu.open = false; });
 
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
@@ -510,16 +530,16 @@ export async function chatView(root, [agentArg, chatArg], state) {
         h('h1', { class: tabs ? null : 'agent-solo' }, agent.display_name), tabs,
         h('span', { class: `status running ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
         agent.shared ? h('span', { class: 'status scope' }, 'Shared with the household') : null,
-        convBtn),
+        viewMenu, convBtn),
       modelStatus, log, micNote, form),
     side, sideScrim, reopen);
   side.append(
     h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
       title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6']))),
     h('button', { type: 'button', class: 'btn', onclick: () => { closeSide(false); location.hash = `#/chat/${agent.name}/${newId()}`; } }, 'New conversation'),
-    h('label', { class: 'toggle', for: 'show-thinking',
+    h('label', { class: 'toggle phone-toggle', for: 'show-thinking',
       title: "Show the agent's reasoning and each tool it used, with what went in and what came back" }, thinkingBox, ' Show thinking'),
-    h('label', { class: 'toggle', for: 'show-jobs' }, jobsBox, ' Show scheduled jobs'),
+    h('label', { class: 'toggle phone-toggle', for: 'show-jobs' }, jobsBox, ' Show scheduled jobs'),
     h('h2', { class: 'label' }, 'Earlier conversations'), convs);
 
   emptyState();

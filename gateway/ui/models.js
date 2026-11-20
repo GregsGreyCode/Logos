@@ -146,8 +146,12 @@ function gpuLine(srv, canChange, repaint) {
 }
 
 function serverBlock(srv, canChange, repaint) {
-  const parts = [h('h2', { class: 'label' }, `Local model · ${srv.server}`), gpuLine(srv, canChange, repaint)];
+  // P5: the server's address and GPU sit in the model card's own heading, and the checks, the
+  // reload button and "Settings only the LM Studio app can change" at its foot.
+  const where = h('div', { class: 'card-where' }, h('span', { class: 'when' }, srv.server), gpuLine(srv, canChange, repaint));
+  const parts = [h('h2', { class: 'label' }, 'Local model')];
   if (!srv.up) {
+    parts.push(where);
     parts.push(h('div', { class: 'notice' }, srv.error || 'LM Studio is closed or that PC is busy.'));
     return h('section', { 'aria-label': `Local model on ${srv.server}` }, parts);
   }
@@ -170,22 +174,25 @@ function serverBlock(srv, canChange, repaint) {
         ev.target.textContent = r.ok ? 'Unloaded' : 'Could not unload';
       } }, 'Unload') : null;
       cards.push(h('div', { class: 'card' },
-        h('span', { class: `status ${ours ? 'up' : 'down'}` }, ours ? `Used by ${ours.agents.join(', ')}` : 'Not used by any agent'),
-        h('h2', {}, m.name),
+        h('div', { class: 'card-title' }, h('h2', {}, m.name),
+          h('span', { class: `status ${ours ? 'up' : 'down'}` }, ours ? `Used by ${ours.agents.join(', ')}` : 'Not used by any agent')),
+        cards.length ? null : where,
         h('dl', { class: 'facts' }, rows.flatMap(([k, v, note]) => [h('dt', {}, k),
           h('dd', {}, String(v), note ? h('span', { class: 'when' }, ` · ${note}`) : null)])),
         unload));
     }
   }
-  if (!srv.loaded.length) cards.push(h('div', { class: 'card' }, h('h2', {}, 'Nothing loaded'),
+  if (!srv.loaded.length) cards.push(h('div', { class: 'card' }, h('h2', {}, 'Nothing loaded'), where,
     h('p', { class: 'when' }, 'The first message loads the agents\' model, which takes about a minute.')));
   parts.push(h('div', { class: 'cards' }, cards));
-  parts.push(h('ul', { class: 'checks' }, (srv.checks || []).map((c) => h('li', { class: `check ${c.level}` },
+  const foot = h('div', { class: 'card-foot' });
+  cards[0].append(foot);
+  foot.append(h('ul', { class: 'checks' }, (srv.checks || []).map((c) => h('li', { class: `check ${c.level}` },
     h('span', { class: 'check-mark', 'aria-hidden': 'true' }, c.level === 'warn' ? '!' : c.level === 'ok' ? '✓' : 'i'),
     h('span', { class: 'visually-hidden' }, c.level === 'warn' ? 'Problem: ' : c.level === 'ok' ? 'Fine: ' : 'Note: '), c.text))));
   if (canChange && Object.keys(srv.want).length) {
     const status = h('p', { class: 'when', role: 'status' });
-    parts.push(h('div', { class: 'actions' },
+    foot.append(h('div', { class: 'actions' },
       h('button', { type: 'button', class: 'btn', onclick: async (ev) => {
         if (!confirm('Reload the agents\' model with Logos\'s settings? The agents cannot answer for about a minute.')) return;
         ev.target.disabled = true; status.textContent = 'Reloading… this takes about a minute.';
@@ -194,7 +201,7 @@ function serverBlock(srv, canChange, repaint) {
         ev.target.disabled = false;
       } }, 'Reload with Logos settings'), status));
   }
-  parts.push(h('details', { class: 'card' }, h('summary', {}, 'Settings only the LM Studio app can change'),
+  foot.append(h('details', { class: 'lms-only' }, h('summary', {}, 'Settings only the LM Studio app can change'),
     h('p', { class: 'when' }, 'LM Studio does not let Logos set or read these. On that PC: My Models, the gear next to the model.'),
     h('table', { class: 'plain' }, h('thead', {}, h('tr', {}, ['Setting', 'Set it to', 'Why'].map((t) => h('th', {}, t)))),
       h('tbody', {}, (srv.advice || []).map((a) => h('tr', {}, h('td', {}, a.setting), h('td', {}, h('strong', {}, a.value)), h('td', {}, a.why)))))));
