@@ -35,7 +35,7 @@ export async function agentsView(root, [agentArg]) {
     data.agents.map((a) => h('a', { href: `#/agents/${a.name}`, class: `card agent-card ${agent && a.name === agent.name ? 'picked' : ''}` },
       h('div', { class: 'card-head' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), h('strong', {}, a.display_name)),
       h('span', { class: `status ${a.running ? 'up' : ''}` }, a.running ? 'Running' : 'Not running'),
-      h('span', { class: 'when' }, a.shared ? 'Shared with the household' : 'Private to you'))),
+      a.shared ? h('span', { class: 'when' }, 'Shared with the household') : null)),
     data.others.map((a) => h('div', { class: 'card agent-card other' },
       h('div', { class: 'card-head' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), h('strong', {}, a.display_name)),
       h('span', { class: 'status' }, a.running ? 'Running' : 'Not running'),
