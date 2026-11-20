@@ -28,6 +28,48 @@ function pendingCard(p, refresh) {
     status);
 }
 
+async function post(path, body) {
+  const r = await api(path, { method: 'POST', body });
+  return { ok: r.ok, body: await r.json().catch(() => ({})) };
+}
+
+// A3: ask the admin for more; the admin sees everyone's budget and answers.
+function budgetBox(d, refresh) {
+  const out = [];
+  const msg = h('p', { class: 'when', role: 'status' });
+  if ((d.budget_requests || []).length) {
+    out.push(h('p', { class: 'when' }, `You asked Greg for more: "${d.budget_requests[0].reason}". Waiting for his answer.`));
+  } else if (d.person !== d.admin) {
+    const reason = h('input', { type: 'text', maxlength: 300, placeholder: 'What is it for?', 'aria-label': 'Reason' });
+    out.push(h('form', { class: 'gpu-form', onsubmit: async (ev) => {
+      ev.preventDefault();
+      const r = await post('/api/v2/advisor-budget/ask', { reason: reason.value });
+      msg.textContent = r.ok ? 'Greg has been asked.' : (r.body.error || 'Could not ask.');
+      setTimeout(refresh, 1200);
+    } }, reason, h('button', { type: 'submit', class: 'btn ghost' }, 'Ask Greg for more'), msg));
+  }
+  if (d.everyone) {
+    out.push(h('h2', { class: 'label' }, 'Budgets (admin)'));
+    for (const [person, info] of Object.entries(d.everyone)) {
+      const b = info.budget;
+      const act = (action, dollars) => async () => {
+        const r = await post(`/api/v2/advisor-budget/${person}/${action}`, { dollars });
+        msg.textContent = r.ok ? `${person}: ${r.body.change}.` : (r.body.error || 'Could not change it.');
+        setTimeout(refresh, 1200);
+      };
+      out.push(h('div', { class: 'card' },
+        h('p', {}, h('strong', {}, person), ` · ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used this month`),
+        ...(info.requests || []).map((q) => h('p', { class: 'when' }, `Asks for more: "${q.reason}"`)),
+        h('div', { class: 'actions' },
+          h('button', { type: 'button', class: 'btn ghost', onclick: act('raise', 10) }, 'Raise $10'),
+          h('button', { type: 'button', class: 'btn ghost', onclick: act('reset', 0) }, 'Reset'),
+          (info.requests || []).length ? h('button', { type: 'button', class: 'btn ghost', onclick: act('no', 0) }, 'Decline') : null)));
+    }
+    out.push(msg);
+  }
+  return h('div', {}, out);
+}
+
 export async function advisorView(root) {
   let alive = true;
   let timer = null;
@@ -43,6 +85,7 @@ export async function advisorView(root) {
     const parts = [h('h1', {}, 'Advisor'),
       h('p', { class: 'when' }, `Your agent can ask Claude, outside the house, when you agree. ${b.month}: ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used, ${usd(b.left_usd)} left.`)];
     if (!d.key) parts.push(h('div', { class: 'notice' }, 'No Anthropic key is set up yet, so nothing can be sent.'));
+    parts.push(budgetBox(d, paint));
     parts.push(h('h2', { class: 'label' }, d.pending.length ? `Waiting for you (${d.pending.length})` : 'Nothing waiting'));
     parts.push(...d.pending.map((p) => pendingCard(p, paint)));
     if (d.history.length) {

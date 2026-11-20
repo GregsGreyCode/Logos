@@ -53,7 +53,7 @@ RESET_PLUGIN = "hermes-session-reset-policy"
 #: The mail tools let through the sandbox rule (gateway/mail_service.py TOOL_NAMES).
 MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
 #: The advisor tools let through the sandbox rule (gateway/advisor_service.py TOOL_NAMES).
-ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget")
+ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",

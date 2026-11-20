@@ -111,9 +111,9 @@ def test_no_key_means_nothing_is_sent(svc):
         svc.decide("greg", svc.pending("greg")[0]["id"], True, "greg")
 
 
-def test_rpc_offers_three_tools_and_refusals_say_why(svc):
+def test_rpc_offers_four_tools_and_refusals_say_why(svc):
     names = [t["name"] for t in adv.handle_rpc(svc, "greg", {"id": 1, "method": "tools/list"})["result"]["tools"]]
-    assert names == ["ask_advisor", "advisor_answer", "advisor_budget"]
+    assert names == ["ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget"]
     r = adv.handle_rpc(svc, "greg", {"id": 2, "method": "tools/call", "params": {
         "name": "ask_advisor", "arguments": {"question": "Help me write to Sarah", "kind": "writing"}}})["result"]
     assert r["isError"] and "private list" in r["content"][0]["text"]
@@ -124,3 +124,78 @@ def test_costs():
     assert adv.cost("sonnet", 1_000_000, 100_000) == 3.0
     assert adv.cost("opus", 0, 0, 3) == 0.03
     assert adv.worst_case("haiku", QUESTION) < adv.worst_case("sonnet", QUESTION) < adv.worst_case("opus", QUESTION)
+
+
+# ── A2: approving from Matrix; A3: budget requests and the admin ───────────────
+
+class FakeMatrix:
+    def __init__(self):
+        self.rooms = {"greg": {"room": "!g", "mxid": "@greg:home"}, "bere": {"room": "!b", "mxid": "@bere:home"}}
+        self.sent = []
+
+    def send(self, room, text):
+        self.sent.append((room, text))
+
+
+@pytest.fixture
+def mx(svc):
+    svc.matrix, svc.admin = FakeMatrix(), "greg"
+    return svc
+
+
+def test_each_preview_is_posted_once_in_its_persons_room(mx):
+    mx.ask_advisor("bere", QUESTION, "writing")
+    mx.post_updates()
+    mx.post_updates()
+    previews = [t for r, t in mx.matrix.sent if "wants to ask Claude" in t]
+    assert len(previews) == 1 and mx.matrix.sent[0][0] == "!b"
+    assert "> " + QUESTION in previews[0] and "Reply send, no" in previews[0] and "$20.00 left" in previews[0]
+
+
+def test_only_the_person_can_approve_in_their_room(mx):
+    mx.ask_advisor("bere", QUESTION, "writing")
+    assert mx.on_message("bere", "@bere-agent:home", "send") is None          # her agent: ignored
+    assert mx.on_message("bere", "@greg:home", "send") is None                # Greg in her room: ignored
+    assert mx.claude.calls == [] and len(mx.pending("bere")) == 1
+    assert mx.on_message("bere", "@bere:home", "Send Opus") == "Sending to Claude..."
+    for _ in range(50):
+        if mx.claude.calls:
+            break
+        time.sleep(0.05)
+    assert mx.claude.calls == [("claude-opus-5-5", QUESTION, False)]
+    assert mx.on_message("bere", "@bere:home", "send") == "Nothing is waiting for you."
+    assert mx.on_message("bere", "@bere:home", "thanks!") is None              # ordinary chat: quiet
+
+
+def test_several_waiting_need_the_id_and_no_declines(mx):
+    mx.ask_advisor("greg", QUESTION, "writing")
+    mx.ask_advisor("greg", "Explain how a combi boiler differs from a system boiler.", "quick")
+    assert "reply with the request id" in mx.on_message("greg", "@greg:home", "no")
+    rid = mx.pending("greg")[1]["id"]
+    assert mx.on_message("greg", "@greg:home", f"no {rid}") == "Declined. Nothing was sent."
+    assert [p["id"] for p in mx.pending("greg")] != [] and rid not in [p["id"] for p in mx.pending("greg")]
+
+
+def test_a_budget_request_reaches_the_admin_who_alone_can_change_it(mx):
+    out = mx.request_more_budget("bere", "planning the honeymoon")
+    assert out["status"] == "asked" and mx.request_more_budget("bere", "again")["status"] == "already asked"
+    mx.post_updates()
+    (ask,) = [t for r, t in mx.matrix.sent if r == "!g" and "asks for more" in t]
+    assert "planning the honeymoon" in ask
+    assert mx.on_message("bere", "@bere:home", "raise 10") is None             # Béré cannot raise her own
+    with pytest.raises(adv.Refused):
+        mx.change_budget("bere", "bere", "raise", 10)
+    assert mx.on_message("greg", "@greg:home", "raise 10") == "bere's advisor budget: raised by $10 to $30."
+    assert mx.budget("bere")["limit_usd"] == 30.0 and mx.budget_requests("bere") == []
+    assert mx.on_message("greg", "@greg:home", "raise") == "Say whose budget, e.g. raise 10 for bere."
+    assert mx.on_message("greg", "@greg:home", "no for bere").endswith("declined.")
+    assert mx.budget("bere")["limit_usd"] == 30.0
+    assert [r["change"] for r in mx.budget_log("bere") if r["status"] == "change"][-1] == "raised by $10 to $30"
+
+
+def test_reset_makes_the_default_available_again(mx):
+    mx.ledger.run("INSERT INTO requests (id, agent, person, kind, model, question, hash, status, created, month, cost) "
+                  "VALUES ('x1', 'greg', 'greg', 'quick', 'haiku', 'q', 'h', 'answered', ?, ?, 19.5)", (time.time(), adv.month()))
+    assert mx.budget("greg")["left_usd"] == 0.5
+    mx.change_budget("greg", "greg", "reset")
+    assert mx.budget("greg")["left_usd"] == 20.0
