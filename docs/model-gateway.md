@@ -105,6 +105,34 @@ server is switched off it still switches the agents; the model loads when the se
 - Matrix messages go straight from the agent to the gateway, so there LM Studio's own
   on-demand loading applies.
 
+## Taking turns on the model (the queue)
+
+Three agents share one model on one GPU, and LM Studio shares one context window between its
+parallel slots. Two long requests at once do not fit ("Context size has been exceeded": seen in
+the same minute across agents at 01:31, 09:51 and 09:53 on 20 Nov), and on one 16 GB card two
+replies at once are each slower. So the model guard queues chat requests (`Gate` in
+`gateway/model_guard.py`):
+
+- **At most `SLOTS` at once** (2; `GUARD_SLOTS` overrides; never more than LM Studio's own
+  `parallel`), and only while the estimated tokens of everything running fit in the loaded window
+  (read from LM Studio every ten minutes). An estimate is the request's size in bytes / 3.5, on
+  the high side, plus 8192 for the reply.
+- **People first.** A request carrying hermes's "You are running as a scheduled cron job" line
+  (consolidation, digests, briefings, noticeboard checks) waits behind a person's message.
+  Otherwise first come, first served; only the first in line may go, so a large request is never
+  passed over.
+- **Never stuck.** One request always runs alone, however large. After 300 s in the queue the
+  first in line goes anyway (Bifrost gives up on a silent stream at 900 s). When the model server
+  is known to be off, requests skip the queue and get the "AI computer is off" answer at once.
+  LM Studio's "context full" retry stays as a backstop.
+
+**Choosing 1 or 2 slots.** Each chat request is logged as one JSON line
+(`docker logs logos-model-guard | grep '"event": "chat"'`): who (person or scheduled), the
+estimate, `waited_s`, `alongside` (how many others were running), `seconds`, and the token counts
+when LM Studio reports them. `/guard/health` shows the queue now and since start. Compare
+requests that ran alone (`alongside: 0`) with ones that ran beside another (`alongside: 1`): if
+sharing roughly doubles `seconds`, two slots gain nothing and one slot answers each person sooner.
+
 ## When the model server is off
 
 LM Studio runs on a machine that is also used for other things, so it is sometimes closed.

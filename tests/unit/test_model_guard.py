@@ -211,7 +211,10 @@ def test_health_finds_a_server_that_is_back():
     try:
         conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
         conn.request("GET", "/guard/health")
-        assert json.loads(conn.getresponse().read()) == {"ok": True, "model_server_off": False, "off_since": None}
+        h = json.loads(conn.getresponse().read())
+        assert {k: h[k] for k in ("ok", "model_server_off", "off_since")} == {
+            "ok": True, "model_server_off": False, "off_since": None}
+        assert h["queue"]["running"] == 0 and h["queue"]["slots"] >= 1          # the queue is on show
     finally:
         g.shutdown(); up.shutdown()
 
@@ -266,3 +269,108 @@ def test_add_presence_penalty_only_when_unset():
     assert model_guard.add_presence_penalty("/v1/embeddings", other) == other  # chat requests only
     assert model_guard.add_presence_penalty(path, b"not json") == b"not json"
     assert model_guard.add_presence_penalty(path, b"[1]") == b"[1]"
+
+
+# ── the queue ────────────────────────────────────────────────────────────────
+
+def run_in_thread(fn, *args):
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault("r", fn(*args)), daemon=True)
+    t.start()
+    return t, out
+
+
+def test_estimate_priority_and_usage():
+    body = json.dumps({"model": "m", "messages": [{"role": "user", "content": "x" * 700}]}).encode()
+    assert model_guard.estimate(body) == int(len(body) / model_guard.BYTES_PER_TOKEN) + model_guard.REPLY_RESERVE
+    small = json.dumps({"model": "m", "max_tokens": 100}).encode()
+    assert model_guard.estimate(small) == int(len(small) / model_guard.BYTES_PER_TOKEN) + 100
+    assert model_guard.priority(b'... [IMPORTANT: You are running as a scheduled cron job. ...') == model_guard.SCHEDULED
+    assert model_guard.priority(body) == model_guard.PERSON
+    assert model_guard.usage(b'data: {"usage": {"prompt_tokens": 5120, "completion_tokens": 311}}\n\n') == {
+        "prompt_tokens": 5120, "completion_tokens": 311}
+    assert model_guard.usage(b"data: [DONE]") == {}
+
+
+def test_the_gate_holds_to_its_slots():
+    gate = model_guard.Gate(2, lambda: 0)
+    a, _, _ = gate.enter(10)
+    b, _, _ = gate.enter(10)
+    t, out = run_in_thread(gate.enter, 10)
+    time.sleep(0.2)
+    assert "r" not in out and gate.view()["waiting"] == 1          # the third waits
+    gate.leave(a)
+    t.join(2)
+    assert out["r"][1] > 0.1 and gate.view()["running"] == 2 and gate.view()["queued"] == 1
+
+
+def test_the_gate_keeps_everything_inside_the_window():
+    gate = model_guard.Gate(4, lambda: 96512)
+    a, _, _ = gate.enter(70000)
+    t, out = run_in_thread(gate.enter, 30000)                      # 100000 would not fit beside it
+    time.sleep(0.2)
+    assert "r" not in out
+    gate.leave(a)
+    t.join(2)
+    assert "r" in out
+
+
+def test_one_request_always_runs_alone_however_large():
+    gate = model_guard.Gate(2, lambda: 1000)
+    ticket, waited, forced = gate.enter(5000)
+    assert waited < 0.1 and not forced
+
+
+def test_a_person_goes_before_scheduled_work():
+    gate = model_guard.Gate(1, lambda: 0)
+    first, _, _ = gate.enter(10)
+    order = []
+    def go(prio, name):
+        t = gate.enter(10, prio)[0]
+        order.append(name)
+        gate.leave(t)
+    t1 = threading.Thread(target=go, args=(model_guard.SCHEDULED, "digest"), daemon=True)
+    t1.start()
+    time.sleep(0.1)
+    t2 = threading.Thread(target=go, args=(model_guard.PERSON, "greg"), daemon=True)
+    t2.start()
+    time.sleep(0.1)
+    gate.leave(first)
+    t1.join(2); t2.join(2)
+    assert order == ["greg", "digest"]                             # arrived later, served first
+
+
+def test_after_the_longest_wait_it_goes_anyway():
+    gate = model_guard.Gate(1, lambda: 0, max_wait=0.3)
+    gate.enter(10)
+    began = time.monotonic()
+    ticket, waited, forced = gate.enter(10)
+    assert forced and 0.3 <= waited < 1.5 and time.monotonic() - began < 1.5
+    assert gate.view()["forced"] == 1
+
+
+def test_chats_through_one_slot_take_turns_and_are_logged():
+    up = serve(Upstream)
+    lines = []
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{up.server_address[1]}", connect_timeout=1,
+                                       slots=1, log=lambda line, **kw: lines.append(json.loads(line))))
+    def chat():
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=10)
+        conn.request("POST", "/v1/chat/completions", body=json.dumps({"model": "qwen/q", "stream": True}),
+                     headers={"Content-Type": "application/json"})
+        conn.getresponse().read()
+    try:
+        threads = [threading.Thread(target=chat, daemon=True) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        assert len(lines) == 2 and all(l["event"] == "chat" and l["status"] == 200 for l in lines)
+        assert sorted(l["waited_s"] for l in lines)[1] >= 0.3          # the second waited for the first
+        assert all(l["alongside"] == 0 for l in lines)                 # never two at once
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+        conn.request("GET", model_guard.HEALTH_PATH)
+        q = json.loads(conn.getresponse().read())["queue"]
+        assert q["served"] == 2 and q["queued"] == 1 and q["slots"] == 1
+    finally:
+        g.shutdown(); up.shutdown()
