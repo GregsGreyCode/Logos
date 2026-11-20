@@ -3,6 +3,7 @@ import { h, api, getJSON, when, markdown, working, agentLabel, icon, none } from
 import { getPref, setPref } from './prefs.js';
 import * as mx from './mx.js';
 import { matrixChat } from './chat-mx.js';
+import { voidView } from './agents-void.js';
 import { takeAsk } from './home.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
@@ -97,6 +98,10 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     root.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'No agents yet'),
       h('p', {}, 'No agent is set up for your account yet. Ask Greg to set one up.')));
     return () => {};
+  }
+  // M4: with this browser connected, Chat opens on the floating agents; pick one to talk to it.
+  if (!agentArg && mx.saved() && agents.some((a) => a.matrix_id)) {
+    return voidView(root, agents.filter((a) => a.matrix_id));
   }
   const agent = agents.find((a) => a.name === agentArg) || agents[0];
   let chatId = chatArg || newId();

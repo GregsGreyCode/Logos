@@ -7,10 +7,11 @@
 // (agents ignore notices) and the first message inside the thread, so the agent answers there, as its own
 // conversation. Its title is that first message; threads quiet for 30 days leave the list (Greg, 21 Nov).
 // On a phone the conversations are chips above the chat (Greg chose K2).
-import { h, getJSON, markdown, when, none, loading, agentLabel } from './util.js';
+import { h, getJSON, markdown, when, none, loading } from './util.js';
 import * as mx from './mx.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
+import { markBar } from './agents-void.js';
 
 const ARCHIVE_DAYS = 30;
 const THREAD_DAYS = 30;
@@ -43,10 +44,6 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const note = h('p', { class: 'when mx-note', role: 'status' });
   const thinkingRow = h('div', { class: 'mx-thinking', hidden: true },
     h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }), `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'));
-  const tabs = agents.length > 1 ? h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Agent' },
-    agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
-      onclick: () => { location.hash = `#/chat/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }),
-      ...agentLabel(a.display_name)))) : null;
   const modelLine = h('div', { class: 'model-line down', role: 'status', hidden: agent.model_up !== false },
     'The AI computer is off: your message waits in the room, and the agent answers when it is back on.');
   const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); sendText(input.value); } },
@@ -56,7 +53,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
       h('header', { class: 'chat-head' },
-        crumb, h('h1', { class: tabs ? null : 'agent-solo' }, threadId ? convTitle : agent.display_name), threadId ? null : tabs,
+        // M4: the agents' marks replace the agent tabs; inside a thread, its title.
+        threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
+        crumb, threadId ? h('h1', {}, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
         h('span', { class: 'mx-same', title: 'The same conversation as your Element X room' }, 'Same as Element X'),
         sideBits.viewMenu || null, sideBits.convBtn || null),
       chipsRow, modelLine, log, thinkingRow, note, form),
@@ -228,7 +227,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // Still waiting for the agent when the newest message is yours.
     const last = shown[shown.length - 1];
     // (a conversation's title notice is not a message waiting for an answer)
-    thinkingRow.hidden = !(last && last.getSender() === me && last.getContent().msgtype !== 'm.notice') && !typing;
+    // Waiting for the agent: your newest readable message, under 15 minutes old, that is not a conversation's
+    // opening (its title notice, or a message whose thread already has replies).
+    const waitingOnAgent = !!(last && last.getSender() === me && !last.isDecryptionFailure()
+      && last.getContent().msgtype !== 'm.notice' && !replyMap.has(last.getId()) && Date.now() - last.getTs() < 15 * 60000);
+    thinkingRow.hidden = !waitingOnAgent && !typing;
     if (stick || atBottom) log.scrollTop = log.scrollHeight;
   }
 
