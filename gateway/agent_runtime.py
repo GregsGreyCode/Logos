@@ -384,7 +384,11 @@ class AgentRuntime:
             # One message per answer: which tools the agent is using goes to its log only, and
             # its "let me check..." text before a tool call is not sent as a message of its own.
             cfg["display"] = {"platforms": {"matrix": {
-                "tool_progress": "log", "interim_assistant_messages": False}}}
+                "tool_progress": "log", "interim_assistant_messages": False}},
+                # A message sent while the agent is still answering waits its turn. hermes otherwise
+                # interrupts the running answer for it, and that request is lost ("Add creme de
+                # marron to the to-do list" on 20 Nov 13:25, cut off by the next item 30 s later).
+                "busy_input_mode": "queue"}
         if agent.get("brain_index", True):
             cfg["memory"] = {"memory_char_limit": MEMORY_CHAR_LIMIT}
         cfg.setdefault("plugins", {"enabled": []})["enabled"].extend(LOGOS_PLUGINS)
