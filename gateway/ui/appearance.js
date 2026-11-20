@@ -42,9 +42,8 @@ async function save(choice) {
   return !!(r && r.ok);
 }
 
-let dialog = null;
-export function openAppearance() {
-  if (dialog) dialog.remove();
+// The look and light-or-dark controls, shown in Settings > Appearance.
+export function lookControls() {
   const note = h('p', { class: 'when appearance-note', role: 'status' });
   const modeBox = h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'Light or dark' });
   const paintModes = () => {
@@ -59,10 +58,10 @@ export function openAppearance() {
     if (def.modes.length === 1) modeBox.append(h('p', { class: 'when' }, `${def.name} is dark only.`));
   };
   const pick = async (choice) => {
-    paintModes();
-    note.textContent = (await save(choice)) ? 'Saved: it follows you to your other devices.' : 'Used here, but could not be saved just now.';
+    apply(choice);
     paintModes();
     for (const i of looksBox.querySelectorAll('input')) i.checked = i.value === current().look;
+    note.textContent = (await save(choice)) ? 'Saved: it follows you to your other devices.' : 'Used here, but could not be saved just now.';
   };
   const looksBox = h('div', { class: 'appearance-looks', role: 'radiogroup', 'aria-label': 'Look' },
     LOOKS.map((l) => h('label', { class: `look-option look-${l.id}` },
@@ -70,16 +69,8 @@ export function openAppearance() {
         onchange: () => pick({ look: l.id, mode: l.modes.includes(current().mode) ? current().mode : l.modes[0] }) }),
       h('span', { class: 'look-swatch', 'aria-hidden': 'true' }, l.swatch.map((c) => h('span', { style: `background:${c}` }))),
       h('span', { class: 'look-text' }, h('strong', {}, l.name), h('span', { class: 'when' }, l.feel)))));
-  dialog = h('dialog', { class: 'appearance', 'aria-labelledby': 'appearance-title' },
-    h('div', { class: 'appearance-head' },
-      h('h2', { id: 'appearance-title' }, 'Appearance'),
-      h('button', { type: 'button', class: 'btn quiet small', onclick: () => dialog.close() }, 'Done')),
-    h('h3', { class: 'label' }, 'Look'), looksBox,
-    h('h3', { class: 'label' }, 'Light or dark'), modeBox, note);
-  dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });   // a tap outside closes it
-  document.body.append(dialog);
   paintModes();
-  dialog.showModal();
+  return { looksBox, modeBox, note };
 }
 
 // After sign-in: the look saved with the login wins over this device's memory of it.

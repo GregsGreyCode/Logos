@@ -49,7 +49,7 @@ const URL_ = arg('url', 'http://127.0.0.1:8091');
 const OUT = arg('out', path.join(os.tmpdir(), 'logos-ui-check'));
 const LOOKS = { glass: ['dark', 'light'], hud: ['dark'], warm: ['light', 'dark'] };
 const looks = arg('looks', 'glass,hud,warm').split(',');
-const screens = arg('screens', 'home,chat,brain,noticeboard,agents,advisor,models,people,updates').split(',');
+const screens = arg('screens', 'home,chat,brain,noticeboard,agents,advisor,models,people,settings,settings/account,settings/chat,settings/updates').split(',');
 const WIDTHS = { phone: [390, 844], desktop: [1280, 860] };
 const widths = arg('widths', 'phone,desktop').split(',');
 const strict = process.argv.includes('--strict');
@@ -169,7 +169,7 @@ function inspect() {
             await page.waitForTimeout(400);
             await page.waitForFunction(() => !/Loading…/.test(document.body.innerText), null, { timeout: 10000 }).catch(() => {});
             await page.waitForTimeout(500);
-            const file = `${w}-${look}-${mode}-${s}.png`;
+            const file = `${w}-${look}-${mode}-${s.replace(/\//g, '-')}.png`;
             await page.screenshot({ path: path.join(OUT, file), fullPage: w === 'phone' });
             const found = await page.evaluate(inspect);
             const n = found.overflow.length + found.cutoff.length + found.contrast.length + found.cramped.length;

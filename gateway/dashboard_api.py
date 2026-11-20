@@ -123,9 +123,38 @@ def look_of(user_id: str) -> Optional[Dict[str, str]]:
     return {"look": look, "mode": mode if mode in MODES else "dark"}
 
 
+# ST1: the dashboard's options each person sets in Settings, kept with their login (user_settings.ui_prefs).
+PREFS = {"panel": ("slide", "open"), "thinking": (True, False), "jobs": (True, False)}
+
+
+def prefs_of(user_id: str) -> Dict[str, Any]:
+    getter = getattr(auth_db, "get_user_settings", None)
+    row = getter(user_id) if (user_id and getter) else None
+    try:
+        saved = json.loads((row or {}).get("ui_prefs") or "{}")
+    except ValueError:
+        saved = {}
+    return {k: v for k, v in (saved if isinstance(saved, dict) else {}).items() if k in PREFS and v in PREFS[k]}
+
+
 async def handle_me(request: web.Request) -> web.Response:
     user = _user(request)
-    return web.json_response({**user, "look": await asyncio.to_thread(look_of, user["id"])})
+    look, prefs = await asyncio.gather(asyncio.to_thread(look_of, user["id"]), asyncio.to_thread(prefs_of, user["id"]))
+    return web.json_response({**user, "look": look, "prefs": prefs})
+
+
+async def handle_set_prefs(request: web.Request) -> web.Response:
+    """PUT /api/v2/me/prefs {key: value, ...}: change some of your own options; unknown ones are refused."""
+    user = _user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict) or not body or any(k not in PREFS or v not in PREFS[k] for k, v in body.items()):
+        return web.json_response({"error": "bad_prefs", "allowed": {k: list(v) for k, v in PREFS.items()}}, status=400)
+    merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
+    await asyncio.to_thread(auth_db.update_user_settings, user["id"], ui_prefs=json.dumps(merged, sort_keys=True))
+    return web.json_response(merged)
 
 
 async def handle_set_look(request: web.Request) -> web.Response:
@@ -1310,6 +1339,7 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/v2/noticeboard/{id}/answer", require_csrf(handle_noticeboard_answer))
     app.router.add_get("/api/v2/me", handle_me)
     app.router.add_put("/api/v2/me/look", require_csrf(handle_set_look))
+    app.router.add_put("/api/v2/me/prefs", require_csrf(handle_set_prefs))
     app.router.add_get("/api/v2/agents", handle_agents)
     app.router.add_get("/api/v2/agents/{name}/conversations", handle_conversations)
     app.router.add_get("/api/v2/agents/{name}/conversations/{sid}", handle_conversation_messages)
