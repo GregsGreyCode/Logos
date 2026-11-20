@@ -17,6 +17,9 @@ Then write the briefing, at most 6 short lines, no headings and no emoji:
 - Other people's events only when they matter to your person's day, in a few words ("Béré is
   out until 21:00"). Never list their day.
 - Any reminder you found.
+- If the facts above list emails waiting for a reply, one line with how many and the first two
+  senders ("3 emails need a reply: the plumber, the registry office."). Senders only; never the
+  contents of an email.
 
 Only when the calendar above says "none" and there is no reminder, write one line: the day,
 the weather, and "Nothing in the calendar today." If the calendar could not be read, say "I

@@ -634,6 +634,45 @@ network_policies:
           - allow: {method: tools/call, tool: {any: [list_lights, set_lights, list_scenes, activate_scene]}}
 """
 
+    POLICY_MAIL = """
+version: 1
+network_policies:
+  lm_studio:
+    endpoints:
+      - {host: 10.0.0.5, port: 1234, allowed_ips: [10.0.0.5/32]}
+  mail:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8099
+        protocol: mcp
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: tools/list}
+"""
+
+    def test_mail_only_for_an_agent_with_a_person(self, repo):
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_MAIL)
+        (repo / "souls/_shared/mail.md").write_text("## Your person's email\n")
+        r = rt(repo)
+        base = r.load("alpha")
+        for agent in (base, {**base, "mail": {"enabled": True}}, {**base, "mail": {"enabled": False, "person": "greg"}}):
+            assert "LOGOS_MAIL_TOKEN" not in r.env_file(agent, "logos-home-alpha")
+            assert "mail" not in (yaml.safe_load(r.config_text("alpha", agent, mail_token="tm")).get("mcp_servers") or {})
+            assert "mail" not in yaml.safe_load(r.policy_path("alpha", agent).read_text())["network_policies"]
+            assert "person's email" not in r.soul_text(agent)
+        greg = {**base, "mail": {"enabled": True, "person": "greg"}}
+        env = r.env_file(greg, "logos-home-alpha")
+        assert "LOGOS_MAIL_TOKEN=" in env and "LOGOS_MAIL_URL=http://172.17.0.1:8099/mcp" in env
+        cfg = yaml.safe_load(r.config_text("alpha", greg, mail_token="tm"))
+        assert cfg["mcp_servers"]["mail"] == {"url": "http://172.17.0.1:8099/mcp", "headers": {"Authorization": "Bearer tm"}}
+        ep = yaml.safe_load(r.policy_path("alpha", greg).read_text())["network_policies"]["mail"]["endpoints"][0]
+        assert (ep["host"], ep["port"]) == ("172.17.0.1", 8099)
+        assert ep["rules"][-1] == {"allow": {"method": "tools/call", "tool": {"any": [
+            "mail_new", "mail_needs_reply", "mail_search", "mail_read"]}}}           # read only: nothing that sends
+        assert "## Your person's email" in r.soul_text(greg)
+
     def test_house_only_when_the_definition_asks(self, repo):
         path = repo / "infra/agent-image/policy.yaml"
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,10 @@ matrix:                           # the household's own Matrix server (docs/matr
   e2ee: required
   allowed_users: []               # set in agents/greg.local.yaml (untracked): @name:gregandbere.com
 
+mail:                           # Greg's own email, read only (docs/mail.md); connect with scripts/logos-mail
+  enabled: true
+  person: greg
+
 house:                          # the lights and their scenes, through the house service (docs/house.md)
   enabled: true
   domains: [light, scene, todo]   # todo: the shared shopping and to-do lists
