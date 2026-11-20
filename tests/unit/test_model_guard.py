@@ -82,7 +82,8 @@ def test_a_streamed_reply_arrives_piece_by_piece(guard):
     assert r.status == 200 and r.getheader("Content-Type") == "text/event-stream"
     assert first == b"data: one\n\n" and first_at < 0.14          # not held back until the end
     assert rest == b"data: two\n\ndata: three\n\n"
-    assert Upstream.seen == [("/v1/chat/completions", "Bearer local", {"model": "qwen/q", "stream": True})]
+    assert Upstream.seen == [("/v1/chat/completions", "Bearer local",
+                             {"model": "qwen/q", "stream": True, "presence_penalty": model_guard.PRESENCE_PENALTY})]
 
 
 def free_port():
@@ -253,3 +254,15 @@ def test_the_guard_drops_a_level_an_on_off_model_cannot_take(guard):
     conn.getresponse().read()
     (path, _auth, sent), = Upstream.seen
     assert path == "/v1/chat/completions" and "reasoning_effort" not in sent and sent["model"] == "qwen/q"
+
+
+def test_add_presence_penalty_only_when_unset():
+    path = "/v1/chat/completions"
+    out = json.loads(model_guard.add_presence_penalty(path, json.dumps({"model": "m", "messages": []}).encode()))
+    assert out["presence_penalty"] == model_guard.PRESENCE_PENALTY
+    own = json.dumps({"model": "m", "presence_penalty": 0.2}).encode()
+    assert model_guard.add_presence_penalty(path, own) == own                  # the caller's own value wins
+    other = json.dumps({"model": "m"}).encode()
+    assert model_guard.add_presence_penalty("/v1/embeddings", other) == other  # chat requests only
+    assert model_guard.add_presence_penalty(path, b"not json") == b"not json"
+    assert model_guard.add_presence_penalty(path, b"[1]") == b"[1]"
