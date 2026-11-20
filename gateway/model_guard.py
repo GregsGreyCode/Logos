@@ -16,6 +16,14 @@ reply. The guard holds a reply's headers until its first bytes arrive; if those 
 refusal, it waits and sends the request again, within the same minute. A request that really
 is too large still fails after that, and hermes then shortens the conversation itself.
 
+Several agents share the one model, and LM Studio shares one context window between its parallel
+slots. When two long requests overlap they do not fit, and both slow down on one GPU. So chat
+requests go through a queue (:class:`Gate`): at most :data:`SLOTS` at once, and only while the
+estimated size of everything running fits in the loaded window. A person's message goes before
+scheduled work (consolidation, digests, noticeboard checks). Each request's wait and duration is
+logged as one JSON line, and ``/guard/health`` shows the queue, so the number of slots can be
+chosen from measurements.
+
 It keeps nothing, and changes two things in the traffic: models whose reasoning is only on or
 off get no ``reasoning_effort`` level they cannot take (:func:`fix_reasoning`), and a chat request
 that sets no presence penalty gets one (:func:`add_presence_penalty`), against thinking that loops. Stdlib only;
@@ -24,10 +32,12 @@ runs in the ``logos-model-guard`` container (see :mod:`gateway.model_gateway`).
 from __future__ import annotations
 
 import http.client
+import itertools
 import json
 import os
 import socket
 import sys
+import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,6 +55,112 @@ WAIT = 60.0                             # how long a request may wait for the mo
 KNOWN_OFF = 120.0                       # after a full wait in vain: answer "off" at once for this long
 RETRY_EVERY = 5.0
 FULL = b"Context size has been exceeded"  # LM Studio: the shared context is in use by other requests
+
+
+# ── the queue ────────────────────────────────────────────────────────────────
+
+SLOTS = 2                    # chat requests at once (GUARD_SLOTS overrides); never more than LM Studio's own
+MAX_QUEUE_WAIT = 300.0       # seconds; then it goes anyway (Bifrost gives up on a silent stream after 900)
+REPLY_RESERVE = 8192         # tokens kept for the reply (thinking included) when the request sets no max
+BYTES_PER_TOKEN = 3.5        # a deliberately high estimate: JSON and tool schemas are dense
+CRON_MARK = b"You are running as a scheduled cron job"
+PERSON, SCHEDULED = 0, 1     # lower goes first
+
+
+def estimate(body: bytes) -> int:
+    """Tokens a chat request may take in the shared window: its prompt plus room for the reply."""
+    try:
+        req = json.loads(body)
+        reply = int(req.get("max_tokens") or req.get("max_completion_tokens") or REPLY_RESERVE)
+    except (ValueError, TypeError, AttributeError):
+        reply = REPLY_RESERVE
+    return int(len(body) / BYTES_PER_TOKEN) + min(reply, REPLY_RESERVE)
+
+
+def priority(body: bytes) -> int:
+    """A person's message goes before a scheduled job's."""
+    return SCHEDULED if CRON_MARK in body else PERSON
+
+
+class Gate:
+    """At most ``slots`` requests at once, and only while their estimated tokens fit ``window()``.
+
+    Waiting requests go in order of priority, then arrival; only the first in line may enter, so a
+    large request is never passed over for ever. One request always runs alone, however large (the
+    model server then refuses it, and hermes shortens the conversation). After ``max_wait`` the
+    first in line goes in anyway."""
+
+    def __init__(self, slots: int, window, max_wait: float = MAX_QUEUE_WAIT, clock=time.monotonic):
+        self.slots, self.window, self.max_wait, self.clock = max(1, int(slots)), window, max_wait, clock
+        self.cond = threading.Condition()
+        self.running = {}                 # ticket -> tokens
+        self.waiting = []                 # (priority, seq, tokens, since)
+        self.seq = itertools.count()
+        self.stats = {"served": 0, "queued": 0, "waited_total": 0.0, "waited_max": 0.0, "forced": 0}
+
+    def _fits(self, tokens: int) -> bool:
+        if not self.running:
+            return True
+        window = int(self.window() or 0)
+        return len(self.running) < self.slots and (not window or sum(self.running.values()) + tokens <= window)
+
+    def enter(self, tokens: int, prio: int = PERSON) -> tuple:
+        """Block until this request may run. Returns (ticket, seconds waited, forced)."""
+        with self.cond:
+            me = (prio, next(self.seq), tokens, self.clock())
+            self.waiting.append(me)
+            self.waiting.sort()
+            queued = False
+            while True:
+                waited = self.clock() - me[3]
+                forced = waited >= self.max_wait
+                if self.waiting[0] is me and (self._fits(tokens) or forced):
+                    break
+                queued = True
+                self.cond.wait(timeout=max(0.05, min(5.0, self.max_wait - waited)))
+            self.waiting.remove(me)
+            self.running[me[1]] = tokens
+            self.stats["served"] += 1
+            if queued:
+                self.stats["queued"] += 1
+            self.stats["waited_total"] += waited
+            self.stats["waited_max"] = max(self.stats["waited_max"], waited)
+            if forced and len(self.running) > 1:
+                self.stats["forced"] += 1
+            self.cond.notify_all()
+            return me[1], waited, forced
+
+    def leave(self, ticket) -> None:
+        with self.cond:
+            self.running.pop(ticket, None)
+            self.cond.notify_all()
+
+    def view(self) -> dict:
+        with self.cond:
+            s = dict(self.stats)
+            served = s.pop("waited_total")
+            return {"slots": self.slots, "running": len(self.running), "waiting": len(self.waiting),
+                    "tokens_running": sum(self.running.values()), "window": int(self.window() or 0),
+                    "served": s["served"], "queued": s["queued"], "forced": s["forced"],
+                    "wait_avg_s": round(served / s["served"], 1) if s["served"] else 0.0,
+                    "wait_max_s": round(s["waited_max"], 1)}
+
+
+def usage(tail: bytes) -> dict:
+    """prompt_tokens and completion_tokens from the end of a reply, when the server reported them."""
+    out = {}
+    for key in ("prompt_tokens", "completion_tokens"):
+        i = tail.rfind(b'"%s":' % key.encode())
+        if i >= 0:
+            digits = tail[i + len(key) + 3:].lstrip()[:12]
+            n = b"".join(itertools.takewhile(lambda c: c.isdigit(), (digits[j:j + 1] for j in range(len(digits)))))
+            if n:
+                out[key] = int(n)
+    return out
+
+
+def is_chat(command: str, path: str) -> bool:
+    return command == "POST" and path.split("?", 1)[0].endswith("/chat/completions")
 
 
 def is_full(first: bytes) -> bool:
@@ -105,7 +221,8 @@ def off_body() -> bytes:
 
 def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: float = 900.0,
                  wait: float = WAIT, retry_every: float = RETRY_EVERY, sleep=time.sleep,
-                 known_off: float = KNOWN_OFF):
+                 known_off: float = KNOWN_OFF, slots: int = SLOTS, max_queue_wait: float = MAX_QUEUE_WAIT,
+                 log=print):
     target = urllib.parse.urlsplit(upstream)
     host, port = target.hostname, target.port or 80
     # For /guard/health: whether the last attempt found the model server off, and since when.
@@ -113,7 +230,8 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
     # call several times (and probes it once more without streaming); without this each of those
     # would wait a minute too, and the person would hear nothing for five.
     state = {"off": False, "off_since": None, "known_off_at": -known_off}
-    options = {"at": -OPTIONS_TTL, "by_model": {}}
+    options = {"at": -OPTIONS_TTL, "by_model": {}, "window": 0, "parallel": 0}
+    gate = Gate(slots, lambda: options["window"], max_wait=max_queue_wait)
 
     def options_for(model: str) -> list:
         """LM Studio's published reasoning options for ``model``, refreshed every ten minutes."""
@@ -124,10 +242,16 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 conn.request("GET", "/api/v1/models")
                 data = json.loads(conn.getresponse().read() or b"{}")
                 conn.close()
+                models = [m for m in data.get("models", data.get("data", [])) if isinstance(m, dict)]
                 options["by_model"] = {
                     str(m.get("key") or m.get("id")): list(((m.get("capabilities") or {}).get("reasoning") or {})
                                                            .get("allowed_options") or [])
-                    for m in data.get("models", data.get("data", [])) if isinstance(m, dict)}
+                    for m in models}
+                # The loaded window and LM Studio's own parallel slots, for the queue.
+                configs = [i.get("config") or {} for m in models for i in (m.get("loaded_instances") or [])]
+                options["window"] = max([int(c.get("context_length") or 0) for c in configs] or [0])
+                options["parallel"] = max([int(c.get("parallel") or 0) for c in configs] or [0])
+                gate.slots = max(1, min(slots, options["parallel"] or slots))
             except (OSError, ValueError, http.client.HTTPException):
                 pass                                # unknown: requests pass unchanged
         return options["by_model"].get(model, [])
@@ -174,7 +298,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 if not state["off"]:
                     state["off"], state["off_since"] = True, time.time()
             out = json.dumps({"ok": True, "model_server_off": state["off"],
-                              "off_since": state["off_since"]}).encode()
+                              "off_since": state["off_since"], "queue": gate.view()}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out)))
@@ -207,6 +331,24 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             body = self._body()
             if self.command == "POST":
                 body = add_presence_penalty(self.path, fix_reasoning(self.path, body, options_for))
+            if not is_chat(self.command, self.path) or time.monotonic() - state["known_off_at"] < known_off:
+                return self._forward(body)          # lookups, and "the model is off" answers, never queue
+            options_for("")                          # keeps the window and slots fresh (every ten minutes)
+            tokens, prio = estimate(body), priority(body)
+            ticket, waited, forced = gate.enter(tokens, prio)
+            began, alongside = time.monotonic(), len(gate.running) - 1
+            record = {}
+            try:
+                record = self._forward(body) or {}
+            finally:
+                gate.leave(ticket)
+                log(json.dumps({"event": "chat", "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "who": "scheduled" if prio == SCHEDULED else "person", "est_tokens": tokens,
+                                "waited_s": round(waited, 1), "forced": forced, "alongside": alongside,
+                                "seconds": round(time.monotonic() - began, 1), **record}), flush=True)
+
+        def _forward(self, body: bytes):
+            """Send the request on and stream the reply back. Returns what is known about the reply."""
             # Only model requests wait; lookups (model lists, health) get their answer at once.
             known = time.monotonic() - state["known_off_at"] < known_off
             deadline = time.monotonic() + (wait if self.command == "POST" and not known else 0)
@@ -216,7 +358,8 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                     if self.command == "POST" and not known:
                         state["known_off_at"] = time.monotonic()
                     print(f"model server off: {self.command} {self.path.split('?')[0]} refused", flush=True)
-                    return self._off()
+                    self._off()
+                    return {"status": "model_off"}
                 conn = http.client.HTTPConnection(host, port)
                 conn.sock = sock
                 try:
@@ -244,20 +387,21 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                         self.send_header("Transfer-Encoding", "chunked")
                     self.send_header("Connection", "close")
                     self.end_headers()
-                    chunk = first
+                    chunk, tail = first, b""
                     while chunk:
                         self.wfile.write(chunk if length is not None else b"%x\r\n%s\r\n" % (len(chunk), chunk))
                         self.wfile.flush()         # streamed replies must not sit in a buffer
+                        tail = (tail + chunk)[-4096:]
                         if length is not None:
                             break
                         chunk = resp.read1(65536)
                     if length is None:
                         self.wfile.write(b"0\r\n\r\n")
+                    return {"status": resp.status, **usage(tail)}
                 except (OSError, http.client.HTTPException):
-                    pass                           # either side went away; closing both is all there is to do
+                    return {"status": "dropped"}   # either side went away; closing both is all there is to do
                 finally:
                     conn.close()
-                return
 
         do_GET = do_POST = do_PUT = do_DELETE = _pass
 
@@ -269,7 +413,9 @@ def main() -> int:
     port = int(os.environ.get("GUARD_PORT", "8094"))
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(
         upstream, connect_timeout=float(os.environ.get("GUARD_CONNECT_TIMEOUT", "3")),
-        wait=float(os.environ.get("GUARD_WAIT", str(WAIT)))))
+        wait=float(os.environ.get("GUARD_WAIT", str(WAIT))),
+        slots=int(os.environ.get("GUARD_SLOTS", str(SLOTS))),
+        max_queue_wait=float(os.environ.get("GUARD_MAX_QUEUE_WAIT", str(MAX_QUEUE_WAIT)))))
     server.daemon_threads = True
     print(f"model guard: {port} -> {upstream}", flush=True)
     server.serve_forever()
