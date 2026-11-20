@@ -46,6 +46,13 @@ understood.
 person can see what was understood. It is off by default (a voice note gets the answer only) and
 on for Béré, who asked for it.
 
+The agent can change it too: the `logos-voice` plugin (`infra/agent-plugins/logos-voice/`) gives
+it a `voice_transcripts` tool, so the person can say "show me what you heard" or "stop sending the
+transcripts". The choice is kept in `/opt/data/voice-echo.json` in the agent's home, survives
+rebuilds, and from then on wins over `voice_echo`. It applies from the next voice note, with no
+restart: the plugin makes hermes check it on every voice note instead of once at start-up. Delete
+that file to go back to the yaml setting.
+
 ## What is inside the image
 
 | Part | Version | Why |

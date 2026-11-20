@@ -50,7 +50,7 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
 # Logos' own hermes plugins (infra/agent-plugins/<name>/), copied into the home by `up`.
-LOGOS_PLUGINS = ("logos-waitlist",)
+LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
