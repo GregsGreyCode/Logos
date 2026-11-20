@@ -1,0 +1,3 @@
+gateway/ui/vendor/** -diff linguist-vendored
+*.gz binary
+*.wasm binary
