@@ -365,6 +365,10 @@ def test_chats_through_one_slot_take_turns_and_are_logged():
             t.start()
         for t in threads:
             t.join(10)
+        for _ in range(50):                    # the guard logs just after the reply is sent
+            if len(lines) == 2:
+                break
+            time.sleep(0.05)
         assert len(lines) == 2 and all(l["event"] == "chat" and l["status"] == 200 for l in lines)
         assert sorted(l["waited_s"] for l in lines)[1] >= 0.3          # the second waited for the first
         assert all(l["alongside"] == 0 for l in lines)                 # never two at once

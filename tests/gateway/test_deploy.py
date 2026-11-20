@@ -41,6 +41,9 @@ def test_image_and_runtime_changes_recreate_every_running_agent(deploy):
     p = deploy.plan(["infra/agent-image/Dockerfile"], RUNNING)
     assert p["image"] and p["agents"] == RUNNING and not p["dashboard"]
     assert deploy.plan(["gateway/agent_runtime.py"], RUNNING)["agents"] == RUNNING
+    # A hermes plugin alone (#127 on 20 Nov was deployed without reaching the agents).
+    p = deploy.plan(["infra/agent-plugins/logos-waitlist/__init__.py"], RUNNING)
+    assert p["agents"] == RUNNING and not p["image"]
 
 
 def test_package_change_reinstalls_and_restarts_the_dashboard(deploy):
