@@ -31,6 +31,10 @@ matrix:                           # the household's own Matrix server (docs/matr
   e2ee: required
   allowed_users: []               # set in agents/greg.local.yaml (untracked): @name:example.org
 
+advisor:                        # ask Claude, each question approved on the dashboard first (docs/advisor.md)
+  enabled: true
+  person: greg
+
 mail:                           # Greg's own email, read only (docs/mail.md); connect with scripts/logos-mail
   enabled: true
   person: greg

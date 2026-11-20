@@ -52,6 +52,8 @@ RESET_PLUGIN = "hermes-session-reset-policy"
 # Logos' own hermes plugins (infra/agent-plugins/<name>/), copied into the home by `up`.
 #: The mail tools let through the sandbox rule (gateway/mail_service.py TOOL_NAMES).
 MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
+#: The advisor tools let through the sandbox rule (gateway/advisor_service.py TOOL_NAMES).
+ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
@@ -340,7 +342,8 @@ class AgentRuntime:
 
     def config_text(self, name: str, agent: Mapping[str, Any], noticeboard_token: str = "",
                     voice_token: str = "", calendar_token: str = "", web_token: str = "",
-                    changes_token: str = "", house_token: str = "", mail_token: str = "") -> str:
+                    changes_token: str = "", house_token: str = "", mail_token: str = "",
+                    advisor_token: str = "") -> str:
         """The hermes ``config.yaml`` written into the agent's home. ``noticeboard_token`` and
         ``voice_token`` are the agent's own tokens for those services (the file lives in its
         private home volume, next to ``.env``)."""
@@ -422,6 +425,12 @@ class AgentRuntime:
             cfg.setdefault("mcp_servers", {})["house"] = {
                 "url": hh.HouseHost(self).url(),
                 "headers": {"Authorization": f"Bearer {house_token}"}}
+        ah = _sibling("advisor_host")
+        if ah.uses_advisor(agent) and advisor_token:
+            # Questions to Claude, each approved by the person first (docs/advisor.md).
+            cfg.setdefault("mcp_servers", {})["advisor"] = {
+                "url": ah.AdvisorHost(self).url(),
+                "headers": {"Authorization": f"Bearer {advisor_token}"}}
         mh = _sibling("mail_host")
         if mh.uses_mail(agent) and mail_token:
             # The person's own email, through the Logos mail service (docs/mail.md).
@@ -482,6 +491,8 @@ class AgentRuntime:
             notes = hh.config_dir(self.env) / hh.NOTES_FILE      # facts about this home, never in git
             if notes.exists() and notes.read_text().strip():
                 text = text.rstrip() + "\n\n### About this home's lights\n\n" + notes.read_text().strip() + "\n"
+        if _sibling("advisor_host").uses_advisor(agent) and (self.repo / "souls/_shared/advisor.md").exists():
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/advisor.md").read_text()
         if _sibling("mail_host").uses_mail(agent) and (self.repo / "souls/_shared/mail.md").exists():
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/mail.md").read_text()
         wh = _sibling("web_host")
@@ -584,6 +595,11 @@ class AgentRuntime:
         else:
             cur.pop(hh.TOKEN_ENV, None)
             cur.pop("LOGOS_HOUSE_URL", None)
+        ah = _sibling("advisor_host")
+        if ah.uses_advisor(agent):
+            cur.setdefault(ah.TOKEN_ENV, secrets.token_urlsafe(32))
+        else:
+            cur.pop(ah.TOKEN_ENV, None)
         mh = _sibling("mail_host")
         if mh.uses_mail(agent):
             cur.setdefault(mh.TOKEN_ENV, secrets.token_urlsafe(32))
@@ -829,6 +845,15 @@ class AgentRuntime:
                     {"allow": {"method": "tools/call", "tool": {"any": tools}}}]
         else:
             rules.pop("house", None)
+        ah = _sibling("advisor_host")
+        if ah.uses_advisor(agent) and "advisor" in rules:
+            point("advisor", ah.AdvisorHost(self).url())
+            for e in rules["advisor"].get("endpoints") or []:
+                e["rules"] = [{"allow": {"method": m}} for m in
+                              ("initialize", "notifications/initialized", "ping", "tools/list")] + [
+                    {"allow": {"method": "tools/call", "tool": {"any": list(ADVISOR_TOOLS)}}}]
+        else:
+            rules.pop("advisor", None)
         mh = _sibling("mail_host")
         if mh.uses_mail(agent) and "mail" in rules:
             point("mail", mh.MailHost(self).url())
@@ -923,8 +948,11 @@ class AgentRuntime:
         mh = _sibling("mail_host")
         mail_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
                            if l.startswith(mh.TOKEN_ENV + "=")), "")
+        ah = _sibling("advisor_host")
+        advisor_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
+                              if l.startswith(ah.TOKEN_ENV + "=")), "")
         self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token,
-                                                       changes_token, house_token, mail_token))
+                                                       changes_token, house_token, mail_token, advisor_token))
         for plugin in LOGOS_PLUGINS:
             for path in sorted((self.repo / "infra" / "agent-plugins" / plugin).iterdir()):
                 if path.is_file():
@@ -960,6 +988,12 @@ class AgentRuntime:
                     print("house: started with the current agents")
             except (hh.HouseError, ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"house: {e}")
+        if ah.uses_advisor(agent):
+            try:
+                if ah.AdvisorHost(self).up():
+                    print("advisor: started with the current agents")
+            except (ah.AdvisorError, ValueError, TimeoutError) as e:
+                raise AgentRuntimeError(f"advisor: {e}")
         if mh.uses_mail(agent):
             try:
                 if mh.MailHost(self).up():

@@ -966,6 +966,7 @@ HOUSE_SERVICES = (
     ("logos-house", "House service", "how the household agent works the lights", "http://{bind}:8098/health"),
     ("logos-sync", "Syncthing", "brains to the phones for Obsidian", "http://127.0.0.1:8384/rest/noauth/health"),
     ("logos-mail", "Mail service", "how agents read their person's email", "http://{bind}:8099/health"),
+    ("logos-advisor", "Advisor", "questions to Claude, approved first", "http://{bind}:8100/health"),
 )
 
 
@@ -1148,6 +1149,68 @@ async def handle_local_model_action(request: web.Request) -> web.Response:
     return web.json_response({"error": "unknown_action"}, status=404)
 
 
+# ── the advisor: each person approves their own agent's questions to Claude (story A1) ───────
+
+def _advisor(request: web.Request):
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return None, None
+    from gateway import advisor_host
+    return advisor_host.AdvisorHost(runtime), advisor_host.dashboard_token(runtime.env)
+
+
+def _advisor_call(host, token: str, method: str, path: str, body: Optional[dict] = None):
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(host.base() + path, method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read() or b"{}")
+    except OSError:
+        return 503, {"error": "The advisor is not running."}
+
+
+async def handle_advisor(request: web.Request) -> web.Response:
+    """GET /api/v2/advisor[?person=] - the signed-in person's waiting questions, log and budget.
+    Greg (admin) may also read Béré's log; approving is always the person's own."""
+    user = _user(request)
+    person = request.query.get("person") or user["username"]
+    if person != user["username"] and user["role"] != "admin":
+        return web.json_response({"error": "forbidden"}, status=403)
+    host, token = _advisor(request)
+    if host is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    status, body = await asyncio.to_thread(_advisor_call, host, token, "GET", f"/approvals/{person}")
+    if status == 200:
+        body["can_approve"] = person == user["username"]
+        body["person"] = person
+    return web.json_response(body, status=status)
+
+
+async def handle_advisor_decide(request: web.Request) -> web.Response:
+    """POST /api/v2/advisor/{id}/{send|decline} - only for the person the question belongs to."""
+    user = _user(request)
+    action = request.match_info["action"]
+    if action not in ("send", "decline"):
+        return web.json_response({"error": "not_found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    host, token = _advisor(request)
+    if host is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    status, out = await asyncio.to_thread(
+        _advisor_call, host, token, "POST", f"/approvals/{user['username']}/{request.match_info['rid']}/{action}",
+        {"approver": user["username"], "model": str((body or {}).get("model") or "")})
+    logger.info("advisor %s by %s: %s", action, user["username"], status)
+    return web.json_response(out, status=status)
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
@@ -1159,6 +1222,8 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/model", handle_model)
     app.router.add_get("/api/v2/models", handle_models)
     app.router.add_get("/api/v2/models/local", handle_local_model)
+    app.router.add_get("/api/v2/advisor", handle_advisor)
+    app.router.add_post("/api/v2/advisor/{rid}/{action}", require_csrf(handle_advisor_decide))
     app.router.add_post("/api/v2/models/local/{action}", require_csrf(handle_local_model_action))
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
