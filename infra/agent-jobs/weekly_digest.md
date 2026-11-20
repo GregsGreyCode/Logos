@@ -4,7 +4,7 @@ Weekly digest for your person. Work only inside /opt/data/brain and only read; c
 2. Read the daily notes in daily/ for those days, and run
    `git -C /opt/data/brain log --since="7 days ago" --name-only --pretty=format:` to see which
    pages changed. Open the changed pages under people/, projects/ and topics/ that matter.
-3. Read topics/open-questions.md if it exists.
+3. Read topics/open-questions.md and topics/lessons.md if they exist.
 
 Then write the digest for a phone screen, at most 12 short lines, no emoji:
 
@@ -15,6 +15,8 @@ Then write the digest for a phone screen, at most 12 short lines, no emoji:
   not "edited a page").
 - "Still open": up to 3 questions or loose ends, saying who each one waits on ("Greg: book the
   boiler service"), if any.
+- "What I'm doing better": up to 2 lessons added to topics/lessons.md this week, each as what you
+  now do differently ("I check whether a company is public before answering"), if any.
 - "Coming up": anything with a date in the next 7 days, with the day ("Saturday 21: dinner at
   Sam's"), if any.
 
