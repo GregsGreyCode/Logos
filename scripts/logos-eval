@@ -2,7 +2,7 @@
 """Run the Logos evals against the throwaway `bench` agent and print a scorecard.
 
 Usage:
-  scripts/logos-eval [--keep] [--only writes|brain|noticeboard] [--model MODEL]
+  scripts/logos-eval [--keep] [--only writes|brain|noticeboard|judgement]
 
 It recreates `bench` with empty volumes (unless --keep), then runs three suites:
 
@@ -175,7 +175,7 @@ def suite_noticeboard(rt):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--keep", action="store_true", help="reuse the running bench agent instead of recreating it")
-    ap.add_argument("--only", choices=["writes", "brain", "noticeboard"])
+    ap.add_argument("--only", choices=["writes", "brain", "noticeboard", "judgement"])
     args = ap.parse_args()
     rt = load("agent_runtime").AgentRuntime(REPO)
     model = rt.load(BENCH)["model"]["default"]
@@ -184,7 +184,7 @@ def main():
         fresh_bench()
     upload(REPO / "evals" / "lib" / "ask.py", "/tmp/ask")
     suites = {"writes": lambda: suite_script("agent_writes"), "brain": lambda: suite_script("brain_checks"),
-              "noticeboard": lambda: suite_noticeboard(rt)}
+              "noticeboard": lambda: suite_noticeboard(rt), "judgement": lambda: suite_script("judgement_checks")}
     results, started = {}, time.time()
     for name, fn in suites.items():
         if args.only and args.only != name:
