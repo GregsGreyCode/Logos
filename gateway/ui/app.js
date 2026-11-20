@@ -7,17 +7,18 @@ import { agentsView } from './agents.js';
 import { peopleView } from './people.js';
 import { modelsView } from './models.js';
 import { updatesView } from './updates.js';
+import { advisorView } from './advisor.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, labelTables } from './util.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
-  models: modelsView, people: peopleView, updates: updatesView };
+  models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView };
 const root = document.getElementById('view');
 let cleanup = null;
 
 const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Noticeboard', agents: 'Agents', models: 'Models',
-  people: 'People', updates: 'Updates' };
-const IN_MORE = ['agents', 'models', 'people', 'updates'];
+  people: 'People', updates: 'Updates', advisor: 'Advisor' };
+const IN_MORE = ['agents', 'advisor', 'models', 'people', 'updates'];
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },

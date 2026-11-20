@@ -207,6 +207,30 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
+  advisor:                         # questions to Claude, each approved by the person first, through
+                                   # the Logos advisor (gateway/advisor_service.py). Inspected as MCP:
+                                   # the handshake, the tool list and the three advisor tools.
+                                   # logos-agent fills in the address, or removes this rule (household).
+    endpoints:
+      - host: 192.0.2.1
+        port: 8100
+        protocol: mcp
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        mcp:
+          versions: ["2025-03-26", "2025-06-18", "2025-11-25"]
+        rules:
+          - allow: {method: initialize}
+          - allow: {method: notifications/initialized}
+          - allow: {method: ping}
+          - allow: {method: tools/list}
+          - allow:
+              method: tools/call
+              tool:
+                any: [ask_advisor, advisor_answer, advisor_budget]
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   mail:                            # the person's own email, through the Logos mail service
                                    # (gateway/mail_service.py). Inspected as MCP: the handshake, the
                                    # tool list and the read tools. logos-agent fills in the address,

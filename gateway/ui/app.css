@@ -459,3 +459,7 @@ details.card summary { cursor: pointer; font-weight: 600; min-height: 32px; }
   background: var(--raised); color: var(--ink); font: inherit; }
 .gpu-form input[type="number"] { width: 6em; }
 .gpu-form .btn.ghost { margin-top: 0; }
+/* Advisor screen */
+.advisor-q { margin: 8px 0; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--raised);
+  border-radius: 8px; white-space: pre-wrap; }
+.advisor-a { white-space: pre-wrap; margin: 8px 0; }
