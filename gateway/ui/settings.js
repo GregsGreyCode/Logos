@@ -180,7 +180,7 @@ function matrix(state, redraw) {
     const list = h('div', { class: 'rows' }, loading());
     const msg = note();
     box.replaceChildren(steps(2),
-      h('div', { class: 'mx-ok' }, '✓ ', `This browser is a verified device of ${me}.`),
+      h('div', { class: 'mx-ok', title: `This browser is a verified device of ${me}.` }, '✓ Verified'),
       h('h2', { class: 'label' }, 'Your devices'), list, msg,
       h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: async () => {
         if (!confirm('Disconnect this browser? It signs out of Matrix here and forgets its keys.')) return;
