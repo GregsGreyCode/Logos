@@ -136,8 +136,25 @@ export async function chatView(root, [agentArg, chatArg], state) {
     log.append(el);
     return el;
   };
-  const emptyState = () => log.replaceChildren(h('div', { class: 'empty' },
-    h('p', {}, `Say something to ${agent.display_name}. It remembers what matters in its brain, across web and Matrix.`)));
+  // An empty conversation: no words, just the Logos mark breathing slowly, as if the agent is asleep.
+  // It fades back when the first message goes, and a small mark fades in beside the agent's reply.
+  const emptyState = () => { mark.remove(); log.replaceChildren(h('div', { class: 'empty sleeping' },
+    h('img', { class: 'sleep-mark', src: '/static/logo.svg', alt: '' }),
+    h('p', { class: 'visually-hidden' }, `Say something to ${agent.display_name}. It remembers what matters in its brain, across web and Matrix.`))); };
+
+  // The small mark beside the agent's newest reply: it cycles its colours while the agent thinks and
+  // settles when the reply is done. One mark, which moves to each new reply.
+  const mark = h('img', { class: 'reply-mark', src: '/static/logo.svg', alt: '' });
+  let marked = null;
+  function placeMark(el, busy) {
+    marked = el || null;
+    if (!el) { mark.remove(); return; }
+    if (mark.parentElement !== log) { log.append(mark); mark.classList.remove('in'); void mark.offsetWidth; mark.classList.add('in'); }
+    mark.classList.toggle('busy', !!busy);
+    mark.style.top = `${el.offsetTop + 4}px`;
+    mark.style.left = `${el.offsetLeft - 30}px`;
+  }
+  new ResizeObserver(() => { if (marked && marked.isConnected) placeMark(marked, mark.classList.contains('busy')); }).observe(log);
 
   let waiting = false;           // true while waiting for a reply the stream did not deliver
   function setBusy(busy) {
@@ -205,11 +222,13 @@ export async function chatView(root, [agentArg, chatArg], state) {
       const { messages } = await getJSON(`/api/v2/agents/${agent.name}/conversations/${encodeURIComponent(c.id)}`);
       if (!alive) return;
       log.replaceChildren();
+      let lastReply = null;
       for (const m of messages) {
         if (showThinking && m.role === 'assistant') { const s = stepsView(m.steps); if (s) log.append(s); }
-        if (m.text) bubble(m.role, m.text);
+        if (m.text) { const b = bubble(m.role, m.text); if (m.role === 'assistant') lastReply = b; }
         if (!showThinking) chips(m.tools.map((t) => `Used ${t}`));
       }
+      placeMark(lastReply, false);
       if (readOnly) log.append(h('div', { class: 'notice' }, READ_ONLY_NOTE[c.where] || 'This conversation can only be read here.'));
       scroll();
     } catch (e) {
@@ -252,10 +271,16 @@ export async function chatView(root, [agentArg, chatArg], state) {
   }
 
   async function sendMessage(text) {
+    const sleeping = log.querySelector('.empty.sleeping');
+    if (sleeping) {                       // the sleeping mark fades back, then the conversation starts
+      sleeping.classList.add('waking');
+      await new Promise((ok) => setTimeout(ok, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 450));
+    }
     if (log.querySelector('.empty')) log.replaceChildren();
     bubble('user', text);
     const reply = h('div', { class: 'msg assistant' }, h('span', { class: 'when' }, 'Thinking…'));
     log.append(reply);
+    placeMark(reply, true);
     const used = h('div', { class: 'chips' });
     log.append(used);
     scroll();
@@ -327,6 +352,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
     }
     running = null;
     if (!alive) return;
+    placeMark(reply.isConnected && body ? reply : marked, false);
     setBusy(false);
     input.focus();
     scroll();
@@ -427,6 +453,17 @@ export async function chatView(root, [agentArg, chatArg], state) {
 
   // Phone: earlier conversations and the view switches open as a panel from the bottom.
   const side = h('aside', { class: 'side', id: 'chat-side', 'aria-label': 'Conversations' });
+  // Desktop: the conversations panel starts open; a small button tucks it away and a tab on the right
+  // edge brings it back. Remembered on this device. (On a phone it is the Conversations panel instead.)
+  const reopen = h('button', { type: 'button', class: 'side-reopen', 'aria-label': 'Show conversations',
+    title: 'Show conversations', 'aria-controls': 'chat-side', onclick: () => tuck(false) }, icon(['M15 6l-6 6 6 6']));
+  const tuck = (hide) => {
+    side.classList.toggle('tucked', hide);
+    reopen.classList.toggle('shown', hide);
+    setPref('side-tucked', hide);
+    (hide ? reopen : side.querySelector('.side-hide')).focus();
+  };
+  if (pref('side-tucked')) { side.classList.add('tucked'); reopen.classList.add('shown'); }
   const sideScrim = h('div', { class: 'chat-scrim', hidden: true });
   const convBtn = h('button', { type: 'button', class: 'conv-btn', 'aria-label': 'Conversations and view settings',
     'aria-controls': 'chat-side', 'aria-expanded': 'false' }, listIcon());
@@ -463,8 +500,10 @@ export async function chatView(root, [agentArg, chatArg], state) {
         h('span', { class: 'status scope' }, agent.shared ? 'Shared with the household' : 'Private to you'),
         convBtn),
       modelStatus, log, micNote, form),
-    side, sideScrim);
+    side, sideScrim, reopen);
   side.append(
+    h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
+      title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6']))),
     h('button', { type: 'button', class: 'btn', onclick: () => { closeSide(false); location.hash = `#/chat/${agent.name}/${newId()}`; } }, 'New conversation'),
     h('label', { class: 'toggle', for: 'show-thinking',
       title: "Show the agent's reasoning and each tool it used, with what went in and what came back" }, thinkingBox, ' Show thinking'),

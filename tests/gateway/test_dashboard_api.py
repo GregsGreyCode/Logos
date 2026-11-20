@@ -318,9 +318,24 @@ def test_brain_listing_is_parsed():
     d = b.parse_listing(out)
     assert [(p["folder"], p["title"]) for p in d["pages"]] == [
         ("", "Brain"), ("daily", "2026-11-16"), ("daily", "2026-11-15"), ("projects", "Trip to Lisbon")]
-    assert d["changes"] == [{"path": "daily/2026-11-16.md", "when": 190, "title": "2026-11-16"},
-                            {"path": "projects/Trip.md", "when": 190, "title": "Trip to Lisbon"}]
+    assert d["changes"] == [{"path": "daily/2026-11-16.md", "when": 190, "title": "2026-11-16", "summary": "", "added": 0, "removed": 0},
+                            {"path": "projects/Trip.md", "when": 190, "title": "Trip to Lisbon", "summary": "", "added": 0, "removed": 0}]
     assert d["conflicts"] == []
+
+
+def test_brain_changes_say_what_was_added_in_plain_words():
+    from gateway import brain_reader as b
+    out = ("P\tpeople/Vittorio.md\t200\tVittorio\nC\t200\npeople/Vittorio.md\n"
+           "D\tpeople/Vittorio.md\t3\t1\n"
+           "A\tpeople/Vittorio.md\t---\nA\tpeople/Vittorio.md\ttags: friend\n"
+           "A\tpeople/Vittorio.md\t## Birthday\n"
+           "A\tpeople/Vittorio.md\t- [ ] Birthday is **3 Dec**, see [[Gift ideas|gifts]]\n"
+           "A\tpeople/Vittorio.md\t- Likes [espresso](https://example.com)\n")
+    (c,) = b.parse_listing(out)["changes"]
+    assert c["summary"] == "Birthday is 3 Dec, see gifts · Likes espresso"
+    assert (c["added"], c["removed"]) == (3, 1)
+    assert b.summary_of(["## Gift ideas"]) == "New section: Gift ideas"
+    assert len(b.summary_of(["word " * 80])) <= 140
 
 
 def test_sync_conflict_copies_are_listed_apart():

@@ -4,6 +4,7 @@
 //   overflow  - the page is wider than the screen, or something runs off its right edge
 //   cut off   - text clipped by its box without an ellipsis
 //   contrast  - text below WCAG AA against what is behind it (4.5:1, or 3:1 for large text)
+//   cramped   - text closer than 6 px to the inside edge of its box
 //
 // Usage (on the dev VM, against the dev dashboard):
 //   node scripts/logos-ui-check.cjs [--url http://127.0.0.1:8091] [--out DIR] [--looks glass,hud,warm]
@@ -56,7 +57,7 @@ const strict = process.argv.includes('--strict');
 // Runs in the page: the three checks.
 function inspect() {
   const vw = document.documentElement.clientWidth;
-  const out = { overflow: [], cutoff: [], contrast: [] };
+  const out = { overflow: [], cutoff: [], contrast: [], cramped: [] };
   const name = (el) => el.tagName.toLowerCase() + (el.className && typeof el.className === 'string'
     ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '');
   const text = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim();
@@ -108,6 +109,35 @@ function inspect() {
     const key = `${name(el)}|${cs.color}`;
     if (ratio < need && !seen.has(key)) { seen.add(key); out.contrast.push(`${name(el)} "${t.slice(0, 30)}" ${ratio.toFixed(2)}:1 (needs ${need})`); }
   }
+  // cramped: text closer than 6 px to the inside edge of the box it sits in (a box = a border or
+  // a background of its own with rounded corners). Inputs and the box's own scroll areas are skipped.
+  const boxOf = (el) => {
+    for (let e = el; e && e !== document.body; e = e.parentElement) {
+      const cs = getComputedStyle(e);
+      const border = parseFloat(cs.borderLeftWidth) > 0 && cs.borderLeftStyle !== 'none' && parseFloat(cs.borderRightWidth) > 0;
+      const filled = (rgba(cs.backgroundColor) || [0, 0, 0, 0])[3] > 0.02 && parseFloat(cs.borderTopLeftRadius) > 0;
+      if (border || filled) return e;
+    }
+    return null;
+  };
+  const tight = new Set();
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n.parentElement;
+    if (!n.textContent.trim() || !el || el.closest('svg, .visually-hidden, .sr, input, textarea, select, .chart-wrap') || !visible(el)) continue;
+    const box = boxOf(el);
+    if (!box || (box === el && box.getBoundingClientRect().width < 36)) continue;   // a glyph in a small badge is meant to be snug
+    const range = document.createRange(); range.selectNodeContents(n);
+    const t = range.getBoundingClientRect(); const b = box.getBoundingClientRect(); const bs = getComputedStyle(box);
+    if (!t.width || t.right < b.left || t.left > b.right || t.bottom < b.top || t.top > b.bottom) continue;
+    const left = t.left - (b.left + parseFloat(bs.borderLeftWidth));
+    const right = (b.right - parseFloat(bs.borderRightWidth)) - t.right;
+    const gap = Math.min(left, right > -1 && right < 6 ? right : 99);
+    if (gap < 6 && box.scrollWidth <= box.clientWidth + 1) {
+      const key = name(box) + '>' + name(el);
+      if (!tight.has(key)) { tight.add(key); out.cramped.push(`${name(el)} "${n.textContent.trim().slice(0, 30)}" ${Math.round(gap)}px from the edge of ${name(box)}`); }
+    }
+  }
   return out;
 }
 
@@ -142,7 +172,7 @@ function inspect() {
             const file = `${w}-${look}-${mode}-${s}.png`;
             await page.screenshot({ path: path.join(OUT, file), fullPage: w === 'phone' });
             const found = await page.evaluate(inspect);
-            const n = found.overflow.length + found.cutoff.length + found.contrast.length;
+            const n = found.overflow.length + found.cutoff.length + found.contrast.length + found.cramped.length;
             report.push({ screen: s, look, mode, width: w, file, ...found });
             console.log(`${n ? '!!' : 'ok'} ${w.padEnd(7)} ${look}/${mode.padEnd(5)} ${s.padEnd(11)} ${n ? JSON.stringify(found) : ''}`);
           }
@@ -155,7 +185,7 @@ function inspect() {
     await browser.close();
   }
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 1));
-  const bad = report.filter((r) => r.overflow.length + r.cutoff.length + r.contrast.length);
+  const bad = report.filter((r) => r.overflow.length + r.cutoff.length + r.contrast.length + r.cramped.length);
   console.log(`\n${report.length} screenshots in ${OUT}; ${bad.length} with something flagged.`);
   process.exit(strict && bad.length ? 1 : 0);
 })();

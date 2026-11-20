@@ -27,6 +27,17 @@ find . -name '*.md' -not -path './.*/*' | while read -r f; do
 done
 git config --global --add safe.directory /v 2>/dev/null
 git log --since='7 days ago' --name-only --pretty=format:'C%x09%ct' 2>/dev/null | grep -v '^$'
+# What changed in the last day, per page: lines added and removed, and the first new lines (Home shows
+# them as a short "what was added", not the file's path).
+base=$(git rev-list -1 --before='24 hours ago' HEAD 2>/dev/null)
+[ -n "$base" ] || base=4b825dc642cb6eb9a060e54bf8d69288fbee4904      # no history that old: compare with an empty brain
+if [ -n "$base" ]; then
+  git diff --numstat "$base" HEAD -- '*.md' 2>/dev/null | while IFS="$(printf '\t')" read -r a r f; do
+    printf 'D\t%s\t%s\t%s\n' "$f" "$a" "$r"
+    git diff -U0 "$base" HEAD -- "$f" 2>/dev/null | grep '^+[^+]' | head -12 | cut -c2-200 | tr '\t' ' ' \
+      | while read -r l; do printf 'A\t%s\t%s\n' "$f" "$l"; done
+  done
+fi
 '''
 _SEARCH = r'''
 cd /v 2>/dev/null || exit 0
@@ -71,11 +82,46 @@ def title_of(path: str, heading: str = "") -> str:
     return heading.strip() or path.rsplit("/", 1)[-1][:-3]
 
 
+_MD = [(re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?"), ""),          # bullets, numbers, to-do boxes
+       (re.compile(r"\[\[([^\]|]+)\|([^\]]+)\]\]"), r"\2"), (re.compile(r"\[\[([^\]]+)\]\]"), r"\1"),
+       (re.compile(r"\[([^\]]+)\]\([^)]+\)"), r"\1"), (re.compile(r"[*_`]{1,3}"), ""), (re.compile(r"\s+"), " ")]
+_FRONT = re.compile(r"^(?:---+|[A-Za-z_-]+:\s.*|[A-Za-z_-]+:)$")
+
+
+def plain(line: str) -> str:
+    """One line of markdown as plain words: no bullets, links, emphasis or front-matter keys."""
+    line = line.strip()
+    if not line or _FRONT.match(line):
+        return ""
+    for pat, to in _MD:
+        line = pat.sub(to, line)
+    return line.strip()
+
+
+def summary_of(added: List[str]) -> str:
+    """What was added to a page, in a line: its first two lines of text, else a new heading."""
+    text = [plain(l) for l in added if not l.lstrip().startswith("#")]
+    text = [t for t in text if len(t) > 2]
+    if not text:
+        heads = [plain(l.lstrip("# ")) for l in added if l.lstrip().startswith("#")]
+        return f"New section: {heads[0]}" if heads and heads[0] else ""
+    s = text[0] if len(text[0]) >= 60 or len(text) == 1 else f"{text[0]} · {text[1]}"
+    return s if len(s) <= 140 else s[:139].rsplit(" ", 1)[0] + "…"
+
+
 def parse_listing(out: str) -> Dict[str, list]:
     """Turn the listing script's output into ``{"pages": [...], "changes": [...]}``."""
     pages, changes, conflicts, seen = [], [], [], set()
-    stamp = 0
+    stamp, sizes, added = 0, {}, {}
     for line in out.splitlines():
+        if line.startswith("D\t"):
+            _, path, a, r = (line.split("\t", 3) + ["", ""])[:4]
+            sizes[path] = (int(a) if a.isdigit() else 0, int(r) if r.isdigit() else 0)
+            continue
+        if line.startswith("A\t"):
+            _, path, text = (line.split("\t", 2) + [""])[:3]
+            added.setdefault(path, []).append(text)
+            continue
         if line.startswith("P\t"):
             _, path, mtime, heading = (line.split("\t", 3) + [""])[:4]
             folder = path.split("/", 1)[0] if "/" in path else ""
@@ -91,7 +137,9 @@ def parse_listing(out: str) -> Dict[str, list]:
             seen.add(line)
             changes.append({"path": line, "when": stamp})
     known = {p["path"]: p["title"] for p in pages}
-    changes = [{**c, "title": known[c["path"]]} for c in changes if c["path"] in known]
+    changes = [{**c, "title": known[c["path"]], "summary": summary_of(added.get(c["path"], [])),
+                "added": sizes.get(c["path"], (0, 0))[0], "removed": sizes.get(c["path"], (0, 0))[1]}
+               for c in changes if c["path"] in known]
     pages.sort(key=lambda p: (p["folder"], -p["modified"] if p["folder"] in ("daily", "inbox") else 0, p["title"].lower()))
     for c in conflicts:
         c["title"] = known.get(c["of"], title_of(c["of"]))
