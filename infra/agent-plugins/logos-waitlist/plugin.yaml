@@ -11,3 +11,5 @@ provides_hooks:
   - transform_api_error_classification
   - api_request_error
   - pre_gateway_dispatch
+  - post_api_request
+  - pre_llm_call
