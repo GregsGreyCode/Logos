@@ -50,7 +50,7 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
 # Logos' own hermes plugins (infra/agent-plugins/<name>/), copied into the home by `up`.
-LOGOS_PLUGINS = ("logos-waitlist",)
+LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
@@ -418,8 +418,10 @@ class AgentRuntime:
         if vh.uses_voice(agent) and voice_token:
             # Voice notes are turned into text by the shared voice service (docs/voice.md).
             # hermes calls it as an OpenAI-style transcription endpoint.
-            # echo_transcripts off: the agent answers a voice note without first posting what it heard.
-            cfg["stt"] = {"enabled": True, "provider": "openai", "echo_transcripts": False,
+            # echo_transcripts: post what was heard before the answer, so the person can check it was
+            # understood. Off unless the agent's yaml says `voice_echo: true` (Béré asked for it).
+            cfg["stt"] = {"enabled": True, "provider": "openai",
+                          "echo_transcripts": bool(agent.get("voice_echo", False)),
                           "openai": {"api_key": voice_token, "base_url": vh.VoiceHost(self).base_url(),
                                      "model": "whisper-1"}}
         else:
