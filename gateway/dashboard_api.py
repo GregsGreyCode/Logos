@@ -1053,6 +1053,100 @@ async def handle_models(request: web.Request) -> web.Response:
     return web.json_response(data)
 
 
+# ── the local model server (LM Studio) ──────────────────────────────────────
+
+def _local_definitions(runtime: Any) -> Dict[str, Mapping[str, Any]]:
+    out = {}
+    for name in runtime.defined():
+        d = runtime.load(name)
+        if d.get("sandbox", True) is not False and d.get("dashboard") is not False:
+            out[name] = d
+    return out
+
+
+def local_model_view(runtime: Any) -> dict:
+    """Everything the "Local model" section shows, one block per LM Studio server. Blocking."""
+    from gateway import model_gateway, model_server
+    http = runtime.runner.http
+    known = model_server.hardware(runtime.env)
+    servers = []
+    for base, want in sorted(model_server.wanted(_local_definitions(runtime)).items()):
+        key = model_server.server_key(base)
+        hw = known.get(key, {})
+        view: Dict[str, Any] = {"server": key, "want": want, "up": False, "hardware": hw}
+        try:
+            listed = [model_server.describe(m) for m in model_server.models(http, base)]
+            vram = float(hw.get("vram_gb") or 0)
+            ours = next((m for m in listed if m["key"] in want), None)
+            view.update(up=True, loaded=[m for m in listed if m["instances"]], downloaded=len(listed),
+                        checks=model_server.checks(want, listed, vram), advice=model_server.advice(ours, vram))
+        except Exception as e:
+            view["error"] = f"LM Studio did not answer ({type(e).__name__})."
+            view["advice"] = model_server.advice(None, float(hw.get("vram_gb") or 0))
+        servers.append(view)
+    gw = model_gateway.ModelGateway(runtime)
+    logs = runtime.runner.run(["docker", "logs", "--since", "168h", model_gateway.GUARD_CONTAINER])
+    return {"servers": servers,
+            "queue": model_server.queue(http, f"http://{gw.bind_address()}:{model_gateway.GUARD_PORT}/guard/health"),
+            "speed": model_server.speed(((logs.stdout or "") + (logs.stderr or "")).splitlines())}
+
+
+async def handle_local_model(request: web.Request) -> web.Response:
+    """GET /api/v2/models/local — each LM Studio server: what is loaded, checks, advice; the queue and speed."""
+    _user(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    view = await asyncio.to_thread(local_model_view, runtime)
+    view["can_change"] = _user(request)["role"] == "admin"
+    return web.json_response(view)
+
+
+async def handle_local_model_action(request: web.Request) -> web.Response:
+    """POST /api/v2/models/local/{action} with {"server": "host:port", ...}. Admin only.
+    ``reload``: the agents' model on that server, with Logos's window. ``unload``: {"instance"} of a
+    model no agent uses. ``hardware``: {"gpu", "vram_gb"} for that server (0 forgets it). Only servers
+    an agent definition names can be acted on."""
+    from gateway import model_server
+    if _user(request)["role"] != "admin":
+        return web.json_response({"error": "forbidden"}, status=403)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    servers = {model_server.server_key(b): (b, w) for b, w in model_server.wanted(_local_definitions(runtime)).items()}
+    key = str(body.get("server") or "")
+    if key not in servers:
+        return web.json_response({"error": "unknown_server"}, status=400)
+    base, want = servers[key]
+    action, who = request.match_info["action"], _user(request)["username"]
+    try:
+        if action == "reload":
+            model, w = next(iter(sorted(want.items())))
+            config = await asyncio.to_thread(model_server.reload, runtime.runner.http, base, model, w["load"])
+            logger.info("local model reloaded by %s: %s on %s", who, model, key)
+            return web.json_response({"done": "reloaded", "model": model, "config": config.get("load_config")})
+        if action == "unload":
+            instance = str(body.get("instance") or "")
+            await asyncio.to_thread(model_server.unload, runtime.runner.http, base, instance, sorted(want))
+            logger.info("local model unloaded by %s: %s on %s", who, instance, key)
+            return web.json_response({"done": "unloaded", "instance": instance})
+        if action == "hardware":
+            saved = await asyncio.to_thread(model_server.set_hardware, runtime.env, key,
+                                            str(body.get("gpu") or ""), body.get("vram_gb") or 0)
+            logger.info("model server hardware set by %s for %s", who, key)
+            return web.json_response({"done": "saved", "hardware": saved})
+    except (ValueError, TypeError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        return web.json_response({"error": f"LM Studio refused ({type(e).__name__})."}, status=502)
+    return web.json_response({"error": "unknown_action"}, status=404)
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
@@ -1063,6 +1157,8 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/home", handle_home)
     app.router.add_get("/api/v2/model", handle_model)
     app.router.add_get("/api/v2/models", handle_models)
+    app.router.add_get("/api/v2/models/local", handle_local_model)
+    app.router.add_post("/api/v2/models/local/{action}", require_csrf(handle_local_model_action))
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
     app.router.add_get("/api/v2/agents/{name}/brain/search", handle_brain_search)
