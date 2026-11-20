@@ -76,13 +76,13 @@ export async function advisorView(root) {
   async function paint() {
     let d;
     try { d = await getJSON('/api/v2/advisor'); } catch (e) {
-      root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Advisor'),
+      root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor'),
         h('div', { class: 'notice' }, e.status === 503 ? 'The advisor is not running yet.' : 'Could not load the advisor.')));
       return;
     }
     if (!alive) return;
     const b = d.budget;
-    const parts = [h('h1', {}, 'Advisor'),
+    const parts = [h('h1', {}, 'Claude Advisor'),
       h('p', { class: 'when' }, `Your agent can ask Claude, outside the house, when you agree. ${b.month}: ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used, ${usd(b.left_usd)} left.`)];
     if (!d.key) parts.push(h('div', { class: 'notice' }, 'No Anthropic key is set up yet, so nothing can be sent.'));
     parts.push(budgetBox(d, paint));
