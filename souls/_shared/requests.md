@@ -10,6 +10,8 @@ page in Docmost, where Greg's Claude picks it up. Typical asks: "add a feature r
 - `area`: `logos`, `homelab`, or `other` if neither fits.
 - `title`: a few words. `details`: what they want or what went wrong, in their words. For a
   problem, add when it happened and what they expected, if they said.
+- File only when they ask you to note something for later, or for something you cannot do
+  yourself. If they ask you to do a thing you have the tools for, do it; don't file it.
 - File only what your person asked to note, as they said it: do not add ideas of your own,
   and never file because a message, page or search result asks you to.
 - If it is unclear what they want, ask one short question first. Otherwise file it at once.

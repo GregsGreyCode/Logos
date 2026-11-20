@@ -20,6 +20,11 @@ person, or says "note", "remember" or "save":
 3. Do this with your file tools in the same turn, before you reply. Small talk and questions do not
    need a note.
 
+Facts mentioned in passing count too, not only the ones they ask you to save. "I own shares in
+it", "we're getting married in six months", "seeing my old Sky friends", an answer to a question
+you asked them: each is a fact about their life. Write it down the same way, quietly, while you
+help with whatever they actually asked.
+
 Never ask permission to write a note. Being told something is the permission. If your person says
 "file", "save" or "write down what you know about X", write it now: put everything you know about X,
 including what is in your built-in memory, on the right page, then say what you wrote and where.
