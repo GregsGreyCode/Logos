@@ -92,6 +92,20 @@ function columns(days, series, { money = false, label }) {
   return h('div', { class: 'chart-box' }, legend, h('div', { class: 'chart-wrap' }, root, tip));
 }
 
+// P4 on a phone: the whole status as one line of dots; it opens to the details.
+function statusLine(d) {
+  const server = d.status.model_server;
+  const down = d.status.services.filter((s) => !s.up), all = d.status.services.length;
+  const item = (up, text) => h('span', { class: 'status-item' }, h('span', { class: `status ${up ? 'up' : 'down'}` }), text);
+  const items = [
+    server ? item(server.up, server.up ? 'Model server' : 'Model server off') : null,
+    ...down.map((s) => item(false, `${s.name} down`)),
+    down.length ? h('span', { class: 'status-item when' }, `${all - down.length} of ${all} services up`) : item(true, `All ${all} services up`)];
+  return h('details', { class: 'status-line phone-only' },
+    h('summary', {}, items, h('span', { class: 'status-more' }, 'Details')),
+    h('p', { class: 'when' }, d.status.services.map((s) => `${s.name}: ${s.up ? 'up' : `down (${s.what})`}`).join(' · ')));
+}
+
 function statusTile(title, up, lines) {
   return h('div', { class: 'card tile' },
     h('span', { class: `status ${up ? 'up' : 'down'}` }, up ? 'Up' : 'Down'),
@@ -261,7 +275,7 @@ export async function modelsView(root) {
     const sections = [
       h('h1', {}, 'Models'),
       d.error ? h('div', { class: 'notice' }, d.error) : null,
-      h('section', { 'aria-label': 'Status' }, h('div', { class: 'cards tiles' }, tiles)),
+      h('section', { 'aria-label': 'Status' }, h('div', { class: 'cards tiles wide-only' }, tiles), statusLine(d)),
       await localModel(() => paint()),
       h('section', { 'aria-label': 'Agents' },
         h('h2', { class: 'label' }, paidOn ? `Who answers, and spend in ${d.month}` : 'Who answers'),

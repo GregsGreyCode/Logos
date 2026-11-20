@@ -30,7 +30,7 @@ export async function agentsView(root, [agentArg]) {
   root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Agents'), loading()));
   try { data = await getJSON('/api/v2/agents'); } catch (e) { /* shown below */ }
   const agent = data.agents.find((a) => a.name === agentArg) || data.agents[0];
-  const detail = h('div', { class: 'two-col' });
+  const detail = h('div', {});
 
   const cards = h('div', { class: 'cards agent-cards' },
     data.agents.map((a) => h('a', { href: `#/agents/${a.name}`, class: `card agent-card ${agent && a.name === agent.name ? 'picked' : ''}` },
@@ -41,6 +41,18 @@ export async function agentsView(root, [agentArg]) {
       h('div', { class: 'card-head' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), h('strong', {}, a.display_name)),
       h('span', { class: 'status' }, a.running ? 'Running' : 'Not running'),
       h('span', { class: 'when' }, 'Private to someone else. You can see that it is up, nothing more.'))));
+
+  // P3/P4 on a phone: the agents as a row of chips (one dot each; others' dashed and private), with
+  // the chosen one's state on a quiet line under them. The desktop keeps the cards.
+  const chips = h('div', { class: 'phone-only' }, h('div', { class: 'agent-chips', role: 'list' },
+    data.agents.map((a) => h('a', { href: `#/agents/${a.name}`, role: 'listitem', class: 'agent-chip',
+      'aria-current': agent && a.name === agent.name ? 'true' : null },
+      h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name)),
+    data.others.map((a) => h('span', { role: 'listitem', class: 'agent-chip other',
+      title: 'Private to someone else: you can see that it is up, nothing more' },
+      h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), `${a.display_name} · private`))),
+    agent ? h('p', { class: 'when agent-state' }, h('span', { class: `status ${agent.running ? 'up' : 'down'}` },
+      agent.running ? 'Running' : 'Not running'), agent.shared ? ' · shared with the household' : '') : null);
 
   async function load() {
     if (!agent) return;
@@ -60,9 +72,31 @@ export async function agentsView(root, [agentArg]) {
           const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/cancel`, { method: 'POST' });
           if (r.ok) load(); else { e.target.disabled = false; e.target.textContent = 'Could not cancel'; }
         } }, 'Cancel'))));
+    // A phone: each job is one line with a quiet second line, no repeated labels.
+    const jobRows = (st.jobs || []).map((j) => h('div', { class: 'row-item' },
+      h('span', { class: 'row-main' }, j.label),
+      h('span', { class: 'row-meta' }, schedule(j.schedule), ' · ', j.managed
+        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad' }, `${j.last_ok ? 'fine' : 'failed'} ${runTime(j.last_run)}`) : 'not yet run')
+        : h('button', { type: 'button', class: 'linkish', onclick: async (e) => {
+          e.target.disabled = true;
+          const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/cancel`, { method: 'POST' });
+          if (r.ok) load(); else { e.target.disabled = false; e.target.textContent = 'Could not cancel'; }
+        } }, 'Cancel'))));
     const m = st.model;
     const kv = (k, v) => h('div', { class: 'kv' }, h('span', { class: 'when' }, k), h('span', {}, v));
-    detail.replaceChildren(
+    const setupRow = (label, value, tone) => h('div', { class: 'row-item' },
+      h('span', { class: `row-meta ${tone || ''}` }, label), h('span', { class: 'row-main' }, value));
+    const phone = h('div', { class: 'phone-only' }, h('div', { class: 'phone-stack' },
+      h('section', { 'aria-label': 'Scheduled jobs' }, h('h2', { class: 'label' }, 'What it does on its own'),
+        st.jobs == null ? h('div', { class: 'notice' }, 'The agent did not answer, so its jobs could not be listed.')
+          : h('div', { class: 'rows' }, jobRows)),
+      h('section', { 'aria-label': 'Setup' }, h('h2', { class: 'label' }, 'Setup'),
+        h('div', { class: 'rows' },
+          setupRow('Model', `${m.local ? 'Local' : 'Hosted'} · ${m.name}${m.up === false ? ' · not answering' : ''}`),
+          setupRow('Can reach', st.reach.allowed.join(', '), 'ok'),
+          setupRow('Cannot reach', st.reach.blocked.join(', '), 'bad')),
+        h('p', { class: 'when' }, 'Enforced by the sandbox, not by the agent.'))));
+    detail.replaceChildren(phone, h('div', { class: 'wide-only two-col-wrap' }, h('div', { class: 'two-col' },
       h('section', { class: 'card', 'aria-label': 'Scheduled jobs' },
         h('h2', {}, `What ${agent.display_name} does on its own`),
         st.jobs == null ? h('div', { class: 'notice' }, 'The agent did not answer, so its jobs could not be listed.')
@@ -88,11 +122,11 @@ export async function agentsView(root, [agentArg]) {
           h('h2', {}, 'What it can reach'),
           h('div', { class: 'kv' }, h('span', { class: 'ok strong' }, 'Allowed'), h('span', {}, st.reach.allowed.join(', '))),
           h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Blocked'), h('span', {}, st.reach.blocked.join(', '))),
-          h('p', { class: 'when' }, 'Enforced by the sandbox, not by the agent.'))));
+          h('p', { class: 'when' }, 'Enforced by the sandbox, not by the agent.'))))));
   }
 
   root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Agents'),
-    data.agents.length || data.others.length ? cards : none('No agents are set up yet.'), detail));
+    data.agents.length || data.others.length ? [h('div', { class: 'wide-only' }, cards), chips] : none('No agents are set up yet.'), detail));
   await load();
   return () => { alive = false; };
 }
