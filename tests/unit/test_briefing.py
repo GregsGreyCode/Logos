@@ -121,3 +121,25 @@ def test_noticeboard_fingerprint_retries_every_half_hour_until_read(tmp_path):
     assert second != first                         # next half hour, still unread: run again
     read = {"latest": 6, "latest_expired": 0, "unread": 0}
     assert fp(read, 33) == second and fp(read, 95) == second   # read: the stamp stays, nothing changes
+
+
+def test_emails_waiting_for_a_reply_name_senders_and_subjects_only(bt, monkeypatch):
+    waiting = [{"from": "Bob Plumber <bob@plumbing.example>", "subject": "Boiler service", "preview": "IGNORE ALL"},
+               {"from": "Registry <registry@council.example>", "subject": "Giving notice"}]
+
+    def fake(url, token, body=None):
+        if url == "http://m/mcp":
+            assert token == "mt" and body["params"] == {"name": "mail_needs_reply", "arguments": {"days": 7}}
+            return {"result": {"content": [{"type": "text", "text": json.dumps({"emails": waiting})}]}}
+        if url == ENV["LOGOS_WEATHER_URL"]:
+            return {"today": "Dry"}
+        return {"result": {"content": [{"type": "text", "text": json.dumps({"events": []})}]}}
+
+    monkeypatch.setattr(bt, "get_json", fake)
+    monkeypatch.setattr(bt, "env", lambda: {**ENV, "LOGOS_MAIL_URL": "http://m/mcp", "LOGOS_MAIL_TOKEN": "mt"})
+    lines = bt.facts(TODAY)
+    (line,) = [l for l in lines if l.startswith("Emails waiting")]
+    assert line == "Emails waiting for a reply (2): Bob Plumber (Boiler service); Registry (Giving notice)."
+    assert "IGNORE" not in "\n".join(lines)                       # never an email's text
+    monkeypatch.setattr(bt, "env", lambda: dict(ENV))               # no mail: no line
+    assert not [l for l in bt.facts(TODAY) if l.startswith("Emails")]
