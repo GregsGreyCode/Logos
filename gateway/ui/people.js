@@ -6,7 +6,8 @@ const slug = (name) => name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCas
 
 export async function peopleView(root, _args, state) {
   let alive = true;
-  const table = h('div', { class: 'table-box' }, loading());
+  const table = h('div', { class: 'table-box wide-only' }, loading());
+  const phoneList = h('div', { class: 'rows phone-only' }, loading());
   const admin = h('div', { class: 'stack' });
 
   async function load() {
@@ -16,6 +17,14 @@ export async function peopleView(root, _args, state) {
       return;
     }
     if (!alive) return;
+    // A phone (P3): each person on one row with chips for the agents they can use; the desktop keeps the table.
+    phoneList.replaceChildren(...d.people.map((p) => h('div', { class: 'row-item person-row' },
+      h('span', { class: 'row-main' }, h('strong', {}, p.display_name), ' ',
+        h('span', { class: 'when' }, p.is_you ? 'you' : p.signed_in_before ? `signs in as ${p.username}` : `not signed in yet · ${p.username}`)),
+      h('span', { class: 'chip-row' },
+        d.agents.filter((a) => p.agents[a.name]).map((a) => h('span', { class: 'chip-pill' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name)),
+        p.is_admin ? h('span', { class: 'chip-pill attn' }, 'Manages Logos') : null,
+        d.agents.some((a) => p.agents[a.name]) ? null : h('span', { class: 'when' }, 'No agents')))));
     table.replaceChildren(h('table', {},
       h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Person'),
         d.agents.map((a) => h('th', { scope: 'col' }, a.display_name)), h('th', { scope: 'col' }, 'Can manage Logos'))),
@@ -67,7 +76,7 @@ export async function peopleView(root, _args, state) {
   root.replaceChildren(h('div', { class: 'page' },
     h('header', {}, h('h1', {}, 'People'),
       h('p', { class: 'when lead' }, 'Who can sign in, and whose agent and brain each person can use. An agent is private to its person, and that includes from whoever manages Logos.')),
-    table,
+    table, phoneList,
     h('p', { class: 'when' }, 'Who owns an agent is set in its definition on the server (owners in agents/<name>.yaml). What an agent may share with other agents is written in its brain, on the page "What may be shared with other agents".'),
     h('p', { class: 'when' }, 'Your own name and password are in ', h('a', { href: '#/settings/account' }, 'Settings'), '.'),
     h('div', { class: 'two-col' }, admin)));

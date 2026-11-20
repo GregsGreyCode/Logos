@@ -776,3 +776,33 @@ dialog.appearance .label { margin: 16px 0 8px; }
 /* The Claude Advisor notice is a card shape, not a pill */
 .notice { border-radius: var(--r-small); }
 .home-quiet { padding: 0; }
+
+/* ── P3 / P4 on a phone: rows with a quiet second line; chips; one status line ───────────────── */
+.rows { display: flex; flex-direction: column; }
+.row-item { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.rows > .row-item:last-child { border-bottom: 0; }
+.row-main { font-size: 15px; line-height: 20px; overflow-wrap: anywhere; }
+.row-meta { font-size: var(--t-sm); line-height: 18px; color: var(--muted); }
+.row-meta.ok { color: var(--ok); } .row-meta.bad { color: var(--bad); }
+.phone-stack { display: flex; flex-direction: column; gap: 24px; }
+.phone-stack > section { display: flex; flex-direction: column; gap: 4px; }
+.agent-chips, .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-chip, .chip-pill { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px;
+  border: 1px solid var(--line); border-radius: 18px; color: var(--ink); text-decoration: none; font-size: var(--t-sm); font-weight: 500; }
+.chip-pill { min-height: 28px; padding: 0 12px; background: var(--chip); border-color: transparent; }
+.chip-pill.attn { background: transparent; border-color: var(--warn-ink); color: var(--warn-ink); font-weight: 600; }
+.agent-chip[aria-current="true"] { border-color: var(--accent-text); background: var(--accent-soft); font-weight: 600; }
+.agent-chip.other { border-style: dashed; color: var(--muted); }
+.agent-state { margin: 10px 0 0 !important; }
+.person-row { gap: 8px; padding: 14px 0; }
+.status-line > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 12px 0; cursor: pointer;
+  list-style: none; border-bottom: 1px solid var(--line); }
+.status-line > summary::-webkit-details-marker { display: none; }
+.status-item { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-md); }
+.status-more { margin-left: auto; color: var(--accent-text); font-size: var(--t-sm); }
+.status-line[open] .status-more::after { content: " ▴"; }
+.status-line p { margin: 8px 0 0; line-height: 20px; }
+@media (max-width: 720px) {
+  .phone-only { display: block !important; }
+  .page section .rows { margin-top: 0; }
+}
