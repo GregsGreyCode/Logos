@@ -16,8 +16,9 @@ reply. The guard holds a reply's headers until its first bytes arrive; if those 
 refusal, it waits and sends the request again, within the same minute. A request that really
 is too large still fails after that, and hermes then shortens the conversation itself.
 
-It keeps nothing, and changes one thing in the traffic (:func:`fix_reasoning`): models whose
-reasoning is only on or off get no ``reasoning_effort`` level they cannot take. Stdlib only;
+It keeps nothing, and changes two things in the traffic: models whose reasoning is only on or
+off get no ``reasoning_effort`` level they cannot take (:func:`fix_reasoning`), and a chat request
+that sets no presence penalty gets one (:func:`add_presence_penalty`), against thinking that loops. Stdlib only;
 runs in the ``logos-model-guard`` container (see :mod:`gateway.model_gateway`).
 """
 from __future__ import annotations
@@ -74,6 +75,26 @@ def fix_reasoning(path: str, body: bytes, options_for) -> bytes:
     if not options or not options <= {"off", "on"}:
         return body
     del req["reasoning_effort"]
+    return json.dumps(req).encode()
+
+
+# Qwen's advice against endless repetition in thinking mode. Without it the local model sometimes
+# repeats itself in its reasoning until hermes cuts the stream ("runaway repetition loop"): four
+# failed turns on 19-20 Nov, each after 5 to 11 minutes of silence.
+PRESENCE_PENALTY = 1.5
+
+
+def add_presence_penalty(path: str, body: bytes) -> bytes:
+    """Give a chat request :data:`PRESENCE_PENALTY` unless it sets its own. Anything else passes."""
+    if not path.split("?", 1)[0].endswith("/chat/completions") or b"presence_penalty" in body:
+        return body
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(req, dict):
+        return body
+    req["presence_penalty"] = PRESENCE_PENALTY
     return json.dumps(req).encode()
 
 
@@ -185,7 +206,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 return self._health()
             body = self._body()
             if self.command == "POST":
-                body = fix_reasoning(self.path, body, options_for)
+                body = add_presence_penalty(self.path, fix_reasoning(self.path, body, options_for))
             # Only model requests wait; lookups (model lists, health) get their answer at once.
             known = time.monotonic() - state["known_off_at"] < known_off
             deadline = time.monotonic() + (wait if self.command == "POST" and not known else 0)
