@@ -148,7 +148,7 @@ network_policies:
               method: tools/call
               tool:
                 any: [list_lights, set_lights, list_scenes, activate_scene,
-                      list_items, add_items, tick_items, remove_items]
+                      list_items, add_items, change_item, tick_items, remove_items]
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 

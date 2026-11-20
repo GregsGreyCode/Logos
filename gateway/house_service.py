@@ -42,6 +42,8 @@ SUPPORTED_DOMAINS = ("light", "scene", "todo")
 SERVICES = {("light", "turn_on"), ("light", "turn_off"), ("scene", "turn_on"),
             ("todo", "add_item"), ("todo", "update_item"), ("todo", "remove_item")}
 MAX_ITEMS = 30                  # items in one call
+TITLE_MAX = 60                  # the Home Assistant app cuts longer titles in the list; the rest goes in details
+SET_DUE_DATE, SET_DESCRIPTION = 16, 64   # Home Assistant TodoListEntityFeature bits
 #: Never, whatever the definition says: these need a confirmation step first.
 NEVER = ("lock", "alarm_control_panel", "climate", "cover", "camera", "siren", "valve", "water_heater")
 MAX_TARGETS = 40
@@ -253,6 +255,30 @@ def clean_item(text: Any) -> str:
     return item
 
 
+def clean_due(value: Any) -> str:
+    """A due date as YYYY-MM-DD, or ''."""
+    due = str(value or "").strip()
+    if due and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", due):
+        raise Refused("A due date is written YYYY-MM-DD (run date first to work it out).")
+    return due
+
+
+def entry(raw: Any) -> Dict[str, str]:
+    """One item to add: a plain string, or {"item", "details", "due"}."""
+    if isinstance(raw, dict):
+        out = {"item": clean_item(raw.get("item")), "details": str(raw.get("details") or "").strip(),
+               "due": clean_due(raw.get("due"))}
+    else:
+        out = {"item": clean_item(raw), "details": "", "due": ""}
+    if len(out["details"]) > 1000:
+        raise Refused("Details are at most 1000 characters.")
+    if len(out["item"]) > TITLE_MAX:
+        raise Refused(f"'{out['item'][:40]}...' is too long for a title ({len(out['item'])} characters; the app "
+                      f"cuts them after about {TITLE_MAX}). Keep the title short in their words and put "
+                      "the rest in details.")
+    return out
+
+
 def light_view(s: Dict[str, Any]) -> Dict[str, Any]:
     a = s.get("attributes") or {}
     out: Dict[str, Any] = {"name": House.name(s), "state": s.get("state")}
@@ -387,8 +413,22 @@ class Service:
     # shared lists
 
     def _items(self, eid: str) -> List[Dict[str, Any]]:
-        return [{"item": str(i.get("summary") or ""), "done": i.get("status") == "completed"}
+        return [{"item": str(i.get("summary") or ""), "done": i.get("status") == "completed",
+                 "details": str(i.get("description") or ""), "due": str(i.get("due") or "")}
                 for i in self.ha.todo_items(eid)]
+
+    @staticmethod
+    def _show(i: Dict[str, Any]) -> Any:
+        """An item for the agent: its title, or the title with its details and due date."""
+        extra = {k: i[k] for k in ("details", "due") if i.get(k)}
+        return {"item": i["item"], **extra} if extra else i["item"]
+
+    @staticmethod
+    def _features(h: "House", eid: str) -> int:
+        try:
+            return int((h.lists[eid].get("attributes") or {}).get("supported_features") or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _match(self, eid: str, items: Any) -> List[str]:
         """The items on the list as written there, for names the agent gave (case and spacing
@@ -418,7 +458,7 @@ class Service:
         for eid in eids:
             items = self._items(eid)
             lists.append({"list": h.name(h.lists[eid]),
-                          "open": [i["item"] for i in items if not i["done"]],
+                          "open": [self._show(i) for i in items if not i["done"]],
                           **({"done": [i["item"] for i in items if i["done"]]} if done is True else {})})
         self.log(f"{agent} list_items {','.join(eids)}")
         return {"lists": lists}
@@ -430,19 +470,32 @@ class Service:
         wanted = items if isinstance(items, list) else [items]
         if not wanted or len(wanted) > MAX_ITEMS:
             raise Refused(f"Add between 1 and {MAX_ITEMS} items.")
+        entries = [entry(raw) for raw in wanted]          # check them all before changing anything
+        features = self._features(h, eid)
         current = {i["item"].strip().lower(): i for i in self._items(eid)}
-        added, already, reopened = [], [], []
-        for raw in wanted:
-            item = clean_item(raw)
+        added, already, reopened, dropped = [], [], [], []
+        for e in entries:
+            item = e["item"]
+            extra: Dict[str, Any] = {}
+            if e["details"]:
+                if features & SET_DESCRIPTION:
+                    extra["description"] = e["details"]
+                else:
+                    dropped.append(item)
+            if e["due"]:
+                if features & SET_DUE_DATE:
+                    extra["due_date"] = e["due"]
+                else:
+                    dropped.append(item)
             have = current.get(item.lower())
             if have and not have["done"]:
                 already.append(have["item"])
             elif have:
                 self.ha.service("todo", "update_item", {"entity_id": eid, "item": have["item"],
-                                                        "status": "needs_action"})
+                                                        "status": "needs_action", **extra})
                 reopened.append(have["item"])
             else:
-                self.ha.service("todo", "add_item", {"entity_id": eid, "item": item})
+                self.ha.service("todo", "add_item", {"entity_id": eid, "item": item, **extra})
                 current[item.lower()] = {"item": item, "done": False}
                 added.append(item)
         self.log(f"{agent} add_items {eid}: {len(added)} added, {len(reopened)} back, {len(already)} already")
@@ -451,7 +504,37 @@ class Service:
             out["back_on_the_list"] = reopened
         if already:
             out["already_on_it"] = already
+        if dropped:
+            out["details_not_kept"] = sorted(set(dropped))
+            out["note"] = "This list cannot hold details or due dates; only the titles were saved."
         return out
+
+    def change_item(self, agent: str, list_name: str, item: Any, new_title: Any = None,
+                    details: Any = None, due: Any = None) -> Dict[str, Any]:
+        """Rename an item, or set its details or due date ("" clears them)."""
+        self._need(agent, "todo")
+        h = self.house(agent)
+        eid = h.resolve_list(list_name)
+        name = self._match(eid, [item])[0]
+        data: Dict[str, Any] = {"entity_id": eid, "item": name}
+        if new_title not in (None, ""):
+            data["rename"] = entry(new_title)["item"]
+        features = self._features(h, eid)
+        if details is not None:
+            if not features & SET_DESCRIPTION:
+                raise Refused("This list cannot hold details.")
+            if len(str(details)) > 1000:
+                raise Refused("Details are at most 1000 characters.")
+            data["description"] = str(details).strip()
+        if due is not None:
+            if not features & SET_DUE_DATE:
+                raise Refused("This list cannot hold due dates.")
+            data["due_date"] = clean_due(due) or None
+        if len(data) == 2:
+            raise Refused("Say what to change: new_title, details or due.")
+        self.ha.service("todo", "update_item", data)
+        self.log(f"{agent} change_item {eid}")
+        return {"list": h.name(h.lists[eid]), "changed": data.get("rename", name)}
 
     def tick_items(self, agent: str, list_name: str, items: Any) -> Dict[str, Any]:
         self._need(agent, "todo")
@@ -514,9 +597,25 @@ TOOLS = [
                      "goes back on."),
      "inputSchema": {"type": "object", "properties": {
          "list": {"type": "string", "description": "e.g. 'shopping'. Can be left out when there is one list."},
-         "items": {"type": "array", "items": {"type": "string"},
-                   "description": "One entry per item, as a person would write it: ['peas', 'pasta', '2 lemons']."}},
+         "items": {"type": "array", "items": {"anyOf": [
+             {"type": "string"},
+             {"type": "object", "properties": {
+                 "item": {"type": "string", "description": "A short title in their words (at most 60 characters)."},
+                 "details": {"type": "string", "description": "The rest of what they said, shown under the title."},
+                 "due": {"type": "string", "description": "YYYY-MM-DD, when they gave a date."}},
+              "required": ["item"]}]},
+                   "description": ("One entry per item: a plain title ('2 lemons'), or {item, details, due} when "
+                                   "there is more to say than fits a short title.")}},
          "required": ["items"]}},
+    {"name": "change_item",
+     "description": "Rename an item on a shared list, or set its details or due date ('' clears them).",
+     "inputSchema": {"type": "object", "properties": {
+         "list": {"type": "string"},
+         "item": {"type": "string", "description": "The item as it is on the list now."},
+         "new_title": {"type": "string"},
+         "details": {"type": "string"},
+         "due": {"type": "string", "description": "YYYY-MM-DD, or '' to clear."}},
+         "required": ["item"]}},
     {"name": "tick_items",
      "description": "Tick items off a shared list (bought, or done). They stay on it as done until removed.",
      "inputSchema": {"type": "object", "properties": {
@@ -530,7 +629,7 @@ TOOLS = [
          "items": {"type": "array", "items": {"type": "string"}}},
          "required": ["items"]}},
 ]
-LIST_TOOLS = {"list_items", "add_items", "tick_items", "remove_items"}
+LIST_TOOLS = {"list_items", "add_items", "change_item", "tick_items", "remove_items"}
 
 
 def tools_for(svc: Service, agent: str) -> List[Dict[str, Any]]:
@@ -566,6 +665,8 @@ def handle_rpc(svc: Service, agent: str, req: Dict[str, Any]) -> Optional[Dict[s
             "activate_scene": lambda: svc.activate_scene(agent, args.get("scene") or "", args.get("room") or ""),
             "list_items": lambda: svc.list_items(agent, args.get("list") or "", args.get("done")),
             "add_items": lambda: svc.add_items(agent, args.get("list") or "", args.get("items")),
+            "change_item": lambda: svc.change_item(agent, args.get("list") or "", args.get("item"),
+                                                   args.get("new_title"), args.get("details"), args.get("due")),
             "tick_items": lambda: svc.tick_items(agent, args.get("list") or "", args.get("items")),
             "remove_items": lambda: svc.remove_items(agent, args.get("list") or "", args.get("items")),
         }

@@ -332,8 +332,9 @@ class FakeTodoHA(FakeHA):
 
     def __init__(self, lists):
         self.lists = {eid: [dict(i) for i in items] for eid, (_, items) in lists.items()}
-        super().__init__(STATES + [{"entity_id": eid, "state": str(len(items)), "attributes": {"friendly_name": name}}
-                                   for eid, (name, items) in lists.items()])
+        super().__init__(STATES + [{"entity_id": eid, "state": str(len(items)), "attributes": {
+            "friendly_name": name, "supported_features": 15 if "shopping" in eid else 127}}
+            for eid, (name, items) in lists.items()])
 
     def __call__(self, method, url, headers, body):
         status, raw = super().__call__(method, url, headers, body)
@@ -343,11 +344,20 @@ class FakeTodoHA(FakeHA):
             eid = data["entity_id"]
             return 200, json.dumps({"changed_states": [], "service_response": {eid: {"items": self.lists[eid]}}}).encode()
         if url.endswith("/api/services/todo/add_item"):
-            self.lists[data["entity_id"]].append({"summary": data["item"], "status": "needs_action"})
+            new = {"summary": data["item"], "status": "needs_action"}
+            new.update({k: data[v] for k, v in (("description", "description"), ("due", "due_date")) if v in data})
+            self.lists[data["entity_id"]].append(new)
         elif url.endswith("/api/services/todo/update_item"):
             for i in self.lists[data["entity_id"]]:
                 if i["summary"] == data["item"]:
-                    i["status"] = data["status"]
+                    if "status" in data:
+                        i["status"] = data["status"]
+                    if "description" in data:
+                        i["description"] = data["description"]
+                    if "due_date" in data:
+                        i["due"] = data["due_date"]
+                    if "rename" in data:
+                        i["summary"] = data["rename"]
         elif url.endswith("/api/services/todo/remove_item"):
             self.lists[data["entity_id"]] = [i for i in self.lists[data["entity_id"]] if i["summary"] not in data["item"]]
         return status, raw
@@ -438,6 +448,8 @@ def test_lists_mirror_writes_only_when_the_lists_change(tmp_path):
     page = tmp_path / "lists.md"
     lists = [{"list": "Shopping list", "open": ["Peas", "2 lemons"]}, {"list": "To-do", "open": []}]
     text = lm.render(lists)
+    rich = lm.render([{"list": "To-do", "open": [{"item": "Ceremony", "details": "banns, hymns", "due": "2026-12-01"}]}])
+    assert "- [ ] Ceremony (due 2026-12-01)\n    banns, hymns\n" in rich
     assert "- [ ] Peas\n- [ ] 2 lemons\n" in text and "## To-do\n\nNothing on it." in text
     assert "Do not edit it here" in text
     assert lm.write_if_changed(text, str(page)) is True
@@ -446,3 +458,38 @@ def test_lists_mirror_writes_only_when_the_lists_change(tmp_path):
     assert lm.write_if_changed(text, str(page)) is False and page.read_text() == first
     assert lm.write_if_changed(lm.render([{"list": "Shopping list", "open": ["Peas"]}]), str(page)) is True
     assert "2 lemons" not in page.read_text()
+
+
+def test_short_titles_with_details_and_due_dates():
+    svc, fake = lists_service({"todo.to_do": ("To-do", []), "todo.shopping_list": ("Shopping list", [])})
+    got = svc.add_items("household", "to-do", [
+        {"item": "Ceremony arrangements", "details": "calling of banns, hymns, music and order of ceremony",
+         "due": "2026-12-01"}, "Look for choreographer"])
+    assert got == {"list": "To-do", "added": ["Ceremony arrangements", "Look for choreographer"]}
+    assert fake.lists["todo.to_do"][0] == {"summary": "Ceremony arrangements", "status": "needs_action",
+                                          "description": "calling of banns, hymns, music and order of ceremony",
+                                          "due": "2026-12-01"}
+    assert svc.list_items("household", "to-do")["lists"][0]["open"] == [
+        {"item": "Ceremony arrangements", "details": "calling of banns, hymns, music and order of ceremony",
+         "due": "2026-12-01"}, "Look for choreographer"]
+    with pytest.raises(hs.Refused, match="too long for a title"):
+        svc.add_items("household", "to-do", ["x" * 61])
+    with pytest.raises(hs.Refused, match="YYYY-MM-DD"):
+        svc.add_items("household", "to-do", [{"item": "Rings", "due": "next week"}])
+    got = svc.add_items("household", "shopping", [{"item": "Milk", "details": "oat"}])   # no details on this list
+    assert got["added"] == ["Milk"] and got["details_not_kept"] == ["Milk"]
+
+
+def test_change_item_renames_and_sets_details():
+    svc, fake = lists_service({"todo.to_do": ("To-do", [
+        {"summary": "[Wedding] Book flat to give notice and prepare docs needed", "status": "needs_action"}]),
+        "todo.shopping_list": ("Shopping list", [{"summary": "Peas", "status": "needs_action"}])})
+    got = svc.change_item("household", "to-do", "book flat", "Book appointment to give notice",
+                          "and prepare the documents needed")
+    assert got == {"list": "To-do", "changed": "Book appointment to give notice"}
+    assert fake.lists["todo.to_do"][0]["summary"] == "Book appointment to give notice"
+    assert fake.lists["todo.to_do"][0]["description"] == "and prepare the documents needed"
+    with pytest.raises(hs.Refused, match="Say what to change"):
+        svc.change_item("household", "to-do", "book appointment")
+    with pytest.raises(hs.Refused, match="cannot hold details"):
+        svc.change_item("household", "shopping", "peas", details="frozen")

@@ -50,7 +50,8 @@ house:
 | `list_scenes` | The Hue scenes, by room |
 | `activate_scene` | Switch a room to one of its scenes |
 | `list_items` | What is on the shared lists (open items; `done: true` adds ticked ones) |
-| `add_items` | Put items on a list; one already there is not added twice, a ticked one goes back on |
+| `add_items` | Put items on a list; one already there is not added twice, a ticked one goes back on. An item is a short title, or `{item, details, due}` |
+| `change_item` | Rename an item, or set its details or due date |
 | `tick_items` | Tick items off (bought, done) |
 | `remove_items` | Take items off a list altogether |
 
@@ -97,6 +98,11 @@ list in their brain (`souls/_shared/lists.md`).
   (`todo.shopping_list`) exists already. For a to-do list, add one in Home Assistant: Settings >
   Devices & services > Add integration > **Local To-do**, named for example "To-do". Agents
   pick a list by name ("shopping", "to-do"); with one list, the name can be left out.
+- **Short titles, details underneath.** The Home Assistant app cuts long titles in the list, so
+  a title is at most 60 characters (the rules ask for about 40, in the person's own words) and the
+  rest goes in the item's description, shown when it is opened, with an optional due date.
+  Local To-do lists take both; the Shopping list takes titles only (the service says so). A list
+  per subject (for example "Wedding") is better than tags in titles.
 - **Obsidian gets a copy.** The household agent's `lists-mirror` job (no model, every 15
   minutes, `infra/agent-jobs/lists_mirror.py`) writes the open items to `lists.md` in the
   household brain, which Syncthing carries to both phones. It says it is a copy: edits there are
