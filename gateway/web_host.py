@@ -20,6 +20,10 @@ Feature requests (story FR1): with ``~/.config/logos/docmost`` (``DOCMOST_EMAIL`
 reader gets ``file_request``, which adds an entry to that page. The login is copied into the
 reader's volume and never enters a sandbox.
 
+The homelab docs (story DM1): with ``DOCMOST_READ_ROOTS`` in that same file (page ids, comma
+separated: the HomeLab page and Béré's guide) every agent of the reader gets ``search_docs``,
+``read_doc`` and ``list_docs``, read-only, over those pages and the pages under them.
+
 The private names the filter refuses come from three places, gathered on every ``up``:
 the people's and agents' own names, the titles of the pages in each brain's ``people/``
 folder, the names the agents added (``add_private_name``, kept in the ``logos-reader-names``
@@ -182,6 +186,9 @@ def reader_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, 
         config["requests"] = {"url": docmost["DOCMOST_URL"], "page": docmost["DOCMOST_REQUESTS_PAGE"],
                               "people": {n: person_for(agents[n], n) for n in sorted(agents)
                                          if uses_web(agents[n]) or uses_changes(agents[n])}}
+    roots = [r.strip() for r in (docmost or {}).get("DOCMOST_READ_ROOTS", "").split(",") if r.strip()]
+    if docmost and docmost.get("DOCMOST_URL") and roots:
+        config["docs"] = {"url": docmost["DOCMOST_URL"], "roots": roots}
     return config
 
 
