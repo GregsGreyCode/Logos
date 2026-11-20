@@ -160,6 +160,7 @@ def repo(tmp_path):
     (jobs / "carry_monitor_state.py").write_text("print('')\n")
     (jobs / "changes_facts.py").write_text("# facts\n")
     (jobs / "changes_check.py").write_text("# check\n")
+    (jobs / "lists_mirror.py").write_text("# lists\n")
     (jobs / "changes_summary.md").write_text("Daily changes.\n")
     (jobs / "rerun_after_outage.py").write_text("print('')\n")
     (jobs / "model_watch.py").write_text("print('')\n")
@@ -668,6 +669,12 @@ network_policies:
         lights = {**house, "house": {"enabled": True, "domains": ["light"]}}
         ep = yaml.safe_load(r.policy_path("alpha", lights).read_text())["network_policies"]["house"]["endpoints"][0]
         assert ep["rules"][-1]["allow"]["tool"] == {"any": ["list_lights", "set_lights"]}
+        # The shared lists: the list tools, the house URL for the copy, the lists rules and the copy job.
+        lists = {**house, "house": {"enabled": True, "domains": ["light", "scene", "todo"]}}
+        ep = yaml.safe_load(r.policy_path("alpha", lists).read_text())["network_policies"]["house"]["endpoints"][0]
+        assert ep["rules"][-1]["allow"]["tool"]["any"][-4:] == ["list_items", "add_items", "tick_items", "remove_items"]
+        assert "LOGOS_HOUSE_URL=http://172.17.0.1:8098/mcp" in r.env_file(lists, "logos-home-alpha")
+        assert art.uses_lists(lists) and not art.uses_lists(house)
 
     def test_changes_token_url_and_policy_only_when_asked(self, repo):
         path = repo / "infra/agent-image/policy.yaml"

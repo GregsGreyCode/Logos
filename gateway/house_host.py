@@ -40,6 +40,7 @@ PORT = 8098
 TOKEN_ENV = "LOGOS_HOUSE_TOKEN"
 SETTINGS_FILE = "home-assistant"          # in ~/.config/logos
 DEFAULT_DOMAINS = ["light", "scene"]
+SUPPORTED_DOMAINS = ["light", "scene", "todo"]     # todo: the shared lists (shopping, to-do)
 
 
 class HouseError(Exception):
@@ -86,10 +87,10 @@ def ha_settings(env: Mapping[str, str]) -> Dict[str, str]:
 def agent_settings(agent: Mapping[str, Any]) -> Dict[str, List[str]]:
     house = agent.get("house") or {}
     domains = [str(d) for d in (house.get("domains") or DEFAULT_DOMAINS)]
-    unknown = [d for d in domains if d not in DEFAULT_DOMAINS]
+    unknown = [d for d in domains if d not in SUPPORTED_DOMAINS]
     if unknown:
         raise HouseError(f"agent {agent.get('name')}: house.domains {unknown} are not supported "
-                         f"(only {', '.join(DEFAULT_DOMAINS)})")
+                         f"(only {', '.join(SUPPORTED_DOMAINS)})")
     return {"domains": domains, "exclude": [str(e) for e in house.get("exclude") or []]}
 
 
