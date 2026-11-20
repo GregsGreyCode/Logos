@@ -11,7 +11,7 @@ fallback: agents wait, and nothing is lost. People see this as "the AI computer 
 | Moment | What happens |
 | --- | --- |
 | LM Studio reloads, closes briefly, or its context is full | The model guard waits up to a minute and sends the request again. The reply is just slower. |
-| Still offline after that minute | The person gets one line at once: "I can't answer right now: the AI computer is off. I'll reply here as soon as it's back on." Once the group chat has been told (next row), the household agent answers in the group with one short line instead: "Noted. I'll answer this when the AI computer is back on." |
+| Still offline after that minute | The person gets one line at once: "I can't answer right now: the AI computer is off. I'll reply here as soon as it's back on." Once the group chat has been told (next row), the household agent answers in the group with one short line instead: "Noted. I'll answer this when the AI computer is back on." That line replaces hermes's own failed-turn text ("temporarily unavailable ... add a backup provider ... Send it again"), which before 20 Nov arrived instead of it (`patch_failed_turn_notice` in the waitlist plugin). |
 | Offline for over 2 minutes | The household agent tells the household group chat ("**The AI computer is off.** ..."); again when it is back on. |
 | LM Studio is back | Each agent answers its waiting conversations by itself, oldest first, one at a time (within about 30 seconds). |
 | A message waited over 12 hours | A short note instead of an answer: ask again if you still need it. |
