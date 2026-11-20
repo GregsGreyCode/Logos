@@ -29,6 +29,12 @@ def server(model: Mapping[str, Any]) -> str:
     return str(model["base_url"]).rsplit("/v1", 1)[0].rstrip("/")
 
 
+def load_window(model: Mapping[str, Any]) -> int:
+    """The window to load the model with: ``load_context_length`` when set (a bigger, shared window,
+    so parallel requests have room beside each other), never less than what the agent uses."""
+    return max(int(model.get("context_length") or 0), int(model.get("load_context_length") or 0))
+
+
 def wanted(agents: Mapping[str, Mapping[str, Any]]) -> Dict[str, Dict[str, int]]:
     """``{server: {model id: largest context any agent asks for}}`` over the agent definitions."""
     out: Dict[str, Dict[str, int]] = {}
@@ -37,7 +43,7 @@ def wanted(agents: Mapping[str, Mapping[str, Any]]) -> Dict[str, Dict[str, int]]
         base = server(model)
         if not base or not model.get("default"):
             continue
-        ctx = int(model.get("context_length") or 0)
+        ctx = load_window(model)
         models = out.setdefault(base, {})
         models[model["default"]] = max(models.get(model["default"], 0), ctx)
     return out

@@ -37,6 +37,13 @@ def test_wanted_takes_the_largest_context_and_skips_other_providers():
     assert lm.wanted(agents) == {BASE: {"qwen/q": 131072}}
 
 
+def test_the_load_window_can_be_larger_than_what_an_agent_uses():
+    shared = {"model": {**agent()["model"], "load_context_length": 96512}}
+    assert lm.load_window(shared["model"]) == 96512
+    assert lm.load_window({"context_length": 65536, "load_context_length": 32768}) == 65536   # never smaller
+    assert lm.wanted({"a": shared, "b": agent()}) == {BASE: {"qwen/q": 96512}}
+
+
 def test_ensure_leaves_a_large_enough_model_alone():
     s = Server({"qwen/q": 262144})
     assert lm.ensure(s.http, BASE, "qwen/q", 65536) is False
