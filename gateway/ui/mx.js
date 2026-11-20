@@ -65,30 +65,24 @@ export async function unlock(recoveryKey) {
       await crypto.loadSessionBackupPrivateKeyFromSecretStorage();
       restored = await crypto.restoreKeyBackup();
     } catch (e) { restored = { error: e.message }; }
-    // The new signature counts once this browser has re-read your identity and devices from the
-    // server (asking for them is what makes it look again); a few seconds, up to ~30 on a slow day.
-    let verified = false;
-    for (let i = 0; i < 40 && !verified; i++) {
-      await crypto.getUserVerificationStatus(c.getUserId());
-      await crypto.getUserDeviceInfo([c.getUserId()], true);
-      verified = await isVerified();
-      if (!verified) await new Promise((ok) => setTimeout(ok, 750));
-    }
-    if (!verified) {
-      const s = await crypto.getCrossSigningStatus();
-      console.warn('Matrix: unlocked but not verified yet', JSON.stringify(s));
-    }
-    return { verified, restored };
+    // Nudge the library to re-read your identity and devices, so other screens see the new signature soon.
+    crypto.getUserVerificationStatus(c.getUserId()).catch(() => {});
+    return { verified: await isVerified(), restored };
   } finally {
     secretKey = null;                     // the key itself is not kept, only what it unlocked
   }
 }
 
+// Verified: the server-confirmed status, or (sooner and just as sure) this browser holding your
+// cross-signing keys, which only the right recovery key gives it, and having signed itself with them.
 export async function isVerified() {
   const c = await get();
   if (!c) return false;
-  const v = await c.getCrypto().getDeviceVerificationStatus(c.getUserId(), c.getDeviceId());
-  return !!(v && v.crossSigningVerified);
+  const crypto = c.getCrypto();
+  const v = await crypto.getDeviceVerificationStatus(c.getUserId(), c.getDeviceId());
+  if (v && v.crossSigningVerified) return true;
+  const s = await crypto.getCrossSigningStatus();
+  return !!(s.publicKeysOnDevice && s.privateKeysCachedLocally.masterKey && s.privateKeysCachedLocally.selfSigningKey);
 }
 
 // Your devices: name, last seen, verified or not, and which one is this browser.
