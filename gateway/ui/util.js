@@ -41,6 +41,9 @@ export function working(who, on) {
 }
 // "Nothing here" is always the same quiet line: no box, no table, no logo.
 export const none = (text) => h('p', { class: 'none' }, text);
+// Loading (P2): the same in every screen and the same place, "Loading…" over three shimmering lines.
+export const loading = () => h('div', { class: 'loading', role: 'status' }, h('span', {}, 'Loading…'),
+  h('span', { class: 'bar', style: 'width:70%' }), h('span', { class: 'bar', style: 'width:90%' }), h('span', { class: 'bar', style: 'width:55%' }));
 
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);

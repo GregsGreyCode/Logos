@@ -1,12 +1,12 @@
 // People screen: who can sign in, who can use which agent, and your own account.
-import { h, api, getJSON } from './util.js';
+import { h, api, getJSON, loading } from './util.js';
 
 const slug = (name) => name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
   .replace(/[^a-z0-9_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
 
 export async function peopleView(root, _args, state) {
   let alive = true;
-  const table = h('div', { class: 'table-box' });
+  const table = h('div', { class: 'table-box' }, loading());
   const admin = h('div', { class: 'stack' });
 
   async function load() {

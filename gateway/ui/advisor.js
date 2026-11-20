@@ -1,6 +1,6 @@
 // Advisor screen (story A1): the questions your agent wants to ask Claude, each waiting for you.
 // You see the exact text, pick the model, and press Send; nothing leaves the house before that.
-import { h, getJSON, api, when } from './util.js';
+import { h, getJSON, api, when, loading } from './util.js';
 
 const usd = (n) => `$${Number(n || 0).toFixed(n && n < 0.1 ? 3 : 2)}`;
 const MODELS = [['haiku', 'Haiku 5.5', 'quick facts, rewording'], ['sonnet', 'Sonnet 5.5', 'writing, planning, research'],
@@ -73,6 +73,7 @@ function budgetBox(d, refresh) {
 export async function advisorView(root) {
   let alive = true;
   let timer = null;
+  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor'), loading()));
   async function paint() {
     let d;
     try { d = await getJSON('/api/v2/advisor'); } catch (e) {
@@ -82,8 +83,8 @@ export async function advisorView(root) {
     }
     if (!alive) return;
     const b = d.budget;
-    const parts = [h('h1', {}, 'Claude Advisor'),
-      h('p', { class: 'when' }, `Your agent can ask Claude, outside the house, when you agree. ${b.month}: ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used, ${usd(b.left_usd)} left.`)];
+    const parts = [h('header', {}, h('h1', {}, 'Claude Advisor'),
+      h('p', { class: 'when lead' }, `Questions your agent wants to send to Claude wait here for your yes. ${b.month}: ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used, ${usd(b.left_usd)} left.`))];
     if (!d.key) parts.push(h('div', { class: 'notice' }, 'No Anthropic key is set up yet, so nothing can be sent.'));
     parts.push(budgetBox(d, paint));
     parts.push(h('h2', { class: 'label' }, d.pending.length ? `Waiting for you (${d.pending.length})` : 'Nothing waiting'));
