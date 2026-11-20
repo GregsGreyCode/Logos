@@ -1,0 +1,11 @@
+# matrix-js-sdk 45.1.0, @matrix-org/matrix-sdk-crypto-wasm 18.9.2 (pinned by the SDK), esbuild 0.24.0
+# built by scripts/logos-vendor-matrix; check with --check
+3fd47497d3cd98e9084474cc200917b0b3192376b80fef1f9338e4b194c17599  ./crypto/index.mjs
+0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594  ./crypto/LICENSE
+551dc602f91b6a82a8fb5a4c89443b3842ea5bf5db21a06a8fe29e4f7765e446  ./crypto/pkg/matrix_sdk_crypto_wasm_bg.js
+c31c13a70b79812f877d0964651667eaae931a112bd54115d6a3a2ddc38a3cc1  ./crypto/pkg/matrix_sdk_crypto_wasm_bg.js.gz
+c6b8137965f1159333cafb2aff0f09983cf69098bdb0b61d4aaa54cea0915c0a  ./crypto/pkg/matrix_sdk_crypto_wasm_bg.wasm
+468d5535efea6e2c60c35ff0b77dfbced42a03ec4c54af6917c97a5a37df3bf3  ./crypto/pkg/matrix_sdk_crypto_wasm_bg.wasm.gz
+0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594  ./LICENSE-matrix-js-sdk
+ea5d1ef77e187c8224e70ccb0a4722f9e38ee1535c5ca79374a7b627f944cb34  ./matrix.js
+ee6cbc288f4860659805edf606b9e74bab23fe2167693e9b9cdf1c0567c32528  ./matrix.js.gz
