@@ -15,6 +15,11 @@ When LM Studio is closed (Greg is gaming), the model guard answers a model reque
   oldest first and one at a time, so LM Studio is not flooded. A message older than 12 hours
   gets a short note instead of an answer to an old question.
 
+- in the chat, replaces hermes's own words for that failed turn ("... temporarily unavailable ...
+  add a backup provider ... Your request was not processed. Send it again ...") with the one
+  line above: the person need not send it again, and there is no backup provider by design
+  (the brain stays local). The line is hermes's failed-turn notice, so the model never reads it.
+
 Scheduled jobs are not handled here (``rerun_after_outage.py``), nor web chat (the dashboard
 re-sends its own messages). Nothing here reads or logs message text.
 """
@@ -212,7 +217,38 @@ async def _watch() -> None:
             _log("answered", session=session_id[:16], outcome=outcome)
 
 
+# ── the chat line for a turn that failed because the model is off ────────────
+
+OFF_MARKS = (OFF_CODE, "the AI computer is off", "LM Studio isn't running")
+
+
+def off_failure(*texts) -> bool:
+    """True when a failed turn's text says the model server is off (the guard's words or code)."""
+    return any(mark in str(t or "") for t in texts for mark in OFF_MARKS)
+
+
+def patch_failed_turn_notice() -> bool:
+    """For a turn that failed because the model is off, the chat shows only :func:`off_reply`."""
+    try:
+        from gateway.run_turn_persistence import GatewayTurnPersistenceMixin as Mixin
+    except Exception:
+        return False
+    original = Mixin._hmwa_add_failed_turn_notice
+    if getattr(original, "_logos_waitlist", False):
+        return True
+
+    def _hmwa_add_failed_turn_notice(self, response, notice):
+        if off_failure(response):
+            return off_reply()
+        return original(self, response, notice)
+
+    _hmwa_add_failed_turn_notice._logos_waitlist = True
+    Mixin._hmwa_add_failed_turn_notice = _hmwa_add_failed_turn_notice
+    return True
+
+
 def register(ctx):
+    patch_failed_turn_notice()
     ctx.register_hook("transform_api_error_classification", _classify)
     ctx.register_hook("api_request_error", _on_error)
     ctx.register_hook("pre_gateway_dispatch", _on_dispatch)

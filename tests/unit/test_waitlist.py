@@ -172,3 +172,25 @@ def test_the_group_chat_hears_about_long_outages_only():
             said.append((t, message))
     assert [t for t, _ in said] == [330, 500]          # a 100-second blip said nothing
     assert said[0][1] == mw.OFFLINE and said[1][1] == mw.BACK
+
+
+def test_a_turn_failed_because_the_model_is_off_shows_one_plain_line(wl, monkeypatch):
+    import sys, types
+
+    class GatewayTurnPersistenceMixin:
+        def _hmwa_add_failed_turn_notice(self, response, notice):
+            return f"{response}\n\n{notice}" if response else notice
+
+    fake = types.ModuleType("gateway.run_turn_persistence")
+    fake.GatewayTurnPersistenceMixin = GatewayTurnPersistenceMixin
+    monkeypatch.setitem(sys.modules, "gateway.run_turn_persistence", fake)
+    assert wl.patch_failed_turn_notice() is True and wl.patch_failed_turn_notice() is True
+    hermes_copy = ("The provider is overloaded — it looks temporarily unavailable. Send /retry in a minute. "
+                   "To avoid this in future, add a backup provider with `hermes fallback add`.\n\nProvider said: "
+                   "HTTP 503: I can't answer right now: the AI computer is off. I'll reply here as soon as it's back on.")
+    notice = "Your request was not processed. Send it again if you still want me to carry it out."
+    runner = GatewayTurnPersistenceMixin()
+    assert runner._hmwa_add_failed_turn_notice(hermes_copy, notice) == wl.OFF_REPLY
+    other = "The provider refused the request (400).\n\nProvider said: bad request"
+    assert runner._hmwa_add_failed_turn_notice(other, notice) == f"{other}\n\n{notice}"   # anything else unchanged
+    assert wl.off_failure("Provider said: HTTP 503: model_server_off") and not wl.off_failure("timeout")
