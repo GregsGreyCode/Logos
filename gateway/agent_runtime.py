@@ -359,7 +359,10 @@ class AgentRuntime:
         cfg["tools"] = {"tool_search": {"enabled": "off"}}
         # Scheduled messages arrive as written: no "Cronjob Response: <name> (job_id: ...)" header and
         # "To stop or manage this job..." footer around them in the chat.
-        cfg["cron"] = {"wrap_response": False}
+        # mirror_delivery: what a job sends to a chat is also written into that chat's session, so
+        # the agent can see its own scheduled messages (a daily question, a reminder) when the
+        # person answers them. hermes leaves this off by default.
+        cfg["cron"] = {"wrap_response": False, "mirror_delivery": True}
         # Nothing in the sandbox may call home: no update checks, no model catalogue download.
         cfg["updates"] = {"check": False}
         cfg["model_catalog"] = {"enabled": False}
