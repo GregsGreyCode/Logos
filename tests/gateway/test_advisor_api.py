@@ -68,3 +68,14 @@ def test_a_decision_is_always_for_the_signed_in_person(api):
     go("u-bere", "POST", "/api/v2/advisor/abc123/decline", {})
     assert calls[-1][1] == "/approvals/bere/abc123/decline"                    # Béré can only act as Béré
     assert go("u-greg", "POST", "/api/v2/advisor/abc123/delete", {})[0] == 404
+
+
+def test_budget_asks_are_your_own_and_changes_are_admin_only(api):
+    go, calls = api
+    assert go("u-bere", "POST", "/api/v2/advisor-budget/ask", {"reason": "honeymoon planning"})[0] == 200
+    assert calls[-1][:3] == ("POST", "/approvals/bere/budget/ask", {"reason": "honeymoon planning"})
+    assert go("u-bere", "POST", "/api/v2/advisor-budget/bere/raise", {"dollars": 50})[0] == 403   # not her own
+    n = len(calls)
+    assert go("u-greg", "POST", "/api/v2/advisor-budget/bere/raise", {"dollars": 10})[0] == 200
+    assert calls[n][:3] == ("POST", "/approvals/bere/budget/raise", {"admin": "greg", "dollars": 10})
+    assert go("u-greg", "POST", "/api/v2/advisor-budget/bere/delete", {})[0] == 404

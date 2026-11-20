@@ -1211,6 +1211,35 @@ async def handle_advisor_decide(request: web.Request) -> web.Response:
     return web.json_response(out, status=status)
 
 
+async def handle_advisor_budget(request: web.Request) -> web.Response:
+    """POST /api/v2/advisor-budget/ask {reason}: the signed-in person asks the admin for more.
+    POST /api/v2/advisor-budget/{person}/{raise|reset|no} {dollars}: the admin answers (the advisor
+    itself checks that the signed-in user is its admin)."""
+    user = _user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    host, token = _advisor(request)
+    if host is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    person, action = request.match_info.get("person", ""), request.match_info["action"]
+    if action == "ask":
+        status, out = await asyncio.to_thread(_advisor_call, host, token, "POST",
+                                              f"/approvals/{user['username']}/budget/ask",
+                                              {"reason": str(body.get("reason") or "")})
+    elif action in ("raise", "reset", "no") and person:
+        if user["role"] != "admin":
+            return web.json_response({"error": "forbidden"}, status=403)
+        status, out = await asyncio.to_thread(_advisor_call, host, token, "POST", f"/approvals/{person}/budget/{action}",
+                                              {"admin": user["username"], "dollars": body.get("dollars") or 0})
+    else:
+        return web.json_response({"error": "not_found"}, status=404)
+    logger.info("advisor budget %s %s by %s: %s", action, person, user["username"], status)
+    return web.json_response(out, status=status)
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
@@ -1224,6 +1253,8 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/models/local", handle_local_model)
     app.router.add_get("/api/v2/advisor", handle_advisor)
     app.router.add_post("/api/v2/advisor/{rid}/{action}", require_csrf(handle_advisor_decide))
+    app.router.add_post("/api/v2/advisor-budget/{action}", require_csrf(handle_advisor_budget))
+    app.router.add_post("/api/v2/advisor-budget/{person}/{action}", require_csrf(handle_advisor_budget))
     app.router.add_post("/api/v2/models/local/{action}", require_csrf(handle_local_model_action))
     app.router.add_get("/api/v2/agents/{name}/brain", handle_brain)
     app.router.add_get("/api/v2/agents/{name}/brain/page", handle_brain_page)
