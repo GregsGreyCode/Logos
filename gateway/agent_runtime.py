@@ -50,6 +50,7 @@ START = ("/opt/hermes/docker/stage2-hook.sh; "
 MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the brain index has room
 RESET_PLUGIN = "hermes-session-reset-policy"
 # Logos' own hermes plugins (infra/agent-plugins/<name>/), copied into the home by `up`.
+SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
@@ -364,6 +365,10 @@ class AgentRuntime:
         # behind a tool_search step, which the local model often skips, so it never sees them.
         # Our agents have about a dozen MCP tools, so the extra context is small.
         cfg["tools"] = {"tool_search": {"enabled": "off"}}
+        # The whole SOUL.md, never cut: hermes caps context files at 20,000 characters for a 64k window
+        # and drops the middle of a longer one (keeping 70% head, 20% tail), so rules vanished
+        # silently once the shared rules passed it (20 Nov, 21.8k-23.8k). ~24k chars is ~6k tokens.
+        cfg["context_file_max_chars"] = SOUL_MAX_CHARS
         # Scheduled messages arrive as written: no "Cronjob Response: <name> (job_id: ...)" header and
         # "To stop or manage this job..." footer around them in the chat.
         # mirror_delivery: what a job sends to a chat is also written into that chat's session, so
@@ -889,7 +894,11 @@ class AgentRuntime:
                     self.put(home, f"plugins/{plugin}/{path.name}", path.read_text())
         self.ensure_vault(brain)
         self.ensure_model(agent["model"])
-        self.put(home, "SOUL.md", self.soul_text(agent))
+        soul = self.soul_text(agent)
+        if len(soul) > SOUL_MAX_CHARS:
+            raise AgentRuntimeError(f"SOUL.md is {len(soul)} characters, over {SOUL_MAX_CHARS}: hermes would cut "
+                                    "the middle of it. Shorten the rules or raise SOUL_MAX_CHARS.")
+        self.put(home, "SOUL.md", soul)
         if nb.uses_noticeboard(agent):
             try:
                 if nb.NoticeboardHost(self).up():
