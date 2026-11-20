@@ -449,6 +449,7 @@ JOB_LABELS = {
     "changes-daily": "What changed today (16:00)",
     "changes-week": "What changed this week (Sundays)",
     "changes-check": "Send a plain list if the changes post failed",
+    "lists-mirror": "Copy the shared lists into the household notes",
 }
 #: Jobs Logos installs and replaces on every update. Anything else is a reminder an agent set,
 #: which its person may cancel. Kept in step with gateway/agent_runtime.py MANAGED_JOBS (tested).

@@ -230,6 +230,7 @@ def test_agent_settings():
         "domains": ["light"], "exclude": ["light.balcony"]}
     with pytest.raises(hh.HouseError, match="not supported"):
         hh.agent_settings({"name": "household", "house": {"domains": ["light", "lock"]}})
+    assert hh.agent_settings({"house": {"domains": ["light", "scene", "todo"]}})["domains"] == ["light", "scene", "todo"]
 
 
 def write_settings(tmp_path, text, mode=0o600):
@@ -322,3 +323,124 @@ def test_up_without_a_household_token_does_nothing(tmp_path):
                      {"household": {"role": "household", "house": {"enabled": True}}}, {})
     assert hh.HouseHost(rt).up() is False
     assert rt.calls == []
+
+
+# ── the shared lists (todo) ──────────────────────────────────────────────────
+
+class FakeTodoHA(FakeHA):
+    """Home Assistant with to-do lists that answer todo.get_items and change on add/update/remove."""
+
+    def __init__(self, lists):
+        self.lists = {eid: [dict(i) for i in items] for eid, (_, items) in lists.items()}
+        super().__init__(STATES + [{"entity_id": eid, "state": str(len(items)), "attributes": {"friendly_name": name}}
+                                   for eid, (name, items) in lists.items()])
+
+    def __call__(self, method, url, headers, body):
+        status, raw = super().__call__(method, url, headers, body)
+        data = json.loads(body) if body else {}
+        if "/api/services/todo/get_items" in url:
+            assert url.endswith("?return_response")
+            eid = data["entity_id"]
+            return 200, json.dumps({"changed_states": [], "service_response": {eid: {"items": self.lists[eid]}}}).encode()
+        if url.endswith("/api/services/todo/add_item"):
+            self.lists[data["entity_id"]].append({"summary": data["item"], "status": "needs_action"})
+        elif url.endswith("/api/services/todo/update_item"):
+            for i in self.lists[data["entity_id"]]:
+                if i["summary"] == data["item"]:
+                    i["status"] = data["status"]
+        elif url.endswith("/api/services/todo/remove_item"):
+            self.lists[data["entity_id"]] = [i for i in self.lists[data["entity_id"]] if i["summary"] not in data["item"]]
+        return status, raw
+
+
+def lists_service(lists=None, domains=("light", "scene", "todo")):
+    fake = FakeTodoHA(lists if lists is not None else {
+        "todo.shopping_list": ("Shopping list", [{"summary": "Peas", "status": "needs_action"},
+                                                 {"summary": "Lemons", "status": "completed"}])})
+    return service(fake, domains=domains)
+
+
+def test_list_items_open_and_done():
+    svc, _ = lists_service()
+    assert svc.list_items("household") == {"lists": [{"list": "Shopping list", "open": ["Peas"]}]}
+    assert svc.list_items("household", "the shopping list", done=True) == {
+        "lists": [{"list": "Shopping list", "open": ["Peas"], "done": ["Lemons"]}]}
+
+
+def test_add_items_skips_duplicates_and_reopens_ticked_ones():
+    svc, fake = lists_service()
+    got = svc.add_items("household", "shopping", ["pasta", " peas ", "lemons", "something sweet"])
+    assert got == {"list": "Shopping list", "added": ["pasta", "something sweet"],
+                   "back_on_the_list": ["Lemons"], "already_on_it": ["Peas"]}
+    assert [i["summary"] for i in fake.lists["todo.shopping_list"] if i["status"] == "needs_action"] == [
+        "Peas", "Lemons", "pasta", "something sweet"]
+
+
+def test_tick_and_remove_match_names_loosely_but_never_guess():
+    svc, fake = lists_service({"todo.shopping_list": ("Shopping list", [
+        {"summary": "Oat milk", "status": "needs_action"}, {"summary": "Milk chocolate", "status": "needs_action"},
+        {"summary": "Bread", "status": "needs_action"}])})
+    assert svc.tick_items("household", "", ["bread"]) == {"list": "Shopping list", "ticked": ["Bread"]}
+    with pytest.raises(hs.Refused, match="could be"):
+        svc.tick_items("household", "", ["milk"])
+    with pytest.raises(hs.Refused, match="not on the list"):
+        svc.remove_items("household", "", ["eggs"])
+    assert svc.remove_items("household", "", ["oat milk"])["removed"] == ["Oat milk"]
+    assert [i["summary"] for i in fake.lists["todo.shopping_list"]] == ["Milk chocolate", "Bread"]
+
+
+def test_which_list():
+    svc, _ = lists_service({"todo.shopping_list": ("Shopping list", []), "todo.household": ("Household to-do", [])})
+    with pytest.raises(hs.Refused, match="Say which list"):
+        svc.add_items("household", "", ["x"])
+    assert svc.add_items("household", "to-do", ["call the plumber"])["list"] == "Household to-do"
+    with pytest.raises(hs.Refused, match="no list called 'gifts'"):
+        svc.list_items("household", "gifts")
+    svc, _ = lists_service({})
+    with pytest.raises(hs.Refused, match="no shared lists"):
+        svc.list_items("household")
+
+
+def test_items_are_checked_and_lists_need_the_domain():
+    svc, _ = lists_service()
+    for bad in ([], [""], ["x" * 201], ["a"] * 31):
+        with pytest.raises(hs.Refused):
+            svc.add_items("household", "shopping", bad)
+    svc, _ = lists_service(domains=("light",))
+    with pytest.raises(hs.Refused, match="not set up"):
+        svc.list_items("household")
+    names = [t["name"] for t in hs.handle_rpc(svc, "household", {"id": 1, "method": "tools/list"})["result"]["tools"]]
+    assert "add_items" not in names
+    svc, _ = lists_service()
+    names = [t["name"] for t in hs.handle_rpc(svc, "household", {"id": 1, "method": "tools/list"})["result"]["tools"]]
+    assert {"list_items", "add_items", "tick_items", "remove_items"} <= set(names)
+    answer = hs.handle_rpc(svc, "household", {"id": 2, "method": "tools/call",
+                                              "params": {"name": "add_items", "arguments": {"items": ["eggs"]}}})
+    assert json.loads(answer["result"]["content"][0]["text"])["added"] == ["eggs"]
+
+
+def test_only_the_list_services_are_added():
+    ha = hs.HomeAssistant("http://192.0.2.10", "t", http=FakeHA())
+    with pytest.raises(hs.Refused):
+        ha.service("todo", "remove_completed_items", {})
+    with pytest.raises(hs.Refused):
+        ha.todo_items("light.kitchen")
+
+
+# ── the copy of the lists in the household brain ─────────────────────────────
+
+def test_lists_mirror_writes_only_when_the_lists_change(tmp_path):
+    spec = importlib.util.spec_from_file_location("lists_mirror", REPO / "infra/agent-jobs/lists_mirror.py")
+    lm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lm)
+    page = tmp_path / "lists.md"
+    lists = [{"list": "Shopping list", "open": ["Peas", "2 lemons"]}, {"list": "To-do", "open": []}]
+    text = lm.render(lists)
+    assert "- [ ] Peas\n- [ ] 2 lemons\n" in text and "## To-do\n\nNothing on it." in text
+    assert "Do not edit it here" in text
+    assert lm.write_if_changed(text, str(page)) is True
+    first = page.read_text()
+    assert "Last changed " in first
+    assert lm.write_if_changed(text, str(page)) is False and page.read_text() == first
+    assert lm.write_if_changed(lm.render([{"list": "Shopping list", "open": ["Peas"]}]), str(page)) is True
+    assert "2 lemons" not in page.read_text()

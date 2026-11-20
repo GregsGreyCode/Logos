@@ -1,4 +1,4 @@
-# House: the lights, through Home Assistant
+# House: the lights and the shared lists, through Home Assistant
 
 The household agent, and Greg's and Béré's own agents, can work the lights and their scenes (story H1). Home Assistant runs on its
 own VM on the home network and talks to the Hue Bridge. Logos does not replace it: schedules and automations stay in Home Assistant, and the
@@ -24,9 +24,10 @@ which agent made each change.
   with its own token in its home volume.
 - The service calls Home Assistant with its own **non-admin** account (`logos-household`).
   Home Assistant cannot limit a user to some devices, so the limits live in the service:
-  - only the domains in the definition, `light` and `scene` for now, minus `exclude`;
-  - only `light.turn_on`, `light.turn_off` and `scene.turn_on` can ever be called. Nothing the
-    agent sends is passed on as a service name or as raw data;
+  - only the domains in the definition (`light`, `scene`, `todo`), minus `exclude`;
+  - only `light.turn_on`, `light.turn_off`, `scene.turn_on`, `todo.get_items`, `todo.add_item`,
+    `todo.update_item` and `todo.remove_item` can ever be called. Nothing the agent sends is
+    passed on as a service name or as raw data;
   - locks, alarms, heating, blinds, cameras, sirens and valves are refused in code, whatever a
     definition says. They need a confirmation step first (story H2).
 - The sandbox rule `house` lets through only the MCP handshake and the tools for the agent's
@@ -38,7 +39,7 @@ which agent made each change.
 # agents/household.yaml
 house:
   enabled: true
-  domains: [light, scene]
+  domains: [light, scene, todo]
   exclude: []                 # e.g. [light.balcony_balcony]
 ```
 
@@ -48,6 +49,10 @@ house:
 | `set_lights` | On, off, brightness, white temperature (kelvin) or a colour name, for rooms, zones, single lights or `everything` |
 | `list_scenes` | The Hue scenes, by room |
 | `activate_scene` | Switch a room to one of its scenes |
+| `list_items` | What is on the shared lists (open items; `done: true` adds ticked ones) |
+| `add_items` | Put items on a list; one already there is not added twice, a ticked one goes back on |
+| `tick_items` | Tick items off (bought, done) |
+| `remove_items` | Take items off a list altogether |
 
 Rooms come from Home Assistant: a light that lists member lights (a Hue room or zone, or a Home
 Assistant light group) is a room. A whole room is sent as the room itself, so Hue changes it
@@ -80,3 +85,23 @@ Home Assistant's logbook shows each change as made by "Logos household agent".
 
 The token file is not in the nightly export; it is in the VM archive. If it is lost, make a new
 token for the `logos-household` user and write the file again.
+
+## The shared lists
+
+The shopping list and the to-do lists live in **Home Assistant** (decided 20 Nov): one copy, which
+Greg and Béré see in the Home Assistant app, and which every agent with `todo` in `house.domains`
+works through the four list tools (Greg's, Béré's and the household agent). Agents never keep a
+list in their brain (`souls/_shared/lists.md`).
+
+- **The lists are Home Assistant to-do entities** (`todo.*`). The Shopping list
+  (`todo.shopping_list`) exists already. For a to-do list, add one in Home Assistant: Settings >
+  Devices & services > Add integration > **Local To-do**, named for example "To-do". Agents
+  pick a list by name ("shopping", "to-do"); with one list, the name can be left out.
+- **Obsidian gets a copy.** The household agent's `lists-mirror` job (no model, every 15
+  minutes, `infra/agent-jobs/lists_mirror.py`) writes the open items to `lists.md` in the
+  household brain, which Syncthing carries to both phones. It says it is a copy: edits there are
+  overwritten. It is rewritten only when the lists change.
+- **Not synced the other way, on purpose:** two copies edited in two places conflict (the same
+  reason Docmost and Obsidian are not synced). Alexa's shopping list cannot be reached (Amazon
+  closed that API in July 2024).
+
