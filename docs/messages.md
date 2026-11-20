@@ -43,4 +43,6 @@ these rules (decided 19 Nov 2026). Check a new message, prompt or fallback again
 
 hermes' own "Cronjob Response: ... (job_id: ...)" wrapper is switched off for every agent
 (`cron.wrap_response: false` in `gateway/agent_runtime.py`), so scheduled messages arrive exactly as
-written.
+written. `cron.mirror_delivery: true` also writes each delivered message into the chat's session,
+so the agent can see what its own jobs sent when the person replies (without it, a daily question
+arrives in the chat but the agent has no record of having asked it).
