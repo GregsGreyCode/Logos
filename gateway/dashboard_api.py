@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import logging
 import time
 from typing import Any, Dict, List, Mapping, Optional
@@ -124,7 +125,18 @@ def look_of(user_id: str) -> Optional[Dict[str, str]]:
 
 
 # ST1: the dashboard's options each person sets in Settings, kept with their login (user_settings.ui_prefs).
-PREFS = {"panel": ("slide", "open"), "thinking": (True, False), "jobs": (True, False)}
+PREFS = {"panel": ("slide", "open"), "thinking": (True, False), "jobs": (True, False),
+         # ST3: how much the agents move, and when their names show on their marks
+         "motion": ("full", "calm", "still"), "names": ("hover", "always")}
+# ST2: your own colours, any "#rrggbb" (the page keeps text readable whatever is picked); "" = the look's own
+COLOUR_PREFS = ("primary", "attention")
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _pref_ok(key: str, value: Any) -> bool:
+    if key in COLOUR_PREFS:
+        return isinstance(value, str) and (value == "" or bool(_HEX.match(value)))
+    return key in PREFS and value in PREFS[key]
 
 
 def prefs_of(user_id: str) -> Dict[str, Any]:
@@ -134,13 +146,34 @@ def prefs_of(user_id: str) -> Dict[str, Any]:
         saved = json.loads((row or {}).get("ui_prefs") or "{}")
     except ValueError:
         saved = {}
-    return {k: v for k, v in (saved if isinstance(saved, dict) else {}).items() if k in PREFS and v in PREFS[k]}
+    return {k: v for k, v in (saved if isinstance(saved, dict) else {}).items() if _pref_ok(k, v)}
+
+
+def agent_colours() -> Dict[str, str]:
+    getter = getattr(auth_db, "get_agent_colours", None)
+    return getter() if getter else {}
 
 
 async def handle_me(request: web.Request) -> web.Response:
     user = _user(request)
-    look, prefs = await asyncio.gather(asyncio.to_thread(look_of, user["id"]), asyncio.to_thread(prefs_of, user["id"]))
-    return web.json_response({**user, "look": look, "prefs": prefs})
+    look, prefs, colours = await asyncio.gather(asyncio.to_thread(look_of, user["id"]), asyncio.to_thread(prefs_of, user["id"]),
+                                                asyncio.to_thread(agent_colours))
+    return web.json_response({**user, "look": look, "prefs": prefs, "agent_colours": colours})
+
+
+async def handle_agent_colour(request: web.Request) -> web.Response:
+    """PUT /api/v2/agents/{name}/colour {colour}: an agent's colour, the same for everyone. Only the
+    people who may use the agent can set it: your own agent, and the household agent by either of you."""
+    name, _agent, user = await _agent_or_404(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    colour = str((body or {}).get("colour") or "")
+    if not _HEX.match(colour):
+        return web.json_response({"error": "bad_colour"}, status=400)
+    await asyncio.to_thread(auth_db.set_agent_colour, name, colour.lower(), user["username"])
+    return web.json_response({"name": name, "colour": colour.lower()})
 
 
 async def handle_set_prefs(request: web.Request) -> web.Response:
@@ -150,8 +183,9 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         body = None
-    if not isinstance(body, dict) or not body or any(k not in PREFS or v not in PREFS[k] for k, v in body.items()):
-        return web.json_response({"error": "bad_prefs", "allowed": {k: list(v) for k, v in PREFS.items()}}, status=400)
+    if not isinstance(body, dict) or not body or not all(_pref_ok(k, v) for k, v in body.items()):
+        return web.json_response({"error": "bad_prefs", "allowed": {**{k: list(v) for k, v in PREFS.items()},
+                                                                   **{k: "#rrggbb" for k in COLOUR_PREFS}}}, status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
     await asyncio.to_thread(auth_db.update_user_settings, user["id"], ui_prefs=json.dumps(merged, sort_keys=True))
     return web.json_response(merged)
@@ -1340,6 +1374,7 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/me", handle_me)
     app.router.add_put("/api/v2/me/look", require_csrf(handle_set_look))
     app.router.add_put("/api/v2/me/prefs", require_csrf(handle_set_prefs))
+    app.router.add_put("/api/v2/agents/{name}/colour", require_csrf(handle_agent_colour))
     app.router.add_get("/api/v2/agents", handle_agents)
     app.router.add_get("/api/v2/agents/{name}/conversations", handle_conversations)
     app.router.add_get("/api/v2/agents/{name}/conversations/{sid}", handle_conversation_messages)

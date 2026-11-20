@@ -20,6 +20,7 @@ export function adoptPrefs(me) {
 }
 
 function remember(key, value) {
+  if (!(key in LOCAL)) return;                // colours, motion: kept with the login only
   try { localStorage.setItem(LOCAL[key], (key === 'panel' ? value === 'open' : value) ? '1' : '0'); } catch (e) { /* private window */ }
 }
 

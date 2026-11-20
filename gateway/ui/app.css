@@ -329,7 +329,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   .tabbar [aria-current="page"] { color: var(--accent-text); border-image: var(--brand-gradient) 1; font-weight: 600; }
   .tab-icon { position: relative; display: flex; }
   .tab-badge { position: absolute; top: -5px; right: -10px; min-width: 18px; height: 18px; padding: 0 5px;
-    border-radius: 9px; background: #7c3aed; color: #ffffff; font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; }
+    border-radius: 9px; background: var(--attn, #7c3aed); color: var(--attn-ink, #ffffff); font-size: 11px; font-weight: 600; line-height: 18px; text-align: center; }
 
   .chat-scrim:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(5, 6, 10, 0.6); }
   .scrim:not([hidden]) { display: block; position: fixed; inset: 0; z-index: 30; background: rgba(5, 6, 10, 0.6); }
@@ -726,3 +726,31 @@ dialog.appearance .label { margin: 16px 0 8px; }
 [data-look="hud"] .settings-tab { font-family: var(--font-mono); text-transform: uppercase; font-size: 12px; letter-spacing: 0.06em; }
 [data-look="hud"] .settings-tab[aria-current="page"] { background: transparent; box-shadow: inset 2px 0 0 var(--accent); color: var(--accent); }
 [data-look="warm"] .settings-tab[aria-current="page"] { background: var(--accent); color: var(--accent-ink); }
+
+/* ST2: anything that needs you takes your attention colour */
+.badge { background: var(--attn, var(--warn-bg)); color: var(--attn-ink, var(--warn-ink)); }
+
+/* ST3: how much things move. Calm is the default; Full is livelier; Still stops it all, leaving
+   colour and glow to show each state (also what a device set to reduce motion gets). */
+[data-motion="full"] .sleep-mark { animation-duration: 4s; }
+[data-motion="still"] .sleep-mark, [data-motion="still"] .reply-mark, [data-motion="still"] .logo.busy,
+[data-motion="still"] .mic[aria-pressed="true"] .mic-dot { animation: none !important; }
+[data-motion="still"] .sleep-mark { opacity: 0.35; }
+[data-motion="still"] .side, [data-motion="still"] .reply-mark { transition: none !important; }
+
+/* Settings: colour rows */
+.colour-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 1fr); gap: 8px 16px; align-items: center; }
+.colour-row .who { display: flex; flex-direction: column; gap: 2px; }
+.colour-row .who strong { font-weight: 600; }
+.swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.swatch-btn { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer;
+  box-shadow: inset 0 0 0 2px var(--surface); }
+.swatch-btn[aria-checked="true"] { border-color: var(--ink); }
+.swatch-pick { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px dashed var(--line); border-radius: 16px; color: var(--muted); font-size: var(--t-sm); cursor: pointer; }
+.swatch-pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.swatch-reset { height: 32px; padding: 0 12px; border: 0; border-radius: 16px; background: none; color: var(--accent-text);
+  font-size: var(--t-sm); }
+.swatch-fixed { width: 24px; height: 24px; border-radius: 50%; display: inline-block; }
+@media (max-width: 720px) { .colour-row { grid-template-columns: minmax(0, 1fr); } }
+.appearance-note:empty { display: none; }
