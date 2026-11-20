@@ -34,6 +34,7 @@ matrix:                           # the household's own Matrix server (docs/matr
 advisor:                        # ask Claude, each question approved on the dashboard first (docs/advisor.md)
   enabled: true
   person: greg
+  admin: true                   # the one who may raise or reset budgets (A3)
 
 mail:                           # Greg's own email, read only (docs/mail.md); connect with scripts/logos-mail
   enabled: true

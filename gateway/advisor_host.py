@@ -8,8 +8,13 @@ volume; the ledger lives in ``logos-advisor-state``. The Anthropic key is read f
 never on a command line, in git, a sandbox or a chat. Without that file the service still runs and
 says it has no key; nothing can be sent.
 
-An agent definition opts in with ``advisor: {enabled: true, person: greg}``. The household agent
-never does (decided 18 Nov 2026).
+An agent definition opts in with ``advisor: {enabled: true, person: greg}``; ``admin: true`` marks
+the person who may change budgets (Greg). The household agent never does (decided 18 Nov 2026).
+
+Story A2: the advisor's own Matrix account (``@advisor``) and one private, invite-only, unencrypted
+room per person ("Advisor") are made on the first ``up`` and kept in
+``~/.config/logos/advisor-matrix.json`` (0600). A person's own Matrix id is the first of their
+agent's ``matrix.allowed_users``; only that account can approve in their room.
 """
 from __future__ import annotations
 
@@ -32,6 +37,8 @@ PORT = 8100
 TOKEN_ENV = "LOGOS_ADVISOR_TOKEN"
 KEY_FILE = "advisor.env"              # in ~/.config/logos
 DASHBOARD_TOKEN_FILE = "advisor-dashboard-token"
+MATRIX_FILE = "advisor-matrix.json"
+LOCALPART = "advisor"
 
 
 class AdvisorError(Exception):
@@ -60,6 +67,15 @@ def dashboard_token(env: Mapping[str, str]) -> str:
         path.write_text(secrets.token_urlsafe(32) + "\n")
         path.chmod(0o600)
     return path.read_text().strip()
+
+
+def admin_of(agents: Mapping[str, Mapping[str, Any]]) -> str:
+    return next((person_of(a) for a in agents.values() if (a.get("advisor") or {}).get("admin")), "")
+
+
+def mxid_of(agent: Mapping[str, Any]) -> str:
+    users = (agent.get("matrix") or {}).get("allowed_users") or []
+    return str(users[0]) if users else ""
 
 
 class AdvisorHost:
@@ -94,6 +110,55 @@ class AdvisorHost:
         return self.rt.run(["docker", "inspect", CONTAINER, "-f", '{{index .Config.Labels "logos.advisor.stamp"}}'],
                            check=False).strip()
 
+    def matrix(self, agents: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+        """The @advisor login and a room per person, made once. {} when Matrix is not in use here."""
+        mh = _sibling("matrix_host")
+        people = {person_of(a): mxid_of(a) for a in agents.values() if mxid_of(a)}
+        if not people:
+            return {}
+        host = mh.MatrixHost(self.rt)
+        try:
+            if not host.running():
+                return {}
+            host.settings()
+        except Exception:
+            return {}
+        path = config_dir(self.rt.env) / MATRIX_FILE
+        state = json.loads(path.read_text()) if path.exists() else {}
+        if not state.get("token"):
+            password = secrets.token_urlsafe(32)
+            login = host.register(LOCALPART, password)
+            state = {"user_id": login["user_id"], "token": login["access_token"], "password": password, "rooms": {}}
+            host.set_display_name(state["user_id"], state["token"], "Advisor (Claude, with your yes)")
+        for person, mxid in sorted(people.items()):
+            have = state["rooms"].get(person) or {}
+            if have.get("room") and have.get("mxid") == mxid:
+                continue
+            made = host._call("/_matrix/client/v3/createRoom", {
+                "preset": "private_chat", "visibility": "private", "is_direct": True, "invite": [mxid],
+                "name": "Advisor", "topic": "Questions your agent wants to ask Claude. Reply send or no."},
+                token=state["token"])
+            if not made.get("room_id"):
+                raise AdvisorError(f"could not make the advisor room for {person}: {made.get('error') or made}")
+            state["rooms"][person] = {"room": made["room_id"], "mxid": mxid}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=1))
+        tmp.chmod(0o600)
+        os.replace(tmp, path)
+        return {"url": host.url(), "token": state["token"], "user_id": state["user_id"],
+                "rooms": {p: v for p, v in state["rooms"].items() if p in people}}
+
+    def _matrix_or_none(self, agents: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+        """Matrix approval is optional: a problem there leaves approval on the dashboard only."""
+        try:
+            return self.matrix(agents)
+        except Exception as e:
+            import sys
+            print(f"warning: advisor Matrix room not set up ({e}); approval stays on the dashboard",
+                  file=sys.stderr)
+            return {}
+
     def up(self) -> bool:
         agents = self.agents()
         tokens = {n: self.token_for(n) for n in agents}
@@ -104,7 +169,9 @@ class AdvisorHost:
         names, exact = wh.WebHost(self.rt).private_names({n: self.rt.load(n) for n in self.rt.defined()})
         config = json.dumps({"agents": {n: {"token": tokens[n], "person": person_of(a)} for n, a in sorted(agents.items())},
                              "names": sorted(set(names)), "capital_only": sorted(set(exact)),
-                             "dashboard_token": dashboard_token(self.rt.env)}, indent=1, sort_keys=True, ensure_ascii=False)
+                             "dashboard_token": dashboard_token(self.rt.env),
+                             "admin": admin_of(agents), "matrix": self._matrix_or_none(agents)},
+                            indent=1, sort_keys=True, ensure_ascii=False)
         key = config_dir(self.rt.env) / KEY_FILE
         key_stamp = hashlib.sha256(key.read_bytes()).hexdigest() if key.exists() else "none"
         stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + FILTER_FILE.read_text() + IMAGE + key_stamp)
@@ -143,6 +210,19 @@ class AdvisorHost:
 
     def down(self) -> None:
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)
+
+
+def _sibling(module: str):
+    import importlib.util
+    import sys
+    name = f"logos_{module}"
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{module}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _web_host():
