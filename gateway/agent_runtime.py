@@ -60,6 +60,8 @@ MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check
 # Story DC2: the daily changes. One script under two names (it reads its own name): the day, and
 # on Sundays the week. Each post covers both the agents (Logos) and the home servers (homelab).
 CHANGES_SCRIPTS = ("changes_daily.py", "changes_week.py")
+# What the household agent may call on the web reader: never search_web or add_private_name.
+HOUSEHOLD_READER_TOOLS = ["file_request", "recent_changes", "search_docs", "read_doc", "list_docs"]
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -443,7 +445,10 @@ class AgentRuntime:
             if notes.exists() and notes.read_text().strip():
                 text = text.rstrip() + "\n\n### About this home's lights\n\n" + notes.read_text().strip() + "\n"
         wh = _sibling("web_host")
-        for part in ("requests.md", "changes.md"):       # feature requests; what changed (on the web reader)
+        docs = bool(wh.WebHost(self).docmost().get("DOCMOST_READ_ROOTS"))
+        for part in ("requests.md", "changes.md", "docs.md"):   # requests; what changed; the homelab docs (web reader)
+            if part == "docs.md" and not docs:
+                continue
             if (wh.uses_web(agent) or wh.uses_changes(agent)) and (self.repo / "souls/_shared" / part).exists():
                 text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared" / part).read_text()
         return text
@@ -770,14 +775,15 @@ class AgentRuntime:
             point("web", wh.WebHost(self).url())
             point("weather", wh.WebHost(self).weather_url(), rest_rules=[("GET", "/weather")])
         elif wh.uses_changes(agent) and "web" in rules:
-            # Story FR1: the household agent may call file_request and recent_changes on the reader, nothing else.
+            # Stories FR1, DC1, DM1: the household agent may file requests, read the changes and read the
+            # homelab docs on the reader, nothing else.
             # The whole rule list is written here, so nothing else on the reader is ever open to it.
             point("web", wh.WebHost(self).url())
             for e in rules["web"].get("endpoints") or []:
                 e.pop("access", None)
                 e["rules"] = [{"allow": {"method": m}} for m in
                               ("initialize", "notifications/initialized", "ping", "tools/list")] + [
-                    {"allow": {"method": "tools/call", "tool": {"any": ["file_request", "recent_changes"]}}}]
+                    {"allow": {"method": "tools/call", "tool": {"any": HOUSEHOLD_READER_TOOLS}}}]
             rules.pop("weather", None)
         else:
             rules.pop("web", None)

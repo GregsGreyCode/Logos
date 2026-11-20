@@ -480,3 +480,96 @@ def test_reader_config_requests_and_people():
                                "people": {"greg": "Greg", "household": "the household chat"}}
     assert "secret" not in json.dumps(cfg)                    # the login goes in its own file, not the config
     assert "requests" not in wh.reader_config(agents, {}, [], [], None, {}, {"DOCMOST_URL": "x"})
+
+
+class FakeDocmost:
+    """The Docmost API, as the reader's Docs sees it: a HomeLab tree and a private page beside it."""
+    PAGES = {"home": ("HomeLab", None, "# HomeLab\nThe overview."),
+             "hosts": ("Hosts", "home", "# Hosts\n## pve1\nRuns Jellyfin.\npassword: hunter2\n"
+                                       "key ghp_abcdefghijklmnop\n" + "filler line\n" * 1500),
+             "logos": ("Logos", "home", "# Logos\nThe agents."),
+             "todo": ("Greg's To-Do List", None, "# To do\nPrivate.")}
+
+    def __init__(self):
+        self.calls = []
+
+    def call(self, path, body):
+        self.calls.append((path, body))
+        if path == "/api/pages/info":
+            title, parent, text = self.PAGES[body["pageId"]]
+            return {"data": {"title": title, "spaceId": "s1", "updatedAt": "2026-11-19T10:00:00Z",
+                             "content": text if body.get("format") == "markdown" else {"type": "doc"}}}
+        if path == "/api/pages/sidebar-pages":
+            kids = [{"id": i, "title": t, "hasChildren": any(p == i for _, p, _ in self.PAGES.values())}
+                    for i, (t, p, _) in self.PAGES.items() if p == body["pageId"]]
+            if body.get("cursor") is None and len(kids) > 1:                 # two pages of results
+                return {"data": {"items": kids[:1], "meta": {"nextCursor": "c2"}}}
+            return {"data": {"items": kids[1:] if body.get("cursor") else kids, "meta": {"nextCursor": None}}}
+        if path == "/api/search":
+            return {"data": {"items": [{"id": "todo", "highlight": "<b>Jellyfin</b> to do"},
+                                       {"id": "hosts", "highlight": "Runs <b>Jellyfin</b>. password: hunter2"}]}}
+        raise AssertionError(path)
+
+
+def test_docs_read_only_and_only_under_the_roots():
+    dm = FakeDocmost()
+    docs = ws.Docs(dm, ["home"], log=lambda m: None)
+    listed = docs.list("greg")["pages"]
+    assert [(p["page"], p["where"]) for p in listed] == [
+        ("home", "HomeLab"), ("hosts", "HomeLab › Hosts"), ("logos", "HomeLab › Logos")]
+    found = docs.search("greg", "jellyfin")["results"]
+    assert [h["page"] for h in found] == ["hosts"]                    # the to-do list is not under HomeLab
+    assert "<b>" not in found[0]["snippet"] and "hunter2" not in found[0]["snippet"]
+    page = docs.read("bere", {"page": "hosts"})
+    assert page["parts"] > 1 and page["part"] == 1 and page["headings"] == ["# Hosts", "## pve1"]
+    assert "Runs Jellyfin" in page["text"] and "hunter2" not in page["text"] and "ghp_" not in page["text"]
+    assert page["updated"] == "2026-11-19"
+    assert docs.read("bere", {"page": "hosts", "part": 2})["text"].startswith("filler")
+    assert docs.read("bere", {"page": "logos"})["title"] == "Logos"   # by id
+    assert docs.read("bere", {"page": "  logos "})["page"] == "logos" # by title, any case
+    for bad in ({"page": "todo"}, {"page": "Greg's To-Do List"}, {"page": "nope"}, {"page": "hosts", "part": 99}):
+        with pytest.raises(ws.Refused):
+            docs.read("bere", bad)
+    with pytest.raises(ws.Refused):
+        docs.search("greg", " ")
+    writes = [p for p, _ in dm.calls if not p.startswith(("/api/pages/info", "/api/pages/sidebar", "/api/search"))]
+    assert writes == []                                                # nothing but reads
+    n = len(dm.calls)
+    docs.pages()
+    assert len(dm.calls) == n                                          # the page list is cached
+
+
+def test_compact_tables():
+    assert ws.compact("| a    |     b |\n|  --- | --- |\ntext  two  spaces  \n") == "| a | b |\n| --- | --- |\ntext  two  spaces"
+
+
+def test_parts_of_keeps_everything():
+    text = "".join(f"line {i}\n" for i in range(3000)) + "x" * 13000
+    parts = ws.parts_of(text, 6000)
+    assert "".join(parts) == text and all(len(p) <= 6000 for p in parts)
+
+
+def test_docs_tools_reach_every_reader_agent():
+    svc = ws.Service("http://sx", {"greg": {"token": "tg"}}, ws.Filter([]), log=lambda m: None)
+    svc.changes_agents = {"household": {"token": "th"}}
+    assert svc.mcp_agent("th") == (None, False)                        # nothing for the household yet
+    svc.docs = ws.Docs(FakeDocmost(), ["home"], log=lambda m: None)
+    assert svc.mcp_agent("th") == ("household", False)
+    for search in (True, False):
+        names = [t["name"] for t in svc.tools_for(search)]
+        assert names[-3:] == ["search_docs", "read_doc", "list_docs"]
+    out = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "read_doc", "arguments": {"page": "Logos"}}}, False)["result"]
+    assert not out.get("isError") and "The agents." in json.loads(out["content"][0]["text"])["text"]
+    out = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+        "name": "read_doc", "arguments": {"page": "todo"}}}, False)["result"]
+    assert out["isError"] and "no homelab doc" in out["content"][0]["text"]
+
+
+def test_reader_config_docs_roots():
+    agents = {"greg": {"web": {"enabled": True}}}
+    dm = {"DOCMOST_URL": "https://docs.example", "DOCMOST_READ_ROOTS": "r1, r2,", "DOCMOST_PASSWORD": "secret"}
+    cfg = wh.reader_config(agents, {"greg": "tg"}, [], [], None, {}, dm)
+    assert cfg["docs"] == {"url": "https://docs.example", "roots": ["r1", "r2"]}
+    assert "secret" not in json.dumps(cfg)
+    assert "docs" not in wh.reader_config(agents, {"greg": "tg"}, [], [], None, {}, {"DOCMOST_URL": "x"})
