@@ -492,7 +492,8 @@ network_policies:
         cfg = yaml.safe_load(r.config_text("alpha", agent))
         assert cfg["platforms"] == {"matrix": {"gateway_restart_notification": False}}
         assert cfg["display"] == {"platforms": {
-            "matrix": {"tool_progress": "log", "interim_assistant_messages": False}}}   # answers only
+            "matrix": {"tool_progress": "log", "interim_assistant_messages": False}},   # answers only
+            "busy_input_mode": "queue"}                       # a second message waits, never cuts the first off
         assert "platforms" not in yaml.safe_load(r.config_text("alpha", r.load("alpha")))
 
     def test_telegram_is_refused(self, repo):
