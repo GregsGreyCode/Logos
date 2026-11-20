@@ -62,3 +62,14 @@ def test_hud_is_dark_only_and_nonsense_is_refused(api):
     assert go("u-greg", "PUT", "/api/v2/me/look", {"look": "neon", "mode": "dark"})[0] == 400
     assert go("u-greg", "PUT", "/api/v2/me/look", {"look": "glass", "mode": "sepia"})[0] == 400
     assert db.settings["u-greg"]["ui_theme"] == "hud:dark"
+
+
+def test_chat_options_are_kept_with_the_login_and_only_known_ones(api):
+    go, db = api
+    assert go("u-bere", "GET", "/api/v2/me")[1]["prefs"] == {}
+    assert go("u-bere", "PUT", "/api/v2/me/prefs", {"panel": "open"}) == (200, {"panel": "open"})
+    assert go("u-bere", "PUT", "/api/v2/me/prefs", {"thinking": True})[1] == {"panel": "open", "thinking": True}
+    assert go("u-bere", "PUT", "/api/v2/me/prefs", {"panel": "sideways"})[0] == 400
+    assert go("u-bere", "PUT", "/api/v2/me/prefs", {"admin": True})[0] == 400
+    assert go("u-bere", "GET", "/api/v2/me")[1]["prefs"] == {"panel": "open", "thinking": True}
+    assert go("u-greg", "GET", "/api/v2/me")[1]["prefs"] == {}

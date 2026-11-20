@@ -366,6 +366,9 @@ def _run_migrations() -> None:
             # need a JOIN to dispatches/agents. NULL on historical rows
             # (pre-migration) — they just don't contribute to new caps.
             "ALTER TABLE cost_log ADD COLUMN user_id TEXT",
+            # v27 (Logos v2 ST1): the dashboard's per-person options, as JSON
+            # (chat panel behaviour, Show thinking, Show scheduled jobs).
+            "ALTER TABLE user_settings ADD COLUMN ui_prefs TEXT",
         ):
             try:
                 conn.execute(stmt)
@@ -1261,7 +1264,7 @@ def get_user_settings(user_id: str) -> Optional[dict]:
 
 
 def update_user_settings(user_id: str, **fields) -> Optional[dict]:
-    allowed = {"default_soul", "default_model", "ui_theme", "notification_telegram", "spawn_defaults"}
+    allowed = {"default_soul", "default_model", "ui_theme", "notification_telegram", "spawn_defaults", "ui_prefs"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     updates["updated_at"] = int(time.time() * 1000)
     set_clause = ", ".join(f"{k} = ?" for k in updates)

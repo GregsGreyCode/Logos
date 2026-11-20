@@ -1,12 +1,11 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
 import { h, api, getJSON, when, markdown, working, agentLabel, icon, none } from './util.js';
+import { getPref, setPref } from './prefs.js';
 import { takeAsk } from './home.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
 // Per-browser view settings: show the agent's reasoning and tool calls; list scheduled jobs too.
-const pref = (key) => { try { return localStorage.getItem(`logos-${key}`) === '1'; } catch (e) { return false; } };
-const setPref = (key, on) => { try { localStorage.setItem(`logos-${key}`, on ? '1' : '0'); } catch (e) { /* private window */ } };
 const WHERE = { web: 'web', matrix: 'Matrix', telegram: 'Telegram', scheduled: 'Scheduled job' };
 const READ_ONLY_NOTE = {
   matrix: 'This conversation happened in Element X. Continue it there, or start a new one here.',
@@ -100,8 +99,8 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const agent = agents.find((a) => a.name === agentArg) || agents[0];
   let chatId = chatArg || newId();
   let readOnly = false;
-  let showThinking = pref('show-thinking');
-  let showJobs = pref('show-jobs');
+  let showThinking = getPref('thinking', false);
+  let showJobs = getPref('jobs', false);
   let lastConversations = [];
   let running = null;            // { taskId } while a reply is streaming
 
@@ -471,12 +470,12 @@ export async function chatView(root, [agentArg, chatArg], state) {
     setTimeout(done, 480);
   }
   const tuck = (hide) => {
-    setPref('side-pinned', !hide);
+    setPref('panel', hide ? 'slide' : 'open');
     if (hide) return slideAway(true);
     side.classList.remove('tucked'); reopen.classList.remove('shown');
     side.querySelector('.side-hide').focus();
   };
-  if (!pref('side-pinned')) setTimeout(() => { if (alive && side.isConnected && !side.contains(document.activeElement)) slideAway(false); }, 1200);
+  if (getPref('panel', 'slide') !== 'open') setTimeout(() => { if (alive && side.isConnected && !side.contains(document.activeElement)) slideAway(false); }, 1200);
   const sideScrim = h('div', { class: 'chat-scrim', hidden: true });
   const convBtn = h('button', { type: 'button', class: 'conv-btn', 'aria-label': 'Conversations and view settings',
     'aria-controls': 'chat-side', 'aria-expanded': 'false' }, listIcon());
@@ -499,11 +498,11 @@ export async function chatView(root, [agentArg, chatArg], state) {
   const thinkingBox = h('input', { type: 'checkbox', id: 'show-thinking', checked: showThinking,
     onchange: async () => {
       showThinking = thinkingBox.checked;
-      setPref('show-thinking', showThinking);
+      setPref('thinking', showThinking);
       if (lastConversations.some((x) => x.chat_id === chatId || x.id === chatId)) await openConversation(lastConversations);
     } });
   const jobsBox = h('input', { type: 'checkbox', id: 'show-jobs', checked: showJobs ? '' : null,
-    onchange: () => { showJobs = jobsBox.checked; setPref('show-jobs', showJobs); loadConversations(); } });
+    onchange: () => { showJobs = jobsBox.checked; setPref('jobs', showJobs); loadConversations(); } });
 
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },

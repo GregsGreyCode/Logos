@@ -697,3 +697,32 @@ dialog.appearance .label { margin: 16px 0 8px; }
   .side-reopen.shown { animation: tab-in 0.3s ease both; }
   @keyframes tab-in { from { opacity: 0; transform: translate(8px, -50%); } }
 }
+
+/* Settings (ST1): sections on the left on a desktop, a row of tabs on a phone */
+.settings-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 40px; align-items: start; }
+.settings-tabs { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 24px; }
+.settings-tab { display: flex; align-items: center; min-height: 42px; padding: 0 14px; border-radius: var(--r-ctl);
+  color: var(--muted); text-decoration: none; font-weight: 500; }
+.settings-tab:hover { color: var(--ink); background: var(--chip); }
+.settings-tab[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--accent-soft); }
+.settings-body { display: flex; flex-direction: column; gap: 32px; max-width: 720px; min-width: 0; }
+.settings-body > section { display: flex; flex-direction: column; gap: 12px; }
+.settings-form { display: flex; flex-direction: column; gap: 12px; max-width: 480px; }
+.settings-form .field-label { margin-bottom: -8px; }
+.settings-form input { min-height: var(--ctl); padding: 0 14px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--ground); color: var(--ink); font: inherit; }
+.settings-choices { display: grid; gap: 8px; }
+.appearance-mode.choice { align-items: flex-start; min-height: 0; padding: 12px 14px; border-radius: var(--r-card); }
+.appearance-mode.choice input { margin-top: 2px; }
+.appearance-mode.choice strong { display: block; font-weight: 600; }
+.block { display: block; }
+.settings-body .lead { margin: 0; }
+@media (max-width: 720px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .settings-tabs { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .settings-tab { flex: none; min-height: 40px; border: 1px solid var(--line); }
+  .page.settings > header { display: none; }
+}
+[data-look="hud"] .settings-tab { font-family: var(--font-mono); text-transform: uppercase; font-size: 12px; letter-spacing: 0.06em; }
+[data-look="hud"] .settings-tab[aria-current="page"] { background: transparent; box-shadow: inset 2px 0 0 var(--accent); color: var(--accent); }
+[data-look="warm"] .settings-tab[aria-current="page"] { background: var(--accent); color: var(--accent-ink); }

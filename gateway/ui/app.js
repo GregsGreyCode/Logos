@@ -8,18 +8,20 @@ import { peopleView } from './people.js';
 import { modelsView } from './models.js';
 import { updatesView } from './updates.js';
 import { advisorView } from './advisor.js';
+import { settingsView } from './settings.js';
+import { adoptPrefs } from './prefs.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, labelTables } from './util.js';
-import { adopt, openAppearance } from './appearance.js';
+import { adopt } from './appearance.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
-  models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView };
+  models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView, settings: settingsView };
 const root = document.getElementById('view');
 let cleanup = null;
 
 const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Noticeboard', agents: 'Agents', models: 'Models',
-  people: 'People', updates: 'Updates', advisor: 'Claude Advisor' };
-const IN_MORE = ['agents', 'advisor', 'models', 'people', 'updates'];
+  people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
+const IN_MORE = ['agents', 'advisor', 'models', 'people', 'settings'];
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },
@@ -63,6 +65,8 @@ for (const a of document.querySelectorAll('.sheet a')) a.addEventListener('click
 
 let visit = 0;
 async function route() {
+  // Updates now lives in Settings (ST1); old links still work.
+  if (location.hash.startsWith('#/updates')) { history.replaceState(null, '', '#/settings/updates'); }
   const [, name = 'home', ...rest] = location.hash.split('/');
   const mine = ++visit;
   dropSheet();
@@ -87,11 +91,7 @@ const state = { me: null };
 // Screens redraw their tables as data arrives; label the cells each time (used by the phone layout).
 new MutationObserver(() => labelTables(root)).observe(root, { childList: true, subtree: true });
 
-// Appearance (L3): the look and light or dark, in a dialog on every screen size.
-for (const b of document.querySelectorAll('.theme-btn')) {
-  b.textContent = 'Appearance';
-  b.addEventListener('click', () => { dropSheet(); openAppearance(); });
-}
+
 for (const b of document.querySelectorAll('.logout-btn')) b.addEventListener('click', async () => {
   await api('/auth/logout', { method: 'POST' }).catch(() => {});
   location.href = '/login';
@@ -99,6 +99,7 @@ for (const b of document.querySelectorAll('.logout-btn')) b.addEventListener('cl
 
 state.me = await getJSON('/api/v2/me');
 adopt(state.me);
+adoptPrefs(state.me);
 const shown = state.me.display_name || state.me.username;
 if (state.me.role === 'admin') for (const el of document.querySelectorAll('.admin-only')) el.hidden = false;
 for (const el of document.querySelectorAll('.nav-foot .who')) el.textContent = `Signed in as ${shown}`;
