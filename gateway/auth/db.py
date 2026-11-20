@@ -499,6 +499,16 @@ def _run_migrations() -> None:
         #   old 8..15  → body N, skin 1 (medium), hair 0             = N * 12 + 4
         #   old 16..23 → body N, skin 2 (dark),   hair 2 (180°)      = N * 12 + 10
         # Guarded by a schema_flags row so it only runs once.
+        # Logos v2 ST2: each agent's colour on the dashboard (its dot and, later, its floating mark),
+        # the same for everyone; set by the people who may use that agent.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_colours (
+                name       TEXT PRIMARY KEY,
+                colour     TEXT NOT NULL,
+                set_by     TEXT,
+                updated_at INTEGER
+            )
+        """)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS schema_flags (
                 key        TEXT PRIMARY KEY,
@@ -1570,3 +1580,15 @@ def get_platform_settings() -> dict:
         }
 
 
+
+
+def get_agent_colours() -> dict:
+    """``{agent name: "#rrggbb"}`` for every agent someone has given a colour (ST2)."""
+    with _conn() as conn:
+        return {r["name"]: r["colour"] for r in conn.execute("SELECT name, colour FROM agent_colours")}
+
+
+def set_agent_colour(name: str, colour: str, set_by: str) -> None:
+    with _conn() as conn:
+        conn.execute("INSERT OR REPLACE INTO agent_colours (name, colour, set_by, updated_at) VALUES (?, ?, ?, ?)",
+                     (name, colour, set_by, int(time.time() * 1000)))
