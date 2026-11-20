@@ -89,6 +89,11 @@ async def auth_middleware(request: web.Request, handler):
     if path.startswith("/mcp/"):
         return await handler(request)
 
+    # The Matrix pass-through checks the dashboard session itself: an expired one must be answered
+    # 503 (try again), never 401, or the browser's Matrix client signs its device out (M1).
+    if path.startswith("/_matrix/"):
+        return await handler(request)
+
     user = get_user_from_request(request)
     if user is TOKEN_EXPIRED:
         # Token present but expired — client should refresh, not re-authenticate

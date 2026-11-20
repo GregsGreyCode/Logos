@@ -154,11 +154,28 @@ def agent_colours() -> Dict[str, str]:
     return getter() if getter else {}
 
 
+def matrix_id_of(request: web.Request, username: str) -> Optional[str]:
+    """The person's Matrix ID (@username:server), for connecting their browser (M1); None without Matrix."""
+    if "matrix_server_name" not in request.app:
+        name = None
+        runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+        if runtime is not None:
+            try:
+                from gateway.matrix_host import MatrixHost
+                name = MatrixHost(runtime).settings()["MATRIX_SERVER_NAME"]
+            except Exception:
+                name = None
+        request.app["matrix_server_name"] = name
+    name = request.app["matrix_server_name"]
+    return f"@{username}:{name}" if name and username else None
+
+
 async def handle_me(request: web.Request) -> web.Response:
     user = _user(request)
     look, prefs, colours = await asyncio.gather(asyncio.to_thread(look_of, user["id"]), asyncio.to_thread(prefs_of, user["id"]),
                                                 asyncio.to_thread(agent_colours))
-    return web.json_response({**user, "look": look, "prefs": prefs, "agent_colours": colours})
+    matrix = await asyncio.to_thread(matrix_id_of, request, user["username"])
+    return web.json_response({**user, "look": look, "prefs": prefs, "agent_colours": colours, "matrix_id": matrix})
 
 
 async def handle_agent_colour(request: web.Request) -> web.Response:
