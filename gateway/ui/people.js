@@ -32,24 +32,6 @@ export async function peopleView(root, _args, state) {
     return [h('label', { for: id, class: 'field-label' }, label), input];
   }
 
-  function account() {
-    const [nl, name] = field('acc-name', 'Name', 'text', { value: state.me.display_name || '' });
-    const [cl, cur] = field('acc-cur', 'Current password', 'password', { autocomplete: 'current-password' });
-    const [pl, next] = field('acc-new', 'New password', 'password', { autocomplete: 'new-password', placeholder: 'At least 8 characters' });
-    const note = h('div', { class: 'result when' });
-    return h('form', { class: 'card form', 'aria-label': 'Your account', onsubmit: async (e) => {
-      e.preventDefault();
-      const body = { display_name: name.value.trim() };
-      if (next.value) { body.current_password = cur.value; body.new_password = next.value; }
-      const r = await api('/users/me', { method: 'PATCH', body });
-      const out = await r.json().catch(() => ({}));
-      note.textContent = r.ok ? 'Saved.' : (out.message || out.error || 'Could not save.');
-      if (r.ok) { state.me.display_name = body.display_name; cur.value = ''; next.value = ''; load(); }
-    } }, h('h2', {}, 'Your account'), nl, name, cl, cur, pl, next,
-    h('p', { class: 'when' }, 'Leave the password boxes empty to change only your name. Your sign-in name does not change, so you keep your agents.'),
-    h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn' }, 'Save')), note);
-  }
-
   function addPerson() {
     const [nl, name] = field('np-name', 'Name', 'text');
     const [el, email] = field('np-email', 'Email', 'email');
@@ -83,11 +65,12 @@ export async function peopleView(root, _args, state) {
   }
 
   root.replaceChildren(h('div', { class: 'page' },
-    h('header', {}, h('h1', {}, 'People and access'),
+    h('header', {}, h('h1', {}, 'People'),
       h('p', { class: 'when lead' }, 'Who can sign in, and whose agent and brain each person can use. An agent is private to its person, and that includes from whoever manages Logos.')),
     table,
     h('p', { class: 'when' }, 'Who owns an agent is set in its definition on the server (owners in agents/<name>.yaml). What an agent may share with other agents is written in its brain, on the page "What may be shared with other agents".'),
-    h('div', { class: 'two-col' }, account(), admin)));
+    h('p', { class: 'when' }, 'Your own name and password are in ', h('a', { href: '#/settings/account' }, 'Settings'), '.'),
+    h('div', { class: 'two-col' }, admin)));
   await load();
   return () => { alive = false; };
 }

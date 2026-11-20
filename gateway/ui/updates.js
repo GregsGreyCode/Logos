@@ -12,7 +12,7 @@ const STATE_TEXT = {
 
 const time = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
-export async function updatesView(root, _args, state) {
+export async function updatesView(root, _args, state, embedded = false) {
   if (state.me.role !== 'admin') {
     root.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'Updates'),
       h('p', {}, 'Only someone who manages Logos can update it.')));
@@ -96,10 +96,10 @@ export async function updatesView(root, _args, state) {
     else if (wasRunning) { wasRunning = false; refresh(true, true); }   // finished: show what is left
   }
 
-  root.replaceChildren(h('div', { class: 'page' },
-    h('header', {}, h('h1', {}, 'Updates'),
-      h('p', { class: 'when lead' }, 'Install the latest Logos from the v2 branch on this machine. Only the parts that changed are restarted.')),
-    planBox, lastBox));
+  const lead = h('p', { class: 'when lead' }, 'Install the latest Logos from the v2 branch on this machine. Only the parts that changed are restarted.');
+  // Inside Settings (ST1) it is a section, not a screen of its own.
+  if (embedded) root.replaceChildren(lead, planBox, lastBox);
+  else root.replaceChildren(h('div', { class: 'page' }, h('header', {}, h('h1', {}, 'Updates'), lead), planBox, lastBox));
   lastBox.hidden = true;
   await refresh(true);
   return () => { alive = false; clearTimeout(timer); };
