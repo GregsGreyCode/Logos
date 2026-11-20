@@ -1,5 +1,5 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
-import { h, api, getJSON, when, markdown, working, agentLabel, icon } from './util.js';
+import { h, api, getJSON, when, markdown, working, agentLabel, icon, none } from './util.js';
 import { takeAsk } from './home.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
@@ -189,7 +189,7 @@ export async function chatView(root, [agentArg, chatArg], state) {
         type: 'button', 'aria-current': String(c.chat_id === chatId || c.id === chatId),
         onclick: () => { closeSide(false); location.hash = `#/chat/${agent.name}/${c.chat_id || c.id}`; },
       }, c.title, h('span', { class: 'when' }, `${when(c.last_active)} · ${WHERE[c.where] || c.where}`))));
-      if (!shown.length) convs.replaceChildren(h('span', { class: 'when' }, 'Nothing yet.'));
+      if (!shown.length) convs.replaceChildren(none('Nothing yet.'));
       return conversations;
     } catch (e) {
       convs.replaceChildren(h('span', { class: 'when' }, 'Could not load earlier conversations.'));

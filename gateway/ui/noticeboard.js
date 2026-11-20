@@ -1,10 +1,10 @@
 // Noticeboard screen: what the agents asked each other, and the requests waiting on you.
-import { h, api, getJSON, when } from './util.js';
+import { h, api, getJSON, when, none } from './util.js';
 
 const KIND = { fyi: 'FYI', question: 'Question', shared_change: 'Shared change', reminder: 'Reminder' };
 const ASKS = { question: 'asks a question', shared_change: 'proposes a shared change', reminder: 'asks for a reminder' };
 
-function outcome(m) {
+export function outcome(m) {
   if (m.kind === 'fyi') return ['Noted', 'plain'];
   if (m.status === 'open') return [m.to_mine ? 'Waiting on you' : `Waiting on ${m.to_name}`, m.to_mine ? 'wait' : 'plain'];
   if (m.status === 'expired') return ['Expired, no answer', 'bad'];
@@ -73,9 +73,15 @@ export async function noticeboardView(root) {
   const doing = {};             // request id -> message shown while the agent acts on an acceptance
   const waitingBox = h('div', { class: 'cards' });
   const tbody = h('tbody');
+  const logBox = h('div', { class: 'table-box' });
+  const noLog = none('No messages yet.');
   const error = h('div', { class: 'notice', hidden: true });
 
   const card = (m) => requestCard(m, doing, () => load());
+
+  logBox.append(h('table', {},
+    h('thead', {}, h('tr', {}, ['When', 'From, to', 'Kind', 'Message', 'Outcome'].map((t) => h('th', { scope: 'col' }, t)))),
+    tbody));
 
   async function load() {
     try {
@@ -85,7 +91,7 @@ export async function noticeboardView(root) {
       for (const id of Object.keys(doing)) if (!waiting.some((w) => String(w.id) === id)) delete doing[id];
       setBadge(waiting.length);
       waitingBox.replaceChildren(...(waiting.length ? waiting.map(card)
-        : [h('div', { class: 'when' }, 'Nothing is waiting on you.')]));
+        : [none('Nothing is waiting on you.')]));
       tbody.replaceChildren(...log.map((m) => {
         const [label, tone] = outcome(m);
         return h('tr', {}, h('td', { class: 'nowrap when' }, when(m.ts)),
@@ -93,7 +99,7 @@ export async function noticeboardView(root) {
           h('td', { class: 'when nowrap' }, KIND[m.kind] || m.kind), h('td', {}, m.text),
           h('td', {}, h('span', { class: `pill ${tone}` }, label)));
       }));
-      if (!log.length) tbody.replaceChildren(h('tr', {}, h('td', { colspan: '5', class: 'when' }, 'No messages yet.')));
+      logBox.hidden = !log.length; noLog.hidden = !!log.length;
     } catch (e) {
       error.hidden = false;
       error.textContent = 'Could not load the noticeboard.';
@@ -106,9 +112,7 @@ export async function noticeboardView(root) {
     error,
     h('section', { 'aria-label': 'Waiting on you' }, h('h2', { class: 'label' }, 'Waiting on you'), waitingBox),
     h('section', { 'aria-label': 'Recent messages' }, h('h2', { class: 'label' }, 'Recent messages'),
-      h('div', { class: 'table-box' }, h('table', {},
-        h('thead', {}, h('tr', {}, ['When', 'From, to', 'Kind', 'Message', 'Outcome'].map((t) => h('th', { scope: 'col' }, t)))),
-        tbody)),
+      noLog, logBox,
       h('p', { class: 'when' }, 'Each agent can send another ten requests a day. Urgent ones reach the person in Element X within a minute.'))));
   await load();
   timer = setInterval(load, 15000);

@@ -107,8 +107,41 @@ async def _agent_or_404(request: web.Request) -> tuple[str, dict, Dict[str, str]
     return name, agents[name], user
 
 
+LOOKS = ("glass", "hud", "warm")
+MODES = ("dark", "light", "auto")
+
+
+def look_of(user_id: str) -> Optional[Dict[str, str]]:
+    """The person's chosen look ("glass" | "hud" | "warm") and light/dark mode, kept with their login
+    (user_settings.ui_theme as "look:mode"), so it follows them from one device to another. None until
+    they choose."""
+    getter = getattr(auth_db, "get_user_settings", None)
+    row = getter(user_id) if (user_id and getter) else None
+    look, _, mode = str((row or {}).get("ui_theme") or "").partition(":")
+    if look not in LOOKS:
+        return None
+    return {"look": look, "mode": mode if mode in MODES else "dark"}
+
+
 async def handle_me(request: web.Request) -> web.Response:
-    return web.json_response(_user(request))
+    user = _user(request)
+    return web.json_response({**user, "look": await asyncio.to_thread(look_of, user["id"])})
+
+
+async def handle_set_look(request: web.Request) -> web.Response:
+    """PUT /api/v2/me/look {look, mode}: the signed-in person's own look; nobody sets another's."""
+    user = _user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    look, mode = str((body or {}).get("look") or ""), str((body or {}).get("mode") or "dark")
+    if look not in LOOKS or mode not in MODES:
+        return web.json_response({"error": "bad_look", "looks": list(LOOKS), "modes": list(MODES)}, status=400)
+    if look == "hud":
+        mode = "dark"                                   # the HUD is dark only (decided 20 Nov 2026)
+    await asyncio.to_thread(auth_db.update_user_settings, user["id"], ui_theme=f"{look}:{mode}")
+    return web.json_response({"look": look, "mode": mode})
 
 
 MODEL_CHECK_SECONDS = 20
@@ -342,6 +375,9 @@ async def handle_conversation_messages(request: web.Request) -> web.Response:
 
 # ── Home (S6.11) ─────────────────────────────────────────────────────────────
 
+HOME_CACHE_SECONDS = 60
+
+
 async def handle_home(request: web.Request) -> web.Response:
     """GET /api/v2/home — for the person's own agent: today's calendar, brain pages changed in
     the last day, and whether the model server is answering. The noticeboard has its own call."""
@@ -360,9 +396,17 @@ async def handle_home(request: web.Request) -> web.Response:
     if runtime is None:
         out.update(today={"error": "no_backend"}, brain_changes=[])
         return web.json_response(out)
-    today, listing = await asyncio.gather(
-        asyncio.to_thread(home.calendar_today, runtime, name, definition, user["username"]),
-        asyncio.to_thread(brain_reader.list_pages, runtime, name), return_exceptions=True)
+    # Both are read inside the agent's sandbox (about 1.5 s together), so they are kept for a minute.
+    cache = request.app.setdefault("home_cache", {})
+    key, now = (name, user["username"]), time.time()
+    if key in cache and now - cache[key][0] < HOME_CACHE_SECONDS:
+        today, listing = cache[key][1]
+    else:
+        today, listing = await asyncio.gather(
+            asyncio.to_thread(home.calendar_today, runtime, name, definition, user["username"]),
+            asyncio.to_thread(brain_reader.list_pages, runtime, name), return_exceptions=True)
+        if isinstance(today, dict) and isinstance(listing, dict):
+            cache[key] = (now, (today, listing))
     out["today"] = today if isinstance(today, dict) else {"error": "calendar_unavailable"}
     out["brain_changes"] = home.recent_brain_changes(listing) if isinstance(listing, dict) else []
     return web.json_response(out)
@@ -1265,6 +1309,7 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/noticeboard", handle_noticeboard)
     app.router.add_post("/api/v2/noticeboard/{id}/answer", require_csrf(handle_noticeboard_answer))
     app.router.add_get("/api/v2/me", handle_me)
+    app.router.add_put("/api/v2/me/look", require_csrf(handle_set_look))
     app.router.add_get("/api/v2/agents", handle_agents)
     app.router.add_get("/api/v2/agents/{name}/conversations", handle_conversations)
     app.router.add_get("/api/v2/agents/{name}/conversations/{sid}", handle_conversation_messages)

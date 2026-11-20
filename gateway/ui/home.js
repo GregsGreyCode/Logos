@@ -1,10 +1,11 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
-import { h, getJSON, when } from './util.js';
-import { requestCard, setBadge } from './noticeboard.js';
+import { h, getJSON, when, none } from './util.js';
+import { requestCard, setBadge, outcome } from './noticeboard.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
 const ASK_KEY = 'logos-ask';           // Chat picks the question up from here and sends it
+const SEEN_KEY = 'logos-home-last';    // the last Home seen on this device, drawn at once while the new one loads
 
 // "2026-11-19 10:30" -> "10:30"; an all-day event shows "All day".
 const timeOf = (e) => (e.all_day ? 'All day' : String(e.start || '').slice(11, 16));
@@ -12,11 +13,26 @@ const timeOf = (e) => (e.all_day ? 'All day' : String(e.start || '').slice(11, 1
 export async function homeView(root) {
   let alive = true, timer = null;
   const doing = {};
-  const waitingBox = h('div', { class: 'stack home-waiting' });
-  const todayBox = h('div', { class: 'home-list' });
-  const doneBox = h('div', { class: 'stack' });
+  const waitingBox = h('div', { class: 'stack home-waiting' }, none('Loading…'));
+  const todayBox = h('div', { class: 'home-list' }, none('Loading…'));
+  const doneBox = h('div', { class: 'stack' }, none('Loading…'));
   const status = h('div', { class: 'when home-status' });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
+  // Terminal HUD (L6): a live strip of the same figures the Models screen shows. Hidden in the other looks.
+  const strip = h('div', { class: 'hud-strip', 'aria-label': 'Live figures' });
+  const cell = (label, value, unit, live) => h('div', { class: 'hud-cell' }, h('span', {}, label),
+    h('strong', { class: live ? 'live' : null }, value, unit ? h('small', {}, ` ${unit}`) : null));
+  async function showStrip() {
+    if (document.documentElement.dataset.look !== 'hud') return;
+    const [local, act] = await Promise.all([getJSON('/api/v2/models/local').catch(() => null),
+      getJSON('/api/v2/activity').catch(() => null)]);
+    if (!alive) return;
+    const q = local && local.queue, sp = local && local.speed && (local.speed.alone || {});
+    strip.replaceChildren(
+      cell('Working', act ? String(act.working.length) : '–', act && act.working.length ? 'agents' : '', act && act.working.length),
+      cell('Model', sp && sp.median_tokens_per_s ? String(Math.round(sp.median_tokens_per_s)) : '–', 'tok/s'),
+      cell('Queue', q ? `${q.running}/${q.waiting}` : '–', 'run/wait'));
+  }
 
   let data = null;
   const obsidian = (path) => `obsidian://open?vault=${encodeURIComponent(data.agent.obsidian_vault)}`
@@ -36,32 +52,58 @@ export async function homeView(root) {
       .sort((a, b) => String(a.start).localeCompare(String(b.start)));
     const todays = rows.filter((e) => String(e.start).startsWith(day));
     const later = rows.filter((e) => !String(e.start).startsWith(day));
-    const row = (e, label) => h('div', { class: 'home-row' },
-      h('span', { class: 'home-time' }, label ?? timeOf(e)),
+    const whose = (e) => (e.kind === 'busy' ? e.who
+      : e.calendar === 'personal' ? 'Yours' : (today.calendars || {})[e.calendar] || e.calendar);
+    const row = (e) => h('div', { class: 'home-row' },
+      h('span', { class: 'home-time' }, timeOf(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
-      h('span', { class: 'home-title' }, e.title, e.location ? h('span', { class: 'when' }, ` · ${e.location}`) : null),
-      h('span', { class: 'when' }, e.kind === 'busy' ? e.who
-        : e.calendar === 'personal' ? 'Yours' : (today.calendars || {})[e.calendar] || e.calendar));
+      h('span', { class: 'home-title' }, h('span', {}, e.title),
+        h('span', { class: 'home-meta' }, [whose(e), e.location].filter(Boolean).join(' · '))));
     todayBox.replaceChildren(
-      ...(todays.length ? todays.map((e) => row(e)) : [h('p', { class: 'when' }, 'Nothing in the calendar today.')]),
-      ...later.slice(0, 4).map((e) => row(e, 'Tomorrow')));
+      ...(todays.length ? todays.map(row) : [none('Nothing in the calendar today.')]),
+      ...(later.length ? [h('h3', { class: 'sub-label' }, 'Tomorrow'), ...later.slice(0, 4).map(row)] : []));
   }
 
+  // Since yesterday: what changed in the brain, grouped by folder, and what the agents said to each
+  // other, one line each with its outcome; a line opens to the whole message and the answer.
   function showDone(log) {
     const since = Date.now() / 1000 - 24 * 3600;
-    const items = [];
-    for (const c of data.brain_changes || []) {
-      items.push({ when: c.when, line: [h('a', { href: isPhone() ? obsidian(c.path) : brainLink(c.path) }, c.title), ' changed in the brain'],
-        who: data.agent.display_name });
+    const pages = data.brain_changes || [];
+    const msgs = (log || []).filter((x) => (x.ts || 0) >= since && x.status !== 'open').sort((a, b) => b.ts - a.ts);
+    const parts = [];
+    if (pages.length) {
+      const folders = new Map();
+      for (const c of pages) {
+        const f = c.path.includes('/') ? c.path.split('/')[0] : 'top level';
+        if (!folders.has(f)) folders.set(f, []);
+        folders.get(f).push(c);
+      }
+      parts.push(h('div', { class: 'done-group' },
+        h('h3', { class: 'sub-label' }, `In ${data.agent.display_name}'s brain · ${pages.length} page${pages.length > 1 ? 's' : ''}`),
+        [...folders].map(([f, cs]) => h('div', { class: 'done-row' },
+          h('span', { class: 'done-what' }, f.replace(/[-_]/g, ' ')),
+          h('span', { class: 'done-pages' }, cs.map((c, i) => [i ? ', ' : '',
+            h('a', { href: isPhone() ? obsidian(c.path) : brainLink(c.path) }, c.title)])),
+          h('span', { class: 'when done-when' }, when(Math.max(...cs.map((c) => c.when))))))));
     }
-    for (const m of (log || []).filter((x) => (x.ts || 0) >= since && x.status !== 'open')) {
-      items.push({ when: m.ts, line: [`${m.from_name} → ${m.to_name}: `, h('span', {}, m.text)],
-        who: m.status === 'answered' && m.answer ? `Answered: ${m.answer}` : m.status });
+    if (msgs.length) {
+      parts.push(h('div', { class: 'done-group' },
+        h('h3', { class: 'sub-label' }, `Between the agents · ${msgs.length}`),
+        msgs.slice(0, 6).map((m) => {
+          const [label, tone] = outcome(m);
+          const short = label.split(':')[0];
+          return h('details', { class: 'done-msg' },
+            h('summary', {},
+              h('span', { class: 'done-what' }, `${m.from_name} → ${m.to_name}`),
+              h('span', { class: 'done-text' }, m.text),
+              h('span', { class: `pill ${tone}` }, short),
+              h('span', { class: 'when done-when' }, when(m.ts))),
+            h('p', { class: 'done-full' }, m.text),
+            m.answer ? h('p', { class: 'done-answer' }, h('strong', {}, `${short}: `), m.answer) : null);
+        }),
+        msgs.length > 6 ? h('a', { href: '#/noticeboard', class: 'done-more' }, `${msgs.length - 6} more on the Noticeboard`) : null));
     }
-    items.sort((a, b) => b.when - a.when);
-    doneBox.replaceChildren(...(items.length ? items.slice(0, 8).map((i) => h('div', { class: 'home-done' },
-      h('span', {}, ...i.line), h('span', { class: 'when' }, `${i.who} · ${when(i.when)}`)))
-      : [h('p', { class: 'when' }, 'Nothing new since yesterday.')]));
+    doneBox.replaceChildren(...(parts.length ? parts : [none('Nothing new since yesterday.')]));
   }
 
   async function load() {
@@ -73,6 +115,21 @@ export async function homeView(root) {
       return;
     }
     if (!alive) return;
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify({ day: new Date().toDateString(), data, nb })); } catch (e) { /* full or private */ }
+    paint(nb);
+  }
+
+  // The last Home seen today on this device, drawn at once; load() replaces it a moment later.
+  function fromLast() {
+    try {
+      const last = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null');
+      if (!last || last.day !== new Date().toDateString() || !last.data || !last.data.agent) return;
+      data = last.data;
+      paint(last.nb || { waiting: [], log: [] });
+    } catch (e) { /* nothing kept */ }
+  }
+
+  function paint(nb) {
     if (!data.agent) {
       root.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'No agent yet'),
         h('p', {}, 'No agent is set up for your account.')));
@@ -87,9 +144,10 @@ export async function homeView(root) {
     setBadge(nb.waiting.length);
     waitingLabel.textContent = nb.waiting.length ? `Waiting on you · ${nb.waiting.length}` : 'Waiting on you';
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
-      : [h('p', { class: 'when' }, 'Nothing is waiting on you.')]));
+      : [none('Nothing is waiting on you.')]));
     showToday(data.today);
     showDone(nb.log);
+    showStrip();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
 
@@ -107,11 +165,13 @@ export async function homeView(root) {
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
       h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), status),
+    strip,
     askForm,
     h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox),
     h('section', { 'aria-label': 'Today' }, h('h2', { class: 'label' }, 'Today'), todayBox),
     h('section', { 'aria-label': 'What happened' }, h('h2', { class: 'label' }, 'Since yesterday'), doneBox)));
 
+  fromLast();
   await load();
   timer = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
   return () => { alive = false; clearInterval(timer); };
