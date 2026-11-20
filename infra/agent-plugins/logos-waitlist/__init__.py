@@ -20,6 +20,11 @@ When LM Studio is closed (Greg is gaming), the model guard answers a model reque
   line above: the person need not send it again, and there is no backup provider by design
   (the brain stays local). The line is hermes's failed-turn notice, so the model never reads it.
 
+- tells the agent, at the start of its next turn in that conversation, that its last reply failed
+  and why. hermes strips its own failure notice before the model reads the conversation, so
+  without this an agent asked "what happened?" guessed ("a formatting error") or redid the
+  request without saying anything (evals: failed_turn_told_plainly_and_redone).
+
 Scheduled jobs are not handled here (``rerun_after_outage.py``), nor web chat (the dashboard
 re-sends its own messages). Nothing here reads or logs message text.
 """
@@ -131,6 +136,7 @@ def _classify(status_code=None, error_code="", error_message="", error_body=None
 
 
 def _on_error(session_id="", platform="", status_code=None, error=None, **_):
+    _remember_failure(session_id, status_code, error)
     if status_code != 503 or not is_off((error or {}).get("message")):
         return
     if add(session_id, str(platform or ""), time.time()):
@@ -247,8 +253,51 @@ def patch_failed_turn_notice() -> bool:
     return True
 
 
+# ── a note for the next turn after a failed one ───────────────────────────────
+
+FAILED: dict = {}                 # session id -> {"why": ..., "at": ...}; a success clears it
+NOTE_MAX_AGE = 12 * 3600
+FAILED_NOTE = ("[Note from Logos, not from your person: your previous reply in this conversation failed "
+               "before it reached them ({why}); they only saw \"Your request was not processed\". "
+               "If they ask what happened, start with one plain sentence saying so. Then, in this same "
+               "reply, do what they asked before it failed, without asking them to send it again.]")
+
+
+def why(status_code=None, error=None) -> str:
+    """The failure in a few plain words, from what hermes reports."""
+    raw = str((error or {}).get("message") or "") + " " + str((error or {}).get("type") or "")
+    text = raw.lower()
+    if is_off(raw) or off_failure(raw):
+        return "the AI computer was off"
+    if "repetition" in text or "runaway" in text:
+        return "the model got stuck repeating itself and was stopped"
+    if "context size" in text or "context length" in text or "too long" in text:
+        return "the conversation was too long for the model at that moment"
+    if "timeout" in text or "timed out" in text or "stale" in text:
+        return "the model took too long to answer"
+    return "the model did not answer"
+
+
+def _remember_failure(session_id="", status_code=None, error=None, **_):
+    if session_id:
+        FAILED[session_id] = {"why": why(status_code, error), "at": time.time()}
+
+
+def _forget_failure(session_id="", **_):
+    FAILED.pop(session_id, None)
+
+
+def _note_for_next_turn(session_id="", **_):
+    item = FAILED.pop(session_id, None) if session_id else None
+    if item and time.time() - item["at"] < NOTE_MAX_AGE:
+        return {"context": FAILED_NOTE.format(why=item["why"])}
+    return None
+
+
 def register(ctx):
     patch_failed_turn_notice()
+    ctx.register_hook("post_api_request", _forget_failure)
+    ctx.register_hook("pre_llm_call", _note_for_next_turn)
     ctx.register_hook("transform_api_error_classification", _classify)
     ctx.register_hook("api_request_error", _on_error)
     ctx.register_hook("pre_gateway_dispatch", _on_dispatch)

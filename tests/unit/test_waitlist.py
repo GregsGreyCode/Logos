@@ -194,3 +194,35 @@ def test_a_turn_failed_because_the_model_is_off_shows_one_plain_line(wl, monkeyp
     other = "The provider refused the request (400).\n\nProvider said: bad request"
     assert runner._hmwa_add_failed_turn_notice(other, notice) == f"{other}\n\n{notice}"   # anything else unchanged
     assert wl.off_failure("Provider said: HTTP 503: model_server_off") and not wl.off_failure("timeout")
+
+
+def test_the_turn_after_a_failed_one_is_told_why(wl):
+    wl.FAILED.clear()
+    assert wl._note_for_next_turn(session_id="s1") is None                     # nothing failed
+    wl._on_error(session_id="s1", platform="matrix", status_code=500,
+                 error={"type": "APIError", "message": "Stream cut: the reasoning turned into a runaway repetition loop"})
+    note = wl._note_for_next_turn(session_id="s1")["context"]
+    assert "got stuck repeating itself" in note and "Your request was not processed" in note
+    assert "without asking them to send it again" in note
+    assert wl._note_for_next_turn(session_id="s1") is None                     # said once
+
+
+def test_a_retry_that_worked_clears_the_failure(wl):
+    wl.FAILED.clear()
+    wl._on_error(session_id="s2", status_code=500, error={"message": "Request timed out"})
+    wl._forget_failure(session_id="s2")                                         # the next attempt succeeded
+    assert wl._note_for_next_turn(session_id="s2") is None
+
+
+def test_why_in_plain_words(wl):
+    assert wl.why(503, {"message": "HTTP 503: I can't answer right now: the AI computer is off."}) == "the AI computer was off"
+    assert wl.why(500, {"message": "Context size has been exceeded."}).startswith("the conversation was too long")
+    assert wl.why(None, {"message": "Interrupted provider wait counted as stale after 47s"}) == "the model took too long to answer"
+    assert wl.why(None, {"message": "something else"}) == "the model did not answer"
+
+
+def test_an_old_failure_is_not_brought_up(wl, monkeypatch):
+    wl.FAILED.clear()
+    wl._on_error(session_id="s3", status_code=500, error={"message": "x"})
+    wl.FAILED["s3"]["at"] -= wl.NOTE_MAX_AGE + 1
+    assert wl._note_for_next_turn(session_id="s3") is None
