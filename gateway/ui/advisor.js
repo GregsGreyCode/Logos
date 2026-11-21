@@ -1,6 +1,6 @@
 // Advisor screen (story A1): the questions your agent wants to ask Claude, each waiting for you.
 // You see the exact text, pick the model, and press Send; nothing leaves the house before that.
-import { h, getJSON, api, when, loading } from './util.js';
+import { h, getJSON, api, when, loading, none } from './util.js';
 
 const usd = (n) => `$${Number(n || 0).toFixed(n && n < 0.1 ? 3 : 2)}`;
 const MODELS = [['haiku', 'Haiku 5.5', 'quick facts, rewording'], ['sonnet', 'Sonnet 5.5', 'writing, planning, research'],
@@ -49,17 +49,18 @@ function budgetBox(d, refresh) {
     } }, reason, h('button', { type: 'submit', class: 'btn ghost' }, 'Ask Greg for more'), msg));
   }
   if (d.everyone) {
-    out.push(h('h2', { class: 'label' }, 'Budgets (admin)'));
+    out.push(h('h2', { class: 'label' }, 'Everyone\'s budget'));
     for (const [person, info] of Object.entries(d.everyone)) {
+      const name = NAMES[person] || person;               // their name, not their login (Greg, 21 Nov)
       const b = info.budget;
       const act = (action, dollars) => async () => {
         const r = await post(`/api/v2/advisor-budget/${person}/${action}`, { dollars });
-        msg.textContent = r.ok ? `${person}: ${r.body.change}.` : (r.body.error || 'Could not change it.');
+        msg.textContent = r.ok ? `${name}: ${r.body.change}.` : (r.body.error || 'Could not change it.');
         setTimeout(refresh, 1200);
       };
-      out.push(h('div', { class: 'card' },
-        h('p', {}, h('strong', {}, person), ` · ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used this month`),
-        ...(info.requests || []).map((q) => h('p', { class: 'when' }, `Asks for more: "${q.reason}"`)),
+      out.push(h('div', { class: 'card budget-row' },
+        h('div', { class: 'budget-who' }, h('strong', {}, name), h('span', { class: 'when' }, `${usd(b.spent_usd)} of ${usd(b.limit_usd)} used`),
+          ...(info.requests || []).map((q) => h('span', { class: 'when' }, `Asks for more: "${q.reason}"`))),
         h('div', { class: 'actions' },
           h('button', { type: 'button', class: 'btn ghost', onclick: act('raise', 10) }, 'Raise $10'),
           h('button', { type: 'button', class: 'btn ghost', onclick: act('reset', 0) }, 'Reset'),
@@ -70,8 +71,11 @@ function budgetBox(d, refresh) {
   return h('div', {}, out);
 }
 
+// People's names for the budgets (the advisor knows their logins).
+let NAMES = {};
 export async function advisorView(root) {
   let alive = true;
+  const names = getJSON('/api/v2/people').then((d) => { NAMES = Object.fromEntries((d.people || []).map((p) => [p.username, p.display_name])); }).catch(() => {});
   let timer = null;
   root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor'), loading()));
   async function paint() {
@@ -84,12 +88,16 @@ export async function advisorView(root) {
     }
     if (!alive) return;
     const b = d.budget;
+    const monthName = new Date(`${b.month}-01T12:00:00`).toLocaleDateString([], { month: 'long' });
     const parts = [h('header', {}, h('h1', {}, 'Claude Advisor'),
-      h('p', { class: 'when lead' }, `Questions your agent wants to send to Claude wait here for your yes. ${b.month}: ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used, ${usd(b.left_usd)} left.`))];
+      h('p', { class: 'when lead' }, "Your agent's questions for Claude wait here for your yes."),
+      h('p', { class: 'advisor-left' }, h('strong', {}, `${usd(b.left_usd)} left`), ` · ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used in ${monthName}`))];
     if (!d.key) parts.push(h('div', { class: 'notice' }, 'No Anthropic key is set up yet, so nothing can be sent.'));
     parts.push(budgetBox(d, paint));
-    parts.push(h('h2', { class: 'label' }, d.pending.length ? `Waiting for you (${d.pending.length})` : 'Nothing waiting'));
-    parts.push(...d.pending.map((p) => pendingCard(p, paint)));
+    if (d.pending.length) {
+      parts.push(h('h2', { class: 'label' }, `Waiting for you (${d.pending.length})`));
+      parts.push(...d.pending.map((p) => pendingCard(p, paint)));
+    } else parts.push(none('Nothing is waiting for your yes.'));
     if (d.history.length) {
       parts.push(h('h2', { class: 'label' }, 'Log'));
       parts.push(...d.history.map((r) => h('details', { class: 'card' },
@@ -100,6 +108,7 @@ export async function advisorView(root) {
     }
     root.replaceChildren(h('div', { class: 'page' }, parts));
   }
+  await names;
   await paint();
   timer = setInterval(() => { if (document.visibilityState === 'visible') paint(); }, 15000);
   return () => { alive = false; clearInterval(timer); };

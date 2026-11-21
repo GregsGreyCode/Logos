@@ -102,7 +102,7 @@ export async function voidView(root, agents, others = []) {
   const spot = (i, n) => {
     if (layout() === 'phone') {                               // two columns, rows down the screen
       const rows = Math.ceil(n / 2), row = Math.floor(i / 2), last = i === n - 1 && n % 2 === 1;
-      return [last ? 50 : (i % 2 ? 72 : 28), rows === 1 ? 45 : 22 + (56 * row) / Math.max(rows - 1, 1)];
+      return [last ? 50 : (i % 2 ? 72 : 28), rows === 1 ? 40 : 16 + (58 * row) / Math.max(rows - 1, 1)];
     }
     const x = n === 1 ? 50 : 18 + (64 * i) / (n - 1);
     const y = [44, 34, 54, 40, 50, 36][i % 6];

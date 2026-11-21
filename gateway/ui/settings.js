@@ -128,8 +128,8 @@ function chat() {
         choice('open', 'Stays open', 'Always beside the conversation; hide it with its own button.'))),
     h('section', { 'aria-label': 'In each conversation' }, heading('In each conversation'),
       h('div', { class: 'settings-choices' },
-        toggle('thinking', 'Show thinking', "The agent's reasoning and each tool it used, under its reply."),
-        toggle('jobs', 'Show scheduled jobs', 'Conversations the agent had on its own, like the morning briefing, in the list.')),
+        // "Show scheduled jobs" is gone (21 Nov): scheduled messages arrive in the chat itself now.
+        toggle('thinking', 'Show thinking', "The agent's reasoning and each tool it used, under its reply.")),
       note),
   ];
 }
