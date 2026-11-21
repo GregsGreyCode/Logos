@@ -1392,3 +1392,21 @@ section:has(> .appearance-modes.single) { display: none; }
   .void-field { position: relative; display: block; flex: 1; min-height: 0; padding: 0; margin: 0 0 12px; }
   .void-field .agent-mark { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); --glyph: 64px; }
 }
+
+/* Notifications feed (Greg, 21 Nov): one row per thing that happened, a dot on the new ones. */
+.notifications { max-width: 760px; }
+.feed { display: flex; flex-direction: column; }
+.feed-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--ink); text-decoration: none; min-width: 0; }
+.feed-item:last-child { border-bottom: 0; }
+a.feed-item:hover .feed-title { color: var(--accent-text); }
+.feed-dot { flex: none; width: 8px; height: 8px; margin-top: 7px; border-radius: 50%; background: transparent; }
+.feed-item.fresh .feed-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+.feed-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.feed-top { display: flex; justify-content: space-between; gap: 8px; font-size: var(--t-xs); color: var(--muted); }
+.feed-what { font-weight: 600; text-transform: none; }
+.feed-title { font-weight: 600; overflow-wrap: anywhere; }
+.feed-text { color: var(--muted); font-size: var(--t-sm); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.feed-extra { display: flex; gap: 8px; align-items: center; margin-top: 2px; }
+.feed-item.kind-ai.down .feed-title { color: var(--bad); }
+.feed-item.kind-ai.up .feed-title { color: var(--ok); }
+[data-look="warm"] .feed { padding: 4px 16px; border-radius: var(--r-card); background: var(--card-bg); box-shadow: var(--card-shadow); }
