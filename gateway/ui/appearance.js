@@ -11,7 +11,7 @@ export const LOOKS = [
   { id: 'warm', name: 'Warm & personal', feel: 'Cream and rounded, a colour each', modes: ['dark', 'light', 'auto'],
     swatch: ['#f6f1ea', '#2e5bd8', '#e39b2d'] },
 ];
-const MODE_NAMES = { dark: 'Dark', light: 'Light', auto: 'Follow this device' };
+const MODE_NAMES = { dark: 'Dark', light: 'Light', auto: 'Auto' };   // Auto: follows the device
 const root = document.documentElement;
 const prefersLight = window.matchMedia('(prefers-color-scheme: light)');
 

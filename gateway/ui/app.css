@@ -985,3 +985,100 @@ a.btn.mx-new { justify-content: center; }
   border: var(--card-border); border-radius: var(--r-card); background: var(--card-bg); }
 .connect-card h2 { margin: 0; font-size: 20px; }
 .connect-card p { margin: 0; color: var(--muted); }
+
+/* ── Phone polish (21 Nov review) ───────────────────────────────────────────────────────────────── */
+.icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 22px;
+  border: 1px solid var(--line); color: var(--ink); background: transparent; }
+.btn .icon { display: none; }
+.mx-tick { display: inline-flex; margin-left: 4px; vertical-align: -3px; color: var(--ok); }
+.mx-tick .icon { width: 14px; height: 14px; stroke-width: 2.4; }
+.chip-lock { display: inline-flex; color: var(--muted); }
+.chip-lock .icon { width: 13px; height: 13px; }
+.sheet-row .icon { width: 20px; height: 20px; margin-right: 14px; color: var(--muted); }
+.sheet-row { justify-content: flex-start !important; }
+.sheet-grip { display: block; width: 36px; height: 4px; margin: -6px auto 10px; border-radius: 2px; background: var(--line); }
+/* status lines: the dot sits on the first line when the text wraps */
+.status { align-items: baseline; }
+.status::before { flex: none; transform: translateY(-1px); }
+
+@media (max-width: 720px) {
+  /* touch targets: 44 px */
+  .agent-chip, .mx-chip, .settings-tab, .appearance-mode { min-height: 44px; }
+  .mx-chip.add { width: 44px; height: 44px; }
+  .tree-add { width: 44px; height: 44px; margin-top: 0; }
+  .mx-signout { min-height: 44px; padding: 0 8px; }
+  .swatch-btn { width: 40px; height: 40px; position: relative; }
+  .swatch-btn::after { content: ""; position: absolute; inset: -2px; }
+  .swatch-pick { height: 40px; }
+  /* chat header: the conversations button on the right; in a thread its title with a way back */
+  .chat-head .conv-btn { margin-left: auto; }
+  .chat-head h1.mx-thread-title { display: block !important; flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mx-crumb { display: inline-flex !important; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none;
+    font-size: 0; color: var(--ink); text-decoration: none; }
+  .mx-crumb::before { content: "‹"; font-size: 30px; line-height: 1; }
+  .mx-same { display: none; }
+  /* chips: long titles end in "…" */
+  .mx-chip .chip-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* conversation: agent bubbles at the same edge as everything else; composer at 16 px; Send is an arrow */
+  .mx-turn.agent, .mx-thread-link, .mx-turn .mx-thread-link { margin-left: 0; }
+  .mx-thinking { padding-left: 16px; }
+  .composer { padding: 10px 16px; }
+  .send-btn, .ask-go { width: 48px; min-width: 48px; height: 48px; padding: 0; border-radius: 24px; display: inline-flex;
+    align-items: center; justify-content: center; }
+  .send-btn .btn-words, .ask-go .btn-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .send-btn .icon, .ask-go .icon { display: block; width: 22px; height: 22px; }
+  /* Brain: tables keep words whole and scroll sideways instead; one-line add box; edges at 16 px */
+  .md-table table { min-width: 100%; }
+  .md-table th, .md-table td { overflow-wrap: normal; word-break: normal; min-width: 7ch; }
+  .ask { padding-top: 12px; }
+  .ask .field-label { display: none; }
+  .ask-row { flex-wrap: nowrap; align-items: center; }
+  .ask-row textarea { flex: 1 1 auto; min-height: 48px; height: 48px; padding: 13px 16px; border-radius: 24px; resize: none; }
+  .doc-head .obsidian-link { margin-left: auto; }
+  .brain .side, .tree { padding-left: 16px; padding-right: 16px; }
+  .tree a, .tree .label, .tree-head .label { padding-left: 0; padding-right: 0; }
+  /* Settings: light or dark as one segmented row; radios as rings */
+  .appearance-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; padding: 3px; border: 1px solid var(--line);
+    border-radius: var(--r-pill); }
+  .appearance-modes .appearance-mode { justify-content: center; border: 0; border-radius: var(--r-pill); }
+  .appearance-modes .appearance-mode input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .appearance-modes p { grid-column: 1 / -1; padding: 6px 10px 2px; }
+  .settings-tabs { flex-wrap: nowrap; }
+  .settings-tab { flex: 1; justify-content: center; padding: 0 8px; }
+  /* the void: the agents in the middle of the screen */
+  .chat.void { min-height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - 40px); display: flex; flex-direction: column; }
+  .void-field { flex: 1; align-content: center; padding-top: 24px; padding-bottom: 24px; }
+  .void-ask { position: static; padding-top: 32px; }
+  /* tab bar: the current tab as an inset pill */
+  [data-look="glass"] .tabbar [aria-current="page"] { margin: 4px; border-radius: 26px; min-height: calc(var(--tabbar-h) - 8px); }
+  .row-meta .ok, .row-meta .bad { font-weight: 600; }
+}
+.look-option input[type="radio"], .appearance-mode input[type="radio"], .settings-choices input[type="radio"] {
+  appearance: none; -webkit-appearance: none; width: 20px; height: 20px; border: 2px solid var(--muted); border-radius: 50%;
+  background: transparent; display: inline-grid; place-items: center; }
+.look-option input[type="radio"]:checked, .appearance-mode input[type="radio"]:checked, .settings-choices input[type="radio"]:checked {
+  border-color: var(--accent-text); background: radial-gradient(var(--accent-text) 0 40%, transparent 46%); }
+.fixed-list { gap: 14px; }
+.fixed-agent { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sm); color: var(--muted); }
+.fixed-agent .swatch-fixed { width: 20px; height: 20px; }
+@media (max-width: 720px) {
+  /* "Any colour": a rainbow circle in the row of swatches */
+  .swatch-pick { width: 40px; padding: 0; border: 0; border-radius: 50%; justify-content: center;
+    background: conic-gradient(#ff5f6d, #ffc371, #f7f06d, #5be3a6, #5bc8f5, #7c8cff, #c084fc, #ff5f6d); }
+  .swatch-pick .btn-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
+@media (max-width: 720px) {
+  a.icon-btn.phone-only { display: inline-flex !important; }
+  .md-table table { min-width: 560px; }        /* readable columns; the table scrolls sideways */
+}
+@media (max-width: 720px) {
+  .tree a { padding: 8px; margin: 0 -8px; }     /* text on the 16 px edge, the highlight around it */
+}
+@media (max-width: 720px) {
+  /* The tab bar stays painted at the bottom edge on every phone browser: its own layer, no blur. */
+  .tabbar { transform: translateZ(0); -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  .topbar { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  [data-look="glass"] .tabbar [aria-current="page"] { margin: 6px 4px; border-radius: 22px; min-height: calc(var(--tabbar-h) - 12px); }
+}

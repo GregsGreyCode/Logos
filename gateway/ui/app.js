@@ -11,7 +11,7 @@ import { advisorView } from './advisor.js';
 import { settingsView } from './settings.js';
 import { adoptPrefs } from './prefs.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
-import { h, api, getJSON, working, labelTables } from './util.js';
+import { h, api, getJSON, working, labelTables, icon, ICONS } from './util.js';
 import { adopt } from './appearance.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
@@ -62,6 +62,8 @@ function dropSheet() {
   openSheet = null;
 }
 for (const a of document.querySelectorAll('.sheet a')) a.addEventListener('click', dropSheet);
+// Each row of the phone's panels gets its icon, then its words.
+for (const row of document.querySelectorAll('.sheet-row[data-icon]')) row.prepend(icon(ICONS[row.dataset.icon]));
 
 let visit = 0;
 async function route() {
@@ -83,6 +85,7 @@ async function route() {
   const box = document.createElement('div');
   box.className = 'view-box';
   root.replaceChildren(box);
+  window.scrollTo(0, 0);                 // every screen starts at its top
   const done = await views[name](box, rest, state);
   if (mine === visit) cleanup = done; else if (done) done();
 }

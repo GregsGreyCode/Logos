@@ -95,7 +95,8 @@ function inspect() {
     const t = text(el);
     if (!t) continue;
     const cs = getComputedStyle(el);
-    if ((cs.overflow.includes('hidden') || cs.overflow.includes('clip')) && cs.textOverflow !== 'ellipsis'
+    const srOnly = cs.clip === 'rect(0px, 0px, 0px, 0px)' || (el.offsetWidth <= 1 && el.offsetHeight <= 1);   // hidden on purpose, for screen readers
+    if (!srOnly && (cs.overflow.includes('hidden') || cs.overflow.includes('clip')) && cs.textOverflow !== 'ellipsis'
         && (el.scrollWidth > el.clientWidth + 2 || el.scrollHeight > el.clientHeight + 4) && !['TEXTAREA', 'INPUT'].includes(el.tagName)) {
       out.cutoff.push(`${name(el)} "${t.slice(0, 40)}"`);
     }

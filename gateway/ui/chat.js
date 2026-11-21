@@ -1,5 +1,5 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
-import { h, api, getJSON, when, markdown, working, agentLabel, icon, none } from './util.js';
+import { h, api, getJSON, when, markdown, working, agentLabel, icon, none, focusIfKeyboard } from './util.js';
 import { getPref, setPref } from './prefs.js';
 import * as mx from './mx.js';
 import { matrixChat } from './chat-mx.js';
@@ -226,7 +226,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     setPending(agent.name, null);
     if (!found) note.textContent = `No reply was found. Check "Earlier conversations" in a moment, or send the message again.`;
     setBusy(false);
-    input.focus();
+    focusIfKeyboard(input);
   }
 
   async function loadConversations() {
@@ -390,7 +390,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     if (!alive) return;
     placeMark(reply.isConnected && body ? reply : marked, false);
     setBusy(false);
-    input.focus();
+    focusIfKeyboard(input);
     scroll();
     if (location.hash !== `#/chat/${agent.name}/${chatId}`) history.replaceState(null, '', `#/chat/${agent.name}/${chatId}`);
     const conversations = await loadConversations();
@@ -431,7 +431,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     if (!alive) return;
     micLabel('Speak');
     setBusy(Boolean(running));
-    input.focus();
+    focusIfKeyboard(input);
   }
   mic.addEventListener('click', async () => {
     if (recording) return stopRecording();
@@ -610,6 +610,6 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
       waitForReply(pending.text);
     }
   }
-  input.focus();
+  focusIfKeyboard(input);
   return () => { alive = false; stopRecording(); working('chat', false); document.removeEventListener('keydown', onKey); };
 }
