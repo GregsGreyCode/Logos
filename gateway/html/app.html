@@ -33,8 +33,7 @@ try {
 <div class="shell">
   <!-- Phone: one-line top bar. The desktop shows the side menu instead. -->
   <header class="topbar">
-    <img class="logo" src="/static/logo.svg" alt="">
-    <span class="brand">Logos</span>
+    <a class="logo-link" href="#/home" title="Logos · Home"><img class="logo" src="/static/logo.svg" alt="Logos"></a>
     <span class="topbar-sep" aria-hidden="true"></span>
     <span class="screen-name" id="screen-name"></span>
     <button type="button" class="avatar-btn" id="acct-btn" aria-label="Your account" aria-haspopup="dialog"
@@ -42,7 +41,7 @@ try {
   </header>
 
   <nav class="nav" aria-label="Main">
-    <div class="brand-row"><img class="logo" src="/static/logo.svg" alt=""><span class="brand">Logos</span></div>
+    <div class="brand-row"><a class="logo-link" href="#/home" title="Logos · Home"><img class="logo" src="/static/logo.svg" alt="Logos"></a></div>
     <div class="nav-links">
       <a href="#/home" data-view="home">Home</a>
       <a href="#/chat" data-view="chat">Chat</a>

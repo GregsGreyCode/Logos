@@ -1110,3 +1110,11 @@ a.btn.mx-new { justify-content: center; }
   /* ...and anything still too wide is clipped, never allowed to widen the page. */
   .main, .page { overflow-x: clip; max-width: 100vw; }
 }
+
+/* The mark alone, no "Logos" beside it (Greg, 21 Nov); it leads Home. */
+.logo-link { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px;
+  margin-left: -8px; border-radius: 12px; flex: none; }
+.logo-link:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.logo-link .logo { transition: transform .2s ease; }
+.logo-link:hover .logo { transform: scale(1.06); }
+.brand-row .logo { width: 34px; height: 34px; }
