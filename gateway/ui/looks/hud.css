@@ -90,3 +90,9 @@
   [data-look="hud"] .topbar .brand { font-size: 13px; }
 }
 [data-look="hud"] .hud-strip:empty { display: none; }
+/* The tab bar has words only here: the bell's number sits at the tab's top right, not over the word. */
+@media (max-width: 599px) {
+  [data-look="hud"] .tabbar a { position: relative; }
+  [data-look="hud"] .tabbar .tab-icon { position: static; }
+  [data-look="hud"] .tabbar .tab-badge { top: 6px; right: 6px; }
+}
