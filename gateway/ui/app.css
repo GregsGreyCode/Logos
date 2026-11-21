@@ -1082,3 +1082,17 @@ a.btn.mx-new { justify-content: center; }
   .topbar { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   [data-look="glass"] .tabbar [aria-current="page"] { margin: 6px 4px; border-radius: 22px; min-height: calc(var(--tabbar-h) - 12px); }
 }
+
+/* Brain: whose brain, as a dropdown */
+.brain-pick { position: relative; display: inline-flex; align-items: center; flex: none; }
+.brain-pick .dot { position: absolute; left: 14px; pointer-events: none; }
+.brain-pick select { appearance: none; -webkit-appearance: none; min-height: 40px; padding: 0 36px 0 32px;
+  border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--chip); color: var(--ink);
+  font: 600 var(--t-md) var(--font-body); cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
+.brain-pick select:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+@media (max-width: 720px) {
+  .brain .chat-head .brain-pick { flex: 1 1 100%; }
+  .brain-pick select { width: 100%; min-height: 44px; }
+}
