@@ -1340,3 +1340,14 @@ section:has(> .appearance-modes.single) { display: none; }
 .composer { align-items: flex-end; }
 .composer textarea { max-height: none; line-height: 1.4; }
 .composer textarea.tall { border-radius: 18px; }
+
+/* The agent bar's one pill (Greg, 21 Nov): it names where you are and opens to Chat | Brain | About. */
+.agent-menu { position: relative; flex: none; }
+.agent-menu > summary { list-style: none; cursor: pointer; gap: 6px; border: 1px solid var(--line); }
+.agent-menu > summary::-webkit-details-marker { display: none; }
+.agent-menu-caret { font-size: 11px; opacity: .8; transition: transform .15s; }
+.agent-menu[open] .agent-menu-caret { transform: rotate(180deg); }
+.agent-menu-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; min-width: 150px; display: flex; flex-direction: column;
+  padding: 4px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 10px 28px rgba(0, 0, 0, .3); }
+.agent-menu-list .agent-tab { display: flex; min-height: 44px; padding: 0 14px; border-radius: 12px; font-size: 15px; color: var(--ink); text-decoration: none; }
+.agent-menu-list .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
