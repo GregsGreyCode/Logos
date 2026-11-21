@@ -73,6 +73,17 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const log = h('div', { class: 'log', role: 'log', 'aria-live': 'polite' }, loading());
   const input = h('textarea', { id: 'chat-input', rows: '1', placeholder: isNew ? 'Start a new conversation: its first message is its title'
     : threadId ? 'Reply' : `Message ${agent.display_name}` });
+  // The box grows with what is in it, up to about half the screen, so a long message or a voice
+  // transcript can be read and scrolled before it is sent (Greg, 21 Nov).
+  const grow = () => {
+    input.style.height = 'auto';
+    const max = Math.round(window.innerHeight * (window.innerWidth < 600 ? 0.45 : 0.4));
+    const hgt = Math.min(input.scrollHeight + 2, max);
+    input.style.height = `${hgt}px`;
+    input.style.overflowY = input.scrollHeight + 2 > max ? 'auto' : 'hidden';
+    input.classList.toggle('tall', hgt > 60);
+  };
+  input.addEventListener('input', grow);
   const main = `#/chat/${agent.name}`;
   const crumb = threadId ? h('a', { href: main, class: 'mx-crumb' }, 'Main conversation ›') : null;
   const convTitle = h('span', { class: 'mx-conv-title' }, isNew ? 'New conversation' : '');
@@ -124,7 +135,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.message || 'That did not work. Try again.');
       if (!d.text) say('No words were heard in that recording.');
-      else { input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + d.text; idle(); say('Check it, then send.'); }
+      else { input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + d.text; grow(); idle(); say('Check it, then send.'); }
     } catch (e) { say(e.message); }
     send.disabled = false;
   }
@@ -404,7 +415,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   async function sendText(text) {
     text = String(text || '').trim();
     if (!text || !room) return;
-    input.value = '';
+    input.value = ''; grow();
     idle();
     note.textContent = '';
     try {
@@ -417,7 +428,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       }
       if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text });
       else await c.sendMessage(room.roomId, { msgtype: 'm.text', body: text });
-    } catch (e) { note.textContent = `Not sent: ${e.message}. It is kept above; send it again.`; input.value = text; }
+    } catch (e) { note.textContent = `Not sent: ${e.message}. It is kept above; send it again.`; input.value = text; grow(); }
     draw(true);
   }
 

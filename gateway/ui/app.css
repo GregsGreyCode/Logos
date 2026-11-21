@@ -1334,3 +1334,9 @@ section:has(> .appearance-modes.single) { display: none; }
 
 /* A scheduled message (briefing, daily question) shown in the chat itself, with a small label (Greg, 21 Nov). */
 .mx-job { display: block; margin: 0 0 4px 4px; font-size: var(--t-xs); font-weight: 600; color: var(--muted); }
+
+/* The message box grows with its text (chat-mx grow()); once it is more than a line it is a rounded box,
+   not a pill, and the Send button stays at the bottom beside it (Greg, 21 Nov). */
+.composer { align-items: flex-end; }
+.composer textarea { max-height: none; line-height: 1.4; }
+.composer textarea.tall { border-radius: 18px; }
