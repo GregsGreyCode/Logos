@@ -40,6 +40,10 @@ export async function homeView(root) {
 
   // The household's shared lists (Greg, 21 Nov), from the copy the household agent keeps in its brain
   // (lists.md, refreshed every 15 minutes): each list, how many things are on it, and the first few.
+  // The Home Assistant app's To-do screen (its homeassistant://navigate links), through Android's intent so
+  // Chrome opens the app; without the app it falls back to the copy in Logos.
+  const HA_TODO = 'intent://navigate/todo#Intent;scheme=homeassistant;package=io.homeassistant.companion.android;'
+    + `S.browser_fallback_url=${encodeURIComponent(`${location.origin}/#/brain/household/lists.md`)};end`;
   const listsBox = h('div', { class: 'home-lists-row' });
   const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists', hidden: true },
     h('h2', { class: 'label' }, 'Lists'), listsBox);
@@ -56,7 +60,11 @@ export async function homeView(root) {
     }
     const shown = lists.filter((l) => l.items.length);
     listsSec.hidden = !lists.length;
-    listsBox.replaceChildren(...(shown.length ? shown.map((l) => h('a', { class: 'home-list-card', href: '#/brain/household/lists.md' },
+    // On a phone a list opens in the Home Assistant app, where the lists live (Greg, 21 Nov); a desktop has
+    // no app, so there it opens the copy in Logos.
+    const phone = window.matchMedia('(max-width: 599px)').matches;
+    const open = phone ? HA_TODO : '#/brain/household/lists.md';
+    listsBox.replaceChildren(...(shown.length ? shown.map((l) => h('a', { class: 'home-list-card', href: open, title: phone ? 'Open in Home Assistant' : 'Open the lists' },
       h('span', { class: 'home-list-head' }, h('strong', {}, l.name), h('span', { class: 'home-list-count' }, String(l.items.length))),
       h('span', { class: 'home-list-items' }, l.items.slice(0, 3).join(' · ') + (l.items.length > 3 ? ` · +${l.items.length - 3}` : ''))))
       : [none('Every list is empty.')]));
