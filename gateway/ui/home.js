@@ -14,7 +14,7 @@ export async function homeView(root) {
   let alive = true, timer = null;
   const doing = {};
   const waitingBox = h('div', { class: 'stack home-waiting' }, loading());
-  const todayBox = h('div', { class: 'home-list' });
+  const todayBox = h('div', { class: 'home-days' });
   const doneBox = h('div', { class: 'stack' });
   const statusWords = h('p', { class: 'when home-status', hidden: true, id: 'home-status-words' });
   const statusDot = h('button', { type: 'button', class: 'status-dot', 'aria-controls': 'home-status-words', 'aria-expanded': 'false',
@@ -74,9 +74,10 @@ export async function homeView(root) {
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, h('span', {}, e.title),
         h('span', { class: 'home-meta' }, whose(e), place(e.location))));
-    todayBox.replaceChildren(
-      ...(todays.length ? todays.map(row) : [none('Nothing in the calendar today.')]),
-      ...(later.length ? [h('h3', { class: 'sub-label' }, 'Tomorrow'), ...later.slice(0, 4).map(row)] : []));
+    // Today and Tomorrow side by side, on a phone too (Greg, 21 Nov): each its own column.
+    const col = (label, list, empty) => h('div', { class: 'home-list home-day' },
+      h('h3', { class: 'sub-label' }, label), ...(list.length ? list.map(row) : [none(empty)]));
+    todayBox.replaceChildren(col('Today', todays, 'Nothing today.'), col('Tomorrow', later.slice(0, 4), 'Nothing yet.'));
   }
 
   // Since yesterday: what changed in the brain, grouped by folder, and what the agents said to each
@@ -184,7 +185,7 @@ export async function homeView(root) {
       h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), statusDot), statusWords),
     strip,
     askForm, waitingSec,
-    h('section', { 'aria-label': 'Today' }, h('h2', { class: 'label' }, 'Today'), todayBox), doneSec, allLink));
+    h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox), doneSec, allLink));
 
   fromLast();
   await load();
