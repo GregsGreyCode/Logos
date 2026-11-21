@@ -71,18 +71,21 @@ export function requestCard(m, doing, reload) {
 
 // The Notifications tab (Greg, 21 Nov): what waits on you, then one feed of what happened (notify.js),
 // newest first: New since you last looked, then Earlier (a week). Opening it marks everything seen.
+const dayWord = (ts) => {
+  const d = new Date(ts * 1000), today = new Date();
+  const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 86400000);
+  return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'long' });
+};
 const KIND_LABEL = { chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents' };
 function feedRow(i) {
-  const size = i.kind === 'brain' ? [i.added ? `+${i.added}` : '', i.removed ? `−${i.removed}` : ''].filter(Boolean).join(' ') : '';
   const what = i.kind === 'brain' ? `${i.who}'s brain` : KIND_LABEL[i.kind] || '';
   return h(i.link ? 'a' : 'div', { class: `feed-item kind-${i.kind}${i.fresh ? ' fresh' : ''}${i.kind === 'ai' ? (i.up ? ' up' : ' down') : ''}`, href: i.link || null },
     h('span', { class: 'feed-dot', 'aria-hidden': 'true' }),
     h('span', { class: 'feed-body' },
-      h('span', { class: 'feed-top' }, h('span', { class: 'feed-what' }, what), h('span', { class: 'when' }, when(i.ts))),
+      h('span', { class: 'feed-top' }, h('span', { class: 'feed-what' }, what), h('span', { class: 'when' }, i.dayOnly ? dayWord(i.ts) : when(i.ts))),
       h('strong', { class: 'feed-title' }, i.title),
       i.text ? h('span', { class: 'feed-text' }, i.text) : null,
-      size || i.outcome ? h('span', { class: 'feed-extra' }, size ? h('span', { class: 'when' }, size) : null,
-        i.outcome ? h('span', { class: `pill ${i.tone}` }, i.outcome) : null) : null),
+      i.outcome ? h('span', { class: 'feed-extra' }, h('span', { class: `pill ${i.tone}` }, i.outcome)) : null),
     i.fresh ? h('span', { class: 'visually-hidden' }, ' (new)') : null);
 }
 

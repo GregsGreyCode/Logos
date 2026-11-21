@@ -40,6 +40,31 @@ export async function unreadFromAgents(agents) {
   return out;
 }
 
+// Brain changes, one line per agent per day (Greg, 21 Nov: one row per page was a wall, every one at
+// "12:00", since the brain is saved on the hour). A daily note's title is its date: say so in words.
+const dayKey = (ts) => new Date(ts * 1000).toDateString();
+const pageTitle = (t) => (/^\d{4}-\d{2}-\d{2}$/.test(t)
+  ? `Notes of ${new Date(`${t}T12:00:00`).toLocaleDateString([], { day: 'numeric', month: 'short' })}` : t);
+function brainByDay(items) {
+  const groups = new Map(), rest = [];
+  for (const i of items) {
+    if (i.kind !== 'brain') { rest.push(i); continue; }
+    const k = `${i.agent}|${dayKey(i.ts)}`;
+    const g = groups.get(k) || { ...i, id: `brain:${k}`, pages: [], ts: 0 };
+    g.pages.push(i); g.ts = Math.max(g.ts, i.ts);
+    groups.set(k, g);
+  }
+  for (const g of groups.values()) {
+    const n = g.pages.length;
+    g.title = n === 1 ? pageTitle(g.pages[0].title) : `${n} pages updated`;
+    g.text = n === 1 ? g.pages[0].text : g.pages.map((p) => pageTitle(p.title)).join(' · ');
+    g.link = n === 1 ? g.pages[0].link : `#/brain/${g.agent}`;
+    g.dayOnly = true;                      // the time is when it was saved, not when it was learnt
+    rest.push(g);
+  }
+  return rest;
+}
+
 // Everything for the feed, newest first, each marked new or not.
 export async function feed() {
   const [server, nb, agents] = await Promise.all([
@@ -55,7 +80,7 @@ export async function feed() {
       outcome: label.split(':')[0], tone, link: '#/noticeboard' };
   });
   const chats = await unreadFromAgents(agents).catch(() => []);
-  const items = [...chats, ...(server.items || []), ...between].sort((a, b) => b.ts - a.ts)
+  const items = [...chats, ...brainByDay(server.items || []), ...between].sort((a, b) => b.ts - a.ts)
     .map((i) => ({ ...i, fresh: i.unread || i.ts > seen }));
   return { items, waiting: nb.waiting || [], seen };
 }

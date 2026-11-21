@@ -1437,3 +1437,16 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 @media (max-width: 599px) {
   .on-home .screen-name { text-align: center; }
 }
+
+/* Claude Advisor (Greg, 21 Nov): one compact row per person's budget; what is left, said first. */
+.advisor-left { margin: 4px 0 0; }
+.card.budget-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; margin-bottom: 8px; }
+.budget-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.budget-row .actions { display: flex; gap: 8px; margin: 0; padding: 0; justify-content: flex-end; }
+.budget-row .btn { min-height: 36px; padding: 0 14px; font-size: var(--t-sm); }
+/* Notifications: the dot only takes room on new rows. */
+.feed-item:not(.fresh) .feed-dot { display: none; }
+.more-jobs > summary { cursor: pointer; padding: 12px 0; color: var(--accent-text); font-weight: 600; list-style: none; }
+.more-jobs > summary::-webkit-details-marker { display: none; }
+.more-jobs[open] > summary { display: none; }
+@media (max-width: 599px) { .void-ask { padding-top: 16px; } }
