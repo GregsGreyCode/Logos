@@ -1206,3 +1206,15 @@ section:has(> .appearance-modes.single) { display: none; }
 @media (prefers-reduced-motion: reduce) { .send-btn.idle .send-ico, .send-btn.idle .mic-ico { animation: none; } }
 /* The queue line sits just above the message box. */
 .chat .model-line { margin: 0 16px 8px; border-radius: 12px; }
+@media (max-width: 720px) {
+  /* Searching the brain on a phone: the results take the page's place, right under the search box. */
+  .brain.is-searching .brain-body > :not(.brain-side) { display: none; }
+  .brain.is-searching .brain-side { display: block !important; order: -1; padding: 8px 16px 24px; }
+  .brain.is-searching .brain-side .changes:not(.results) { display: none; }
+  .brain-side .hit { display: flex; flex-direction: column; gap: 2px; padding: 12px 0; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
+}
+@media (max-width: 720px) {
+  /* In a conversation the header is just ‹ and the agent's name (Greg, 21 Nov): no mark beside it. */
+  .in-conv .mark-bar .agent-mark.current { display: none; }
+  .in-conv .mark-bar { gap: 4px; }
+}

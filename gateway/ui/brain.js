@@ -54,7 +54,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   const tree = h('nav', { class: 'tree', 'aria-label': 'Pages' });
   const article = h('article', { class: 'doc' });
   const changes = h('div', { class: 'changes' });
-  const results = h('div', { class: 'changes', hidden: true });
+  const results = h('div', { class: 'changes results', hidden: true });
   const search = h('input', { id: 'q', type: 'search', placeholder: 'Search pages and notes' });
   let pages = [];
   let recent = [];                 // pages changed this week, newest first
@@ -278,14 +278,15 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       const q = search.value.trim();
-      if (q.length < 2) { changes.hidden = false; results.hidden = true; side.classList.remove('searching'); return; }
+      const wrap = search.closest('.brain');
+      if (q.length < 2) { changes.hidden = false; results.hidden = true; side.classList.remove('searching'); wrap?.classList.remove('is-searching'); return; }
       try {
         const { hits } = await getJSON(`${base}/search?q=${encodeURIComponent(q)}`);
         if (!alive) return;
         const title = (x) => (pages.find((p) => p.path === x.path) || x).title;
-        results.replaceChildren(h('h2', { class: 'label' }, `Found in ${hits.length} page${hits.length === 1 ? '' : 's'}`),
+        results.replaceChildren(h('h2', { class: 'label' }, hits.length ? `Found in ${hits.length} page${hits.length === 1 ? '' : 's'}` : `Nothing found for “${q}”`),
           ...hits.map((x) => h('a', { href: link(x.path), class: 'hit' }, title(x), h('span', { class: 'when' }, x.snippet))));
-        changes.hidden = true; results.hidden = false; side.classList.add('searching');
+        changes.hidden = true; results.hidden = false; side.classList.add('searching'); wrap?.classList.add('is-searching');
       } catch (e) { /* keep what is shown */ }
     }, 250);
   });
