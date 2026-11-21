@@ -123,7 +123,7 @@ adopt(state.me);
 adoptPrefs(state.me);
 const shown = state.me.display_name || state.me.username;
 if (state.me.role === 'admin') for (const el of document.querySelectorAll('.admin-only')) el.hidden = false;
-for (const el of document.querySelectorAll('.nav-foot .who')) el.textContent = `Signed in as ${shown}`;
+for (const el of document.querySelectorAll('.nav-foot .who')) { el.textContent = shown; el.title = `Signed in as ${shown}`; }
 for (const el of document.querySelectorAll('.sheet-who .who')) el.textContent = shown;
 for (const el of document.querySelectorAll('.sheet-who .role')) el.textContent = state.me.role === 'admin' ? 'Manages Logos' : 'Member';
 for (const el of document.querySelectorAll('.avatar')) el.textContent = (shown || '?').trim().charAt(0).toUpperCase();

@@ -1095,6 +1095,7 @@ a.btn.mx-new { justify-content: center; }
 @media (max-width: 720px) {
   .brain .chat-head .brain-pick { flex: 1 1 100%; }
   .brain-pick select { width: 100%; min-height: 44px; }
+}
 @media (max-width: 720px) {
   /* Lifted by however much of the page the browser's own toolbar covers (app.js placeTabbar). */
   .tabbar { bottom: var(--below-visible, 0px) !important; }
@@ -1155,3 +1156,8 @@ a.btn.mx-new { justify-content: center; }
 .status-dot.down::before { background: var(--bad); box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 18%, transparent); }
 .status-dot:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -4px; }
 .home-status { margin: 0; }
+@media (min-width: 721px) {
+  /* Side menu only as wide as its words (Greg, 21 Nov): was 220 px for ~110 px of text. */
+  .nav { flex: 0 0 172px; }
+  .nav-foot .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
