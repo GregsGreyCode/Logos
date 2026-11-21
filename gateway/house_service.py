@@ -133,8 +133,42 @@ class House:
                 self.rooms[eid] = s
             else:
                 self.lights[eid] = s
-        self.scenes = {eid: s for eid, s in self.by_id.items() if eid.startswith("scene.")}
+        # A room, zone or group switches its members itself: one with a member that is excluded,
+        # never allowed or unknown is never sent as a whole, only as its allowed lights (split).
+        everything = {str(s.get("entity_id") or ""): s for s in states}
+        self.split: Dict[str, List[str]] = {}
+        for rid in self.rooms:
+            leaves = self._leaves(rid, everything)
+            if any(l not in self.lights for l in leaves):
+                self.split[rid] = sorted(l for l in leaves if l in self.lights)
+        # A scene may set anything: Home Assistant's own scenes list what they set (only allowed
+        # lights pass), and a Hue scene sets its room (only a room sent whole passes).
+        rooms_by_name = {norm(self.name(s)): rid for rid, s in self.rooms.items()}
+        self.scenes = {}
+        for eid, s in self.by_id.items():
+            if not eid.startswith("scene."):
+                continue
+            a = s.get("attributes") or {}
+            sets = a.get("entity_id")
+            if isinstance(sets, list) and sets:
+                if all(m in self.lights or (m in self.rooms and m not in self.split) for m in sets):
+                    self.scenes[eid] = s
+            elif a.get("group_name"):
+                rid = rooms_by_name.get(norm(a.get("group_name")))
+                if rid is not None and rid not in self.split:
+                    self.scenes[eid] = s
         self.lists = {eid: s for eid, s in self.by_id.items() if eid.startswith("todo.")}
+
+    @staticmethod
+    def _leaves(eid: str, everything: Dict[str, Dict[str, Any]], seen: frozenset = frozenset()) -> set:
+        """The single entities a group switches, through groups inside groups."""
+        members = ((everything.get(eid) or {}).get("attributes") or {}).get("entity_id")
+        if eid in seen or not (isinstance(members, list) and members):
+            return {eid}
+        out: set = set()
+        for m in members:
+            out |= House._leaves(str(m), everything, seen | {eid})
+        return out
 
     @staticmethod
     def name(s: Dict[str, Any]) -> str:
@@ -186,7 +220,7 @@ class House:
                               "Use list_lights to see every light.")
             out += hits
         seen, unique = set(), []
-        for eid in out:
+        for eid in [l for e in out for l in self.split.get(e, [e])]:
             if eid not in seen:
                 seen.add(eid)
                 unique.append(eid)

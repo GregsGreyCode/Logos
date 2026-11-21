@@ -33,7 +33,7 @@ class FakeBox:
         self.rows = {"inbox": list(inbox), "sent": list(sent)}
         self.calls = []
 
-    def fetch(self, folder, since, known=()):
+    def fetch(self, folder, since, known=(), until=None):
         self.calls.append((folder, since))
         return [dict(r) for r in self.rows[folder]]
 
@@ -204,3 +204,52 @@ def test_gmail_reads_without_marking_read_and_skips_what_it_has():
     bad = ms.Gmail({"address": "b", "app_password": "x"}, connect=lambda: FakeIMAP({}, fail=True))
     with pytest.raises(ms.Refused, match="app password"):
         bad.fetch("inbox", NOW)
+
+
+def test_excluding_a_sender_later_deletes_what_was_already_copied(svc):
+    svc.mailboxes["greg"]["exclude"] = ["mybank.example", "plumbing.example"]
+    svc.sync("greg")
+    assert svc.store.query("SELECT id FROM messages WHERE from_addr LIKE '%plumbing%'", ()) == []
+    assert "Boiler service Friday" not in subjects(svc.mail_search("greg", "boiler"))
+
+
+class CappedBox:
+    """A busy mailbox: 5 messages, a day apart, newest first; each fetch returns at most MAX."""
+    MAX = 2
+
+    def __init__(self):
+        self.rows = [row(f"o:{i}", thread=f"t{i}", hours=24 * i + 1) for i in range(5)]
+        self.calls = []
+
+    def fetch(self, folder, since, known=(), until=None):
+        self.calls.append((folder, until))
+        if folder != "inbox":
+            return []
+        got = [r for r in self.rows if r["date"] >= ms.iso(since) and (until is None or r["date"] < ms.iso(until))
+               and r["id"] not in set(known)]
+        return [dict(r) for r in got[:self.MAX]]
+
+
+def test_a_busy_mailbox_is_back_filled_until_the_whole_window_is_copied(tmp_path):
+    box = CappedBox()
+    s = ms.Service(ms.Store(str(tmp_path / "m.db")), {"greg": {"token": "tg", "person": "greg"}},
+                   {"greg": {"client": box, "address": "greg@hotmail.example", "exclude": []}}, log=lambda m: None)
+    s.sync("greg")
+    assert len(s.store.query("SELECT id FROM messages", ())) == 4           # first batch, then one more
+    assert "still being copied" in s.mail_new("greg")["copy_incomplete"]
+    s.sync("greg")
+    s.sync("greg")
+    assert len(s.store.query("SELECT id FROM messages", ())) == 5
+    assert "copy_incomplete" not in s.mail_new("greg")
+
+
+def test_a_new_outlook_sign_in_wins_over_a_token_the_old_container_saved(tmp_path):
+    old = ms.build({"mailboxes": {"greg": {"kind": "outlook", "refresh_token": "first-signin"}}}, str(tmp_path))
+    old_client = old.mailboxes["greg"]["client"]
+    old_client.save_token("rotated-from-first")
+    assert old_client.load_token() == "rotated-from-first"
+    new = ms.build({"mailboxes": {"greg": {"kind": "outlook", "refresh_token": "second-signin"}}}, str(tmp_path))
+    old_client.save_token("rotated-again-from-first")            # the old container, still running, saves
+    assert new.mailboxes["greg"]["client"].load_token() == "second-signin"
+    (tmp_path / "outlook-greg.token").write_text("plain-old-token")   # a file from before the mark
+    assert new.mailboxes["greg"]["client"].load_token() == "plain-old-token"

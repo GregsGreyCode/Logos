@@ -11,6 +11,9 @@ Story E1 (read). Decided 20 Nov 2026: read, then drafts, then sending only after
 - **A local copy.** Every 5 minutes the service copies the last 90 days of Inbox and Sent into
   `logos-mail-state` (SQLite), and the tools read the copy. Nothing in this story can send,
   delete, move or mark mail: Gmail is read with `BODY.PEEK`, Outlook with GET requests only.
+  A busy mailbox's first copy stops at 2,000 (Outlook) or 1,500 (Gmail) messages a folder; each
+  sync then copies one more batch of older mail until the 90 days are in, and until then the tools
+  say how far back the copy goes.
 - **Logins** live in `~/.config/logos/mail/<person>.json` (mode 0600), written by
   `scripts/logos-mail`. `logos-agent up` passes them to the container on stdin into the
   read-only `logos-mail` volume; they are never on a command line, in git, a sandbox or a chat.
@@ -18,7 +21,8 @@ Story E1 (read). Decided 20 Nov 2026: read, then drafts, then sending only after
   `souls/_shared/mail.md` forbids acting on anything an email asks, sharing it with other agents
   or the household brain, or searching the web with it. The sandbox rule `mail` lets through
   only the four read tools.
-- **Excluded senders** (`scripts/logos-mail exclude <person> mybank.example`) are never copied.
+- **Excluded senders** (`scripts/logos-mail exclude <person> mybank.example`) are never copied, and
+  mail from them already in the copy is deleted on the next sync after the restart.
 - The container: its own network `logos-mail` (it needs the internet: Microsoft and Google),
   read only, uid 1000, no capabilities, 256 MB.
 
@@ -39,7 +43,9 @@ September 2024, so this is OAuth with your own app registration):
 1. entra.microsoft.com, signed in with the Outlook account: App registrations, New registration,
    name `Logos mail`, **Personal Microsoft accounts only**, no redirect URI.
 2. Authentication: **Allow public client flows: Yes**.
-3. API permissions, Microsoft Graph, Delegated: `Mail.ReadWrite`, `Mail.Send`, `offline_access`.
+3. API permissions, Microsoft Graph, Delegated: `Mail.Read`, `offline_access` (read only: Logos
+   never sends, deletes or moves mail). A mailbox connected before 21 Nov 2026 asked for write and
+   send too: remove `Mail.ReadWrite` and `Mail.Send` here and connect again to drop them.
 4. On the server: `scripts/logos-mail connect greg --outlook --address <address> --client-id <Application ID>`,
    then open the address it shows on any device and type the code. Microsoft renews the token by
    itself; if it is unused for 90 days, connect again.

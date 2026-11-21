@@ -25,6 +25,9 @@ which agent made each change.
 - The service calls Home Assistant with its own **non-admin** account (`logos-household`).
   Home Assistant cannot limit a user to some devices, so the limits live in the service:
   - only the domains in the definition (`light`, `scene`, `todo`), minus `exclude`;
+  - a room, zone or group with an excluded (or never-allowed) member is switched light by light,
+    never as a whole, and its Hue scenes are not offered; a Home Assistant scene is offered only
+    when everything it sets is an allowed light or room;
   - only `light.turn_on`, `light.turn_off`, `scene.turn_on`, `todo.get_items`, `todo.add_item`,
     `todo.update_item` and `todo.remove_item` can ever be called. Nothing the agent sends is
     passed on as a service name or as raw data;
