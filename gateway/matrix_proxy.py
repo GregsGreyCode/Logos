@@ -51,9 +51,17 @@ async def handle(request: web.Request) -> web.StreamResponse:
     base = await asyncio.to_thread(matrix_url, request.app)
     if not base:
         return _try_again("The Matrix server is not set up here.")
-    body = await request.read() if request.can_read_body else None
-    if body is not None and len(body) > MAX_BODY:
-        return web.json_response({"errcode": "M_TOO_LARGE", "error": "Too large"}, status=413)
+    # Read from the stream ourselves: request.read() stops at the app's 1 MiB limit, and photos and
+    # files sent from the browser are bigger than that. MAX_BODY is the limit here.
+    body = None
+    if request.can_read_body:
+        chunks, size = [], 0
+        async for chunk in request.content.iter_chunked(1 << 16):
+            size += len(chunk)
+            if size > MAX_BODY:
+                return web.json_response({"errcode": "M_TOO_LARGE", "error": "Too large"}, status=413)
+            chunks.append(chunk)
+        body = b"".join(chunks)
     session: aiohttp.ClientSession = request.app.setdefault("matrix_session", None) or aiohttp.ClientSession(timeout=TIMEOUT)
     request.app["matrix_session"] = session
     headers = {k: v for k, v in request.headers.items() if k in PASS_HEADERS and k != "Content-Length"}
