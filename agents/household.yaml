@@ -57,3 +57,6 @@ digest:                         # weekly summary of what the brain learned, sent
 session_reset:                  # start a fresh conversation on the first message after this hour
   mode: daily
   at_hour: 3                    # in the agent's timezone
+
+# The vault's name in Obsidian on the phones (Greg's phone calls it "household"), for the Brain button.
+obsidian_vault: household
