@@ -52,15 +52,15 @@
 [data-look="warm"] .composer textarea, [data-look="warm"] .home-ask input { background: var(--surface); border: 0;
   box-shadow: var(--card-shadow); }
 
-/* Home: what needs you is a bold card in your colour; today's events are cards you swipe */
+/* Home: what needs you is a bold card in your colour; the day is one soft panel of plain rows
+   (Greg, 21 Nov: a card per event tripled the height of the day). */
 [data-look="warm"] .home-waiting .card { background: var(--accent); color: var(--accent-ink); }
 [data-look="warm"] .home-waiting .card .when, [data-look="warm"] .home-waiting .card .card-text { color: inherit; }
 [data-look="warm"] .home-waiting .card .btn { background: var(--surface); color: var(--ink); }
-[data-look="warm"] .home-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-[data-look="warm"] .home-list > .none, [data-look="warm"] .home-list > .sub-label { grid-column: 1 / -1; }
-[data-look="warm"] .home-list > .home-row { flex-direction: column; align-items: flex-start; gap: 6px; min-height: 0;
-  padding: 14px 16px; border: 0; border-radius: var(--r-card); background: var(--card-bg); box-shadow: var(--card-shadow); }
-[data-look="warm"] .home-list > .home-row .dot { display: none; }
+[data-look="warm"] .home-list { padding: 4px 16px; border-radius: var(--r-card); background: var(--card-bg); box-shadow: var(--card-shadow); }
+[data-look="warm"] .home-list > .home-row { border-bottom: 1px solid var(--line); }
+[data-look="warm"] .home-list > .home-row:last-child { border-bottom: 0; }
+[data-look="warm"] .home-list > .sub-label { margin: 14px 0 2px; }
 [data-look="warm"] .home-list .home-time { width: auto; color: var(--accent-text); font-weight: 800; font-size: 13px; }
 [data-look="warm"] .home-list .home-title > span:first-child { font-weight: 700; }
 [data-look="warm"] .done-group { padding: 6px 16px; border-radius: var(--r-card); background: var(--card-bg); box-shadow: var(--card-shadow); }
