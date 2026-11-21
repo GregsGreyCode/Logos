@@ -1306,3 +1306,15 @@ section:has(> .appearance-modes.single) { display: none; }
 
 .home-all { grid-column: 1 / -1; justify-self: start; }
 .agent-tab-out { font-size: 11px; opacity: .7; }
+
+/* Moods (21 Nov). Unplugged: the AI computer is off: grey, no glow, still.
+   Asleep: slow breathing (above). Awake: a steady soft glow. Waking (the model loading):
+   calm breathes quicker, full bounces about. */
+.mood-unplugged .mark-glyph { background: var(--muted); opacity: 0.35; }
+.mood-unplugged .mark-glow { animation: none; filter: none; }
+.mood-awake .mark-glow { opacity: 1; filter: drop-shadow(0 0 10px var(--mark)); }
+.mood-waking .mark-glow { animation: mark-breathe 2.2s ease-in-out infinite; }
+[data-motion="full"] .mood-waking .mark-glow { animation: mark-bounce .9s cubic-bezier(.3, 1.6, .5, 1) infinite alternate, mark-breathe 1.6s ease-in-out infinite; }
+@keyframes mark-bounce { from { transform: translateY(0) rotate(-4deg); } to { transform: translateY(-10px) rotate(4deg); } }
+[data-motion="still"] .mood-waking .mark-glow { animation: none; opacity: 0.85; }
+.mood-waking .mark-label > span { transition: opacity .3s ease; }
