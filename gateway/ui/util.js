@@ -28,6 +28,8 @@ export const ICONS = {
   send: ['M5 12h14', 'M13 6l6 6-6 6'],
   external: ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5'],
   lock: ['M6 11h12v9H6z', 'M8 11V8a4 4 0 0 1 8 0v3'],
+  eye: ['M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z', 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'],
+  eyeOff: ['M3 3l18 18', 'M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2', 'M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6'],
   bell: ['M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7', 'M10 20a2 2 0 0 0 4 0'],
   check: ['M5 12l5 5 9-10'],
   agents: ['M12 3l8 4.5v9L12 21l-8-4.5v-9z', 'M12 12l8-4.5', 'M12 12v9', 'M12 12L4 7.5'],
@@ -173,4 +175,29 @@ export function markdown(text) {
     }
   });
   return nodes;
+}
+
+// A model id as people say it: "qwen/qwen3.6-35b-a3b" -> "Qwen 3.6 35B A3B". The id stays in the tooltip.
+export function modelName(id) {
+  if (!id) return '';
+  const base = String(id).split('/').pop().replace(/\.gguf$/i, '');
+  const UPPER = new Set(['gpt', 'oss', 'it', 'moe', 'vl', 'gguf', 'mlx']);
+  return base.split(/[- ]+/).filter(Boolean).map((t, i) => {
+    if (i === 0) { const m = t.match(/^([a-z]+)(\d[\d.]*)$/i); if (m) return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}`; }
+    if (UPPER.has(t.toLowerCase())) return t.toUpperCase();
+    if (/^[a-z]?\d+(\.\d+)?[bkm]$/i.test(t) || /^q\d/i.test(t)) return t.toUpperCase();
+    return t[0].toUpperCase() + t.slice(1);
+  }).join(' ');
+}
+
+// A password box with a show/hide button beside it.
+export function revealable(input) {
+  const btn = h('button', { type: 'button', class: 'reveal-btn', 'aria-label': 'Show password', title: 'Show password',
+    onclick: () => {
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); btn.title = btn.getAttribute('aria-label');
+      btn.replaceChildren(icon(show ? ICONS.eyeOff : ICONS.eye));
+    } }, icon(ICONS.eye));
+  return h('div', { class: 'reveal' }, input, btn);
 }

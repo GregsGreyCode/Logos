@@ -1,7 +1,7 @@
 // Settings (ST1): one screen for everything you set for yourself. Sections on the left (a row of
 // tabs on a phone): Appearance, Your account, Chat, Matrix device, and Updates for whoever
 // manages Logos. Each section is its own address (#/settings/chat), so it can be linked to.
-import { h, api, getJSON, when, loading } from './util.js';
+import { h, api, getJSON, when, loading, revealable } from './util.js';
 import * as mx from './mx.js';
 import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
@@ -106,7 +106,7 @@ function account(state) {
     }
   } },
   h('p', { class: 'when' }, `Username: ${state.me.username} (it never changes)`),
-  nl, name, cl, cur, pl, next,
+  nl, name, cl, revealable(cur), pl, revealable(next),
   h('p', { class: 'when' }, 'Leave blank to keep your password.'),
   h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn' }, 'Save')), note)];
 }
@@ -157,7 +157,7 @@ function matrix(state, redraw) {
     } },
     h('p', {}, 'Chat here becomes your Element conversation itself: the same messages, encrypted, here and on your phone. This browser becomes one of your Matrix devices.'),
     ...field('mx-user', 'Matrix account', h('input', { id: 'mx-user', type: 'text', value: me, readonly: true })),
-    ...field('mx-pass', 'Matrix password (used once, never kept)', pass),
+    ...field('mx-pass', 'Matrix password (used once, never kept)', revealable(pass)),
     h('div', { class: 'row' }, go), msg));
   }
 
