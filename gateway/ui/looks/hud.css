@@ -66,8 +66,8 @@
 [data-look="hud"] .composer textarea::placeholder { text-transform: lowercase; }
 
 /* Home: the live status strip and the agents' log */
-.hud-strip { display: none; }
-[data-look="hud"] .hud-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); }
+[data-look="hud"] .hud-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); }
+[data-look="hud"] .hud-cell { border: 0; border-radius: 0; background: none; box-shadow: none; }
 [data-look="hud"] .hud-cell { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
 [data-look="hud"] .hud-cell + .hud-cell { border-left: 1px solid var(--line); }
 [data-look="hud"] .hud-cell span { font: 500 10px/12px var(--font-mono); letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
