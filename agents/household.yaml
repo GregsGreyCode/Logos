@@ -36,6 +36,7 @@ budget:
 matrix:                           # the household's own Matrix server (docs/matrix.md)
   enabled: true
   e2ee: required
+  verified_only: true            # answer only devices the person verified (M5, docs/matrix-chat.md)
   allowed_users: []               # set in agents/household.local.yaml (untracked): both people, @name:gregandbere.com
   require_mention: false          # in the household room it answers every message (voice notes too)
   display_name: "Household \U0001F916"   # its name in Element (others default to "<display_name> 🤖")

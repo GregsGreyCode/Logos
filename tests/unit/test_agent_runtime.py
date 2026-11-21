@@ -172,6 +172,10 @@ def repo(tmp_path):
     voice_plugin.mkdir(parents=True)
     (voice_plugin / "plugin.yaml").write_text("name: logos-voice\n")
     (voice_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
+    vo_plugin = tmp_path / "infra" / "agent-plugins" / "logos-verified-only"
+    vo_plugin.mkdir(parents=True)
+    (vo_plugin / "plugin.yaml").write_text("name: logos-verified-only\n")
+    (vo_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
@@ -944,7 +948,7 @@ network_policies:
             "cron": {"wrap_response": False, "mirror_delivery": True},         # no header; agent sees its own jobs
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
-            "plugins": {"enabled": ["logos-waitlist", "logos-voice"]},
+            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only"]},
             "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
@@ -952,10 +956,10 @@ network_policies:
         agent = r.load("alpha")
         agent["session_reset"] = {"mode": "daily", "at_hour": 3}
         cfg = art.yaml.safe_load(r.config_text("alpha", agent))
-        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "hermes-session-reset-policy"]}
+        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "hermes-session-reset-policy"]}
         assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
         agent["session_reset"] = {"mode": "none"}
-        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice"]}
+        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only"]}
 
     def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
         r = rt(repo)
@@ -981,7 +985,8 @@ network_policies:
                    if c[:2] == ["docker", "run"] and "cat > /v/" in c[-1]]
         assert [w.split("cat > /v/")[1].split(" ")[0] for w in written] == [
             ".env", "config.yaml", "plugins/logos-waitlist/__init__.py", "plugins/logos-waitlist/plugin.yaml",
-            "plugins/logos-voice/__init__.py", "plugins/logos-voice/plugin.yaml", "SOUL.md"]
+            "plugins/logos-voice/__init__.py", "plugins/logos-voice/plugin.yaml",
+            "plugins/logos-verified-only/__init__.py", "plugins/logos-verified-only/plugin.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out

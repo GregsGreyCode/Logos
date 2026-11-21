@@ -1,0 +1,10 @@
+name: logos-verified-only
+label: Logos verified devices only
+kind: standalone
+version: 1.0.0
+description: >
+  Story M5. With LOGOS_ONLY_VERIFIED_DEVICES=1, the agent answers only messages sent from a device its
+  person has verified (cross-signed by their own keys), so a Matrix password alone is not enough to
+  talk to an agent. Others are dropped and logged.
+author: Logos
+provides_hooks: []

@@ -980,3 +980,8 @@ a.btn.mx-new { justify-content: center; }
   .mark-name { font-size: 16px; }
 }
 .mx-ok { align-self: flex-start; padding: 6px 14px; border-radius: var(--r-pill); font-weight: 600; cursor: default; }
+/* M5: a browser not connected yet */
+.connect-card { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; max-width: 560px; padding: 24px;
+  border: var(--card-border); border-radius: var(--r-card); background: var(--card-bg); }
+.connect-card h2 { margin: 0; font-size: 20px; }
+.connect-card p { margin: 0; color: var(--muted); }

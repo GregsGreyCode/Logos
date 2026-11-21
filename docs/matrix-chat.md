@@ -31,3 +31,20 @@ About 2.4 MB is downloaded once, then cached. The page maps the encryption modul
 
 Checked on dev: served gzipped with the right types (`application/wasm`), and the encryption starts
 in a headless browser in about 0.3 s with no request leaving Logos.
+
+## M5: the switch-over (21 Nov 2026)
+
+Greg's and Béré's browsers are connected and verified (checked from the server: their Element X,
+Element and Logos devices all carry their own cross-signing signature). Since then:
+
+- **Chat is only in the Matrix room.** A browser that is not connected sees "Connect this browser to chat
+  here" (Settings › Matrix device) and the old web chats of the last 30 days, read only. Agents without
+  Matrix (none on prod) keep the web chat.
+- **The agents answer verified devices only** (`matrix.verified_only: true` on greg, bere and household;
+  plugin `infra/agent-plugins/logos-verified-only`). A message from a device below "cross-signed by its
+  owner", or an unencrypted one, is dropped and logged ("not from a verified device"). So a Matrix
+  password alone is not enough to talk to an agent: a new device must be verified first, in Element
+  (or with the recovery key in Logos). Tested on dev: a verified browser's messages were let through;
+  an unverified device of the same account, same password, was ignored.
+- If a person's own Element X stops getting answers, check its device is verified: Element X › Settings ›
+  Sessions, or Logos › Settings › Matrix device (it lists each device as verified or not).
