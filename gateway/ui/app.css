@@ -1331,3 +1331,6 @@ section:has(> .appearance-modes.single) { display: none; }
   .home-day .home-time { width: auto; font-size: 13px; }
   .home-day .home-title { flex-basis: 100%; overflow-wrap: anywhere; }
 }
+
+/* A scheduled message (briefing, daily question) shown in the chat itself, with a small label (Greg, 21 Nov). */
+.mx-job { display: block; margin: 0 0 4px 4px; font-size: var(--t-xs); font-weight: 600; color: var(--muted); }
