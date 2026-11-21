@@ -136,17 +136,30 @@ export function markBar(agents, current) {
   return bar;
 }
 
-// Phone (Greg, 21 Nov): inside an agent, one bar: ‹ back to all agents, its name, and Chat | Brain | About.
+// Phone (Greg, 21 Nov): inside an agent, one bar: ‹ back to all agents, its name, and one pill naming
+// where you are (Chat, About) that opens to Chat | Brain | About, so the name has the room (Greg, 21 Nov).
+const LABELS = { chat: 'Chat', brain: 'Brain', about: 'About' };
 export function agentBar(agent, active) {
-  const tab = (key, label, href) => h('a', { href, class: `agent-tab${key === active ? ' on' : ''}`, 'aria-current': key === active ? 'page' : null }, label);
-  return h('nav', { class: 'agent-bar', 'aria-label': agent.display_name },
-    h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
-    h('strong', { class: 'agent-bar-name' }, agent.display_name),
-    h('span', { class: 'agent-tabs' },
-      tab('chat', 'Chat', `#/chat/${agent.name}`),
+  const item = (key, href, extra = {}) => h('a', { href, class: `agent-tab${key === active ? ' on' : ''}`, role: 'menuitem',
+    'aria-current': key === active ? 'page' : null, ...extra }, LABELS[key],
+    key === 'brain' ? h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗') : null);
+  const menu = h('details', { class: 'agent-menu' },
+    h('summary', { class: 'agent-tab on', 'aria-label': `${LABELS[active] || 'Chat'}: switch to Chat, Brain or About` },
+      LABELS[active] || 'Chat', h('span', { class: 'agent-menu-caret', 'aria-hidden': 'true' }, '▾')),
+    h('div', { class: 'agent-menu-list', role: 'menu' },
+      item('chat', `#/chat/${agent.name}`),
       // On a phone Brain opens the agent's vault straight in Obsidian (Greg, 21 Nov); a desktop has no
       // Obsidian, so there it is the reader in Logos (the desktop never shows this bar).
-      h('a', { href: `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}&file=README.md`, class: 'agent-tab',
-        title: 'Open this brain in Obsidian' }, 'Brain', h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗')),
-      tab('about', 'About', `#/agents/${agent.name}`)));
+      item('brain', `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}&file=README.md`,
+        { title: 'Open this brain in Obsidian' }),
+      item('about', `#/agents/${agent.name}`)));
+  menu.addEventListener('click', (e) => { if (e.target.closest('a')) menu.open = false; });
+  const shut = (e) => {
+    if (!menu.isConnected) { document.removeEventListener('pointerdown', shut, true); return; }
+    if (menu.open && !menu.contains(e.target)) menu.open = false;
+  };
+  document.addEventListener('pointerdown', shut, true);
+  return h('nav', { class: 'agent-bar', 'aria-label': agent.display_name },
+    h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
+    h('strong', { class: 'agent-bar-name' }, agent.display_name), menu);
 }
