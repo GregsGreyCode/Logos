@@ -23,7 +23,8 @@ let cleanup = null;
 
 const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Notifications', agents: 'Agents', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
-const IN_MORE = ['advisor', 'models', 'people', 'settings'];
+// The screens in the account panel: the initial, top right, lights up on them.
+const IN_ACCOUNT = ['advisor', 'models', 'people', 'settings'];
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },
@@ -52,9 +53,7 @@ function toggleSheet(opener, sheet) {
 }
 scrim.addEventListener('click', closeSheet);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openSheet) closeSheet(); });
-const moreBtn = document.getElementById('more-btn');
 const acctBtn = document.getElementById('acct-btn');
-moreBtn.addEventListener('click', () => toggleSheet(moreBtn, document.getElementById('more-sheet')));
 acctBtn.addEventListener('click', () => toggleSheet(acctBtn, document.getElementById('acct-sheet')));
 // Leaving the screen (a link in the panel, the Back button) closes an open panel.
 function dropSheet() {
@@ -94,7 +93,7 @@ async function route() {
     const on = a.dataset.view === name || (a.closest('.tabbar') && (a.dataset.also || '').split(' ').includes(name));
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
-  if (IN_MORE.includes(name)) moreBtn.setAttribute('aria-current', 'page'); else moreBtn.removeAttribute('aria-current');
+  if (IN_ACCOUNT.includes(name)) acctBtn.setAttribute('aria-current', 'page'); else acctBtn.removeAttribute('aria-current');
   // The top bar names the screen only when the tab bar does not: Home, Chat, Brain and Notices are
   // already lit up at the bottom; the screens under More are not (Greg, 21 Nov).
   const tabbed = ['home', 'chat', 'brain', 'agents', 'noticeboard'].includes(name);
