@@ -1450,3 +1450,31 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .more-jobs > summary::-webkit-details-marker { display: none; }
 .more-jobs[open] > summary { display: none; }
 @media (max-width: 599px) { .void-ask { padding-top: 16px; } }
+
+/* Recording for an agent (agents-void): swipe up to send, down to cancel (Greg, 21 Nov). */
+.rec-guide { position: absolute; left: 50%; top: 0; bottom: 0; width: 0; pointer-events: none; }
+.rec-guide > span { position: absolute; left: 0; transform: translateX(-50%); white-space: nowrap; padding: 4px 10px; border-radius: 999px;
+  font-size: var(--t-xs); font-weight: 700; color: var(--muted); background: var(--surface); border: 1px solid var(--line);
+  transition: color .15s, background .15s, transform .15s; }
+.rec-up { top: -40px; }
+.rec-down { bottom: -40px; }
+.will-send .rec-up { color: var(--on-accent, #fff); background: var(--accent); border-color: transparent; transform: translateX(-50%) scale(1.12); }
+.will-cancel .rec-down { color: #fff; background: var(--bad, #e5484d); border-color: transparent; transform: translateX(-50%) scale(1.12); }
+.void-field .agent-mark.will-cancel .mark-glow { opacity: .45; }
+.void-field .agent-mark.recording { transition: translate .08s linear; }
+.void-field .agent-mark.will-send .mark-label > span { color: var(--accent-text); }
+
+/* The floating agents' how-to line, and the voice note's animations (Greg, 21 Nov). */
+.void-how { margin: 6px 0 0; text-align: center; font-size: var(--t-xs); line-height: 1.5; color: var(--muted); opacity: .8; }
+@media (min-width: 600px) { .void-how { position: absolute; left: 0; right: 0; top: 68px; } }
+.rec-guide > span { animation: rec-guide-in .25s cubic-bezier(.2, .8, .2, 1) both; }
+.rec-up { --from: 12px; }
+.rec-down { --from: -12px; animation-delay: .05s !important; }
+@keyframes rec-guide-in { from { opacity: 0; translate: 0 var(--from); } to { opacity: 1; translate: 0 0; } }
+.void-field .agent-mark.sending { animation: mark-send .32s cubic-bezier(.5, 0, .9, .4) forwards; pointer-events: none; }
+@keyframes mark-send { to { translate: 0 -160px; opacity: 0; scale: .85; } }
+.void-field .agent-mark.cancelling .mark-glow { animation: mark-shake .42s ease; }
+@keyframes mark-shake { 20% { translate: -6px 0; } 40% { translate: 6px 0; } 60% { translate: -4px 0; } 80% { translate: 3px 0; } }
+[data-motion="still"] .rec-guide > span { animation: none; }
+@media (prefers-reduced-motion: reduce) { .rec-guide > span, .void-field .agent-mark.sending, .void-field .agent-mark.cancelling .mark-glow { animation: none; } }
+@media (min-width: 600px) { .void-field { inset: 116px 0 0; } }
