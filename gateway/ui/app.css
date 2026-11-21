@@ -1374,3 +1374,7 @@ section:has(> .appearance-modes.single) { display: none; }
 .void-field .agent-mark.recording .mark-label > span { color: var(--danger, #e5484d); font-weight: 600; }
 @keyframes mark-rec { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--danger, #e5484d) 25%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .void-field .agent-mark.recording .mark-glow { animation: none; } }
+
+/* Sliding between Home and Agents moves the main area sideways; it must never make the page wider than
+   the screen, or the phone re-fits the page and the tab bar jumps (Greg, 21 Nov). */
+.shell { overflow-x: clip; }       /* not on body: the browser hands body's overflow to the window, where it does not clip */
