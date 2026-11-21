@@ -4,7 +4,7 @@
 // or the agent is not running). Click a mark to talk to that agent. In a conversation the marks sit in the
 // header: the current one with its name, the others small, one click to switch. Names show when you point
 // at a mark, or always (Settings; always on a phone). Motion follows Settings: Full, Calm or Still.
-import { h, getJSON } from './util.js';
+import { h, getJSON, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
 
 export const MOODS = { asleep: 'Asleep', thinking: 'Thinking…', waiting: 'Waiting on you', off: 'Off' };
@@ -49,14 +49,30 @@ export async function moods(agents) {
 }
 
 // The void: every agent floating, nothing else, until you pick one.
-export async function voidView(root, agents) {
+export async function voidView(root, agents, others = []) {
   let alive = true;
   const field = h('div', { class: 'void-field' });
-  const draw = (m) => field.replaceChildren(...agents.map((a, i) => {
-    const el = mark(a, { size: 'big', mood: m[a.name] || 'asleep', href: `#/chat/${a.name}` });
+  // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
+  // off to the left). Yours first, then the private ones.
+  const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
+  const spot = (i, n) => {
+    const x = n === 1 ? 50 : 18 + (64 * i) / (n - 1);
+    const y = [44, 34, 54, 40, 50, 36][i % 6];
+    return [x, y];
+  };
+  const draw = (m) => field.replaceChildren(...all.map(({ a, mine }, i) => {
+    const el = mine ? mark(a, { size: 'big', mood: m[a.name] || 'asleep', href: `#/chat/${a.name}` })
+      : mark(a, { size: 'big', mood: a.running === false ? 'off' : 'asleep' });
+    if (!mine) {
+      el.classList.add('private');
+      el.title = `${a.display_name} · private to its owner`;
+      el.setAttribute('aria-label', `${a.display_name}: private to its owner`);
+      el.querySelector('.mark-label span')?.replaceChildren(icon(ICONS.lock), ' Private');
+    }
     el.classList.add(`drift-${i % 3}`);
-    el.style.setProperty('--x', `${[22, 52, 76, 36, 64][i % 5]}%`);
-    el.style.setProperty('--y', `${[46, 28, 52, 70, 74][i % 5]}%`);
+    const [x, y] = spot(i, all.length);
+    el.style.setProperty('--x', `${x}%`);
+    el.style.setProperty('--y', `${y}%`);
     return el;
   }));
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
