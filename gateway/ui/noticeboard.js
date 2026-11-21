@@ -41,7 +41,7 @@ export function requestCard(m, doing, reload) {
   const el = h('div', { class: 'card' },
     h('div', { class: 'card-head' }, h('span', { class: `dot ${m.from}`, 'aria-hidden': 'true' }),
       h('strong', {}, m.from_name), h('span', { class: 'when' },
-        `${ASKS[m.kind]} of ${m.to_name} · request ${m.id} · ${when(m.ts)}${m.urgent ? ' · urgent' : ''}`)),
+        `${when(m.ts)}${m.urgent ? ' · urgent' : ''}`, { title: `${ASKS[m.kind]} of ${m.to_name} · request ${m.id}` })),
     h('div', { class: 'card-text' }, m.text));
   if (doing[m.id]) {
     el.append(h('div', { class: 'result' }, doing[m.id]));
@@ -50,7 +50,7 @@ export function requestCard(m, doing, reload) {
   if (m.kind === 'question') {
     const id = `a${m.id}`;
     const input = h('input', { id, type: 'text', placeholder: 'Your answer' });
-    el.append(h('label', { for: id, class: 'field-label' }, 'Your answer, sent in your words'), input,
+    el.append(h('label', { for: id, class: 'sr' }, 'Your answer'), input,
       h('div', { class: 'row' },
         h('button', { type: 'button', class: 'btn', onclick: () => {
           if (!input.value.trim()) { result.textContent = 'Type the answer to send, or decline.'; input.focus(); return; }
@@ -63,8 +63,9 @@ export function requestCard(m, doing, reload) {
         m.kind === 'reminder' ? 'Accept and set reminder' : 'Accept and make the change'),
       h('button', { type: 'button', class: 'btn quiet', onclick: () => decide(m, 'declined', '', el, doing, reload) }, 'Decline')));
   }
-  el.append(result, h('div', { class: 'when' },
-    `Expires ${when(m.expires_at).toLowerCase()} if nobody decides.`));
+  // When it expires only matters once it is close (within a day).
+  const soon = m.expires_at && (new Date(m.expires_at).getTime() - Date.now()) < 86400000;
+  el.append(result, soon ? h('div', { class: 'when' }, `Expires ${when(m.expires_at).toLowerCase()}`) : null);
   return el;
 }
 

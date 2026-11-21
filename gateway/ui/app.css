@@ -1176,3 +1176,10 @@ section:has(> .appearance-modes.single) { display: none; }
 .changes.few { display: none; }
 .home-all { align-self: flex-start; font-size: var(--t-sm); color: var(--muted); text-decoration: none; padding: 10px 0; }
 .home-all:hover { color: var(--accent-text); }
+
+/* Password boxes: a show/hide eye inside the right edge. */
+.reveal { position: relative; display: flex; }
+.reveal input { flex: 1; min-width: 0; padding-right: 48px; }
+.reveal-btn { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border: 0;
+  background: none; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 50%; }
+.reveal-btn:hover, .reveal-btn:focus-visible { color: var(--ink); }
