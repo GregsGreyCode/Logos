@@ -31,12 +31,18 @@ limit and left.
 
 $20 per person per calendar month (UK time), from the costs Claude reports (tokens per model and
 $0.01 per web search). Before sending, the service works out the most the request could cost
-(16,000 output tokens, five searches) and refuses if that would go past what is left. Every request,
-its approver, model, answer and cost stays in the log for 180 days.
+(16,000 output tokens per call; a research question with search is priced for up to four calls,
+each with five searches and their results read back) and refuses if that would go past what is left.
+A research question stops early rather than start a call that could pass that figure. A question
+being sent counts at its most until its real cost is known, so two approvals at once cannot both
+spend the same money. A send that fails part-way keeps the cost of the calls that did finish, and
+one cut off by a restart is marked failed and counted at its most (it may have been charged).
+Every request, its approver, model, answer and cost stays in the log for 180 days.
 
 **Asking for more (A3).** The agent's `request_more_budget(reason)`, or "Ask Greg for more" on the
 person's Claude Advisor screen, asks the admin (`advisor: {admin: true}`, Greg). He answers **raise 10**
-(any amount up to $200), **reset** (this month's spending counts from zero again) or **no**, in his
+(any amount up to $200), **reset** (this month's spending counts from zero again) or **no** (a bare
+"no" goes to the budget request only when no question of his own is also waiting), in his
 Claude Advisor room or with the buttons in the admin part of his Claude Advisor screen. Only the admin can change
 a limit; every change is in the budget log. The default goes back to $20 on the 1st.
 
@@ -45,7 +51,8 @@ a limit; every change is in the budget log. The default goes back to $20 on the 
 The advisor has its own Matrix account, `@advisor`, made on the first `up`, with one private,
 invite-only, unencrypted room per person called "Claude Advisor" (unencrypted by decision: it only ever
 holds text already approved for Claude, on our own server, reached over Tailscale). Each waiting
-question is posted there once: the exact text, the model, the most it can cost and the budget left.
+question is posted there once (a post that fails, say while the server restarts, is tried again a
+minute later): the exact text, the model, the most it can cost and the budget left.
 The person replies **send**, **no**, or **send haiku / sonnet / opus**; with several waiting, they
 add the request id ("send 1a2b3c4d"). The answer is posted back. Only the person's own Matrix
 account (the first of their agent's `matrix.allowed_users`) is listened to; their agent, other
