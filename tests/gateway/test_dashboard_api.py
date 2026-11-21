@@ -593,3 +593,10 @@ def test_a_matrix_reply_brings_its_thinking_and_only_your_own(run):
     # On the shared household agent, Béré only searches her own Matrix sessions.
     status, body = run("u-bere", "/api/v2/agents/household/steps?text=Added.")
     assert status == 200 and body["tools"] == ["write_file"]          # her mx-bere session is hers to see
+
+
+def test_notifications_feed_answers_with_items_and_seen(run, monkeypatch):
+    monkeypatch.setattr(FakeDb, "get_user_settings", lambda self, uid: {"ui_prefs": '{"seen_until": 42}'}, raising=False)
+    status, body = run("u-greg", "/api/v2/notifications")
+    assert status == 200 and set(body) == {"items", "seen_until"}
+    assert body["seen_until"] == 42 and isinstance(body["items"], list)

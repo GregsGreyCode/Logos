@@ -1,7 +1,7 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
 import { h, getJSON, when, none, loading, aiState } from './util.js';
-import { requestCard, setBadge, outcome } from './noticeboard.js';
+import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
@@ -16,11 +16,9 @@ export async function homeView(root) {
   const doing = {};
   const waitingBox = h('div', { class: 'stack home-waiting' }, loading());
   const todayBox = h('div', { class: 'home-days' });
-  const doneBox = h('div', { class: 'stack' });
   const statusWords = h('p', { class: 'when home-status', hidden: true, id: 'home-status-words' });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
   const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
-  const doneSec = h('section', { 'aria-label': 'What happened' }, h('h2', { class: 'label' }, 'Since yesterday'), doneBox);
   // Terminal HUD (L6): a live strip of the same figures the Models screen shows. Hidden in the other looks.
   const strip = h('div', { class: 'hud-strip', 'aria-label': 'Live figures' });
   const cell = (label, value, unit, live) => h('div', { class: 'hud-cell' }, h('span', {}, label),
@@ -38,10 +36,6 @@ export async function homeView(root) {
   }
 
   let data = null;
-  const obsidian = (path) => `obsidian://open?vault=${encodeURIComponent(data.agent.obsidian_vault)}`
-    + `&file=${encodeURIComponent(path.replace(/\.md$/, ''))}`;
-  const brainLink = (path) => `#/brain/${data.agent.name}/${path.split('/').map(encodeURIComponent).join('/')}`;
-  const isPhone = () => window.matchMedia('(max-width: 599px)').matches;
 
   function showToday(today) {
     if (!today || today.error) {
@@ -78,45 +72,6 @@ export async function homeView(root) {
     todayBox.replaceChildren(col('Today', todays, 'Nothing today.'), col('Tomorrow', later.slice(0, 4), 'Nothing yet.'));
   }
 
-  // Since yesterday: what changed in the brain, grouped by folder, and what the agents said to each
-  // other, one line each with its outcome; a line opens to the whole message and the answer.
-  function showDone(log) {
-    const since = Date.now() / 1000 - 24 * 3600;
-    const pages = data.brain_changes || [];
-    const msgs = (log || []).filter((x) => (x.ts || 0) >= since && x.status !== 'open').sort((a, b) => b.ts - a.ts);
-    const parts = [];
-    if (pages.length) {
-      // Each page by its title, with what was added to it ("Vittorio's birthday is 3 Dec") and how much.
-      const size = (c) => [c.added ? `+${c.added}` : '', c.removed ? `−${c.removed}` : ''].filter(Boolean).join(' ');
-      parts.push(h('div', { class: 'done-group' },
-        h('h3', { class: 'sub-label' }, `In ${data.agent.display_name}'s brain · ${pages.length} page${pages.length > 1 ? 's' : ''}`),
-        pages.slice(0, 8).map((c) => h('div', { class: 'done-page' },
-          h('div', { class: 'done-page-head' },
-            h('a', { href: isPhone() ? obsidian(c.path) : brainLink(c.path) }, c.title),
-            size(c) ? h('span', { class: 'done-size', title: 'Lines added and removed' }, size(c)) : null,
-            h('span', { class: 'when done-when' }, when(c.when))),
-          c.summary ? h('p', { class: 'done-summary' }, c.summary) : null))));
-    }
-    if (msgs.length) {
-      parts.push(h('div', { class: 'done-group' },
-        h('h3', { class: 'sub-label' }, `Between the agents · ${msgs.length}`),
-        msgs.slice(0, 6).map((m) => {
-          const [label, tone] = outcome(m);
-          const short = label.split(':')[0];
-          return h('details', { class: 'done-msg' },
-            h('summary', {},
-              h('span', { class: 'done-what' }, `${m.from_name} → ${m.to_name}`),
-              h('span', { class: 'done-text' }, m.text),
-              h('span', { class: `pill ${tone}` }, short),
-              h('span', { class: 'when done-when' }, when(m.ts))),
-            h('p', { class: 'done-full' }, m.text),
-            m.answer ? h('p', { class: 'done-answer' }, h('strong', {}, `${short}: `), m.answer) : null);
-        }),
-        msgs.length > 6 ? h('a', { href: '#/noticeboard', class: 'done-more' }, `${msgs.length - 6} more in Notifications`) : null));
-    }
-    doneBox.replaceChildren(...(parts.length ? parts : [none('Nothing new since yesterday.')]));
-    return parts.length > 0;
-  }
 
   async function load() {
     let nb = { waiting: [], log: [] };
@@ -149,14 +104,12 @@ export async function homeView(root) {
     }
     // Whether the AI computer is on shows on the logo now, on every screen (Greg, 21 Nov).
     aiState(data.model_up, data.model_off_since);
-    setBadge(nb.waiting.length);
     waitingLabel.textContent = nb.waiting.length ? `Waiting on you · ${nb.waiting.length}` : 'Waiting on you';
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
       : [none('Nothing is waiting on you.')]));
     showToday(data.today);
-    const anyDone = showDone(nb.log);
-    const noWait = !nb.waiting.length;
-    waitingSec.hidden = noWait; doneSec.hidden = !anyDone;
+    // "Since yesterday" lives in Notifications now (Greg, 21 Nov).
+    waitingSec.hidden = !nb.waiting.length;
     showStrip();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
@@ -178,8 +131,7 @@ export async function homeView(root) {
     strip,
     waitingSec,
     h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox),
-    askForm,                                     // under Today and Tomorrow (Greg, 21 Nov)
-    doneSec));
+    askForm));                                   // under Today and Tomorrow (Greg, 21 Nov)
 
   fromLast();
   await load();

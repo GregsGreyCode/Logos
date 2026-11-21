@@ -242,6 +242,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // ── drawing the room ────────────────────────────────────────────────────────────────────────
   const steps = new Map();                 // reply text -> its thinking, fetched when opened
   let replyMap = new Map();                // thread root id -> { count, last }
+  let lastReceipt = null;                  // the event this browser last marked as read
   let briefs = new Map();                  // scheduled-message thread root id -> the message itself
   function thinking(text) {
     const box = h('div', { class: 'mx-steps' }, loading());
@@ -390,6 +391,13 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       const showTime = !next || next.getSender() !== ev.getSender() || next.getTs() - ev.getTs() > 5 * 60000;
       return bubbleFor(ev, edits, reactions, inMain, showTime);
     }) : [none('Nothing said here yet.')]));
+    // Read: tell Matrix this chat has been read up to its newest message (as Element X does), so it
+    // leaves Notifications here and on the phone (Greg, 21 Nov). Only while the page is on screen.
+    const newest = [...room.getLiveTimeline().getEvents()].reverse().find((e) => e.getId() && !e.getId().startsWith('~') && e.getSender() !== me);
+    if (newest && newest.getId() !== lastReceipt && document.visibilityState === 'visible') {
+      lastReceipt = newest.getId();
+      c.sendReadReceipt(newest).catch(() => { lastReceipt = null; });
+    }
     // Still waiting for the agent when the newest message is yours.
     const last = shown[shown.length - 1];
     // (a conversation's title notice is not a message waiting for an answer)
