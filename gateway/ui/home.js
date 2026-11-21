@@ -1,6 +1,6 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
-import { h, getJSON, when, none, loading } from './util.js';
+import { h, getJSON, when, none, loading, aiState } from './util.js';
 import { requestCard, setBadge, outcome } from './noticeboard.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
@@ -17,8 +17,6 @@ export async function homeView(root) {
   const todayBox = h('div', { class: 'home-days' });
   const doneBox = h('div', { class: 'stack' });
   const statusWords = h('p', { class: 'when home-status', hidden: true, id: 'home-status-words' });
-  const statusDot = h('button', { type: 'button', class: 'status-dot', 'aria-controls': 'home-status-words', 'aria-expanded': 'false',
-    onclick: () => { statusWords.hidden = !statusWords.hidden; statusDot.setAttribute('aria-expanded', String(!statusWords.hidden)); } });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
   const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
   const doneSec = h('section', { 'aria-label': 'What happened' }, h('h2', { class: 'label' }, 'Since yesterday'), doneBox);
@@ -149,14 +147,8 @@ export async function homeView(root) {
         h('p', {}, 'No agent is set up for your account.')));
       return;
     }
-    const offSince = data.model_off_since
-      ? new Date(data.model_off_since * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-    // Just a dot beside the date (Greg, 21 Nov): green on, red off. Its words show when you tap or click it.
-    const words = data.model_up === false
-      ? `AI computer off${offSince ? ` since ${offSince}` : ''} · replies when it's back` : 'AI computer on';
-    statusDot.className = `status-dot ${data.model_up === false ? 'down' : 'up'}`;
-    statusDot.setAttribute('aria-label', words); statusDot.title = words;
-    statusWords.textContent = words;
+    // Whether the AI computer is on shows on the logo now, on every screen (Greg, 21 Nov).
+    aiState(data.model_up, data.model_off_since);
     setBadge(nb.waiting.length);
     waitingLabel.textContent = nb.waiting.length ? `Waiting on you · ${nb.waiting.length}` : 'Waiting on you';
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
@@ -182,7 +174,7 @@ export async function homeView(root) {
 
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
-      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), statusDot), statusWords),
+      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY))), statusWords),
     strip,
     waitingSec,
     h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox),
