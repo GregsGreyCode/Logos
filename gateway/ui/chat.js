@@ -128,8 +128,14 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     getJSON(`/api/v2/agents/${agent.name}/conversations`).then(({ conversations }) => {
       const since = Date.now() / 1000 - 30 * 86400;
       const list = conversations.filter((x) => x.where === 'web' && (x.last_active || 0) >= since);
-      old.replaceChildren(...(list.length ? list.map((x) => h('a', { href: `#/chat/${agent.name}/${x.chat_id}`, class: 'conv-link' },
-        h('span', { class: 'conv-title' }, x.title), h('span', { class: 'when' }, when(x.last_active)))) : [none('None in the last 30 days.')]));
+      // The day once, as a heading over its chats, not on every row (21 Nov).
+      const rows = []; let day = null;
+      for (const x of list) {
+        const d = when(x.last_active).replace(/\s*\d{1,2}:\d{2}.*$/, '').replace(/,$/, '') || when(x.last_active);
+        if (d !== day) { day = d; rows.push(h('h3', { class: 'sub-label' }, d)); }
+        rows.push(h('a', { href: `#/chat/${agent.name}/${x.chat_id}`, class: 'conv-link' }, h('span', { class: 'conv-title' }, x.title)));
+      }
+      old.replaceChildren(...(rows.length ? rows : [none('None in the last 30 days.')]));
     }).catch(() => old.replaceChildren(none('Could not list them just now.')));
     return () => {};
   }

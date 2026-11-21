@@ -56,29 +56,31 @@ function appearance() {
       (c) => { setAgentColour(a.name, c); say(cNote, api(`/api/v2/agents/${a.name}/colour`, { method: 'PUT', body: { colour: c } }).then((r) => r.ok)); },
       false)), ...fixed);
   }).catch(() => agentsBox.replaceChildren(h('p', { class: 'none' }, 'The agents could not be listed just now.')));
-  const radio = (group, value, label, help, current, onPick) => h('label', { class: 'appearance-mode choice' },
-    h('input', { type: 'radio', name: group, value, checked: current === value, onchange: () => onPick(value) }),
-    h('span', {}, h('strong', {}, label), h('span', { class: 'when block' }, help)));
   const motion = getPref('motion', 'calm'), names = getPref('names', 'hover');
   const pickMotion = (v) => { setMotion(v, null); say(mNote, setPref('motion', v)); };
   const pickNames = (v) => { setMotion(null, v); say(mNote, setPref('names', v)); };
   return [
     h('section', { 'aria-label': 'Look' }, heading('Look'), looksBox),
     h('section', { 'aria-label': 'Light or dark' }, heading('Light or dark'), modeBox, note),
+    // Colours are set once: folded away behind one line (Greg, 21 Nov).
+    h('details', { class: 'colours-more' }, h('summary', {}, h('span', {}, 'Colours'), h('span', { class: 'when' }, 'Yours and the agents\'')),
     h('section', { 'aria-label': 'Your colours' }, heading('Your colours'),
       colourRow('Primary and glow', 'Buttons, links, the glow', SWATCHES.primary, mine.primary, pickMine('primary'), true),
       colourRow('Attention', 'Anything waiting on you, and the Noticeboard badge', SWATCHES.attention, mine.attention, pickMine('attention'), true),
       h('p', { class: 'when' }, 'Colours may be adjusted slightly to stay readable.')),
-    h('section', { 'aria-label': 'Agent colours' }, heading('Agent colours'), agentsBox, cNote),
+    h('section', { 'aria-label': 'Agent colours' }, heading('Agent colours'), agentsBox, cNote)),
+    // Motion: one line, like Light or dark. What each does is in the tooltip.
     h('section', { 'aria-label': 'Motion' }, heading('Motion'),
-      h('div', { class: 'settings-choices' },
-        radio('motion', 'full', 'Full', 'The agents wander, breathe and cycle colour while they think.', motion, pickMotion),
-        radio('motion', 'calm', 'Calm', 'Slow breathing and a slow drift; thinking still cycles colour.', motion, pickMotion),
-        radio('motion', 'still', 'Still', 'Nothing moves: colour and glow show each state.', motion, pickMotion))),
+      h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'Motion' },
+        [['full', 'Full', 'The agents wander, breathe and cycle colour while they think'],
+          ['calm', 'Calm', 'Slow breathing and a slow drift'], ['still', 'Still', 'Nothing moves']]
+          .map(([v, label, tip]) => h('label', { class: 'appearance-mode', title: tip },
+            h('input', { type: 'radio', name: 'motion', value: v, checked: motion === v, onchange: () => pickMotion(v) }), label)))),
     h('section', { 'aria-label': 'Agent names', class: 'wide-only' }, heading('Agent names on their marks'),
-      h('div', { class: 'settings-choices' },
-        radio('names', 'hover', 'When you point at one', 'On a phone they are always shown.', names, pickNames),
-        radio('names', 'always', 'Always', 'Each mark has its name and mood under it.', names, pickNames)), mNote),
+      h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'Agent names' },
+        [['hover', 'On hover', 'Shown when you point at a mark (always shown on a phone)'], ['always', 'Always', 'Each mark has its name and mood under it']]
+          .map(([v, label, tip]) => h('label', { class: 'appearance-mode', title: tip },
+            h('input', { type: 'radio', name: 'names', value: v, checked: names === v, onchange: () => pickNames(v) }), label))), mNote),
   ];
 }
 

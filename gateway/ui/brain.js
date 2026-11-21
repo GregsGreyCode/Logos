@@ -98,7 +98,8 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     const other = pages.filter((p) => !FOLDERS.some(([f]) => f === p.folder));
     // P5: on a desktop the list starts with what changed most recently (the side column is gone).
     const seen = new Set(); const latest = recent.filter((c) => !seen.has(c.path) && seen.add(c.path)).slice(0, 5);
-    const recentGroup = latest.length ? [h('div', { class: 'wide-only tree-recent' }, h('h2', { class: 'label' }, 'Recent'),
+    // A short brain lists every page anyway: "Recent" only earns its place once the list is long.
+    const recentGroup = latest.length && pages.length > 8 ? [h('div', { class: 'wide-only tree-recent' }, h('h2', { class: 'label' }, 'Recent'),
       ...latest.map((c) => item({ path: c.path, title: c.title })))] : [];
     tree.replaceChildren(opener, form, ...recentGroup, ...groups,
       ...(other.length ? [h('h2', { class: 'label' }, 'Other'), ...other.map(item)] : []));
@@ -123,7 +124,8 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     changes.replaceChildren(h('h2', { class: 'label' }, 'Changed this week'),
       ...(d.changes.length ? d.changes.map((c) => h('a', { href: link(c.path), class: 'hit' }, c.title, h('span', { class: 'when' }, when(c.when))))
         : [none('Nothing changed this week.')]),
-      h('p', { class: 'when' }, 'Tidied nightly. Every change is kept in history.'));
+    );
+    changes.classList.toggle('few', pages.length <= 8);
   }
 
   // ── add or change by asking the agent ──────────────────────────────────
@@ -152,7 +154,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
       }
       go.disabled = false;
     } },
-    h('label', { for: id, class: 'field-label' }, `Tell ${agent.display_name} what to add or change`),
+    h('label', { for: id, class: 'sr' }, `Tell ${agent.display_name} what to add or change`),
     h('div', { class: 'ask-row' }, input, go), out);
   }
 
@@ -177,7 +179,6 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     const body = d.text.replace(/^# .*\n?/, '');
     article.replaceChildren(
       h('div', { class: 'doc-head' }, h('h1', {}, d.title),
-        h('span', { class: 'when wide-only' }, d.path.replace(/\.md$/, '').replace(/\//g, ' / ')),
         h('button', { type: 'button', class: 'btn quiet small wide-only', onclick: () => edit(page, d) }, 'Edit'),
         h('a', { class: 'icon-btn phone-only obsidian-link', href: obsidian(d.path), 'aria-label': 'Open in Obsidian', title: 'Open in Obsidian' }, icon(ICONS.external))),
       ask || askBox(page),
