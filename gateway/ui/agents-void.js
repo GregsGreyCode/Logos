@@ -116,5 +116,10 @@ export function agentBar(agent, active) {
     h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
     h('strong', { class: 'agent-bar-name' }, agent.display_name),
     h('span', { class: 'agent-tabs' },
-      tab('chat', 'Chat', `#/chat/${agent.name}`), tab('brain', 'Brain', `#/brain/${agent.name}`), tab('about', 'About', `#/agents/${agent.name}`)));
+      tab('chat', 'Chat', `#/chat/${agent.name}`),
+      // On a phone Brain opens the agent's vault straight in Obsidian (Greg, 21 Nov); a desktop has no
+      // Obsidian, so there it is the reader in Logos (the desktop never shows this bar).
+      h('a', { href: `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}`, class: 'agent-tab',
+        title: 'Open this brain in Obsidian' }, 'Brain', h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗')),
+      tab('about', 'About', `#/agents/${agent.name}`)));
 }

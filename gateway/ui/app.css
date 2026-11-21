@@ -1305,3 +1305,4 @@ section:has(> .appearance-modes.single) { display: none; }
 }
 
 .home-all { grid-column: 1 / -1; justify-self: start; }
+.agent-tab-out { font-size: 11px; opacity: .7; }
