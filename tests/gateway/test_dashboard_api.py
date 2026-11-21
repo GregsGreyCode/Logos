@@ -600,3 +600,12 @@ def test_notifications_feed_answers_with_items_and_seen(run, monkeypatch):
     status, body = run("u-greg", "/api/v2/notifications")
     assert status == 200 and set(body) == {"items", "seen_until"}
     assert body["seen_until"] == 42 and isinstance(body["items"], list)
+
+
+def test_notifications_have_types_and_say_when_an_agent_is_not_running(run, monkeypatch):
+    monkeypatch.setattr(FakeDb, "get_user_settings", lambda self, uid: None, raising=False)
+    status, body = run("u-greg", "/api/v2/notifications")
+    assert status == 200
+    assert all(i["type"] in ("needs", "problem", "update") for i in body["items"])
+    down = [i for i in body["items"] if i["kind"] == "agent_down"]
+    assert [d["agent"] for d in down] == ["household"] and down[0]["type"] == "problem"     # not running in this fake

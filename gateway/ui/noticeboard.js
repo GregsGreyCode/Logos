@@ -76,13 +76,18 @@ const dayWord = (ts) => {
   const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 86400000);
   return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'long' });
 };
-const KIND_LABEL = { chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents' };
-function feedRow(i) {
-  const what = i.kind === 'brain' ? `${i.who}'s brain` : KIND_LABEL[i.kind] || '';
-  return h(i.link ? 'a' : 'div', { class: `feed-item kind-${i.kind}${i.fresh ? ' fresh' : ''}${i.kind === 'ai' ? (i.up ? ' up' : ' down') : ''}`, href: i.link || null },
+const KIND_LABEL = { chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents', advisor: 'Claude Advisor',
+  budget: 'Claude Advisor', conflict: 'Brain', agent_down: 'Agent' };
+function feedRow(i, TYPES) {
+  const what = i.kind === 'brain' ? `${i.who}'s brain` : i.kind === 'chat' ? i.who : KIND_LABEL[i.kind] || '';
+  const type = i.type || 'update';
+  // Its type first, in its own colour: Needs you, Problem, Message or Update (Greg, 21 Nov).
+  return h(i.link ? 'a' : 'div', { class: `feed-item type-${type} kind-${i.kind}${i.fresh ? ' fresh' : ''}${i.kind === 'ai' ? (i.up ? ' up' : ' down') : ''}`, href: i.link || null },
     h('span', { class: 'feed-dot', 'aria-hidden': 'true' }),
     h('span', { class: 'feed-body' },
-      h('span', { class: 'feed-top' }, h('span', { class: 'feed-what' }, what), h('span', { class: 'when' }, i.dayOnly ? dayWord(i.ts) : when(i.ts))),
+      h('span', { class: 'feed-top' },
+        h('span', { class: 'feed-tags' }, h('span', { class: `feed-type type-${type}` }, TYPES[type] || type), what && what !== TYPES[type] ? h('span', { class: 'feed-what' }, what) : null),
+        h('span', { class: 'when' }, i.kind === 'agent_down' ? 'Now' : i.dayOnly ? dayWord(i.ts) : when(i.ts))),
       h('strong', { class: 'feed-title' }, i.title),
       i.text ? h('span', { class: 'feed-text' }, i.text) : null,
       i.outcome ? h('span', { class: 'feed-extra' }, h('span', { class: `pill ${i.tone}` }, i.outcome)) : null),
@@ -90,13 +95,17 @@ function feedRow(i) {
 }
 
 export async function noticeboardView(root) {
-  const { feed, markSeen } = await import('./notify.js');
+  const { feed, markSeen, TYPES, urgent } = await import('./notify.js');
+  const row = (i) => feedRow(i, TYPES);
   let alive = true, timer = null, marked = false, seenAtOpen = null;
   const doing = {};             // request id -> message shown while the agent acts on an acceptance
   const waitingBox = h('div', { class: 'cards' });
   const newBox = h('div', { class: 'feed' }, loading());
   const oldBox = h('div', { class: 'feed' });
-  const waitSec = h('section', { 'aria-label': 'Waiting on you', hidden: true }, h('h2', { class: 'label' }, 'Waiting on you'), waitingBox);
+  // Needs you: requests to answer, then everything else to do or put right, before what just happened.
+  const needsBox = h('div', { class: 'feed needs' });
+  const needsLabel = h('h2', { class: 'label' }, 'Needs you');
+  const waitSec = h('section', { 'aria-label': 'Needs you', hidden: true }, needsLabel, waitingBox, needsBox);
   const newSec = h('section', { 'aria-label': 'New' }, h('h2', { class: 'label' }, 'New'), newBox);
   const oldSec = h('section', { 'aria-label': 'Earlier', hidden: true }, h('h2', { class: 'label' }, 'Earlier this week'), oldBox);
   const error = h('div', { class: 'notice', hidden: true });
@@ -111,15 +120,19 @@ export async function noticeboardView(root) {
       const items = raw.map((i) => ({ ...i, fresh: i.unread || i.ts > seenAtOpen }));
       error.hidden = true;
       for (const id of Object.keys(doing)) if (!waiting.some((w) => String(w.id) === id)) delete doing[id];
-      waitSec.hidden = !waiting.length;
+      const needs = items.filter(urgent), rest = items.filter((i) => !urgent(i));
+      const toDo = waiting.length + needs.length;
+      waitSec.hidden = !toDo;
+      needsLabel.textContent = toDo ? `Needs you · ${toDo}` : 'Needs you';
       waitingBox.replaceChildren(...waiting.map(card));
-      const fresh = items.filter((i) => i.fresh), old = items.filter((i) => !i.fresh).slice(0, 30);
-      newBox.replaceChildren(...(fresh.length ? fresh.map(feedRow) : [none(waiting.length ? 'Nothing else new.' : "You're all caught up.")]));
+      needsBox.replaceChildren(...needs.map(row));
+      const fresh = rest.filter((i) => i.fresh), old = rest.filter((i) => !i.fresh).slice(0, 30);
+      newBox.replaceChildren(...(fresh.length ? fresh.map(row) : [none(toDo ? 'Nothing else new.' : "You're all caught up.")]));
       oldSec.hidden = !old.length;
-      oldBox.replaceChildren(...old.map(feedRow));
+      oldBox.replaceChildren(...old.map(row));
       // Seen once you have opened it: the dots stay for this visit, the count on the bell goes.
       if (!marked) { marked = true; await markSeen(); }
-      setBadge(waiting.length + items.filter((i) => i.unread).length);
+      setBadge(toDo + items.filter((i) => i.unread).length);
     } catch (e) {
       error.hidden = false;
       error.textContent = 'Could not load the notifications just now.';
