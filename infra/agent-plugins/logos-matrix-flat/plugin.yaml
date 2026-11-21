@@ -1,0 +1,10 @@
+name: logos-matrix-flat
+label: Logos scheduled messages in the chat
+kind: standalone
+version: 1.0.0
+description: >
+  Scheduled messages (briefings, the daily question) arrive in the chat as ordinary messages, not as a
+  "Hermes — <job>" thread each. hermes only does this for adapters that say they can; its Matrix
+  adapter does not say so yet, so this plugin marks it.
+author: Logos
+provides_hooks: []

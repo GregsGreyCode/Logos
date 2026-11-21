@@ -16,9 +16,18 @@ import { markBar, agentBar } from './agents-void.js';
 const ARCHIVE_DAYS = 30;
 const THREAD_DAYS = 30;
 const TITLE_MARK = '💬 ';
+// hermes opens a "Hermes — <job>" thread for a scheduled message (a briefing, the daily question).
+// Those show by the job's plain name, and in the chat as the message itself (Greg, 21 Nov).
+const CRON_ROOT = /^Hermes\s+[—–-]\s+(\S+)\s*$/;
+const JOB_TITLES = { 'morning-briefing': 'Morning briefing', 'morning-briefing-weekend': 'Morning briefing',
+  'daily-question': 'Daily question', 'weekly-digest': 'Weekly digest', 'changes-daily': 'What changed',
+  'changes-week': 'What changed this week', 'noticeboard-check': 'Waiting on you', 'noticeboard-urgent': 'Urgent' };
+export const jobTitle = (job) => JOB_TITLES[job] || (job.charAt(0).toUpperCase() + job.slice(1)).replace(/[-_]+/g, ' ');
+const cronJob = (ev) => (ev && ev.getType && ev.getType() === 'm.room.message' && CRON_ROOT.exec(String(ev.getContent()?.body || ''))?.[1]) || null;
 const titleOf = (ev) => (ev && ev.isDecryptionFailure && ev.isDecryptionFailure()
   ? 'Locked conversation'
-  : String(ev?.getContent()?.body || 'Conversation').replace(/^💬\s*/, '').slice(0, 80));
+  : cronJob(ev) ? jobTitle(cronJob(ev))
+    : String(ev?.getContent()?.body || 'Conversation').replace(/^💬\s*/, '').slice(0, 80));
 
 function pickRoom(c, agentId) {
   const rooms = c.getRooms().filter((r) => r.getMyMembership() === 'join'
@@ -219,6 +228,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // ── drawing the room ────────────────────────────────────────────────────────────────────────
   const steps = new Map();                 // reply text -> its thinking, fetched when opened
   let replyMap = new Map();                // thread root id -> { count, last }
+  let briefs = new Map();                  // scheduled-message thread root id -> the message itself
   function thinking(text) {
     const box = h('div', { class: 'mx-steps' }, loading());
     const d = h('details', { class: 'mx-think', ontoggle: async () => {
@@ -253,6 +263,17 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const content = edits.get(ev.getId()) || ev.getContent();
     const kind = content.msgtype;
     const thread = inMain ? replyMap.get(ev.getId()) : null;
+    const job = cronJob(ev);
+    if (job && !inMain) return h('p', { class: 'when mx-thread-start' }, `${jobTitle(job)} · ${when(ev.getTs() / 1000)}`);
+    if (job && briefs.has(ev.getId())) {
+      // The message itself, under a small label; only a conversation that went on links onwards.
+      const turn = bubbleFor(briefs.get(ev.getId()), edits, reactions, false, showTime);
+      turn.prepend(h('span', { class: 'mx-job' }, jobTitle(job)));
+      const more = (thread?.count || 1) - 1;
+      if (more > 0) turn.append(h('a', { class: 'mx-thread-link', href: `${main}/thread/${encodeURIComponent(ev.getId())}` },
+        `↳ ${more} repl${more === 1 ? 'y' : 'ies'} · open`));
+      return turn;
+    }
     if (kind === 'm.notice' && String(content.body || '').startsWith(TITLE_MARK.trim())) {
       // A conversation's title (M3): in the main timeline, a link into it; inside it, its heading.
       const n = thread ? thread.count : 0;
@@ -284,6 +305,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     if (!room) return [];
     const since = Date.now() - THREAD_DAYS * 86400000;
     return [...replyMap].filter(([id]) => !room.findEventById(id)?.isDecryptionFailure())
+      .filter(([id, r]) => !(briefs.has(id) && r.count <= 1))
       .map(([id, r]) => ({ id, title: titleOf(room.findEventById(id)), last: r.last }))
       .filter((t) => t.last >= since).sort((a, b) => b.last - a.last);
   }
@@ -312,9 +334,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // Replies per thread, from each message's thread mark (m.relates_to rel_type m.thread).
   function threadReplies() {
     const n = new Map();
+    briefs = new Map();
     for (const e of room.getLiveTimeline().getEvents()) {
       const r = e.threadRootId;
-      if (r && r !== e.getId() && e.getType() === 'm.room.message') n.set(r, { count: (n.get(r)?.count || 0) + 1, last: e.getTs() });
+      if (r && r !== e.getId() && e.getType() === 'm.room.message') {
+        n.set(r, { count: (n.get(r)?.count || 0) + 1, last: e.getTs() });
+        const root = room.findEventById(r);
+        if (!briefs.has(r) && cronJob(root) && e.getSender() === root.getSender()) briefs.set(r, e);
+      }
     }
     return n;
   }
