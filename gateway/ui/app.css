@@ -1431,3 +1431,9 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
   .hud-cell { padding: 10px 12px; }
   .hud-cell strong { font-size: 20px; }
 }
+
+/* Home (Greg, 21 Nov): the figures and the top bar's date centred. */
+.hud-cell { align-items: center; text-align: center; }
+@media (max-width: 599px) {
+  .on-home .screen-name { text-align: center; }
+}
