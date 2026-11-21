@@ -25,10 +25,10 @@
   color-scheme: light;
 }
 
-/* The glow behind everything: two soft lights, fixed, never in the way */
+/* Behind everything: a faint, even wash of your primary colour from the top, fading out by a third
+   of the way down. Replaced two big round glows (Greg, 21 Nov: random, static, a bit childish). */
 [data-look="glass"] body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background: radial-gradient(420px 420px at 85% -60px, var(--glow-1), transparent 70%),
-              radial-gradient(380px 380px at -80px 75%, var(--glow-2), transparent 70%), var(--ground); }
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, var(--ground)) 0, var(--ground) 38%); }
 [data-look="glass"] body { background: transparent; }
 
 /* Panels are glass */
