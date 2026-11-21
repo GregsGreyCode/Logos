@@ -7,7 +7,7 @@
 // (agents ignore notices) and the first message inside the thread, so the agent answers there, as its own
 // conversation. Its title is that first message; threads quiet for 30 days leave the list (Greg, 21 Nov).
 // On a phone the conversations are chips above the chat (Greg chose K2).
-import { h, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
+import { h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
@@ -68,15 +68,69 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const crumb = threadId ? h('a', { href: main, class: 'mx-crumb' }, 'Main conversation ›') : null;
   const convTitle = h('span', { class: 'mx-conv-title' }, isNew ? 'New conversation' : '');
   const chipsRow = h('div', { class: 'mx-chips phone-only', role: 'tablist', 'aria-label': 'Conversations' });
-  const send = h('button', { type: 'submit', class: 'btn send-btn', 'aria-label': 'Send' }, h('span', { class: 'btn-words' }, 'Send'), icon(ICONS.send));
+  // Send, and hold to record (Greg, 21 Nov): with the box empty the button slowly turns between the arrow
+  // and a microphone, so people find out they can hold it down to speak a message.
+  const send = h('button', { type: 'submit', class: 'btn send-btn idle', 'aria-label': 'Send, or hold to record a voice message' },
+    h('span', { class: 'btn-words' }, 'Send'), h('span', { class: 'send-ico' }, icon(ICONS.send)), h('span', { class: 'mic-ico' }, icon(ICONS.mic)));
   const note = h('p', { class: 'when mx-note', role: 'status' });
   const thinkingRow = h('div', { class: 'mx-thinking', hidden: true },
     h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }), `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'));
   const modelLine = h('div', { class: 'model-line down', role: 'status', hidden: agent.model_up !== false },
-    'AI computer off · your message will wait');
+    'AI computer off · your message will queue');
   const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); sendText(input.value); } },
     h('label', { for: 'chat-input', class: 'sr' }, 'Message'), input, send);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(input.value); } });
+  const idle = () => send.classList.toggle('idle', !input.value.trim());
+  input.addEventListener('input', idle);
+
+  // Hold the button to record; let go to stop. The words land in the box to check, then Send.
+  let rec = null, holdTimer = null, held = false;
+  const say = (t) => { note.textContent = t; };
+  async function startRecording() {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      say(window.isSecureContext ? 'This browser cannot record audio.' : 'The microphone only works on the https address.'); return;
+    }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {
+      say('The microphone is blocked. Allow it for this site in the browser, then try again.'); return;
+    }
+    if (!held) { stream.getTracks().forEach((t) => t.stop()); return; }      // let go before it started
+    const recorder = new MediaRecorder(stream); const chunks = []; const started = Date.now();
+    recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
+    recorder.addEventListener('stop', () => {
+      stream.getTracks().forEach((t) => t.stop()); clearInterval(rec?.timer); rec = null; send.classList.remove('recording');
+      if (alive && chunks.length && Date.now() - started > 600) toWords(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+      else say('Hold a little longer to record.');
+    });
+    recorder.start(); send.classList.add('recording');
+    const tick = () => { const s = Math.floor((Date.now() - started) / 1000);
+      say(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · let go to stop`); if (s >= 300) stopRecording(); };
+    tick(); rec = { recorder, timer: setInterval(tick, 500) };
+  }
+  function stopRecording() { if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop(); }
+  async function toWords(blob) {
+    say('Turning it into words…'); send.disabled = true;
+    try {
+      const r = await api(`/api/v2/agents/${agent.name}/voice`, { method: 'POST', raw: blob, headers: { 'Content-Type': blob.type || 'audio/webm' } });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.message || 'That did not work. Try again.');
+      if (!d.text) say('No words were heard in that recording.');
+      else { input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + d.text; idle(); say('Check it, then send.'); }
+    } catch (e) { say(e.message); }
+    send.disabled = false;
+  }
+  send.addEventListener('pointerdown', (e) => {
+    if (input.value.trim() || send.disabled) return;           // with words in the box it is just Send
+    e.preventDefault(); held = true;
+    holdTimer = setTimeout(startRecording, 200);
+  });
+  const letGo = () => {
+    if (!held) return; held = false; clearTimeout(holdTimer);
+    if (rec) stopRecording(); else if (!input.value.trim()) say('Hold to record a voice message.');
+  };
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) send.addEventListener(ev, letGo);
+  send.addEventListener('contextmenu', (e) => e.preventDefault());
+  off.push(() => { held = false; clearTimeout(holdTimer); stopRecording(); });
 
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
@@ -86,7 +140,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
         h('span', { class: 'mx-same', title: 'The same conversation as your Element X room' }, 'Same as Element X'),
         sideBits.viewMenu || null, sideBits.convBtn || null),
-      chipsRow, modelLine, log, thinkingRow, note, form),
+      chipsRow, log, thinkingRow, note, modelLine, form),
     sideBits.side, sideBits.sideScrim || null, sideBits.reopen || null);
 
   // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
@@ -128,7 +182,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       for (const d of (info.get(me) || new Map()).values()) deviceNames.set(d.getIdentityKey(), d.displayName || d.deviceId);
     } catch (e) { /* names are a nicety */ }
   }
-  await readNames();
+  // Device names are a nicety: wait at most 0.3 s for them, so opening a chat never hangs on it.
+  await Promise.race([readNames(), new Promise((ok) => setTimeout(ok, 300))]);
   let looking = false;
   const fromWhere = (ev) => {
     if (ev.status) return ev.status === 'not_sent' ? 'not sent' : 'sending…';
@@ -308,6 +363,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     text = String(text || '').trim();
     if (!text || !room) return;
     input.value = '';
+    idle();
     note.textContent = '';
     try {
       if (isNew) {
