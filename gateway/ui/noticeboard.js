@@ -77,7 +77,7 @@ const dayWord = (ts) => {
   return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'long' });
 };
 const KIND_LABEL = { chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents', advisor: 'Claude Advisor',
-  budget: 'Claude Advisor', conflict: 'Brain', agent_down: 'Agent' };
+  budget: 'Claude Advisor', conflict: 'Brain', agent_down: 'Agent', sync: 'Sync' };
 function feedRow(i, TYPES) {
   const what = i.kind === 'brain' ? `${i.who}'s brain` : i.kind === 'chat' ? i.who : KIND_LABEL[i.kind] || '';
   const type = i.type || 'update';
@@ -87,9 +87,10 @@ function feedRow(i, TYPES) {
     h('span', { class: 'feed-body' },
       h('span', { class: 'feed-top' },
         h('span', { class: 'feed-tags' }, h('span', { class: `feed-type type-${type}` }, TYPES[type] || type), what && what !== TYPES[type] ? h('span', { class: 'feed-what' }, what) : null),
-        h('span', { class: 'when' }, i.kind === 'agent_down' ? 'Now' : i.dayOnly ? dayWord(i.ts) : when(i.ts))),
+        h('span', { class: 'when' }, i.kind === 'agent_down' || i.kind === 'sync' ? 'Now' : i.dayOnly ? dayWord(i.ts) : when(i.ts))),
       h('strong', { class: 'feed-title' }, i.title),
-      i.text ? h('span', { class: 'feed-text' }, i.text) : null,
+      i.kind === 'sync' ? h('span', { class: 'feed-text' }, `Last synced ${i.last_seen ? when(i.last_seen).toLowerCase() : 'never'} · `
+        + `${i.missing} change${i.missing === 1 ? '' : 's'} waiting. ${i.text}`) : i.text ? h('span', { class: 'feed-text' }, i.text) : null,
       i.outcome ? h('span', { class: 'feed-extra' }, h('span', { class: `pill ${i.tone}` }, i.outcome)) : null),
     i.fresh ? h('span', { class: 'visually-hidden' }, ' (new)') : null);
 }
