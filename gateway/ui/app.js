@@ -107,7 +107,23 @@ async function route() {
   // on finishes into a box that is no longer on the page, instead of over the new screen.
   const box = document.createElement('div');
   box.className = name === 'chat' ? 'view-box view-fade' : 'view-box';   // chat screens fade in (smoother switching)
-  if (slideNext) { box.classList.remove('view-fade'); box.classList.add(`slide-in-${slideNext}`); slideNext = null; }
+  if (slideNext) {
+    // The old screen has just slid out. The new one stays hidden until it has drawn something, then
+    // slides in (the box itself is display: contents, so the slide is on the main area).
+    const dir = slideNext; slideNext = null;
+    box.classList.remove('view-fade');
+    root.classList.remove('slide-in-left', 'slide-in-right');
+    root.style.transition = 'none'; root.style.transform = ''; root.style.willChange = ''; root.style.opacity = '0';
+    const t0 = performance.now();
+    const go = () => {
+      if (!box.isConnected) return;
+      if (!box.childElementCount && performance.now() - t0 < 400) { requestAnimationFrame(go); return; }
+      root.style.opacity = '';
+      root.classList.add(`slide-in-${dir}`);
+      root.addEventListener('animationend', () => root.classList.remove(`slide-in-${dir}`), { once: true });
+    };
+    requestAnimationFrame(go);
+  }
   root.replaceChildren(box);
   window.scrollTo(0, 0);                 // every screen starts at its top
   const done = await views[name](box, rest, state);
@@ -159,7 +175,7 @@ window.addEventListener('hashchange', route);
 // Inside an agent the swipe right goes back to all agents (chat-mx), so it is not caught here.
 const SWIPE_TABS = ['#/home', '#/chat'];
 function swipeTabs(el) {
-  let start = null;
+  let start = null, leaving = false;
   const here = () => {
     const [, name = 'home', ...rest] = location.hash.split('/');
     if (name === 'home') return 0;
@@ -179,18 +195,23 @@ function swipeTabs(el) {
     if (dy > 40 && dy > Math.abs(dx)) { start = null; el.style.transform = ''; el.style.opacity = ''; return; }
     const next = start.at + (dx < 0 ? 1 : -1);
     if (next < 0 || next >= SWIPE_TABS.length || dy > Math.abs(dx) / 2) return;
-    el.style.transition = 'none';
+    el.style.transition = 'none'; el.style.willChange = 'transform, opacity';
     el.style.transform = `translateX(${dx * 0.6}px)`;
     el.style.opacity = String(1 - Math.min(Math.abs(dx) / 500, 0.4));
     if (Math.abs(dx) > 90) {
-      start = null;
-      slideNext = dx < 0 ? 'right' : 'left';           // the next screen comes in from where the finger went
-      el.style.transition = ''; el.style.transform = ''; el.style.opacity = '';
-      location.hash = SWIPE_TABS[next];
+      // Carry on the way the finger went: the screen slides off, and only then does the next one
+      // draw and slide in, so nothing snaps back first (Greg, 21 Nov: it stuttered).
+      start = null; leaving = true;
+      slideNext = dx < 0 ? 'right' : 'left';
+      const still = document.documentElement.dataset.motion === 'still' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      el.style.transition = 'transform .14s ease-in, opacity .14s ease-in';
+      el.style.transform = `translateX(${dx < 0 ? '-' : ''}45%)`; el.style.opacity = '0';
+      setTimeout(() => { leaving = false; location.hash = SWIPE_TABS[next]; }, still ? 0 : 130);
     }
   }, { passive: true });
   el.addEventListener('touchend', () => {
     start = null;
+    if (leaving) return;
     el.style.transition = 'transform .2s ease, opacity .2s ease'; el.style.transform = ''; el.style.opacity = '';
   }, { passive: true });
 }
