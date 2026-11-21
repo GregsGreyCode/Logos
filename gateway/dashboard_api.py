@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import logging
 import time
+import urllib.parse
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 from aiohttp import web
@@ -204,7 +207,9 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
         return web.json_response({"error": "bad_prefs", "allowed": {**{k: list(v) for k, v in PREFS.items()},
                                                                    **{k: "#rrggbb" for k in COLOUR_PREFS}}}, status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
-    await asyncio.to_thread(auth_db.update_user_settings, user["id"], ui_prefs=json.dumps(merged, sort_keys=True))
+    seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not a setting
+    stored = {**merged, **({"seen_until": seen} if seen else {})}
+    await asyncio.to_thread(auth_db.update_user_settings, user["id"], ui_prefs=json.dumps(stored, sort_keys=True))
     return web.json_response(merged)
 
 
@@ -227,20 +232,23 @@ async def handle_set_look(request: web.Request) -> web.Response:
 MODEL_CHECK_SECONDS = 20
 
 
-async def model_server_up(request: web.Request, definition: Mapping[str, Any]) -> Optional[bool]:
+async def model_server_up(request: Any, definition: Mapping[str, Any]) -> Optional[bool]:
     """Whether this agent's local model server is answering: True, False, or None when the
-    agent has no local model. Checked at most every 20 seconds per server."""
+    agent has no local model. Checked at most every 20 seconds per server. ``request`` may be the
+    app itself (the background watch below)."""
     from gateway import local_models
+    app = getattr(request, "app", request)
     base = local_models.server(definition.get("model") or {})
-    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    runtime = agent_chat.runtime_of(app.get("sandbox_backend"))
     if not base or runtime is None:
         return None
-    cache = request.app.setdefault("model_server_up", {})
-    since = request.app.setdefault("model_server_off_since", {})
+    cache = app.setdefault("model_server_up", {})
+    since = app.setdefault("model_server_off_since", {})
     now = asyncio.get_running_loop().time()
     if base not in cache or now - cache[base][0] > MODEL_CHECK_SECONDS:
         up = await asyncio.to_thread(local_models.reachable, runtime.runner.http, base)
         cache[base] = (now, up)
+        note_ai(app, bool(up))
         if up:
             since.pop(base, None)
         else:
@@ -1426,8 +1434,153 @@ async def handle_advisor_budget(request: web.Request) -> web.Response:
     return web.json_response(out, status=status)
 
 
+# ── notifications (Greg, 21 Nov) ─────────────────────────────────────────
+# The Notifications tab: what changed in the brains of the agents you use, and the AI computer going off
+# and back on, newest first, for a week. The page adds what lives in the browser (your agents' messages
+# you have not read, from Matrix) and the noticeboard. "New" is anything after the last time you opened
+# it (seen_until, kept with your login, so the phone and the desktop agree).
+NOTIFY_DAYS = 7
+AI_EVENTS_MAX = 60
+
+
+def _ai_events_path(app: Any) -> Optional[Path]:
+    runtime = agent_chat.runtime_of(app.get("sandbox_backend"))
+    if runtime is None:
+        return None
+    env = getattr(runtime, "env", None) or os.environ
+    base = env.get("XDG_CONFIG_HOME") or os.path.join(env.get("HOME", str(Path.home())), ".config")
+    return Path(base) / "logos" / "ai-events.json"
+
+
+def ai_events(app: Any) -> List[Dict[str, Any]]:
+    if "ai_events" not in app:
+        events: List[Dict[str, Any]] = []
+        path = _ai_events_path(app)
+        try:
+            loaded = json.loads(path.read_text()) if path and path.exists() else []
+            events = [e for e in loaded if isinstance(e, dict) and "ts" in e and "up" in e]
+        except (OSError, ValueError):
+            events = []
+        app["ai_events"] = events
+    return app["ai_events"]
+
+
+def note_ai(app: Any, up: bool) -> None:
+    """Record the AI computer going off or coming back on (a change only; the first look is not one)."""
+    events = ai_events(app)
+    last = app.get("ai_last_up")
+    app["ai_last_up"] = up
+    if last is None:
+        if not events or events[-1]["up"] == up:
+            return
+    elif last == up:
+        return
+    if events and events[-1]["up"] == up:
+        return
+    events.append({"ts": time.time(), "up": up})
+    del events[:-AI_EVENTS_MAX]
+    path = _ai_events_path(app)
+    if path:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(events))
+        except OSError:
+            logger.warning("notifications: could not save the AI computer's on/off record")
+
+
+def _seen_until(user_id: str) -> float:
+    row = auth_db.get_user_settings(user_id) if user_id else None
+    try:
+        raw = json.loads((row or {}).get("ui_prefs") or "{}")
+        return float(raw.get("seen_until") or 0) if isinstance(raw, dict) else 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _set_seen_until(user_id: str, ts: float) -> None:
+    row = auth_db.get_user_settings(user_id) or {}
+    try:
+        raw = json.loads(row.get("ui_prefs") or "{}")
+    except ValueError:
+        raw = {}
+    raw = raw if isinstance(raw, dict) else {}
+    raw["seen_until"] = round(ts, 3)
+    auth_db.update_user_settings(user_id, ui_prefs=json.dumps(raw, sort_keys=True))
+
+
+async def handle_notifications(request: web.Request) -> web.Response:
+    """GET /api/v2/notifications — {"items": [...], "seen_until": ts}."""
+    from gateway import brain_reader
+    user = _user(request)
+    now = time.time()
+    since = now - NOTIFY_DAYS * 86400
+    items: List[Dict[str, Any]] = []
+    agents = await _visible_agents(request, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is not None:
+        names = sorted(agents)
+        listings = await asyncio.gather(*(asyncio.to_thread(brain_reader.list_pages, runtime, n) for n in names),
+                                        return_exceptions=True)
+        for name, listing in zip(names, listings):
+            if not isinstance(listing, dict):
+                continue
+            shown = str(agents[name]["definition"].get("display_name") or name)
+            for c in listing.get("changes") or []:
+                ts = float(c.get("when") or 0)
+                if ts < since:
+                    continue
+                path = str(c.get("path") or "")
+                items.append({"id": f"brain:{name}:{path}:{int(ts)}", "kind": "brain", "ts": ts, "agent": name,
+                              "who": shown, "title": str(c.get("title") or path),
+                              "text": str(c.get("summary") or ""), "added": c.get("added") or 0,
+                              "removed": c.get("removed") or 0,
+                              "link": f"#/brain/{name}/" + "/".join(urllib.parse.quote(p) for p in path.split("/"))})
+    for e in ai_events(request.app):
+        if e["ts"] >= since:
+            items.append({"id": f"ai:{int(e['ts'])}", "kind": "ai", "ts": e["ts"], "up": bool(e["up"]),
+                          "title": "AI computer back on" if e["up"] else "AI computer off",
+                          "text": "The agents answer again." if e["up"] else "Messages wait until it is back."})
+    items.sort(key=lambda i: -i["ts"])
+    seen = await asyncio.to_thread(_seen_until, user["id"])
+    return web.json_response({"items": items[:60], "seen_until": seen})
+
+
+async def handle_notifications_seen(request: web.Request) -> web.Response:
+    """POST /api/v2/notifications/seen — everything up to now has been seen."""
+    user = _user(request)
+    ts = time.time()
+    await asyncio.to_thread(_set_seen_until, user["id"], ts)
+    return web.json_response({"seen_until": ts})
+
+
+async def _watch_ai(app: web.Application) -> None:
+    """Check the AI computer every minute, so its going off or on is noticed with no one looking."""
+    async def loop() -> None:
+        while True:
+            try:
+                runtime = agent_chat.runtime_of(app.get("sandbox_backend"))
+                if runtime is not None:
+                    for name in await asyncio.to_thread(runtime.defined):
+                        definition = await asyncio.to_thread(runtime.load, name)
+                        if await model_server_up(app, definition) is not None:
+                            break                        # one server is enough: there is one AI computer
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("notifications: AI computer check failed: %s", exc)
+            await asyncio.sleep(60)
+    app["ai_watch"] = asyncio.create_task(loop())
+
+    async def stop(_app: web.Application) -> None:
+        _app["ai_watch"].cancel()
+    app.on_cleanup.append(stop)
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
+    app.router.add_get("/api/v2/notifications", handle_notifications)
+    app.router.add_post("/api/v2/notifications/seen", require_csrf(handle_notifications_seen))
+    app.on_startup.append(_watch_ai)
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
     app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
