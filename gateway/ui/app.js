@@ -100,7 +100,10 @@ async function route() {
   const tabbed = ['home', 'chat', 'brain', 'agents', 'noticeboard'].includes(name);
   // Inside one agent (its chat, brain or about): on a phone its own bar replaces the Logos bar.
   document.documentElement.classList.toggle('in-agent', (name === 'chat' && !!rest[0]) || name === 'brain' || (name === 'agents' && !!rest[0]));
-  document.getElementById('screen-name').textContent = tabbed ? '' : (NAMES[name] || '');
+  // Home's top bar carries the date, between the logo and your initial (Greg, 21 Nov).
+  document.getElementById('screen-name').textContent = name === 'home'
+    ? new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }) : tabbed ? '' : (NAMES[name] || '');
+  document.documentElement.classList.toggle('on-home', name === 'home');
   document.documentElement.classList.toggle('screen-tabbed', tabbed);
   document.title = NAMES[name] ? `${NAMES[name]} · Logos` : 'Logos';
   if (!views[name]) return soon(name);
