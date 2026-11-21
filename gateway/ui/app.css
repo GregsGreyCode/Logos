@@ -1425,7 +1425,7 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
   .on-home .topbar-sep { display: none; }
   .on-home .screen-name { color: var(--ink); font: 600 17px/1.2 var(--font-display); }
   .on-home .home-date-row { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-  .home { display: flex; flex-direction: column; min-height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 40px); }
+  .home { display: flex; flex-direction: column; padding-bottom: 6px; min-height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 6px); }
   .home > .home-ask { margin-top: auto; position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--below-visible, 0px)); padding: 10px 0; background: var(--ground); z-index: 5; }
   .hud-cell { padding: 10px 12px; }
   .hud-cell strong { font-size: 20px; }
