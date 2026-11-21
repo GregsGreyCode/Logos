@@ -164,6 +164,9 @@ export async function voidView(root, agents, others = []) {
   const label = (el) => el.querySelector('.mark-label > span');
   const tell = (t) => { ask.textContent = t; };
   const resetAsk = () => { ask.textContent = 'Who do you want to talk to?'; };
+  // An outcome ("Cancelled", "Not sent…") shows for a few seconds, then the question comes back
+  // (Greg, 21 Nov: "Not sent" stayed there for good).
+  const flash = (t) => { tell(t); setTimeout(() => { if (ask.textContent === t) resetAsk(); }, 4000); };
   function finish() {
     if (!g) return;
     clearTimeout(g.t1); clearTimeout(g.t2);
@@ -180,15 +183,15 @@ export async function voidView(root, agents, others = []) {
     if (!g || g.drag || !g.mine) return;
     const mine = g;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      tell(window.isSecureContext ? 'This browser cannot record audio.' : 'The microphone only works on the https address.'); return;
+      flash(window.isSecureContext ? 'This browser cannot record audio.' : 'The microphone only works on the https address.'); return;
     }
     mine.el.classList.add('recording'); navigator.vibrate?.(20);
     label(mine.el)?.replaceChildren('Listening…');
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {
-      tell('The microphone is blocked. Allow it for this site, then hold again.'); if (g === mine) finish(); return;
+      flash('The microphone is blocked. Allow it for this site, then hold again.'); if (g === mine) finish(); return;
     }
-    if (g !== mine) { stream.getTracks().forEach((t) => t.stop()); tell('Microphone ready: hold an agent again to record.'); return; }
+    if (g !== mine) { stream.getTracks().forEach((t) => t.stop()); flash('Microphone ready: hold an agent again to record.'); return; }
     const recorder = new MediaRecorder(stream); const chunks = []; const started = Date.now();
     recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
     recorder.addEventListener('stop', () => {
@@ -197,9 +200,9 @@ export async function voidView(root, agents, others = []) {
       const play = (cls, ms) => { if (still) return; mine.el.classList.add(cls); setTimeout(() => mine.el.classList.remove(cls), ms); };
       if (!mine.send) {
         play('cancelling', 450);                                 // a small shake: nothing went
-        tell(mine.choice === 'cancel' ? 'Cancelled: nothing was sent.' : 'Not sent: swipe up to send it.'); return;
+        flash(mine.choice === 'cancel' ? 'Cancelled: nothing was sent.' : 'Not sent: swipe up to send it.'); return;
       }
-      if (!chunks.length || Date.now() - started < 600) { tell('Hold a little longer to record.'); return; }
+      if (!chunks.length || Date.now() - started < 600) { flash('Hold a little longer to record.'); return; }
       handed = { agent: mine.name, blob: new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }) };
       tell('Sending…');
       play('sending', 600);                                      // it flies up and away, then its chat opens
