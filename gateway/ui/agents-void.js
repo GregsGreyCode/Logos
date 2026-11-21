@@ -95,6 +95,8 @@ export async function voidView(root, agents, others = []) {
   let alive = true;
   const field = h('div', { class: 'void-field' });
   const ask = h('p', { class: 'void-ask' }, 'Who do you want to talk to?');
+  // How it works, said once under the question (Greg, 21 Nov).
+  const how = h('p', { class: 'void-how' }, 'Tap to chat · hold to move', h('br'), 'Hold longer for a voice note: swipe up to send');
   // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
   // off to the left). Yours first, then the private ones, unless the person has moved them.
   const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
@@ -191,10 +193,17 @@ export async function voidView(root, agents, others = []) {
     recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
     recorder.addEventListener('stop', () => {
       stream.getTracks().forEach((t) => t.stop()); clearInterval(mine.tick);
-      if (!mine.send) { tell(mine.choice === 'cancel' ? 'Cancelled: nothing was sent.' : 'Not sent: swipe up to send it.'); return; }
+      const still = document.documentElement.dataset.motion === 'still' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const play = (cls, ms) => { if (still) return; mine.el.classList.add(cls); setTimeout(() => mine.el.classList.remove(cls), ms); };
+      if (!mine.send) {
+        play('cancelling', 450);                                 // a small shake: nothing went
+        tell(mine.choice === 'cancel' ? 'Cancelled: nothing was sent.' : 'Not sent: swipe up to send it.'); return;
+      }
       if (!chunks.length || Date.now() - started < 600) { tell('Hold a little longer to record.'); return; }
       handed = { agent: mine.name, blob: new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }) };
-      location.hash = `#/chat/${mine.name}`;
+      tell('Sending…');
+      play('sending', 600);                                      // it flies up and away, then its chat opens
+      setTimeout(() => { location.hash = `#/chat/${mine.name}`; }, still ? 0 : 320);
     });
     recorder.start();
     mine.rec = recorder;
@@ -292,7 +301,7 @@ export async function voidView(root, agents, others = []) {
   field.addEventListener('dragstart', (e) => e.preventDefault());
 
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, field));
+    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, how, field));
   draw(lastMoods);
   const tick = async () => { const m = await moods(agents); if (alive) draw(m); };
   await tick();
