@@ -1509,7 +1509,13 @@ def _set_seen_until(user_id: str, ts: float) -> None:
 
 
 async def handle_notifications(request: web.Request) -> web.Response:
-    """GET /api/v2/notifications — {"items": [...], "seen_until": ts}."""
+    """GET /api/v2/notifications — {"items": [...], "seen_until": ts}.
+
+    Each item has a ``type`` (Greg, 21 Nov), so what needs you stands apart from what merely happened:
+      * ``needs``: something to do (a brain page with two copies to merge);
+      * ``problem``: something wrong right now (the AI computer off, an agent not running);
+      * ``update``: what happened (brain changes, the AI computer back on, an earlier outage).
+    The page adds ``needs`` (requests, Advisor questions and budget asks) and ``message`` (unread chat)."""
     from gateway import brain_reader
     user = _user(request)
     now = time.time()
@@ -1534,12 +1540,36 @@ async def handle_notifications(request: web.Request) -> web.Response:
                               "who": shown, "title": str(c.get("title") or path),
                               "text": str(c.get("summary") or ""), "added": c.get("added") or 0,
                               "removed": c.get("removed") or 0,
+                              "link": f"#/brain/{name}/" + "/".join(urllib.parse.quote(p) for p in path.split("/")),
+                              "type": "update"})
+            for c in listing.get("conflicts") or []:
+                path = str(c.get("path") or "")
+                items.append({"id": f"conflict:{name}:{path}", "kind": "conflict", "type": "needs",
+                              "ts": float(c.get("modified") or now), "agent": name, "who": shown,
+                              "title": f"Two copies of {c.get('title') or c.get('of') or path}",
+                              "text": "Changed on a phone and here before they synced. Keep what you want, delete the copy.",
                               "link": f"#/brain/{name}/" + "/".join(urllib.parse.quote(p) for p in path.split("/"))})
-    for e in ai_events(request.app):
+    # Agents that should be running and are not: a problem until they are back.
+    backend = request.app.get("sandbox_backend")
+    try:
+        states = {st.name: st for st in await asyncio.to_thread(backend.list)} if backend else {}
+    except Exception:
+        states = {}
+    for name, a in agents.items():
+        st = states.get(name)
+        if states and not (st and st.running) and a["definition"].get("role") != "test":   # as the agent list says
+            items.append({"id": f"down:{name}", "kind": "agent_down", "type": "problem", "ts": now, "agent": name,
+                          "title": f"{a['definition'].get('display_name') or name} is not running",
+                          "text": "It cannot answer or run its jobs. Greg can start it again.", "link": f"#/agents/{name}"})
+    events = ai_events(request.app)
+    for e in events:
         if e["ts"] >= since:
+            current = e is events[-1] and not e["up"]               # still off: a problem, else history
             items.append({"id": f"ai:{int(e['ts'])}", "kind": "ai", "ts": e["ts"], "up": bool(e["up"]),
+                          "type": "problem" if current else "update",
                           "title": "AI computer back on" if e["up"] else "AI computer off",
-                          "text": "The agents answer again." if e["up"] else "Messages wait until it is back."})
+                          "text": "The agents answer again." if e["up"] else
+                          ("Messages wait until it is back." if current else "It came back on.")})
     items.sort(key=lambda i: -i["ts"])
     seen = await asyncio.to_thread(_seen_until, user["id"])
     return web.json_response({"items": items[:60], "seen_until": seen})
