@@ -78,7 +78,8 @@ export async function advisorView(root) {
     let d;
     try { d = await getJSON('/api/v2/advisor'); } catch (e) {
       root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor'),
-        h('div', { class: 'notice' }, e.status === 503 ? 'The advisor is not running yet.' : 'Could not load the advisor.')));
+        h('div', { class: 'empty' }, h('h1', {}, e.status === 503 ? 'Not running yet' : 'Could not load it'),
+          h('p', {}, e.status === 503 ? 'The Claude Advisor starts with Logos once it is set up on the server.' : 'Try again in a moment.'))));
       return;
     }
     if (!alive) return;

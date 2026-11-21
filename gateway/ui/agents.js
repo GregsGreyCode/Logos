@@ -1,5 +1,5 @@
 // Agents screen: is each agent up, what it does on its own, what it runs on, what it can reach.
-import { h, api, getJSON, none, loading } from './util.js';
+import { h, api, getJSON, none, loading, icon, ICONS, shortName } from './util.js';
 
 function runTime(iso) {
   if (!iso) return '';
@@ -20,8 +20,9 @@ function schedule(s) {
   if (/^\*\/\d+$/.test(min) && hour === '*') return `Every ${min.slice(2)} minutes`;
   if (hour === '*') return 'Hourly';
   const at = `${hour.padStart(2, '0')}:${min.padStart(2, '0')}`;
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return dow === '*' ? `Nightly, ${at}` : `${days[Number(dow) % 7] || dow}, ${at}`;
+  const days = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+  const named = { '1-5': 'Weekdays', '0,6': 'Weekends', '6,0': 'Weekends' };
+  return dow === '*' ? `Nightly ${at}` : `${named[dow] || days[Number(dow) % 7] || dow} ${at}`;
 }
 
 export async function agentsView(root, [agentArg]) {
@@ -47,10 +48,10 @@ export async function agentsView(root, [agentArg]) {
   const chips = h('div', { class: 'phone-only' }, h('div', { class: 'agent-chips', role: 'list' },
     data.agents.map((a) => h('a', { href: `#/agents/${a.name}`, role: 'listitem', class: 'agent-chip',
       'aria-current': agent && a.name === agent.name ? 'true' : null },
-      h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name)),
+      h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), shortName(a.display_name))),
     data.others.map((a) => h('span', { role: 'listitem', class: 'agent-chip other',
       title: 'Private to someone else: you can see that it is up, nothing more' },
-      h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), `${a.display_name} · private`))),
+      h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), shortName(a.display_name), h('span', { class: 'chip-lock', 'aria-label': 'private' }, icon(ICONS.lock))))),
     agent ? h('p', { class: 'when agent-state' }, h('span', { class: `status ${agent.running ? 'up' : 'down'}` },
       agent.running ? 'Running' : 'Not running'), agent.shared ? ' · shared with the household' : '') : null);
 
@@ -76,7 +77,7 @@ export async function agentsView(root, [agentArg]) {
     const jobRows = (st.jobs || []).map((j) => h('div', { class: 'row-item' },
       h('span', { class: 'row-main' }, j.label),
       h('span', { class: 'row-meta' }, schedule(j.schedule), ' · ', j.managed
-        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad' }, `${j.last_ok ? 'fine' : 'failed'} ${runTime(j.last_run)}`) : 'not yet run')
+        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad', title: j.last_ok ? 'Ran fine' : 'Failed' }, `${j.last_ok ? '✓' : '✕ failed'} ${runTime(j.last_run).replace(/^Today /, '')}`) : 'not yet run')
         : h('button', { type: 'button', class: 'linkish', onclick: async (e) => {
           e.target.disabled = true;
           const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/cancel`, { method: 'POST' });
@@ -87,7 +88,7 @@ export async function agentsView(root, [agentArg]) {
     const setupRow = (label, value, tone) => h('div', { class: 'row-item' },
       h('span', { class: `row-meta ${tone || ''}` }, label), h('span', { class: 'row-main' }, value));
     const phone = h('div', { class: 'phone-only' }, h('div', { class: 'phone-stack' },
-      h('section', { 'aria-label': 'Scheduled jobs' }, h('h2', { class: 'label' }, 'What it does on its own'),
+      h('section', { 'aria-label': 'Scheduled jobs' }, h('h2', { class: 'label' }, 'Scheduled'),
         st.jobs == null ? h('div', { class: 'notice' }, 'The agent did not answer, so its jobs could not be listed.')
           : h('div', { class: 'rows' }, jobRows)),
       h('section', { 'aria-label': 'Setup' }, h('h2', { class: 'label' }, 'Setup'),

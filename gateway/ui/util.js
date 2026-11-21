@@ -23,6 +23,20 @@ export function icon(paths) {
   return svg;
 }
 
+// A few shared icon shapes (24-unit stroke paths), for buttons whose words are too long on a phone.
+export const ICONS = {
+  send: ['M5 12h14', 'M13 6l6 6-6 6'],
+  external: ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5'],
+  lock: ['M6 11h12v9H6z', 'M8 11V8a4 4 0 0 1 8 0v3'],
+  check: ['M5 12l5 5 9-10'],
+  agents: ['M12 3l8 4.5v9L12 21l-8-4.5v-9z', 'M12 12l8-4.5', 'M12 12v9', 'M12 12L4 7.5'],
+  shield: ['M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z', 'M8.5 12l2.5 2.5 4.5-5'],
+  chip: ['M7 7h10v10H7z', 'M10 3v4', 'M14 3v4', 'M10 17v4', 'M14 17v4', 'M3 10h4', 'M3 14h4', 'M17 10h4', 'M17 14h4'],
+  people: ['M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M2 21v-1a6 6 0 0 1 12 0v1', 'M16 3.5a4 4 0 0 1 0 7', 'M22 21v-1a6 6 0 0 0-4-5.6'],
+  gear: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'],
+  logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'M16 17l5-5-5-5', 'M21 12H9'],
+};
+
 // On a phone a table becomes a list of small blocks; each cell is labelled with its column.
 export function labelTables(root) {
   for (const table of root.querySelectorAll('table')) {
@@ -44,6 +58,12 @@ export const none = (text) => h('p', { class: 'none' }, text);
 // Loading (P2): the same in every screen and the same place, "Loading…" over three shimmering lines.
 export const loading = () => h('div', { class: 'loading', role: 'status' }, h('span', {}, 'Loading…'),
   h('span', { class: 'bar', style: 'width:70%' }), h('span', { class: 'bar', style: 'width:90%' }), h('span', { class: 'bar', style: 'width:55%' }));
+
+// Put the cursor in a text box only where there is a real keyboard: on a phone, focusing it pops the
+// on-screen keyboard up before the person has chosen to type.
+export function focusIfKeyboard(el) {
+  if (el && window.matchMedia('(hover: hover) and (pointer: fine)').matches) el.focus();
+}
 
 export function h(tag, attrs = {}, ...children) {
   const el = document.createElement(tag);

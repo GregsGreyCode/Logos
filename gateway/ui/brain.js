@@ -1,5 +1,5 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
-import { h, api, getJSON, when, markdown, agentLabel, none, loading } from './util.js';
+import { h, api, getJSON, when, markdown, agentLabel, none, loading, icon, ICONS } from './util.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -129,9 +129,9 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   // ── add or change by asking the agent ──────────────────────────────────
   function askBox(page) {
     const id = 'ask-brain';
-    const input = h('textarea', { id, rows: '3', placeholder: `For example: add that the table is booked for 7:30, or note Sam's new phone number` });
+    const input = h('textarea', { id, rows: '3', placeholder: 'Add or change something…', title: 'For example: the table is booked for 7:30' });
     const out = h('div', { class: 'result' });
-    const go = h('button', { type: 'submit', class: 'btn' }, 'Add to brain');
+    const go = h('button', { type: 'submit', class: 'btn ask-go', 'aria-label': 'Add to brain' }, h('span', { class: 'btn-words' }, 'Add to brain'), icon(ICONS.send));
     return h('form', { class: 'ask', onsubmit: async (e) => {
       e.preventDefault();
       const text = input.value.trim();
@@ -160,7 +160,12 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   async function showPage(page, keepAsk = false) {
     current = page.path;
     const ask = keepAsk ? article.querySelector('.ask') : null;
-    if (!keepAsk) article.replaceChildren(loading());
+    if (!keepAsk) {
+      article.replaceChildren(loading());
+      // Opening a page from the list (below the page on a phone) starts at the page's top.
+      const top = article.getBoundingClientRect().top + window.scrollY - 64;
+      if (window.scrollY > top) window.scrollTo(0, Math.max(0, top));
+    }
     let d;
     try {
       d = await getJSON(`${base}/page?path=${encodeURIComponent(page.path)}`);
@@ -172,12 +177,12 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     const body = d.text.replace(/^# .*\n?/, '');
     article.replaceChildren(
       h('div', { class: 'doc-head' }, h('h1', {}, d.title),
-        h('span', { class: 'when' }, d.path.replace(/\.md$/, '').replace(/\//g, ' / ')),
+        h('span', { class: 'when wide-only' }, d.path.replace(/\.md$/, '').replace(/\//g, ' / ')),
         h('button', { type: 'button', class: 'btn quiet small wide-only', onclick: () => edit(page, d) }, 'Edit'),
-        h('a', { class: 'btn quiet small phone-only obsidian-link', href: obsidian(d.path) }, 'Open in Obsidian')),
+        h('a', { class: 'icon-btn phone-only obsidian-link', href: obsidian(d.path), 'aria-label': 'Open in Obsidian', title: 'Open in Obsidian' }, icon(ICONS.external))),
       ask || askBox(page),
       h('div', { class: 'doc-body' }, ...(body.trim() ? markdown(body) : [h('p', { class: 'when' }, 'This page is empty.')])),
-      h('div', { class: 'doc-foot when' }, `Last changed ${when(d.modified).toLowerCase()}. Your edits win: ${agent.display_name} keeps what you write.`));
+      h('div', { class: 'doc-foot when' }, `Changed ${when(d.modified)}`, h('span', { class: 'wide-only' }, `. Your edits win: ${agent.display_name} keeps what you write.`)));
     showTree();
   }
 

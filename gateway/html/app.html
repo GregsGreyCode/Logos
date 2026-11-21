@@ -71,23 +71,25 @@ try {
     <a href="#/brain" data-view="brain">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h10l4 4v12H5z"/><path d="M9 12h6M9 16h6"/></svg>Brain</a>
     <a href="#/noticeboard" data-view="noticeboard">
-      <span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="tab-badge nb-badge" hidden></span></span>Noticeboard</a>
+      <span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="tab-badge nb-badge" hidden></span></span>Notices</a>
     <button type="button" id="more-btn" aria-haspopup="dialog" aria-controls="more-sheet" aria-expanded="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>More</button>
   </nav>
 
   <div class="scrim" id="scrim" hidden></div>
   <div class="sheet" id="more-sheet" role="dialog" aria-modal="true" aria-label="More" hidden>
-    <a class="sheet-row" href="#/agents" data-view="agents">Agents</a>
-    <a class="sheet-row" href="#/advisor" data-view="advisor">Claude Advisor</a>
-    <a class="sheet-row" href="#/models" data-view="models">Models</a>
-    <a class="sheet-row" href="#/people" data-view="people">People</a>
-    <a class="sheet-row" href="#/settings" data-view="settings">Settings</a>
+    <span class="sheet-grip" aria-hidden="true"></span>
+    <a class="sheet-row" href="#/agents" data-view="agents" data-icon="agents">Agents</a>
+    <a class="sheet-row" href="#/advisor" data-view="advisor" data-icon="shield">Claude Advisor</a>
+    <a class="sheet-row" href="#/models" data-view="models" data-icon="chip">Models</a>
+    <a class="sheet-row" href="#/people" data-view="people" data-icon="people">People</a>
+    <a class="sheet-row" href="#/settings" data-view="settings" data-icon="gear">Settings</a>
   </div>
   <div class="sheet" id="acct-sheet" role="dialog" aria-modal="true" aria-label="Your account" hidden>
+    <span class="sheet-grip" aria-hidden="true"></span>
     <div class="sheet-who"><span class="avatar big"></span><span><span class="who strong"></span><br><span class="when role"></span></span></div>
-    <a class="sheet-row" href="#/settings" data-view="settings">Settings</a>
-    <button type="button" class="sheet-row logout-btn danger-text">Sign out</button>
+    <a class="sheet-row" href="#/settings" data-view="settings" data-icon="gear">Settings</a>
+    <button type="button" class="sheet-row logout-btn danger-text" data-icon="logout">Sign out</button>
   </div>
 </div>
 <script type="module" src="/ui/app.js"></script>

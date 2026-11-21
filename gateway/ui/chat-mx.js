@@ -7,7 +7,7 @@
 // (agents ignore notices) and the first message inside the thread, so the agent answers there, as its own
 // conversation. Its title is that first message; threads quiet for 30 days leave the list (Greg, 21 Nov).
 // On a phone the conversations are chips above the chat (Greg chose K2).
-import { h, getJSON, markdown, when, none, loading } from './util.js';
+import { h, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
@@ -17,7 +17,7 @@ const ARCHIVE_DAYS = 30;
 const THREAD_DAYS = 30;
 const TITLE_MARK = '💬 ';
 const titleOf = (ev) => (ev && ev.isDecryptionFailure && ev.isDecryptionFailure()
-  ? 'An earlier conversation (cannot be read in this browser)'
+  ? 'Locked conversation'
   : String(ev?.getContent()?.body || 'Conversation').replace(/^💬\s*/, '').slice(0, 80));
 
 function pickRoom(c, agentId) {
@@ -35,17 +35,17 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const off = [];
   const log = h('div', { class: 'log', role: 'log', 'aria-live': 'polite' }, loading());
   const input = h('textarea', { id: 'chat-input', rows: '1', placeholder: isNew ? 'Start a new conversation: its first message is its title'
-    : threadId ? 'Reply in this conversation' : `Message ${agent.display_name}` });
+    : threadId ? 'Reply' : `Message ${agent.display_name}` });
   const main = `#/chat/${agent.name}`;
   const crumb = threadId ? h('a', { href: main, class: 'mx-crumb' }, 'Main conversation ›') : null;
   const convTitle = h('span', { class: 'mx-conv-title' }, isNew ? 'New conversation' : '');
   const chipsRow = h('div', { class: 'mx-chips phone-only', role: 'tablist', 'aria-label': 'Conversations' });
-  const send = h('button', { type: 'submit', class: 'btn' }, 'Send');
+  const send = h('button', { type: 'submit', class: 'btn send-btn', 'aria-label': 'Send' }, h('span', { class: 'btn-words' }, 'Send'), icon(ICONS.send));
   const note = h('p', { class: 'when mx-note', role: 'status' });
   const thinkingRow = h('div', { class: 'mx-thinking', hidden: true },
     h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }), `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'));
   const modelLine = h('div', { class: 'model-line down', role: 'status', hidden: agent.model_up !== false },
-    'The AI computer is off: your message waits in the room, and the agent answers when it is back on.');
+    'AI computer off · your message will wait');
   const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); sendText(input.value); } },
     h('label', { for: 'chat-input', class: 'sr' }, 'Message'), input, send);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(input.value); } });
@@ -55,7 +55,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       h('header', { class: 'chat-head' },
         // M4: the agents' marks replace the agent tabs; inside a thread, its title.
         threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
-        crumb, threadId ? h('h1', {}, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
+        crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
         h('span', { class: 'mx-same', title: 'The same conversation as your Element X room' }, 'Same as Element X'),
         sideBits.viewMenu || null, sideBits.convBtn || null),
       chipsRow, modelLine, log, thinkingRow, note, form),
@@ -135,6 +135,16 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     return d;
   }
 
+  // Under a message: its time; for yours, a tick when it is in the room (also in Element X, on hover)
+  // or where it came from ("from Element X") when another of your devices sent it.
+  function metaFor(ev, mine, edited) {
+    const where = mine ? fromWhere(ev) : '';
+    const sentHere = where === 'sent · also in Element X';
+    return h('span', { class: 'when mx-meta', title: sentHere ? 'Sent · also in Element X' : null },
+      [when(ev.getTs() / 1000), sentHere ? '' : where, edited ? 'edited' : ''].filter(Boolean).join(' · '),
+      sentHere ? h('span', { class: 'mx-tick', 'aria-label': 'sent' }, icon(ICONS.check)) : null);
+  }
+
   function bubbleFor(ev, edits, reactions, inMain) {
     const mine = ev.getSender() === me;
     const content = edits.get(ev.getId()) || ev.getContent();
@@ -157,8 +167,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     return h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}` },
       h('div', { class: `msg ${mine ? 'user' : 'assistant'}` }, ...body),
       rx ? h('div', { class: 'mx-reactions' }, [...rx].map(([k, n]) => h('span', { class: 'chip' }, `${k} ${n > 1 ? n : ''}`))) : null,
-      h('span', { class: 'when mx-meta' }, [when(ev.getTs() / 1000), mine ? fromWhere(ev) : '', edits.has(ev.getId()) ? 'edited' : '']
-        .filter(Boolean).join(' · ')),
+      metaFor(ev, mine, edits.has(ev.getId())),
       !mine && kind === 'm.text' && content.body ? thinking(String(content.body)) : null,
       thread ? h('a', { class: 'mx-thread-link', href: `${main}/thread/${encodeURIComponent(ev.getId())}` },
         `↳ ${thread.count} repl${thread.count === 1 ? 'y' : 'ies'} · open this conversation`) : null);
@@ -168,7 +177,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   function threadsNow() {
     if (!room) return [];
     const since = Date.now() - THREAD_DAYS * 86400000;
-    return [...replyMap].map(([id, r]) => ({ id, title: titleOf(room.findEventById(id)), last: r.last }))
+    return [...replyMap].filter(([id]) => !room.findEventById(id)?.isDecryptionFailure())
+      .map(([id, r]) => ({ id, title: titleOf(room.findEventById(id)), last: r.last }))
       .filter((t) => t.last >= since).sort((a, b) => b.last - a.last);
   }
   const convList = h('div', { class: 'convs' });
@@ -178,7 +188,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       h('span', { class: 'conv-title' }, title), h('span', { class: 'when' }, last ? when(last / 1000) : ''));
     convList.replaceChildren(link(main, 'Main conversation', 0, !threadId),
       ...list.map((t) => link(`${main}/thread/${encodeURIComponent(t.id)}`, t.title, t.last, t.id === threadId)));
-    const chip = (href, label, on, extra) => h('a', { href, class: `mx-chip${on ? ' on' : ''}${extra || ''}`, role: 'tab', 'aria-selected': String(!!on) }, label);
+    const chip = (href, label, on, extra) => h('a', { href, class: `mx-chip${on ? ' on' : ''}${extra || ''}`, role: 'tab', 'aria-selected': String(!!on), title: label }, h('span', { class: 'chip-text' }, label));
     chipsRow.replaceChildren(chip(`${main}/thread/new`, '+', isNew, ' add'), chip(main, 'Main', !threadId),
       ...list.map((t) => chip(`${main}/thread/${encodeURIComponent(t.id)}`, t.title, t.id === threadId)));
   }
@@ -295,6 +305,6 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   draw(true);
   const asked = takeAsk(agent.name);           // a question asked on Home
   if (asked) sendText(asked);
-  input.focus();
+  focusIfKeyboard(input);
   return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };
 }
