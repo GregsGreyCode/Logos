@@ -169,7 +169,10 @@ class ResetServer:
             return {"event_id": "$cmd"}
         if "/messages" in path:
             return {"chunk": [{"event_id": "$ans", "sender": "@conduit:home", "type": "m.room.message",
-                               "content": {"body": "Successfully reset the password" if self.works else "No such user"}}]}
+                               "content": {"body": "Successfully reset the password" if self.works else "No such user"}},
+                              {"event_id": "$cmd", "sender": "@logos-admin:home", "type": "m.room.message"},
+                              {"event_id": "$old", "sender": "@conduit:home", "type": "m.room.message",
+                               "content": {"body": "an earlier answer"}}]}       # newest first
         if "/redact/" in path:
             self.redacted.append(path.split("/redact/")[1].split("/")[0])
             return {"event_id": "$r"}

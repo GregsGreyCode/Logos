@@ -249,17 +249,20 @@ class MatrixHost:
             sent = self._call(f"/_matrix/client/v3/rooms/{rid}/send/m.room.message/logos-reset-{secrets.token_hex(6)}",
                               {"msgtype": "m.text", "body": f"!admin users reset-password {localpart} {password}"},
                               token=token, method="PUT")
-            answer, answer_id = "", None
-            for _ in range(20):
+            answer, answer_ids = "", []
+            for _ in range(60):                                  # up to 30 s: a busy server answers late
                 sleep(0.5)
-                for ev in self._call(f"/_matrix/client/v3/rooms/{rid}/messages?dir=b&limit=5", token=token).get("chunk", []):
-                    if ev.get("sender") != login.get("user_id") and ev.get("origin_server_ts", 0) >= 0 \
-                            and ev.get("event_id") != sent.get("event_id") and ev.get("type") == "m.room.message":
-                        answer, answer_id = (ev.get("content") or {}).get("body", ""), ev.get("event_id")
+                # Newest first: only what came after our command (before it in this list) is its answer;
+                # an older message from the server (an earlier reset, a notice) is never taken for it.
+                for ev in self._call(f"/_matrix/client/v3/rooms/{rid}/messages?dir=b&limit=20", token=token).get("chunk", []):
+                    if ev.get("event_id") == sent.get("event_id"):
                         break
-                if answer_id:
+                    if ev.get("sender") != login.get("user_id") and ev.get("type") == "m.room.message":
+                        answer = (ev.get("content") or {}).get("body", "")
+                        answer_ids.append(ev.get("event_id"))
+                if answer_ids:
                     break
-            for eid in (sent.get("event_id"), answer_id):        # the password does not stay in the room
+            for eid in [sent.get("event_id"), *answer_ids]:      # the password does not stay in the room
                 if eid:
                     self._call(f"/_matrix/client/v3/rooms/{rid}/redact/{urllib.parse.quote(eid)}/logos-redact-{secrets.token_hex(6)}",
                                {"reason": "password reset"}, token=token, method="PUT")

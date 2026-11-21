@@ -128,10 +128,21 @@ class AdvisorHost:
             return {}
         path = config_dir(self.rt.env) / MATRIX_FILE
         state = json.loads(path.read_text()) if path.exists() else {}
+
+        def save() -> None:
+            # Saved as soon as anything is made: a later failure must not lose the login (the
+            # account cannot be registered twice) or a room (it would be made again).
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(state, indent=1))
+            tmp.chmod(0o600)
+            os.replace(tmp, path)
+
         if not state.get("token"):
             password = secrets.token_urlsafe(32)
             login = host.register(LOCALPART, password)
             state = {"user_id": login["user_id"], "token": login["access_token"], "password": password, "rooms": {}}
+            save()
         # The name shown in Element: set each time, so a rename reaches the account and rooms already made.
         host.set_display_name(state["user_id"], state["token"], DISPLAY_NAME)
         for person, have in (state.get("rooms") or {}).items():
@@ -150,11 +161,8 @@ class AdvisorHost:
             if not made.get("room_id"):
                 raise AdvisorError(f"could not make the advisor room for {person}: {made.get('error') or made}")
             state["rooms"][person] = {"room": made["room_id"], "mxid": mxid, "named": ROOM_NAME}
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=1))
-        tmp.chmod(0o600)
-        os.replace(tmp, path)
+            save()
+        save()
         return {"url": host.url(), "token": state["token"], "user_id": state["user_id"],
                 "rooms": {p: v for p, v in state["rooms"].items() if p in people}}
 
