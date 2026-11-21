@@ -1318,3 +1318,16 @@ section:has(> .appearance-modes.single) { display: none; }
 @keyframes mark-bounce { from { transform: translateY(0) rotate(-4deg); } to { transform: translateY(-10px) rotate(4deg); } }
 [data-motion="still"] .mood-waking .mark-glow { animation: none; opacity: 0.85; }
 .mood-waking .mark-label > span { transition: opacity .3s ease; }
+
+/* Home: Today and Tomorrow side by side, on a phone too (Greg, 21 Nov). In a narrow column the time and
+   dot sit on one line with the title under them, so nothing is squeezed. */
+.home-days { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.home-days > p { grid-column: 1 / -1; }
+.home-day { min-width: 0; }
+.home-day > .sub-label { margin: 0 0 2px; }
+@media (max-width: 599px) {
+  .home-days { gap: 10px; }
+  .home-day .home-row { flex-wrap: wrap; gap: 2px 8px; padding: 8px 0; min-height: 0; align-items: center; }
+  .home-day .home-time { width: auto; font-size: 13px; }
+  .home-day .home-title { flex-basis: 100%; overflow-wrap: anywhere; }
+}
