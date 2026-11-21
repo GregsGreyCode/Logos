@@ -1450,3 +1450,16 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .more-jobs > summary::-webkit-details-marker { display: none; }
 .more-jobs[open] > summary { display: none; }
 @media (max-width: 599px) { .void-ask { padding-top: 16px; } }
+
+/* Recording for an agent (agents-void): swipe up to send, down to cancel (Greg, 21 Nov). */
+.rec-guide { position: absolute; left: 50%; top: 0; bottom: 0; width: 0; pointer-events: none; }
+.rec-guide > span { position: absolute; left: 0; transform: translateX(-50%); white-space: nowrap; padding: 4px 10px; border-radius: 999px;
+  font-size: var(--t-xs); font-weight: 700; color: var(--muted); background: var(--surface); border: 1px solid var(--line);
+  transition: color .15s, background .15s, transform .15s; }
+.rec-up { top: -40px; }
+.rec-down { bottom: -40px; }
+.will-send .rec-up { color: var(--on-accent, #fff); background: var(--accent); border-color: transparent; transform: translateX(-50%) scale(1.12); }
+.will-cancel .rec-down { color: #fff; background: var(--bad, #e5484d); border-color: transparent; transform: translateX(-50%) scale(1.12); }
+.void-field .agent-mark.will-cancel .mark-glow { opacity: .45; }
+.void-field .agent-mark.recording { transition: translate .08s linear; }
+.void-field .agent-mark.will-send .mark-label > span { color: var(--accent-text); }
