@@ -2,6 +2,7 @@
 // ask box that hands the question to Chat.
 import { h, getJSON, when, none, loading, aiState } from './util.js';
 import { requestCard, setBadge, outcome } from './noticeboard.js';
+import { warmAgents } from './chat.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
 const ASK_KEY = 'logos-ask';           // Chat picks the question up from here and sends it
@@ -182,6 +183,7 @@ export async function homeView(root) {
 
   fromLast();
   await load();
+  setTimeout(() => { if (alive) warmAgents(); }, 300);   // the Agents tab, ready before the swipe
   timer = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
   return () => { alive = false; clearInterval(timer); };
 }

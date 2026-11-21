@@ -1385,3 +1385,10 @@ section:has(> .appearance-modes.single) { display: none; }
 .ai-off .logo:not(.busy), :root[data-theme="light"].ai-off .logo:not(.busy) { filter: grayscale(1); opacity: .45; }
 .void-field .agent-mark[data-href] { cursor: pointer; }
 .void-field .agent-mark, .void-field .agent-mark * { -webkit-user-drag: none; -webkit-tap-highlight-color: transparent; }
+
+/* Phone: the agents sit where the person put them too (Greg, 21 Nov), not in a fixed row. */
+@media (max-width: 599px) {
+  .chat.void { height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-bottom) - 8px); min-height: 0; overflow: hidden; }
+  .void-field { position: relative; display: block; flex: 1; min-height: 0; padding: 0; margin: 0 0 12px; }
+  .void-field .agent-mark { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); --glyph: 64px; }
+}

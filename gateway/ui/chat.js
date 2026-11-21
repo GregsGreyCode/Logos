@@ -91,6 +91,12 @@ export function replyArrived(messages, text) {
 }
 
 let agentsKept = null, othersKept = [];
+// Home warms these in the background (Greg, 21 Nov), so the swipe to Agents draws at once: the agent list,
+// and this browser's Matrix connection when it has one.
+export function warmAgents() {
+  if (!agentsKept) getJSON('/api/v2/agents').then((d) => { agentsKept = d.agents; othersKept = d.others || []; }).catch(() => {});
+  if (mx.saved()) mx.get().catch(() => {});
+}
 
 export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   let alive = true;
