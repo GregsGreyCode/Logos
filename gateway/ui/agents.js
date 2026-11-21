@@ -1,5 +1,6 @@
 // Agents screen: is each agent up, what it does on its own, what it runs on, what it can reach.
 import { modelName, h, api, getJSON, none, loading, icon, ICONS, shortName } from './util.js';
+import { agentBar } from './agents-void.js';
 
 function runTime(iso) {
   if (!iso) return '';
@@ -121,8 +122,8 @@ export async function agentsView(root, [agentArg]) {
           h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Blocked'), h('span', {}, st.reach.blocked.join(', '))))))));
   }
 
-  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Agents'),
-    data.agents.length || data.others.length ? [h('div', { class: 'wide-only' }, cards), chips] : none('No agents are set up yet.'), detail));
+  root.replaceChildren(h('div', { class: 'page agents-page' }, agent ? agentBar(agent, 'about') : null, h('h1', { class: 'agents-title' }, 'Agents'),
+    data.agents.length || data.others.length ? [h('div', { class: 'wide-only' }, cards), h('div', { class: 'agents-chips' }, chips)] : none('No agents are set up yet.'), detail));
   await load();
   return () => { alive = false; };
 }

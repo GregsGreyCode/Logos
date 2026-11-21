@@ -507,7 +507,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     title: 'Show conversations', 'aria-controls': 'chat-side', onclick: () => tuck(false) }, icon(['M15 6l-6 6 6 6']));
   // It shows for a moment when Chat opens, then slides away to its tab, so you know where it is.
   // Reopen it and it stays (remembered) until you hide it again.
-  const wide = () => window.matchMedia('(min-width: 721px)').matches;
+  const wide = () => window.matchMedia('(min-width: 600px)').matches;
   const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   function slideAway(focusTab) {
     if (side.classList.contains('tucked')) return;

@@ -21,7 +21,7 @@ let cleanup = null;
 
 const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Activity', agents: 'Agents', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
-const IN_MORE = ['noticeboard', 'agents', 'advisor', 'models', 'people', 'settings'];
+const IN_MORE = ['noticeboard', 'advisor', 'models', 'people', 'settings'];
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },
@@ -78,6 +78,7 @@ if (vv) { vv.addEventListener('resize', placeTabbar); vv.addEventListener('scrol
 
 // Each row of the phone's panels gets its icon, then its words.
 for (const row of document.querySelectorAll('.sheet-row[data-icon]')) row.prepend(icon(ICONS[row.dataset.icon]));
+for (const link of document.querySelectorAll('.nav-links a[data-icon]')) link.prepend(icon(ICONS[link.dataset.icon]));
 
 let visit = 0;
 async function route() {
@@ -88,12 +89,15 @@ async function route() {
   dropSheet();
   if (cleanup) { cleanup(); cleanup = null; }
   for (const a of document.querySelectorAll('.nav-links a, .tabbar a, .sheet a')) {
-    if (a.dataset.view === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    const on = a.dataset.view === name || (a.closest('.tabbar') && (a.dataset.also || '').split(' ').includes(name));
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
   if (IN_MORE.includes(name)) moreBtn.setAttribute('aria-current', 'page'); else moreBtn.removeAttribute('aria-current');
   // The top bar names the screen only when the tab bar does not: Home, Chat, Brain and Notices are
   // already lit up at the bottom; the screens under More are not (Greg, 21 Nov).
-  const tabbed = ['home', 'chat', 'brain'].includes(name);
+  const tabbed = ['home', 'chat', 'brain', 'agents'].includes(name);
+  // Inside one agent (its chat, brain or about): on a phone its own bar replaces the Logos bar.
+  document.documentElement.classList.toggle('in-agent', (name === 'chat' && !!rest[0]) || name === 'brain' || (name === 'agents' && !!rest[0]));
   document.getElementById('screen-name').textContent = tabbed ? '' : (NAMES[name] || '');
   document.documentElement.classList.toggle('screen-tabbed', tabbed);
   document.title = NAMES[name] ? `${NAMES[name]} · Logos` : 'Logos';

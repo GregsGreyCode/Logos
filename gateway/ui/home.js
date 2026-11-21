@@ -43,7 +43,7 @@ export async function homeView(root) {
   const obsidian = (path) => `obsidian://open?vault=${encodeURIComponent(data.agent.obsidian_vault)}`
     + `&file=${encodeURIComponent(path.replace(/\.md$/, ''))}`;
   const brainLink = (path) => `#/brain/${data.agent.name}/${path.split('/').map(encodeURIComponent).join('/')}`;
-  const isPhone = () => window.matchMedia('(max-width: 720px)').matches;
+  const isPhone = () => window.matchMedia('(max-width: 599px)').matches;
 
   function showToday(today) {
     if (!today || today.error) {

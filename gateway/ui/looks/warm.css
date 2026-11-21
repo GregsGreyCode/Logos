@@ -66,7 +66,7 @@
 [data-look="warm"] .done-group { padding: 6px 16px; border-radius: var(--r-card); background: var(--card-bg); box-shadow: var(--card-shadow); }
 [data-look="warm"] .done-group > .sub-label:first-child { margin-top: 10px; }
 
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   [data-look="warm"] .tabbar { background: var(--surface); border-radius: var(--r-sheet) var(--r-sheet) 0 0;
     box-shadow: 0 -4px 20px rgba(60, 40, 20, 0.06); }
   [data-look="warm"] .tabbar a, [data-look="warm"] .tabbar button { border-top: 0; font-weight: 700; font-size: 12px; }
