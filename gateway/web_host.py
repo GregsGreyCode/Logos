@@ -68,6 +68,9 @@ NAMES_TEMPLATE = """# Names that must never leave the house in a web search (or,
 # added by themselves; put here anyone else: family, friends, children, pets, employers,
 # schools, your street and town. A line starting with = is matched only exactly as written,
 # for names that are also everyday words (=Rose, =Bill).
+# A line starting with + is someone the whole household knows (family, a pet, close friends): they
+# also get a page in the household brain's people/ folder, so every agent knows who they are
+# (+Juniper, +=Rose). Lines without + stay on this list only.
 """
 
 SETTINGS = """# Written by gateway/web_host.py. SearXNG for the Logos web reader: JSON only, no limiter
@@ -147,11 +150,23 @@ def parse_names(text: str) -> Tuple[List[str], List[str]]:
     """``home-names.txt`` -> (names matched however written, names matched only as written)."""
     names, exact = [], []
     for line in text.splitlines():
-        line = line.strip()
+        line = line.strip().lstrip("+").strip()
         if not line or line.startswith("#"):
             continue
         (exact if line.startswith("=") else names).append(line.lstrip("=").strip())
     return [n for n in names if n], [n for n in exact if n]
+
+
+def shared_names(text: str) -> List[str]:
+    """The ``+`` lines of ``home-names.txt``: people the whole household knows (Greg, 21 Nov)."""
+    out = []
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("+"):
+            name = line.lstrip("+").strip().lstrip("=").strip()
+            if name and name not in out:
+                out.append(name)
+    return out
 
 
 def own_names(agents: Mapping[str, Mapping[str, Any]]) -> List[str]:
@@ -255,14 +270,43 @@ class WebHost:
                 os.umask(old)
         return path.read_text().strip()
 
-    def private_names(self, agents: Mapping[str, Mapping[str, Any]]) -> Tuple[List[str], List[str]]:
-        from gateway import brain_reader
+    def names_file(self) -> Path:
         path = config_dir(self.rt.env) / "home-names.txt"
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(NAMES_TEMPLATE)
             path.chmod(0o600)
-        names, exact = parse_names(path.read_text())
+        return path
+
+    def share_with_household(self, agents: Mapping[str, Mapping[str, Any]]) -> List[str]:
+        """Give each ``+`` name a page in the household brain's people/ folder if it has none yet.
+        Only adds: a page is never removed or changed here (the person may have written in it)."""
+        from gateway import brain_reader
+        shared = shared_names(self.names_file().read_text())
+        made = []
+        for name, a in agents.items():
+            if a.get("role") != "household" or not shared:
+                continue
+            try:
+                listing = brain_reader.list_pages(self.rt, name)
+            except Exception:
+                continue
+            have = {str(p.get("title", "")).casefold() for p in listing.get("pages") or [] if p.get("folder") == "people"}
+            for person in shared:
+                if person.casefold() in have:
+                    continue
+                try:
+                    brain_reader.create_page(self.rt, name, "people", person)
+                    made.append(person)
+                except Exception:
+                    continue
+        if made:
+            print(f"web reader: {len(made)} shared name(s) given a page in the household brain")
+        return made
+
+    def private_names(self, agents: Mapping[str, Mapping[str, Any]]) -> Tuple[List[str], List[str]]:
+        from gateway import brain_reader
+        names, exact = parse_names(self.names_file().read_text())
         names += own_names(agents)
         for name in agents:                       # who each brain knows: its people/ pages
             try:
@@ -284,6 +328,7 @@ class WebHost:
         changed = self._up_searxng() if web_agents else False
         tokens = {n: self.token_for(n) for n in web_agents}
         changes_tokens = {n: self.token_for(n, CHANGES_TOKEN_ENV) for n in changes_agents}
+        self.share_with_household(agents)
         names, exact = self.private_names(agents)
         docmost = self.docmost()
         config = json.dumps(reader_config(agents, tokens, names, exact, self.place(), changes_tokens, docmost),
