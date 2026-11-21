@@ -58,5 +58,3 @@ session_reset:                  # start a fresh conversation on the first messag
   mode: daily
   at_hour: 3                    # in the agent's timezone
 
-# The vault's name in Obsidian on the phones (Greg's phone calls it "household"), for the Brain button.
-obsidian_vault: household
