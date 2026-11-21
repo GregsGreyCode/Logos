@@ -91,7 +91,10 @@ export async function agentsView(root, [agentArg]) {
     const phone = h('div', { class: 'phone-only' }, h('div', { class: 'phone-stack' },
       h('section', { 'aria-label': 'Scheduled jobs' }, h('h2', { class: 'label' }, 'Scheduled'),
         st.jobs == null ? h('div', { class: 'notice' }, 'The agent did not answer, so its jobs could not be listed.')
-          : h('div', { class: 'rows' }, jobRows)),
+          // The first few, the rest a tap away (Greg, 21 Nov: twelve jobs were a wall on a phone).
+          : h('div', { class: 'rows' }, jobRows.length > 5
+            ? [...jobRows.slice(0, 4), h('details', { class: 'more-jobs' }, h('summary', {}, `${jobRows.length - 4} more`), ...jobRows.slice(4))]
+            : jobRows)),
       h('section', { 'aria-label': 'Setup' }, h('h2', { class: 'label' }, 'Setup'),
         h('div', { class: 'rows' },
           setupRow('Model', `${m.local ? 'Local' : 'Hosted'} · ${modelName(m.name)}${m.up === false ? ' · not answering' : ''}`),
