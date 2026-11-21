@@ -1440,6 +1440,7 @@ async def handle_advisor_budget(request: web.Request) -> web.Response:
 # you have not read, from Matrix) and the noticeboard. "New" is anything after the last time you opened
 # it (seen_until, kept with your login, so the phone and the desktop agree).
 NOTIFY_DAYS = 7
+SYNC_CHECK_SECONDS = 300           # Syncthing is asked at most every five minutes
 AI_EVENTS_MAX = 60
 
 
@@ -1561,6 +1562,24 @@ async def handle_notifications(request: web.Request) -> web.Response:
             items.append({"id": f"down:{name}", "kind": "agent_down", "type": "problem", "ts": now, "agent": name,
                           "title": f"{a['definition'].get('display_name') or name} is not running",
                           "text": "It cannot answer or run its jobs. Greg can start it again.", "link": f"#/agents/{name}"})
+    # Phones that have fallen behind on a brain (Syncthing asleep on Android): a problem (Greg, 21 Nov).
+    if runtime is not None:
+        cache = request.app.setdefault("sync_behind", {})
+        if now - cache.get("at", 0) > SYNC_CHECK_SECONDS:
+            from gateway import sync_status
+            try:
+                cache["rows"] = await asyncio.to_thread(sync_status.behind, runtime.runner, now)
+            except Exception:
+                cache["rows"] = []
+            cache["at"] = now
+        for b in cache.get("rows") or []:
+            if b["agent"] not in agents:
+                continue
+            shown = str(agents[b["agent"]]["definition"].get("display_name") or b["agent"])
+            items.append({"id": f"sync:{b['agent']}:{b['device']}", "kind": "sync", "type": "problem", "ts": now,
+                          "agent": b["agent"], "device": b["device"], "last_seen": b["last_seen"], "missing": b["missing"],
+                          "title": f"{b['device']} is behind on {shown}'s brain",
+                          "text": "Open Syncthing on it, and set its battery use to Unrestricted so Android stops pausing it."})
     events = ai_events(request.app)
     for e in events:
         if e["ts"] >= since:
