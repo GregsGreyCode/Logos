@@ -595,3 +595,18 @@ def test_reader_config_docs_roots():
     assert cfg["docs"] == {"url": "https://docs.example", "roots": ["r1", "r2"]}
     assert "secret" not in json.dumps(cfg)
     assert "docs" not in wh.reader_config(agents, {"greg": "tg"}, [], [], None, {}, {"DOCMOST_URL": "x"})
+
+
+@pytest.mark.parametrize("line", [
+    "**Password:** hunter2", "password: hunter2", "| password | hunter2 |", "the password is 'hunter2'",
+    "Wi-Fi key - hunter2", "pw = hunter2", "PIN: hunter2", "api_key=hunter2", "Root pass: hunter2"])
+def test_docs_leave_out_passwords_however_they_are_written(line):
+    assert "hunter2" not in ws.redact(line) and ws.REDACTED in ws.redact(line)
+
+
+def test_docs_leave_out_a_password_column_and_keep_ordinary_text():
+    table = "| Host | User | Password |\n|---|---|---|\n| pve1 | root | hunter2 |"
+    out = ws.redact(table)
+    assert "hunter2" not in out and "pve1 | root" in out and "| Password |" in out
+    for keep in ("Runs Jellyfin on pve1.", "pin the image to 1.2", "| Host | Port |\n|---|---|\n| pve1 | 8006 |"):
+        assert ws.redact(keep) == keep

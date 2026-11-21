@@ -73,14 +73,18 @@ def test_plain_version():
     assert cf.plain([HOMELAB], 7).startswith("**What changed this week**\n\nHomelab")
 
 
-def test_nothing_changed_or_reader_down_skips_the_model(monkeypatch, capsys):
+def test_nothing_changed_or_reader_down_skips_the_model(monkeypatch, capsys, tmp_path):
+    marks = str(tmp_path / "unfetched.json")
     monkeypatch.setattr(cf, "env", lambda: {})
-    for answer in (None, {"repo": "logos", "days": 1, "prs": []}):
-        monkeypatch.setattr(cf, "fetch", lambda e, r, d, a=answer: a)
-        cf.main("changes_daily.py")
-        assert json.loads(capsys.readouterr().out) == {"wakeAgent": False}
+    monkeypatch.setattr(cf, "fetch", lambda e, r, d: {"repo": r, "days": 1, "prs": []})
+    cf.main("changes_daily.py", marks)
+    assert json.loads(capsys.readouterr().out) == {"wakeAgent": False} and cf.unfetched(marks) == {}
+    monkeypatch.setattr(cf, "fetch", lambda e, r, d: None)            # the reader is down: marked for the check
+    cf.main("changes_daily.py", marks)
+    assert json.loads(capsys.readouterr().out) == {"wakeAgent": False}
+    assert cf.unfetched(marks) == {"changes-daily": datetime.date.today().isoformat()}
     monkeypatch.setattr(cf, "fetch", lambda e, r, d: {"logos": LOGOS, "homelab": None}[r])
-    cf.main("changes_daily.py")
+    cf.main("changes_daily.py", marks)
     out = capsys.readouterr().out
     assert "#104" in out and "Homelab" not in out           # a part that could not be fetched is left out
 
@@ -107,6 +111,11 @@ def test_check_sends_the_plain_list_only_for_posts_that_did_not_go_out():
     cc.report([job("changes-daily", err="matrix down")], THURSDAY, {}, fetch)
     assert asked == [("logos", 1), ("homelab", 1)]
     asked.clear()
-    cc.report([job("changes-daily", when="2026-11-22T16:01:00+00:00")], SUNDAY, {}, fetch)
+    cc.report([job("changes-daily", when="2026-11-22T16:01:00+00:00"), job("changes-week", "error")], SUNDAY, {}, fetch)
     assert asked == [("logos", 7), ("homelab", 7)]                   # Sunday: the week's post counts too
+    asked.clear()
+    cc.report([job("changes-daily", when="2026-11-22T16:01:00+00:00")], SUNDAY, {}, fetch)
+    assert asked == []                                               # weekly: false, so no weekly job: none sent
+    cc.report([job("changes-daily")], THURSDAY, {}, fetch, marks={"changes-daily": THURSDAY.isoformat()})
+    assert asked == [("logos", 1), ("homelab", 1)]                   # its skip was the reader being down
     assert cc.report([], THURSDAY, {}, lambda e, r, d: None) == ""

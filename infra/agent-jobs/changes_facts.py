@@ -14,6 +14,9 @@ import sys
 import urllib.request
 
 SKIP = json.dumps({"wakeAgent": False})
+#: Today's posts that skipped because the reader could not be reached (not because nothing
+#: changed), so changes_check.py knows to try them again whatever hermes records for the skip.
+UNFETCHED = "/opt/data/cron/changes-unfetched.json"
 REPOS = ("logos", "homelab")
 #: How people know each part (docs/messages.md: no repository names).
 LABEL = {"logos": "Logos", "homelab": "Homelab"}           # Greg, 20 Nov: the names, not "the home servers"
@@ -122,22 +125,52 @@ def plain(parts, days):
     return "\n".join(lines)
 
 
-def gather(e, days, fetch_one=None):
-    """The parts that changed, in a fixed order; parts that could not be fetched are left out."""
+def gather(e, days, fetch_one=None, failed=None):
+    """The parts that changed, in a fixed order; parts that could not be fetched are left out
+    (and named in ``failed`` when a list is given)."""
     fetch_one = fetch_one or fetch
     out = []
     for repo in REPOS:
         data = fetch_one(e, repo, days)
+        if data is None and failed is not None:
+            failed.append(repo)
         if data and count(data):
             out.append(data)
     return out
 
 
-def main(argv0=None):
-    days = which(argv0 or sys.argv[0])
-    parts = gather(env(), days)
+def job_name(path):
+    """``changes_week.py`` -> ``changes-week``."""
+    return os.path.basename(path).rsplit(".", 1)[0].replace("_", "-")
+
+
+def unfetched(path=UNFETCHED):
+    try:
+        return json.load(open(path))
+    except Exception:
+        return {}
+
+
+def mark_unfetched(name, path=UNFETCHED, today=None):
+    import datetime
+    marks = unfetched(path)
+    marks[name] = (today or datetime.date.today()).isoformat()
+    try:
+        with open(path, "w") as f:
+            json.dump(marks, f)
+    except OSError:
+        pass
+
+
+def main(argv0=None, mark_path=UNFETCHED):
+    path = argv0 or sys.argv[0]
+    days = which(path)
+    failed = []
+    parts = gather(env(), days, failed=failed)
     if not parts:
-        print(SKIP)          # nothing changed, or the reader is down: changes_check.py tries again
+        if failed:
+            mark_unfetched(job_name(path), mark_path)   # not "nothing changed": changes_check.py tries again
+        print(SKIP)
         return
     print("\n".join(facts(parts, days)))
 
