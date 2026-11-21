@@ -82,13 +82,14 @@ export function takeVoice(agent) {
   const blob = handed.blob; handed = null; return blob;
 }
 
-// The order the person put the agents in (this device), by dragging them (Greg, 21 Nov).
-const ORDER_KEY = 'logos.void.order';
-const savedOrder = () => { try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '[]'); } catch (e) { return []; } };
-const saveOrder = (names) => { try { localStorage.setItem(ORDER_KEY, JSON.stringify(names)); } catch (e) { /* private window */ } };
+// Where the person put each agent (this device), by dragging it (Greg, 21 Nov): { phone|wide: { name: [x%, y%] } }.
+// A phone and a wide screen are different shapes, so each keeps its own places.
+const SPOTS_KEY = 'logos.void.spots';
+const savedSpots = () => { try { const v = JSON.parse(localStorage.getItem(SPOTS_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; } };
+const saveSpots = (v) => { try { localStorage.setItem(SPOTS_KEY, JSON.stringify(v)); } catch (e) { /* private window */ } };
 
 // The void: every agent floating, nothing else, until you pick one.
-// Press and hold a mark (half a second) to lift it, then move it onto another to swap places. Keep holding
+// Press and hold a mark (half a second) to lift it, then put it anywhere (onto another: they swap). Keep holding
 // still for a second and it records: let go and the voice note goes to that agent, in its chat (Greg, 21 Nov).
 export async function voidView(root, agents, others = []) {
   let alive = true;
@@ -96,15 +97,19 @@ export async function voidView(root, agents, others = []) {
   const ask = h('p', { class: 'void-ask' }, 'Who do you want to talk to?');
   // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
   // off to the left). Yours first, then the private ones, unless the person has moved them.
-  let all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
-  const order = savedOrder();
-  const rank = (n) => { const i = order.indexOf(n); return i < 0 ? 1000 : i; };
-  all = all.map((x, i) => ({ ...x, i })).sort((x, y) => rank(x.a.name) - rank(y.a.name) || x.i - y.i);
+  const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
+  const layout = () => (window.matchMedia('(max-width: 599px)').matches ? 'phone' : 'wide');
   const spot = (i, n) => {
+    if (layout() === 'phone') {                               // two columns, rows down the screen
+      const rows = Math.ceil(n / 2), row = Math.floor(i / 2), last = i === n - 1 && n % 2 === 1;
+      return [last ? 50 : (i % 2 ? 72 : 28), rows === 1 ? 45 : 22 + (56 * row) / Math.max(rows - 1, 1)];
+    }
     const x = n === 1 ? 50 : 18 + (64 * i) / (n - 1);
     const y = [44, 34, 54, 40, 50, 36][i % 6];
     return [x, y];
   };
+  const spots = savedSpots();
+  const placeOf = (name, i) => (spots[layout()] || {})[name] || spot(i, all.length);
   let lastMoods = Object.fromEntries(agents.map((a) => [a.name, 'asleep']));
   let busy = false, redrawWanted = false;
   const draw = (m) => {
@@ -124,7 +129,7 @@ export async function voidView(root, agents, others = []) {
         el.setAttribute('aria-label', `${el.getAttribute('aria-label')}. Talk to it. Hold to move it, or keep holding to send a voice note`);
       }
       el.classList.add(`drift-${i % 3}`);
-      const [x, y] = spot(i, all.length);
+      const [x, y] = placeOf(a.name, i);
       el.style.setProperty('--x', `${x}%`);
       el.style.setProperty('--y', `${y}%`);
       el.draggable = false;
@@ -202,7 +207,7 @@ export async function voidView(root, agents, others = []) {
       const r = el.getBoundingClientRect(); const d = Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y);
       if (d < bestD) { best = el; bestD = d; }
     }
-    return bestD < 140 ? best : null;
+    return bestD < 70 ? best : null;                          // right on another: a swap; else a new place
   }
   function onMove(e) {
     if (!g || e.pointerId !== g.id) return;
@@ -226,11 +231,20 @@ export async function voidView(root, agents, others = []) {
       const before = rects();
       const r = was.el.getBoundingClientRect(); before[was.name] = r;        // it glides home from where it was let go
       was.el.style.translate = '';
-      if (target) {
-        const i = all.findIndex((x) => x.a.name === was.name), j = all.findIndex((x) => x.a.name === target.dataset.agent);
-        [all[i], all[j]] = [all[j], all[i]];
-        saveOrder(all.map((x) => x.a.name));
+      const i = all.findIndex((x) => x.a.name === was.name);
+      const here = spots[layout()] = { ...(spots[layout()] || {}) };
+      if (target) {                                           // onto another: they swap places
+        const j = all.findIndex((x) => x.a.name === target.dataset.agent);
+        const a = placeOf(was.name, i), b = placeOf(target.dataset.agent, j);
+        here[was.name] = b; here[target.dataset.agent] = a;
+      } else {                                                // anywhere else: it stays where it was let go
+        const f = field.getBoundingClientRect();
+        const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2;       // the mark is placed by its centre
+        here[was.name] = [Math.round(clamp(((cx - f.left) / f.width) * 100, 14, 86) * 10) / 10,
+          Math.round(clamp(((cy - f.top) / f.height) * 100, 12, 88) * 10) / 10];
       }
+      saveSpots(spots);
       g.lifted = false; finish();
       draw(lastMoods); glide(before);
       resetAsk();
