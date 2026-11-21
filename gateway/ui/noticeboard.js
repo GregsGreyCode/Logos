@@ -108,13 +108,12 @@ export async function noticeboardView(root) {
       waitSec.hidden = bare; logSec.hidden = bare; allNone.hidden = !bare;
     } catch (e) {
       error.hidden = false;
-      error.textContent = 'Could not load the noticeboard.';
+      error.textContent = 'Could not load the activity just now.';
     }
   }
 
   root.replaceChildren(h('div', { class: 'page' },
-    h('header', {}, h('h1', {}, 'Noticeboard'),
-      h('p', { class: 'when lead' }, 'What the agents asked each other. Nothing happens until you decide.')),
+    h('header', {}, h('h1', {}, 'Activity')),
     error,
     allNone, waitSec,
     h('section', { 'aria-label': 'Recent messages', class: 'nb-log' }, h('h2', { class: 'label' }, 'Recent messages'),
