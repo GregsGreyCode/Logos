@@ -1,5 +1,5 @@
 // Agents screen: is each agent up, what it does on its own, what it runs on, what it can reach.
-import { h, api, getJSON, none, loading, icon, ICONS, shortName } from './util.js';
+import { modelName, h, api, getJSON, none, loading, icon, ICONS, shortName } from './util.js';
 
 function runTime(iso) {
   if (!iso) return '';
@@ -93,7 +93,7 @@ export async function agentsView(root, [agentArg]) {
           : h('div', { class: 'rows' }, jobRows)),
       h('section', { 'aria-label': 'Setup' }, h('h2', { class: 'label' }, 'Setup'),
         h('div', { class: 'rows' },
-          setupRow('Model', `${m.local ? 'Local' : 'Hosted'} · ${m.name}${m.up === false ? ' · not answering' : ''}`),
+          setupRow('Model', `${m.local ? 'Local' : 'Hosted'} · ${modelName(m.name)}${m.up === false ? ' · not answering' : ''}`),
           setupRow('Can reach', st.reach.allowed.join(', '), 'ok'),
           setupRow('Cannot reach', st.reach.blocked.join(', '), 'bad')))));
     detail.replaceChildren(phone, h('div', { class: 'wide-only two-col-wrap' }, h('div', { class: 'two-col' },
@@ -106,7 +106,7 @@ export async function agentsView(root, [agentArg]) {
       h('div', { class: 'stack' },
         h('section', { class: 'card', 'aria-label': 'Model' },
           h('h2', {}, 'Model'),
-          kv('Model', `${m.local ? 'Local' : 'Hosted'} · ${m.name}`),
+          kv('Model', `${m.local ? 'Local' : 'Hosted'} · ${modelName(m.name)}`),
           m.up === false ? h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Model server'),
             h('span', {}, 'Not answering')) : null,
           // The brain stays local: agents use only the local model. Paid providers and their

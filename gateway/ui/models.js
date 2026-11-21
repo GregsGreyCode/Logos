@@ -1,6 +1,6 @@
 // Models screen: is everything that answers up, who answers each agent right now, and what
 // the paid fallbacks have cost this month. All figures come from the model gateway's records.
-import { h, getJSON, api, none, loading } from './util.js';
+import { h, getJSON, api, none, loading, modelName } from './util.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -174,7 +174,7 @@ function serverBlock(srv, canChange, repaint) {
         ev.target.textContent = r.ok ? 'Unloaded' : 'Could not unload';
       } }, 'Unload') : null;
       cards.push(h('div', { class: 'card' },
-        h('div', { class: 'card-title' }, h('h2', {}, m.name),
+        h('div', { class: 'card-title' }, h('h2', { title: m.name }, modelName(m.name)),
           h('span', { class: `status ${ours ? 'up' : 'down'}` }, ours ? `Used by ${ours.agents.join(', ')}` : 'Not used by any agent')),
         cards.length ? null : where,
         h('dl', { class: 'facts' }, rows.flatMap(([k, v, note]) => [h('dt', {}, k),
@@ -244,7 +244,7 @@ export async function modelsView(root) {
 
     const tiles = [];
     if (server) {
-      const loaded = server.loaded.map((m) => `${m.model} (${count(m.context)} context)`);
+      const loaded = server.loaded.map((m) => `${modelName(m.model)} (${count(m.context)} context)`);
       tiles.push(statusTile('Local model server', server.up, server.up
         ? [loaded.length ? `Loaded: ${loaded.join(', ')}` : 'Nothing loaded: the next message loads the model first',
           server.ready ? 'Ready for the agents' : `The agents use ${server.wanted.join(', ')}`]
@@ -259,10 +259,10 @@ export async function modelsView(root) {
 
     const rows = d.agents.map((a) => {
       const last = a.current
-        ? `${a.current.kind === 'local' ? 'Local' : a.current.provider} · ${a.current.model}, ${ago(a.current.last_call)}`
+        ? `${a.current.kind === 'local' ? 'Local' : a.current.provider} · ${modelName(a.current.model)}, ${ago(a.current.last_call)}`
         : 'No calls yet';
       const chain = a.fallbacks.length
-        ? a.fallbacks.map((f) => `${f.provider} · ${f.model}${f.spent_out ? ' (limit spent)' : ''}`).join(', then ')
+        ? a.fallbacks.map((f) => `${f.provider} · ${modelName(f.model)}${f.spent_out ? ' (limit spent)' : ''}`).join(', then ')
         : 'None';
       const who = [
         h('td', {}, h('strong', {}, a.display_name), a.test ? h('span', { class: 'when' }, ' test agent') : null),
