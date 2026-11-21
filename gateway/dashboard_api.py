@@ -248,6 +248,30 @@ async def model_server_up(request: web.Request, definition: Mapping[str, Any]) -
     return cache[base][1]
 
 
+async def model_loaded(request: web.Request, definition: Mapping[str, Any]) -> Optional[bool]:
+    """Whether this agent's model is loaded in LM Studio right now: True, False, or None when that
+    cannot be told (no local model, or the server is off). Drives the floating agents' moods: asleep
+    (on, nothing loaded) or awake (loaded). Checked at most every 20 seconds per server."""
+    from gateway import local_models
+    base = local_models.server(definition.get("model") or {})
+    model_id = str((definition.get("model") or {}).get("default") or "")
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not base or not model_id or runtime is None:
+        return None
+    if await model_server_up(request, definition) is not True:
+        return None
+    cache = request.app.setdefault("model_loaded_ids", {})
+    now = asyncio.get_running_loop().time()
+    if base not in cache or now - cache[base][0] > MODEL_CHECK_SECONDS:
+        try:
+            ids = set(await asyncio.to_thread(local_models.loaded, runtime.runner.http, base))
+        except Exception:                                   # answered a moment ago, not now: unknown
+            ids = None
+        cache[base] = (now, ids)
+    ids = cache[base][1]
+    return None if ids is None else model_id in ids
+
+
 def model_off_since(request: web.Request, definition: Mapping[str, Any]) -> Optional[float]:
     """When this agent's model server was first seen off (epoch seconds), or None while it is on."""
     from gateway import local_models
@@ -294,6 +318,7 @@ async def handle_agents(request: web.Request) -> web.Response:
             # shares the brain as the folder brain-<agent>; a different name goes in the definition.
             "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}"),
             "model_up": await model_server_up(request, definition),
+            "model_loaded": await model_loaded(request, definition),
             "has_backup": await asyncio.to_thread(agent_chat.has_backup, definition),
             # M2: the agent's own Matrix account (@<name>-agent:server), for finding its room
             "matrix_id": (await asyncio.to_thread(matrix_id_of, request, f"{name}-agent"))
