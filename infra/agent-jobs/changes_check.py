@@ -15,7 +15,9 @@ DAILY = {"changes-daily": 1}
 WEEKLY = {"changes-week": 7}
 
 
-def done_today(jobs, name, today):
+def done_today(jobs, name, today, marks=None):
+    if (marks or {}).get(name) == today.isoformat():
+        return False                     # it skipped because the reader was down, not because nothing changed
     for job in jobs:
         if job.get("name") != name or job.get("last_status") != "ok" or job.get("last_delivery_error"):
             continue
@@ -28,14 +30,17 @@ def done_today(jobs, name, today):
     return False
 
 
-def due(today):
-    return {**DAILY, **(WEEKLY if today.weekday() == 6 else {})}
+def due(today, jobs=()):
+    """Today's posts. The weekly one only on Sundays, and only when it is installed
+    (``changes: {weekly: false}`` leaves it out)."""
+    weekly = today.weekday() == 6 and any(j.get("name") in WEEKLY for j in jobs)
+    return {**DAILY, **(WEEKLY if weekly else {})}
 
 
-def report(jobs, today, e, fetch=cf.fetch):
+def report(jobs, today, e, fetch=cf.fetch, marks=None):
     posts = []
-    for name, days in due(today).items():
-        if done_today(jobs, name, today):
+    for name, days in due(today, jobs).items():
+        if done_today(jobs, name, today, marks):
             continue
         parts = cf.gather(e, days, fetch)
         if parts:
@@ -51,7 +56,7 @@ def main():
         jobs = list(jobs.values()) if isinstance(jobs, dict) else list(jobs)
     except Exception:
         jobs = []
-    out = report(jobs, today, cf.env())
+    out = report(jobs, today, cf.env(), marks=cf.unfetched())
     if out:
         print(out)
 

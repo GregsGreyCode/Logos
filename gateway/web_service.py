@@ -626,13 +626,46 @@ LIST_DOCS = {
 DOCS_TTL = 600             # the page list is fetched again after ten minutes
 DOC_PART = 6000            # characters per part of a long page
 REDACTED = "[left out: looks like a key or password]"
-SECRET_LINE = re.compile(r"(?i)\b(password|passwd|passphrase|secret|api[ _-]?key|token)\b(\s*[:=]\s*)(\S+)")
+SECRET_LABEL = (r"(?:passwords?|passwd|pwd|pw|pass|passphrase|passcode|pin(?: code)?|secrets?|client[ _-]?secret|"
+                r"api[ _-]?keys?|access[ _-]?keys?|private[ _-]?key|tokens?|wi-?fi[ _-]?(?:key|password)|psk|"
+                r"credentials?|login)")
+# A label, then (through any **bold**, `code` or quotes) ':', '=', ' - ' or 'is', then the rest of the
+# line or table cell: "**Password:** hunter2", "pw = x", "Wi-Fi key - x", "the password is 'x'".
+SECRET_LINE = re.compile(rf"(?i)\b({SECRET_LABEL})\b([*_`'\"\s]*(?::|=|\s[-–]\s|\s(?:is|was)\b)[*_`'\"\s]*)([^|\n]+)")
+SECRET_CELL = re.compile(rf"(?i)^[\s*_`]*{SECRET_LABEL}[\s*_`:]*$")
+
+
+def _redact_table(lines: List[str]) -> List[str]:
+    """In a markdown table, a cell after a secret label ("| Password | x |"), and every cell in a
+    column headed by one, is left out."""
+    out, columns = [], set()
+    for i, line in enumerate(lines):
+        if not line.lstrip().startswith("|"):
+            out.append(line)
+            columns = set()
+            continue
+        cells = line.split("|")
+        if re.fullmatch(r"[\s|:-]+", line):
+            out.append(line)
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if re.fullmatch(r"\s*\|[\s|:-]+", nxt):           # a header row
+            columns = {j for j, c in enumerate(cells) if SECRET_CELL.match(c) and c.strip()}
+            out.append(line)
+            continue
+        for j in range(1, len(cells) - 1):
+            if cells[j].strip() and (j in columns or SECRET_CELL.match(cells[j - 1]) and cells[j - 1].strip()):
+                cells[j] = f" {REDACTED} "
+        out.append("|".join(cells))
+    return out
 
 
 def redact(text: str) -> str:
-    """Docs are for answering questions: a key or password that slipped into a page never reaches an agent."""
+    """Docs are for answering questions: a key or password that slipped into a page never reaches an agent.
+    Generous on purpose: a line that names a password, key or token loses the rest of that line."""
     text = PATTERNS[-1][1].sub(REDACTED, text)
-    return SECRET_LINE.sub(lambda m: m.group(1) + m.group(2) + REDACTED, text)
+    text = "\n".join(_redact_table(text.split("\n")))
+    return SECRET_LINE.sub(lambda m: m.group(1) + m.group(2).rstrip(" \"'`") + " " + REDACTED, text)
 
 
 def compact(text: str) -> str:

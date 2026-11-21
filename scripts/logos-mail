@@ -21,7 +21,7 @@ if str(REPO) not in sys.path:
 from gateway import mail_host  # noqa: E402
 
 LOGIN = "https://login.microsoftonline.com/consumers/oauth2/v2.0"
-SCOPES = "offline_access User.Read Mail.ReadWrite Mail.Send"
+SCOPES = "offline_access User.Read Mail.Read"          # read only: nothing here sends, deletes or moves mail
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 

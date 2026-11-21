@@ -154,6 +154,30 @@ def test_excluded_lights_cannot_be_touched():
     assert "light.balcony" not in fake.services()[-1][1]["entity_id"]
 
 
+def test_a_room_with_an_excluded_light_is_switched_light_by_light_and_loses_its_scenes():
+    svc, fake = service(exclude=["light.lounge_right"])
+    svc.set_lights("household", ["Living Room"], True)
+    assert fake.services()[-1][1]["entity_id"] == ["light.lounge_left", "light.tv_gradient"]  # not the room
+    svc.set_lights("household", ["everything"], False)
+    sent = fake.services()[-1][1]["entity_id"]
+    assert "light.living_room" not in sent and "light.lounge_right" not in sent and "light.kitchen_kitchen" in sent
+    assert [r["room"] for r in svc.list_scenes("household")["scenes"]] == ["Kitchen"]   # Hue scenes set the room
+    with pytest.raises(hs.Refused):
+        svc.activate_scene("household", "Relax", "living room")
+
+
+def test_a_home_assistant_scene_that_sets_anything_but_allowed_lights_is_never_offered():
+    states = STATES + [
+        {"entity_id": "scene.leaving", "state": "unknown",
+         "attributes": {"friendly_name": "Leaving home", "entity_id": ["light.kitchen_kitchen", "lock.front_door"]}},
+        {"entity_id": "scene.evening", "state": "unknown",
+         "attributes": {"friendly_name": "Evening", "entity_id": ["light.lounge_left", "light.kitchen_kitchen"]}}]
+    svc, fake = service(FakeHA(states))
+    with pytest.raises(hs.Refused):
+        svc.activate_scene("household", "Leaving home")
+    assert svc.activate_scene("household", "Evening")["activated"]["scene"] == "Evening"
+
+
 def test_set_lights_reports_unreachable_lights():
     svc, _ = service()
     out = svc.set_lights("household", ["TV Gradient"], True)

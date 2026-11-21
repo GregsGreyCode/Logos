@@ -341,3 +341,24 @@ def test_has_backup_needs_the_gateway_a_fallback_and_its_key(tmp_path, monkeypat
     assert agent_chat.has_backup(agent)
     assert not agent_chat.has_backup({**agent, "model": {**agent["model"], "gateway": False}})
     assert not agent_chat.has_backup({**agent, "model": {"gateway": True}})
+
+
+def test_wake_model_loads_the_shared_window_not_just_the_agents_own():
+    import json
+
+    loads = []
+
+    def http(url, *, data=None, headers=None, timeout=10):
+        if url.endswith("/api/v0/models"):
+            return json.dumps({"data": []}).encode()
+        loads.append(json.loads(data or b"{}"))
+        return b"{}"
+
+    model = {"provider": "lmstudio", "base_url": "http://10.0.0.5:1234/v1", "default": "qwen/q",
+             "context_length": 65536, "load_context_length": 96512}
+
+    async def events():
+        return [p async for p in agent_chat.wake_model(model, http)]
+
+    asyncio.run(events())
+    assert any("96512" in json.dumps(body) for body in loads) and not any("65536" in json.dumps(b) for b in loads)
