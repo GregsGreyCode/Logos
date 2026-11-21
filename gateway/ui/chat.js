@@ -90,10 +90,15 @@ export function replyArrived(messages, text) {
   return last.role === 'assistant' && Boolean((last.text || '').trim());
 }
 
+let agentsKept = null;
+
 export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   let alive = true;
-  let agents = [];
-  try { agents = (await getJSON('/api/v2/agents')).agents; } catch (e) { /* shown below */ }
+  // The agent list is kept from the last visit, so switching between chats draws at once; a fresh
+  // copy is fetched in the background for next time (Greg, 21 Nov: switching lagged on a phone).
+  let agents = agentsKept;
+  const fresh = getJSON('/api/v2/agents').then((d) => { agentsKept = d.agents; return d.agents; }).catch(() => null);
+  if (!agents) agents = (await fresh) || [];
   if (!agents.length) {
     root.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'No agents yet'),
       h('p', {}, 'No agent is set up for your account yet. Ask Greg to set one up.')));

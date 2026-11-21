@@ -21,7 +21,7 @@ let cleanup = null;
 
 const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Activity', agents: 'Agents', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
-const IN_MORE = ['agents', 'advisor', 'models', 'people', 'settings'];
+const IN_MORE = ['noticeboard', 'agents', 'advisor', 'models', 'people', 'settings'];
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },
@@ -93,7 +93,7 @@ async function route() {
   if (IN_MORE.includes(name)) moreBtn.setAttribute('aria-current', 'page'); else moreBtn.removeAttribute('aria-current');
   // The top bar names the screen only when the tab bar does not: Home, Chat, Brain and Notices are
   // already lit up at the bottom; the screens under More are not (Greg, 21 Nov).
-  const tabbed = ['home', 'chat', 'brain', 'noticeboard'].includes(name);
+  const tabbed = ['home', 'chat', 'brain'].includes(name);
   document.getElementById('screen-name').textContent = tabbed ? '' : (NAMES[name] || '');
   document.documentElement.classList.toggle('screen-tabbed', tabbed);
   document.title = NAMES[name] ? `${NAMES[name]} · Logos` : 'Logos';
@@ -101,7 +101,7 @@ async function route() {
   // Each visit draws into its own box. A screen that is still loading when the person moves
   // on finishes into a box that is no longer on the page, instead of over the new screen.
   const box = document.createElement('div');
-  box.className = 'view-box';
+  box.className = name === 'chat' ? 'view-box view-fade' : 'view-box';   // chat screens fade in (smoother switching)
   root.replaceChildren(box);
   window.scrollTo(0, 0);                 // every screen starts at its top
   const done = await views[name](box, rest, state);
