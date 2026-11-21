@@ -304,7 +304,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   border-bottom: 1px solid var(--line); }
 .model-line.down { background: var(--warn-bg); color: var(--warn-ink); }
 
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .shell { display: block; min-height: 0; }
   .nav { display: none; }
   .topbar { display: flex; position: sticky; top: 0; z-index: 20; height: var(--topbar-h); align-items: center; gap: 10px;
@@ -522,7 +522,7 @@ details.card { display: block; }
 details.card summary { display: flex; align-items: center; min-height: 24px; }
 details.card[open] > summary { margin-bottom: 12px; }
 
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .page h1 { font-size: 20px; }
   /* Chat: no extra band under the top bar */
   .chat-head { background: transparent; border-bottom: 0; padding: 8px 16px 0; }
@@ -587,7 +587,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .done-msg[open] { padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .done-msg[open] > summary { border-bottom: 0; }
 .done-more { padding-top: 8px; font-size: var(--t-sm); }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .done-row { grid-template-columns: minmax(0, 1fr) auto; }
   .done-row .done-what { grid-column: 1 / -1; }
   .done-msg > summary { grid-template-columns: minmax(0, 1fr) auto; }
@@ -638,7 +638,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 /* Tables in a bordered box get room at both edges (table.plain is flush only inside a card) */
 .table-box table.plain th:first-child, .table-box table.plain td:first-child { padding-left: 16px; }
 .table-box table.plain th:last-child, .table-box table.plain td:last-child { padding-right: 16px; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .table-box table.plain th:first-child, .table-box table.plain td:first-child { padding-left: 0; }
 }
 .done-page { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--line); }
@@ -657,18 +657,18 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .side-hide .icon, .side-reopen .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2;
   stroke-linecap: round; stroke-linejoin: round; }
 .side-reopen { display: none; }
-@media (min-width: 721px) {
+@media (min-width: 600px) {
   .side.tucked { display: none; }
   .side-reopen.shown { display: inline-flex; position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 5;
     width: 28px; height: 72px; border-right: 0; border-radius: var(--r-small) 0 0 var(--r-small); background: var(--surface); }
 }
-@media (max-width: 720px) { .side-top { display: none; } }
+@media (max-width: 599px) { .side-top { display: none; } }
 
 /* ── Spacing pass (21 Nov): one scale, used the same way everywhere ─────────────────────────
    Screen edge 32/40 px (16 on a phone); 32 between sections; 12 from a section heading to its
    content; 8 between a title and its intro; 16 between cards; 20 inside a card. The side menu's
    logo sits in a band as tall as each screen's header band, so the two line up. */
-@media (min-width: 721px) {
+@media (min-width: 600px) {
   .nav { padding: 0 12px 20px; gap: 12px; }
   .brand-row { height: 68px; padding: 0 12px; border-bottom: 1px solid var(--line); margin: 0 -12px 4px; padding-left: 24px; }
   .nav-links { gap: 4px; }
@@ -686,12 +686,12 @@ dialog.appearance .label { margin: 16px 0 8px; }
 /* Agents: the last two columns of the jobs table keep to one line */
 .card .table-inline table.plain td:nth-child(n+2), .card .table-inline table.plain th:nth-child(n+2) { white-space: nowrap; }
 .card .table-inline table.plain td:first-child { width: 100%; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .page { gap: 24px; }
   .card { padding: 16px; }
   .card .table-inline table.plain td:nth-child(n+2) { white-space: normal; }
 }
-@media (min-width: 721px) {
+@media (min-width: 600px) {
   .side { transition: margin-right 0.45s ease, opacity 0.35s ease; }
   .side.sliding { opacity: 0; pointer-events: none; }
   .side-reopen.shown { animation: tab-in 0.3s ease both; }
@@ -717,7 +717,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .appearance-mode.choice strong { display: block; font-weight: 600; }
 .block { display: block; }
 .settings-body .lead { margin: 0; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .settings-tabs { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; }
   .settings-tab { flex: none; min-height: 40px; border: 1px solid var(--line); }
@@ -752,13 +752,13 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .swatch-reset { height: 32px; padding: 0 12px; border: 0; border-radius: 16px; background: none; color: var(--accent-text);
   font-size: var(--t-sm); }
 .swatch-fixed { width: 24px; height: 24px; border-radius: 50%; display: inline-block; }
-@media (max-width: 720px) { .colour-row { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 599px) { .colour-row { grid-template-columns: minmax(0, 1fr); } }
 .appearance-note:empty { display: none; }
 
 /* ── P1: one page header. On a desktop every screen's title sits in a band as tall as the menu's
    Logos band (68 px), ruled underneath, so the two line up; Chat and Brain already have one. The
    one-line intro sits below it. On a phone the top bar names the screen, so the band is hidden. */
-@media (min-width: 721px) {
+@media (min-width: 600px) {
   .page > header > h1, .page > h1 { display: flex; align-items: center; min-height: 68px; margin: -32px -40px 0;
     padding: 0 40px; border-bottom: 1px solid var(--line); font-size: 22px; line-height: 28px; }
   .page > header { gap: 20px; }
@@ -802,7 +802,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .status-more { margin-left: auto; color: var(--accent-text); font-size: var(--t-sm); }
 .status-line[open] .status-more::after { content: " ▴"; }
 .status-line p { margin: 8px 0 0; line-height: 20px; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .phone-only { display: block !important; }
   .page section .rows { margin-top: 0; }
 }
@@ -822,7 +822,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .convs button { display: flex; align-items: baseline; gap: 10px; min-height: 40px; }
 .convs .conv-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .convs button .when { display: inline; flex: none; font-size: var(--t-xs); }
-@media (min-width: 721px) { .side .phone-toggle { display: none; } }
+@media (min-width: 600px) { .side .phone-toggle { display: none; } }
 /* Brain: a small + beside each folder; Recent first; the side column only while searching */
 .tree-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .tree-head .label { padding: 12px 8px 4px; }
@@ -831,7 +831,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .tree-add:hover { color: var(--ink); background: var(--chip); }
 .tree-recent { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
 .tree-recent .label { padding: 0 8px 4px; }
-@media (min-width: 721px) {
+@media (min-width: 600px) {
   .brain .brain-side { display: none; }
   .brain .brain-side.searching { display: flex; }
 }
@@ -888,7 +888,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .mx-note { padding: 0 24px; }
 .conv-link { display: flex; align-items: baseline; gap: 10px; min-height: 40px; padding: 10px 0; border-bottom: 1px solid var(--line);
   color: var(--ink); text-decoration: none; }
-@media (max-width: 720px) { .mx-same { display: none; } .mx-thinking { padding-left: 46px; } }
+@media (max-width: 599px) { .mx-same { display: none; } .mx-thinking { padding-left: 46px; } }
 
 /* M3: conversations as threads */
 .mx-crumb { color: var(--muted); text-decoration: none; font-size: var(--t-md); white-space: nowrap; }
@@ -903,7 +903,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 a.btn.mx-new { justify-content: center; }
 .conv-link[aria-current="true"] { font-weight: 600; color: var(--accent-text); }
 .mx-chips { display: none; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .mx-chips.phone-only { display: flex !important; gap: 6px; padding: 8px 16px; overflow-x: auto; white-space: nowrap;
     border-bottom: 1px solid var(--line); -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent);
     mask-image: linear-gradient(90deg, #000 85%, transparent); }
@@ -972,7 +972,7 @@ a.btn.mx-new { justify-content: center; }
 .mark-name:hover { color: var(--accent-text); }
 .mark-others { display: flex; align-items: center; gap: 10px; margin-left: 8px; padding-left: 12px; border-left: 1px solid var(--line); }
 
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* A phone: the marks in a row with their names, no drifting */
   .void-field { position: static; display: flex; flex-wrap: wrap; justify-content: center; gap: 28px 32px; padding: 96px 16px 0; }
   .void-field .agent-mark { position: static; transform: none; --glyph: 72px; }
@@ -1003,7 +1003,7 @@ a.btn.mx-new { justify-content: center; }
 .status { align-items: baseline; }
 .status::before { flex: none; transform: translateY(-1px); }
 
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* touch targets: 44 px */
   .agent-chip, .mx-chip, .settings-tab, .appearance-mode { min-height: 44px; }
   .mx-chip.add { width: 44px; height: 44px; }
@@ -1064,20 +1064,20 @@ a.btn.mx-new { justify-content: center; }
 .fixed-list { gap: 14px; }
 .fixed-agent { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sm); color: var(--muted); }
 .fixed-agent .swatch-fixed { width: 20px; height: 20px; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* "Any colour": a rainbow circle in the row of swatches */
   .swatch-pick { width: 40px; padding: 0; border: 0; border-radius: 50%; justify-content: center;
     background: conic-gradient(#ff5f6d, #ffc371, #f7f06d, #5be3a6, #5bc8f5, #7c8cff, #c084fc, #ff5f6d); }
   .swatch-pick .btn-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   a.icon-btn.phone-only { display: inline-flex !important; }
   .md-table table { min-width: 560px; }        /* readable columns; the table scrolls sideways */
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .tree a { padding: 8px; margin: 0 -8px; }     /* text on the 16 px edge, the highlight around it */
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* The tab bar stays painted at the bottom edge on every phone browser: its own layer, no blur. */
   .tabbar { transform: translateZ(0); -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
   .topbar { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
@@ -1093,17 +1093,17 @@ a.btn.mx-new { justify-content: center; }
   background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%; background-size: 5px 5px; background-repeat: no-repeat; }
 .brain-pick select:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .brain .chat-head .brain-pick { flex: 1 1 100%; }
   .brain-pick select { width: 100%; min-height: 44px; }
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* Lifted by however much of the page the browser's own toolbar covers (app.js placeTabbar). */
   .tabbar { bottom: var(--below-visible, 0px) !important; }
   .keyboard-open .tabbar { display: none !important; }
   .keyboard-open .main { padding-bottom: 0; }
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* Nothing may make the page wider than the phone: a wider page is shown "zoomed in" and its bottom
      bar off-screen until you scroll (seen on Greg's Home, 21 Nov). Long words and links wrap... */
   .home-title, .home-title > span, .home-meta, .done-text, .done-what, .done-pages, .done-page-head a, .done-summary,
@@ -1120,10 +1120,10 @@ a.btn.mx-new { justify-content: center; }
 .logo-link .logo { transition: transform .2s ease; }
 .logo-link:hover .logo { transform: scale(1.06); }
 .brand-row .logo { width: 34px; height: 34px; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .screen-tabbed .topbar-sep { visibility: hidden; }   /* no name after it; keeps the avatar on the right */
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* In a conversation: one header (the agent's mark and name, conversations on the right), no Logos bar,
      no other agents' marks. Back: swipe right, pinch, or tap the mark. */
   .in-conv .topbar { display: none; }
@@ -1134,7 +1134,7 @@ a.btn.mx-new { justify-content: center; }
   .in-conv .chat { touch-action: pan-y; }   /* the pinch goes back instead of zooming the page */
 }
 .mark-back { display: none; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   .in-conv .mark-back { display: inline-flex; align-items: center; justify-content: center; width: 32px; min-height: 44px;
     margin-right: -6px; font: 400 32px/1 var(--font-body); color: var(--ink); text-decoration: none; }
   .gesture-tip { position: absolute; left: 16px; right: 16px; bottom: 84px; z-index: 5; padding: 12px 16px; border-radius: 14px;
@@ -1143,7 +1143,7 @@ a.btn.mx-new { justify-content: center; }
   .gesture-tip.gone { opacity: 0; }
   .in-conv .chat { position: relative; }
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* The browser's own sideways "previous page" swipe and pinch-zoom would take the gesture first. */
   html.in-conv, html.in-conv body { overscroll-behavior-x: none; touch-action: pan-y; }
 }
@@ -1157,7 +1157,7 @@ a.btn.mx-new { justify-content: center; }
 .status-dot.down::before { background: var(--bad); box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 18%, transparent); }
 .status-dot:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -4px; }
 .home-status { margin: 0; }
-@media (min-width: 721px) {
+@media (min-width: 600px) {
   /* Side menu only as wide as its words (Greg, 21 Nov): was 220 px for ~110 px of text. */
   .nav { flex: 0 0 172px; }
   .nav-foot .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1206,14 +1206,14 @@ section:has(> .appearance-modes.single) { display: none; }
 @media (prefers-reduced-motion: reduce) { .send-btn.idle .send-ico, .send-btn.idle .mic-ico { animation: none; } }
 /* The queue line sits just above the message box. */
 .chat .model-line { margin: 0 16px 8px; border-radius: 12px; }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* Searching the brain on a phone: the results take the page's place, right under the search box. */
   .brain.is-searching .brain-body > :not(.brain-side) { display: none; }
   .brain.is-searching .brain-side { display: block !important; order: -1; padding: 8px 16px 24px; }
   .brain.is-searching .brain-side .changes:not(.results) { display: none; }
   .brain-side .hit { display: flex; flex-direction: column; gap: 2px; padding: 12px 0; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
 }
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* In a conversation the header is just ‹ and the agent's name (Greg, 21 Nov): no mark beside it. */
   .in-conv .mark-bar .agent-mark.current { display: none; }
   .in-conv .mark-bar { gap: 4px; }
@@ -1223,3 +1223,85 @@ section:has(> .appearance-modes.single) { display: none; }
 .agent-mark.private { cursor: default; opacity: .42; }
 .agent-mark.private .mark-glow { animation: none; }
 .agent-mark.private .mark-label .icon { width: 12px; height: 12px; display: inline-block; vertical-align: -1px; }
+
+/* Under a message: time, tick and "Thinking ›" on one line. The tick is grey when sent, green once
+   the agent has acknowledged it. Messages in a run sit closer together. */
+.mx-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.mx-turn.me .mx-foot { justify-content: flex-end; }
+.mx-foot .mx-think { max-width: 100%; }
+.mx-foot .mx-think > summary { list-style: none; font-size: var(--t-xs); }
+.mx-foot .mx-think > summary::-webkit-details-marker { display: none; }
+.mx-foot .mx-think[open] { flex-basis: 100%; }
+.mx-tick { color: var(--muted); }
+.mx-tick.seen { color: var(--ok); }
+.mx-turn.grouped { margin-bottom: -6px; }
+
+/* Side menu: an icon before each item. From 600 to 1099 px (a folding phone opened, a small tablet)
+   it is a slim rail: the icon over a small label, so both ways of holding the screen look the same. */
+@media (min-width: 600px) {
+  .nav-links a { justify-content: flex-start; gap: 12px; }
+  .nav-links a .badge { margin-left: auto; }
+  .nav-links a .icon { color: var(--muted); }
+  .nav-links a[aria-current="page"] .icon { color: inherit; }
+}
+@media (min-width: 600px) and (max-width: 1099px) {
+  .nav { flex: 0 0 84px !important; padding: 0 6px 16px; }
+  .brand-row { justify-content: center; padding: 0 !important; margin: 0 -6px 4px !important; }
+  .logo-link { margin-left: 0; }
+  .nav-links a { position: relative; flex-direction: column; justify-content: center; gap: 4px; min-height: 60px;
+    padding: 8px 2px !important; text-align: center; border-radius: 14px; }
+  .nav-links a .nav-label { font-size: 11px; line-height: 1.2; }
+  .nav-links a .icon { width: 22px; height: 22px; }
+  .nav-links a .badge { position: absolute; top: 4px; right: 10px; margin: 0; font-size: 0; min-width: 10px; height: 10px; padding: 0; }
+  .nav-foot { padding: 10px 0 0 !important; align-items: center; }
+  .nav-foot .who { display: none; }
+  .nav-foot .logout-btn { font-size: 11px; }
+}
+
+/* A conversation, and Brain and About, read at a comfortable width on a wide screen. */
+@media (min-width: 600px) {
+  /* Centred by padding, never by a width, so nothing can push the page wider than the screen. */
+  .chat .log, .chat .composer { padding-left: max(24px, calc((100% - 760px) / 2)); padding-right: max(24px, calc((100% - 760px) / 2)); }
+  .chat .model-line, .chat .mx-note { margin-left: max(24px, calc((100% - 760px) / 2)); margin-right: max(24px, calc((100% - 760px) / 2)); }
+}
+/* The phone tab bar never stretches its tabs across a wide phone. */
+@media (max-width: 599px) {
+  .tabbar { justify-content: center; }
+  .tabbar > * { max-width: 140px; }
+}
+
+/* Inside an agent (phone): its bar replaces the Logos bar: ‹ name … Chat | Brain | About. */
+.agent-bar { display: none; }
+@media (max-width: 599px) {
+  .in-agent .topbar { display: none; }
+  .in-agent .chat { height: calc(100dvh - var(--tabbar-h) - env(safe-area-inset-bottom)); padding-top: env(safe-area-inset-top); }
+  .in-agent .agent-bar { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: env(safe-area-inset-top) 12px 0 4px; width: 100%; box-sizing: border-box; }
+  .agent-back { display: inline-flex; align-items: center; justify-content: center; width: 40px; min-height: 44px;
+    font: 400 32px/1 var(--font-body); color: var(--ink); text-decoration: none; }
+  .agent-bar-name { flex: 1; min-width: 0; font: 600 17px/1.2 var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent-tabs { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--chip, var(--raised)); border: 1px solid var(--line); flex: none; }
+  .agent-tab { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 600;
+    color: var(--muted); text-decoration: none; }
+  .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
+  .in-agent .chat-head .mark-bar { display: none; }
+  .in-agent .chat > .chat-head { padding: 0; min-height: 0; }
+}
+@media (max-width: 599px) {
+  /* Inside an agent, Brain and About need no title or agent picker of their own: the bar says whose. */
+  .in-agent .brain > .chat-head > h1, .in-agent .brain-pick { display: none; }
+  .in-agent .agents-page { padding-top: 0; }
+  .in-agent .agents-page > .agent-bar { margin: 0 -16px; width: calc(100% + 32px); }
+  .in-agent .agents-title, .in-agent .agents-chips { display: none; }
+}
+@media (max-width: 599px) {
+  .in-agent .chat-head .conv-btn { display: none; }
+  .mx-chips .mx-chip.panel { margin-left: auto; flex: none; position: sticky; right: 0; background: var(--surface); }
+}
+
+@media (min-width: 600px) and (max-width: 1099px) {
+  /* Mid widths: the conversations panel floats over the chat instead of squeezing it. */
+  .side:not(.tucked) { position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: min(360px, 80vw);
+    box-shadow: -12px 0 32px rgba(0, 0, 0, .35); overflow-y: auto; }
+}
+
+.home-all { grid-column: 1 / -1; justify-self: start; }

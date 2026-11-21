@@ -60,7 +60,7 @@
 [data-look="glass"] .home-waiting .card { box-shadow: 0 0 0 1px rgba(255, 196, 102, 0.25), 0 0 28px rgba(255, 196, 102, 0.08); }
 [data-look="glass"] .home-time { color: var(--accent-text); }
 
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   /* The tab bar floats above the page as one pill */
   /* Glued to the bottom edge (Greg, 21 Nov), solid rather than blurred: Chrome on Android sometimes
      does not paint a fixed, backdrop-blurred bar until the page is scrolled. */

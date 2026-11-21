@@ -11,7 +11,7 @@ import { h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, 
 import * as mx from './mx.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
-import { markBar } from './agents-void.js';
+import { markBar, agentBar } from './agents-void.js';
 
 const ARCHIVE_DAYS = 30;
 const THREAD_DAYS = 30;
@@ -137,8 +137,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       h('header', { class: 'chat-head' },
         // M4: the agents' marks replace the agent tabs; inside a thread, its title.
         threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
+        threadId ? null : agentBar(agent, 'chat'),
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
-        h('span', { class: 'mx-same', title: 'The same conversation as your Element X room' }, 'Same as Element X'),
         sideBits.viewMenu || null, sideBits.convBtn || null),
       chipsRow, log, thinkingRow, note, modelLine, form),
     sideBits.side, sideBits.sideScrim || null, sideBits.reopen || null);
@@ -230,21 +230,25 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         box.replaceChildren(v ? v : none('No thinking was recorded for this reply.'));
         if (v) v.open = true;
       } catch (e) { box.replaceChildren(none('The thinking could not be read just now.')); }
-    } }, h('summary', {}, 'Thinking'), box);
+    } }, h('summary', {}, 'Thinking ›'), box);
     return d;
   }
 
   // Under a message: its time; for yours, a tick when it is in the room (also in Element X, on hover)
   // or where it came from ("from Element X") when another of your devices sent it.
-  function metaFor(ev, mine, edited) {
+  // One line under a message: its time (only at the end of a run), where it came from, and a tick that
+  // turns green once the agent has acknowledged it (its ✅ reaction, no longer shown as a chip).
+  function metaFor(ev, mine, edited, showTime = true, seen = false) {
     const where = mine ? fromWhere(ev) : '';
     const sentHere = where === 'sent · also in Element X';
-    return h('span', { class: 'when mx-meta', title: sentHere ? 'Sent · also in Element X' : null },
-      [when(ev.getTs() / 1000), sentHere ? '' : where, edited ? 'edited' : ''].filter(Boolean).join(' · '),
-      sentHere ? h('span', { class: 'mx-tick', 'aria-label': 'sent' }, icon(ICONS.check)) : null);
+    const words = [showTime ? when(ev.getTs() / 1000) : '', sentHere ? '' : where, edited ? 'edited' : ''].filter(Boolean).join(' · ');
+    if (!words && !sentHere) return null;
+    return h('span', { class: 'when mx-meta', title: sentHere ? `Sent · also in Element X${seen ? ` · seen by ${agent.display_name}` : ''}` : null },
+      words, sentHere ? h('span', { class: `mx-tick${seen ? ' seen' : ''}`, 'aria-label': seen ? 'seen' : 'sent' }, icon(ICONS.check)) : null);
   }
+  const ACK = new Set(['✅', '✔️', '👀']);
 
-  function bubbleFor(ev, edits, reactions, inMain) {
+  function bubbleFor(ev, edits, reactions, inMain, showTime = true) {
     const mine = ev.getSender() === me;
     const content = edits.get(ev.getId()) || ev.getContent();
     const kind = content.msgtype;
@@ -262,12 +266,15 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     else if (kind === 'm.audio') body = [h('em', {}, 'Voice note: play it in Element X.')];
     else if (kind === 'm.image' || kind === 'm.file' || kind === 'm.video') body = [h('em', {}, `${content.body || 'A file'}: open it in Element X.`)];
     else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));
-    const rx = reactions.get(ev.getId());
-    return h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}` },
+    const rx = [...(reactions.get(ev.getId()) || [])];
+    const seen = mine && rx.some(([k]) => ACK.has(k));
+    const chips = rx.filter(([k]) => !(mine && ACK.has(k)));
+    const meta = metaFor(ev, mine, edits.has(ev.getId()), showTime, seen);
+    const think = !mine && kind === 'm.text' && content.body ? thinking(String(content.body)) : null;
+    return h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
       h('div', { class: `msg ${mine ? 'user' : 'assistant'}` }, ...body),
-      rx ? h('div', { class: 'mx-reactions' }, [...rx].map(([k, n]) => h('span', { class: 'chip' }, `${k} ${n > 1 ? n : ''}`))) : null,
-      metaFor(ev, mine, edits.has(ev.getId())),
-      !mine && kind === 'm.text' && content.body ? thinking(String(content.body)) : null,
+      chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, n]) => h('span', { class: 'chip' }, `${k} ${n > 1 ? n : ''}`))) : null,
+      meta || think ? h('div', { class: 'mx-foot' }, meta, think) : null,
       thread ? h('a', { class: 'mx-thread-link', href: `${main}/thread/${encodeURIComponent(ev.getId())}` },
         `↳ ${thread.count} repl${thread.count === 1 ? 'y' : 'ies'} · open this conversation`) : null);
   }
@@ -288,8 +295,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     convList.replaceChildren(link(main, 'Main conversation', 0, !threadId),
       ...list.map((t) => link(`${main}/thread/${encodeURIComponent(t.id)}`, t.title, t.last, t.id === threadId)));
     const chip = (href, label, on, extra) => h('a', { href, class: `mx-chip${on ? ' on' : ''}${extra || ''}`, role: 'tab', 'aria-selected': String(!!on), title: label }, h('span', { class: 'chip-text' }, label));
+    // On a phone the conversations panel (☰) opens from the end of this row; the header has the agent bar.
+    const panel = sideBits.convBtn ? h('button', { type: 'button', class: 'mx-chip panel', 'aria-label': 'All conversations', title: 'All conversations',
+      onclick: () => sideBits.convBtn.click() }, '☰') : null;
     chipsRow.replaceChildren(chip(`${main}/thread/new`, '+', isNew, ' add'), chip(main, 'Main', !threadId),
-      ...list.map((t) => chip(`${main}/thread/${encodeURIComponent(t.id)}`, t.title, t.id === threadId)));
+      ...list.map((t) => chip(`${main}/thread/${encodeURIComponent(t.id)}`, t.title, t.id === threadId)), panel);
   }
 
   // The events of what is on screen: the main timeline, or one thread (its first message, then the replies).
@@ -332,7 +342,12 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const older = h('button', { type: 'button', class: 'linkish mx-older', onclick: async (e) => {
       e.target.textContent = 'Loading…'; await c.scrollback(room, 30); draw(false);
     } }, 'Earlier messages');
-    log.replaceChildren(...(threadId ? [] : [older]), ...(shown.length ? shown.map((ev) => bubbleFor(ev, edits, reactions, inMain)) : [none('Nothing said here yet.')]));
+    log.replaceChildren(...(threadId ? [] : [older]), ...(shown.length ? shown.map((ev, i) => {
+      // The time shows at the end of a run: the next message is from someone else, or 5+ minutes later.
+      const next = shown[i + 1];
+      const showTime = !next || next.getSender() !== ev.getSender() || next.getTs() - ev.getTs() > 5 * 60000;
+      return bubbleFor(ev, edits, reactions, inMain, showTime);
+    }) : [none('Nothing said here yet.')]));
     // Still waiting for the agent when the newest message is yours.
     const last = shown[shown.length - 1];
     // (a conversation's title notice is not a message waiting for an answer)
