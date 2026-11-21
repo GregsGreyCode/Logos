@@ -60,6 +60,19 @@ export function working(who, on) {
   if (on) busy.add(who); else busy.delete(who);
   for (const el of document.querySelectorAll('.logo')) el.classList.toggle('busy', busy.size > 0);
 }
+// The logo says whether the AI computer is on (Greg, 21 Nov): in colour when it is, grey when it is off,
+// cycling while an agent works. up: true, false, or null (no agent uses a local model: shown as on).
+export function aiState(up, offSince = null) {
+  const off = up === false;
+  document.documentElement.classList.toggle('ai-off', off);
+  const at = offSince ? new Date(offSince * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  const words = off ? `AI computer off${at ? ` since ${at}` : ''} · replies when it's back` : 'AI computer on';
+  for (const el of document.querySelectorAll('.logo')) {
+    el.dataset.ai = words;
+    if (!el.classList.contains('busy')) el.title = words;
+  }
+  for (const a of document.querySelectorAll('.logo-link')) a.title = `Logos · Home · ${words}`;
+}
 // "Nothing here" is always the same quiet line: no box, no table, no logo.
 export const none = (text) => h('p', { class: 'none' }, text);
 // Loading (P2): the same in every screen and the same place, "Loading…" over three shimmering lines.

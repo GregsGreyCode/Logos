@@ -578,8 +578,9 @@ def test_agent_is_working_looks_at_the_newest_conversation():
 
 def test_activity_lists_only_your_running_agents(run):
     status, body = run("u-greg", "/api/v2/activity")
-    assert status == 200 and set(body) == {"working"}
+    assert status == 200 and set(body) == {"working", "model_up"}
     assert set(body["working"]) <= {"greg"}          # household is not running in this fake
+    assert body["model_up"] in (True, False, None)
 
 
 def test_a_matrix_reply_brings_its_thinking_and_only_your_own(run):
