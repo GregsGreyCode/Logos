@@ -58,11 +58,21 @@ export async function homeView(root) {
     const later = rows.filter((e) => !String(e.start).startsWith(day));
     const whose = (e) => (e.kind === 'busy' ? e.who
       : e.calendar === 'personal' ? 'Yours' : String((today.calendars || {})[e.calendar] || e.calendar).replace(/\s*\(.*\)\s*$/, ''));
+    // A location that is a web address (a Maps link) shows as a short link, never the whole address:
+    // one long unbreakable address made the whole page wider than a phone (Greg, 21 Nov).
+    const place = (loc) => {
+      if (!loc) return null;
+      const url = String(loc).match(/https?:\/\/\S+/);
+      if (!url) return ` · ${loc}`;
+      const label = /maps|goo\.gl/.test(url[0]) ? 'Map' : 'Link';
+      const rest = String(loc).replace(url[0], '').replace(/[\s,·-]+$/, '').trim();
+      return h('span', {}, ` · ${rest ? `${rest} · ` : ''}`, h('a', { href: url[0], target: '_blank', rel: 'noopener' }, label));
+    };
     const row = (e) => h('div', { class: 'home-row' },
       h('span', { class: 'home-time' }, timeOf(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, h('span', {}, e.title),
-        h('span', { class: 'home-meta' }, [whose(e), e.location].filter(Boolean).join(' · '))));
+        h('span', { class: 'home-meta' }, whose(e), place(e.location))));
     todayBox.replaceChildren(
       ...(todays.length ? todays.map(row) : [none('Nothing in the calendar today.')]),
       ...(later.length ? [h('h3', { class: 'sub-label' }, 'Tomorrow'), ...later.slice(0, 4).map(row)] : []));
