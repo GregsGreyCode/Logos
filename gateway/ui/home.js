@@ -19,20 +19,20 @@ export async function homeView(root) {
   const statusWords = h('p', { class: 'when home-status', hidden: true, id: 'home-status-words' });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
   const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
-  // Terminal HUD (L6): a live strip of the same figures the Models screen shows. Hidden in the other looks.
+  // A live strip of figures (L6), in every look since 21 Nov (Greg): agents working, how fast the AI
+  // computer answers, and messages waiting their turn.
   const strip = h('div', { class: 'hud-strip', 'aria-label': 'Live figures' });
   const cell = (label, value, unit, live) => h('div', { class: 'hud-cell' }, h('span', {}, label),
     h('strong', { class: live ? 'live' : null }, value, unit ? h('small', {}, ` ${unit}`) : null));
   async function showStrip() {
-    if (document.documentElement.dataset.look !== 'hud') return;
     const [local, act] = await Promise.all([getJSON('/api/v2/models/local').catch(() => null),
       getJSON('/api/v2/activity').catch(() => null)]);
     if (!alive) return;
     const q = local && local.queue, sp = local && local.speed && (local.speed.alone || {});
     strip.replaceChildren(
-      cell('Working', act ? String(act.working.length) : '–', act && act.working.length ? 'agents' : '', act && act.working.length),
-      cell('Model', sp && sp.median_tokens_per_s ? String(Math.round(sp.median_tokens_per_s)) : '–', 'tok/s'),
-      cell('Queue', q ? `${q.running}/${q.waiting}` : '–', 'run/wait'));
+      cell('Working', act ? String(act.working.length) : '–', act && act.working.length === 1 ? 'agent' : 'agents', act && act.working.length),
+      cell('AI speed', sp && sp.median_tokens_per_s ? String(Math.round(sp.median_tokens_per_s)) : '–', 'tok/s'),
+      cell('Queue', q ? String(q.waiting) : '–', q && q.running ? `waiting · ${q.running} running` : 'waiting'));
   }
 
   let data = null;
@@ -128,10 +128,10 @@ export async function homeView(root) {
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
       h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY))), statusWords),
-    strip,
     waitingSec,
     h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox),
-    askForm));                                   // under Today and Tomorrow (Greg, 21 Nov)
+    strip,
+    askForm));                                   // at the bottom (Greg, 21 Nov)                                   // under Today and Tomorrow (Greg, 21 Nov)
 
   fromLast();
   await load();
