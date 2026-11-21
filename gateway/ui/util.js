@@ -155,6 +155,9 @@ function inline(text) {
 
 export function markdown(text) {
   const nodes = [];
+  // HTML comments are notes for programs (the lists copy says which Home Assistant list is which), and
+  // Obsidian hides them too.
+  text = String(text).replace(/<!--[\s\S]*?-->\n?/g, '');
   const parts = text.split(/```[^\n]*\n?/);
   parts.forEach((part, i) => {
     if (i % 2) { nodes.push(h('pre', {}, h('code', {}, part.replace(/\n$/, '')))); return; }
