@@ -20,7 +20,6 @@ export async function homeView(root) {
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
   const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
   const doneSec = h('section', { 'aria-label': 'What happened' }, h('h2', { class: 'label' }, 'Since yesterday'), doneBox);
-  const allLink = h('a', { href: '#/noticeboard', class: 'home-all' }, 'All activity ›');
   // Terminal HUD (L6): a live strip of the same figures the Models screen shows. Hidden in the other looks.
   const strip = h('div', { class: 'hud-strip', 'aria-label': 'Live figures' });
   const cell = (label, value, unit, live) => h('div', { class: 'hud-cell' }, h('span', {}, label),
@@ -112,7 +111,7 @@ export async function homeView(root) {
             h('p', { class: 'done-full' }, m.text),
             m.answer ? h('p', { class: 'done-answer' }, h('strong', {}, `${short}: `), m.answer) : null);
         }),
-        msgs.length > 6 ? h('a', { href: '#/noticeboard', class: 'done-more' }, `${msgs.length - 6} more in Activity`) : null));
+        msgs.length > 6 ? h('a', { href: '#/noticeboard', class: 'done-more' }, `${msgs.length - 6} more in Notifications`) : null));
     }
     doneBox.replaceChildren(...(parts.length ? parts : [none('Nothing new since yesterday.')]));
     return parts.length > 0;
@@ -179,7 +178,7 @@ export async function homeView(root) {
     waitingSec,
     h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox),
     askForm,                                     // under Today and Tomorrow (Greg, 21 Nov)
-    doneSec, allLink));
+    doneSec));
 
   fromLast();
   await load();
