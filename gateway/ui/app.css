@@ -1161,3 +1161,15 @@ a.btn.mx-new { justify-content: center; }
   .nav { flex: 0 0 172px; }
   .nav-foot .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }
+
+/* Settings: a look with one mode has no Light-or-dark section; colours fold behind one line. */
+section:has(> .appearance-modes.single) { display: none; }
+.colours-more { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.colours-more > summary { display: flex; align-items: center; gap: 10px; min-height: 52px; cursor: pointer; list-style: none;
+  font-weight: 600; color: var(--ink); }
+.colours-more > summary::-webkit-details-marker { display: none; }
+.colours-more > summary::after { content: "›"; margin-left: auto; font-size: 22px; color: var(--muted); transition: transform .2s ease; }
+.colours-more[open] > summary::after { transform: rotate(90deg); }
+.colours-more > section { padding-bottom: 20px; }
+.colours-more > section + section { padding-top: 4px; }
+.changes.few { display: none; }

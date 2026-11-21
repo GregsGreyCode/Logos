@@ -31,7 +31,7 @@ export async function peopleView(root, _args, state) {
       h('tbody', {}, d.people.map((p) => h('tr', {},
         h('td', {}, h('strong', {}, p.display_name),
           h('span', { class: 'when block' }, p.is_you ? 'You' : p.signed_in_before ? `Signs in as ${p.username}` : `Has not signed in yet · ${p.username}`)),
-        d.agents.map((a) => h('td', { class: p.agents[a.name] ? 'ok' : 'when' }, p.agents[a.name] ? 'Chat and brain' : 'No access')),
+        d.agents.map((a) => h('td', { class: p.agents[a.name] ? 'ok' : 'when', title: p.agents[a.name] ? 'Can chat with it and read its brain' : 'No access' }, p.agents[a.name] ? '✓' : '·')),
         h('td', {}, p.is_admin ? 'Yes' : 'No'))))));
     if (d.is_admin && !admin.children.length) admin.replaceChildren(addPerson(), startAgain());
   }
@@ -75,9 +75,8 @@ export async function peopleView(root, _args, state) {
 
   root.replaceChildren(h('div', { class: 'page' },
     h('header', {}, h('h1', {}, 'People'),
-      h('p', { class: 'when lead' }, 'Who can sign in, and whose agent and brain each person can use. An agent is private to its person, and that includes from whoever manages Logos.')),
+      h('p', { class: 'when lead' }, 'Who can use which agent.')),
     table, phoneList,
-    h('p', { class: 'when wide-only' }, 'Who owns an agent is set in its definition on the server (owners in agents/<name>.yaml). What an agent may share with other agents is written in its brain, on the page "What may be shared with other agents".'),
     h('div', { class: 'two-col' }, admin)));
   await load();
   return () => { alive = false; };

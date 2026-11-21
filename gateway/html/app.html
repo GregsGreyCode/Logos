@@ -48,9 +48,9 @@ try {
       <a href="#/brain" data-view="brain">Brain</a>
       <a href="#/noticeboard" data-view="noticeboard">Noticeboard <span class="badge nb-badge" hidden></span></a>
       <a href="#/agents" data-view="agents">Agents</a>
-      <a href="#/advisor" data-view="advisor">Claude Advisor</a>
-      <a href="#/models" data-view="models">Models</a>
-      <a href="#/people" data-view="people">People</a>
+      <a class="admin-only" hidden href="#/advisor" data-view="advisor">Claude Advisor</a>
+      <a class="admin-only" hidden href="#/models" data-view="models">Models</a>
+      <a class="admin-only" hidden href="#/people" data-view="people">People</a>
       <a href="#/settings" data-view="settings">Settings</a>
     </div>
     <div class="nav-foot">
@@ -79,10 +79,9 @@ try {
   <div class="sheet" id="more-sheet" role="dialog" aria-modal="true" aria-label="More" hidden>
     <span class="sheet-grip" aria-hidden="true"></span>
     <a class="sheet-row" href="#/agents" data-view="agents" data-icon="agents">Agents</a>
-    <a class="sheet-row" href="#/advisor" data-view="advisor" data-icon="shield">Claude Advisor</a>
-    <a class="sheet-row" href="#/models" data-view="models" data-icon="chip">Models</a>
-    <a class="sheet-row" href="#/people" data-view="people" data-icon="people">People</a>
-    <a class="sheet-row" href="#/settings" data-view="settings" data-icon="gear">Settings</a>
+    <a hidden class="sheet-row admin-only" href="#/advisor" data-view="advisor" data-icon="shield">Claude Advisor</a>
+    <a hidden class="sheet-row admin-only" href="#/models" data-view="models" data-icon="chip">Models</a>
+    <a hidden class="sheet-row admin-only" href="#/people" data-view="people" data-icon="people">People</a>
   </div>
   <div class="sheet" id="acct-sheet" role="dialog" aria-modal="true" aria-label="Your account" hidden>
     <span class="sheet-grip" aria-hidden="true"></span>

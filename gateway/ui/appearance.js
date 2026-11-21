@@ -127,7 +127,8 @@ export function lookControls() {
         h('input', { type: 'radio', name: 'mode', value: m, checked: m === mode, disabled: !allowed,
           onchange: () => pick({ look, mode: m }) }), MODE_NAMES[m]);
     }));
-    if (def.modes.length === 1) modeBox.append(h('p', { class: 'when' }, `${def.name} is dark only.`));
+    // A look with one mode (Terminal HUD is dark only) hides the whole Light-or-dark section.
+    modeBox.classList.toggle('single', def.modes.length === 1);
   };
   const pick = async (choice) => {
     apply(choice);
