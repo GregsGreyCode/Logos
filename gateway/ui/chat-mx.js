@@ -12,6 +12,7 @@ import * as mx from './mx.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
 import { markBar, agentBar, takeVoice } from './agents-void.js';
+import { getPref } from './prefs.js';
 
 const ARCHIVE_DAYS = 30;
 const THREAD_DAYS = 30;
@@ -304,7 +305,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const seen = mine && rx.some(([k]) => ACK.has(k));
     const chips = rx.filter(([k]) => !(mine && ACK.has(k)));
     const meta = metaFor(ev, mine, edits.has(ev.getId()), showTime, seen);
-    const think = !mine && kind === 'm.text' && content.body ? thinking(String(content.body)) : null;
+    // "Thinking ›" under a reply only with Settings > Show thinking on (Greg, 21 Nov: off by default).
+    const think = !mine && kind === 'm.text' && content.body && getPref('thinking', false) ? thinking(String(content.body)) : null;
     return h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
       h('div', { class: `msg ${mine ? 'user' : 'assistant'}` }, ...body),
       chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, n]) => h('span', { class: 'chip' }, `${k} ${n > 1 ? n : ''}`))) : null,
