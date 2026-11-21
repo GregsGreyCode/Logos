@@ -16,7 +16,7 @@ def run(signed_in, method, path, headers=None, body=None, matrix=None):
         async def fake_matrix(request):
             seen.update(path=request.path_qs, auth=request.headers.get("Authorization"), body=await request.read())
             return web.json_response({"ok": True, "user_id": "@greg:home"})
-        upstream = web.Application()
+        upstream = web.Application(client_max_size=matrix_proxy.MAX_BODY + 1)
         upstream.router.add_route("*", "/{tail:.*}", fake_matrix)
         async with TestServer(upstream) as up:
             app = web.Application()
@@ -48,3 +48,11 @@ def test_only_client_and_media_apis_are_passed_on():
     status, out, seen = run({"sub": "u"}, "GET", "/_matrix/federation/v1/version")
     assert status == 404 and seen == {}
     assert run({"sub": "u"}, "GET", "/_matrix/media/v3/config")[0] == 200
+
+
+def test_uploads_bigger_than_a_mebibyte_pass_and_only_too_large_ones_are_refused():
+    photo = b"x" * (3 << 20)
+    status, out, seen = run({"sub": "u"}, "POST", "/_matrix/media/v3/upload", {"Authorization": "Bearer t"}, photo)
+    assert status == 200 and len(seen["body"]) == len(photo)
+    status, out, seen = run({"sub": "u"}, "POST", "/_matrix/media/v3/upload", {}, b"x" * (matrix_proxy.MAX_BODY + 1))
+    assert status == 413 and out["errcode"] == "M_TOO_LARGE" and seen == {}

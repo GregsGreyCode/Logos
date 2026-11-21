@@ -13,6 +13,7 @@ import { adoptPrefs } from './prefs.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, aiState, labelTables, icon, ICONS } from './util.js';
 import { adopt } from './appearance.js';
+import * as mx from './mx.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView, settings: settingsView };
@@ -136,11 +137,13 @@ new MutationObserver(() => labelTables(root)).observe(root, { childList: true, s
 
 
 for (const b of document.querySelectorAll('.logout-btn')) b.addEventListener('click', async () => {
+  await mx.forget().catch(() => {});
   await api('/auth/logout', { method: 'POST' }).catch(() => {});
   location.href = '/login';
 });
 
 state.me = await getJSON('/api/v2/me');
+mx.bind(state.me.matrix_id);
 adopt(state.me);
 adoptPrefs(state.me);
 const shown = state.me.display_name || state.me.username;

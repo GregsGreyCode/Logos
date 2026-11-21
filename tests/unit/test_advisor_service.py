@@ -22,7 +22,7 @@ class FakeClaude:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, model_id, question, search):
+    def __call__(self, model_id, question, search, cap=None):
         self.calls.append((model_id, question, search))
         return {"text": "Thank you so much for the invitation...", "input_tokens": 1200, "output_tokens": 300,
                 "searches": 2 if search else 0}
@@ -100,7 +100,7 @@ def test_the_budget_is_never_overrun(svc):
     svc.ledger.run("INSERT INTO limits VALUES ('greg', ?, 0.05)", (adv.month(),))
     with pytest.raises(adv.Refused, match="could cost more"):
         svc.ask_advisor("greg", QUESTION, "coding")                       # Opus worst case > $0.05
-    assert svc.advisor_budget("greg") == {"month": adv.month(), "spent_usd": 0.0, "limit_usd": 0.05, "left_usd": 0.05}
+    assert svc.advisor_budget("greg") == {"month": adv.month(), "spent_usd": 0.0, "limit_usd": 0.05, "held_usd": 0, "left_usd": 0.05}
     assert svc.advisor_budget("bere")["limit_usd"] == 20.0
 
 
@@ -199,3 +199,73 @@ def test_reset_makes_the_default_available_again(mx):
     assert mx.budget("greg")["left_usd"] == 0.5
     mx.change_budget("greg", "greg", "reset")
     assert mx.budget("greg")["left_usd"] == 20.0
+
+
+def test_research_is_priced_for_every_round_the_search_loop_can_run():
+    one = adv.round_worst("opus", QUESTION, True)
+    assert adv.worst_case("opus", QUESTION, "research") == pytest.approx(one * adv.ROUNDS)
+    assert adv.worst_case("opus", QUESTION, "writing") == adv.round_worst("opus", QUESTION, False)
+    assert adv.worst_case("haiku", QUESTION, "research") == adv.worst_case("haiku", QUESTION, "writing")
+
+
+def test_a_request_being_sent_holds_its_worst_case_so_a_second_approval_cannot_overspend(svc):
+    release, started = threading.Event(), threading.Event()
+
+    def slow(model_id, question, search, cap=None):
+        started.set()
+        release.wait(5)
+        return {"text": "ok", "input_tokens": 10, "output_tokens": 10, "searches": 0}
+    svc.ask_claude = slow
+    svc.ask_advisor("greg", QUESTION, "coding")
+    svc.ask_advisor("greg", QUESTION + " Keep it short.", "coding")
+    first, second = svc.pending("greg")
+    left = first["estimate_max_usd"] + second["estimate_max_usd"] / 2      # room for one, not two
+    svc.ledger.run("INSERT OR REPLACE INTO limits VALUES (?, ?, ?)", ("greg", adv.month(), left))
+    assert svc.decide("greg", first["id"], True, "greg", background=True)["status"] == "sending"
+    assert started.wait(5)
+    assert svc.budget("greg")["held_usd"] == pytest.approx(first["estimate_max_usd"], abs=0.01)
+    with pytest.raises(adv.Refused):
+        svc.decide("greg", second["id"], True, "greg")
+    release.set()
+
+
+def test_a_send_that_fails_part_way_keeps_what_was_billed(svc):
+    def flaky(model_id, question, search, cap=None):
+        raise adv.AskFailed("OverloadedError: busy", 4000, 16000, 5)
+    svc.ask_claude = flaky
+    svc.ask_advisor("greg", QUESTION, "research", "opus")
+    (p,) = svc.pending("greg")
+    assert svc.decide("greg", p["id"], True, "greg")["status"] == "failed"
+    (h,) = svc.history("greg")
+    assert h["cost"] == adv.cost("opus", 4000, 16000, 5) and svc.budget("greg")["spent_usd"] > 0
+
+
+def test_a_request_left_sending_by_a_restart_is_failed_and_counted_at_its_most(svc, tmp_path):
+    svc.ask_advisor("greg", QUESTION, "writing")
+    (p,) = svc.pending("greg")
+    svc.ledger.run("UPDATE requests SET status = 'sending' WHERE id = ?", (p["id"],))
+    again = adv.Service(svc.ledger, svc.agents, svc.filter, "dash", ask=svc.claude, log=lambda m: None)
+    r = again.advisor_answer("greg", p["id"])
+    assert r["status"] == "failed" and "restarted" in r["note"]
+    assert svc.ledger.get(p["id"])["cost"] == pytest.approx(adv.worst_case("sonnet", QUESTION, "writing"))
+
+
+def test_a_preview_whose_send_failed_is_posted_on_the_next_round(mx):
+    real = mx.matrix.send
+    mx.matrix.send = lambda room, text: (_ for _ in ()).throw(OSError("homeserver restarting"))
+    mx.ask_advisor("bere", QUESTION, "writing")
+    mx.post_updates()
+    assert mx.matrix.sent == []
+    mx.matrix.send = real
+    mx.post_updates()
+    mx.post_updates()
+    assert len([t for r, t in mx.matrix.sent if "wants to ask Claude" in t]) == 1
+
+
+def test_a_bare_no_from_the_admin_answers_the_budget_request(mx):
+    mx.request_more_budget("bere", "planning the honeymoon")
+    assert mx.on_message("greg", "@greg:home", "no") == "bere's advisor budget: declined."
+    mx.request_more_budget("bere", "once more")
+    mx.ask_advisor("greg", QUESTION, "writing")
+    assert "Both a question and a budget request" in mx.on_message("greg", "@greg:home", "no")
+    assert len(mx.pending("greg")) == 1 and mx.budget_requests("bere")              # neither was touched

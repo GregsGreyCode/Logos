@@ -3,8 +3,22 @@
 // (/_matrix/..., gateway/matrix_proxy.py). The access token and the device's keys stay in this browser:
 // the session in localStorage, the encryption keys in IndexedDB. The Matrix password is used once,
 // to sign in, and for signing out other devices; it is never kept.
-const SESSION = 'logos-mx-session';
+// The session is kept per dashboard account: a browser only ever uses the Matrix session of whoever
+// is signed in to the dashboard (owner, from /api/v2/me), never one a previous person left behind.
+const LEGACY = 'logos-mx-session';
+let owner = null;
+const key = () => `logos-mx-session:${owner}`;
 let sdkP = null, client = null, secretKey = null, startP = null;
+
+// Called once the dashboard knows who is signed in (app.js), before any screen uses Matrix.
+export function bind(matrixId) {
+  owner = matrixId || null;
+  try {
+    const old = JSON.parse(localStorage.getItem(LEGACY) || 'null');
+    if (old && owner && old.userId === owner && !localStorage.getItem(key())) localStorage.setItem(key(), JSON.stringify(old));
+    if (old && (!owner || old.userId === owner)) localStorage.removeItem(LEGACY);
+  } catch (e) { /* private window */ }
+}
 
 const sdk = () => (sdkP ||= import('/ui/vendor/matrix/matrix.js'));
 const base = () => location.origin;
@@ -13,9 +27,16 @@ const base = () => location.origin;
 const fetchFn = (url, opts) => fetch(url, { ...opts, credentials: 'same-origin' });
 
 export function saved() {
-  try { return JSON.parse(localStorage.getItem(SESSION) || 'null'); } catch (e) { return null; }
+  if (!owner) return null;
+  try {
+    const s = JSON.parse(localStorage.getItem(key()) || 'null');
+    return s && s.userId === owner ? s : null;
+  } catch (e) { return null; }
 }
-function remember(s) { try { localStorage.setItem(SESSION, JSON.stringify(s)); } catch (e) { /* private window */ } }
+function remember(s) {
+  if (!owner || s.userId !== owner) throw new Error(`Signed in to Matrix as ${s.userId}, not ${owner}.`);
+  try { localStorage.setItem(key(), JSON.stringify(s)); } catch (e) { /* private window */ }
+}
 
 async function make(s) {
   const m = await sdk();
@@ -116,11 +137,27 @@ export async function signOut(deviceId, password) {
 export async function disconnect() {
   const s = saved();
   try { const c = await get(); if (c) { c.stopClient(); await c.logout(true); } } catch (e) { /* signed out already */ }
+  await wipe(s);
+}
+
+async function wipe(s) {
   client = null; startP = null;
-  try { localStorage.removeItem(SESSION); } catch (e) { /* private window */ }
+  try { localStorage.removeItem(key()); } catch (e) { /* private window */ }
   if (s && window.indexedDB && indexedDB.databases) {
     for (const db of await indexedDB.databases()) if (db.name && db.name.startsWith(`logos-${s.userId}`)) indexedDB.deleteDatabase(db.name);
   }
+}
+
+// Signing out of the dashboard signs this browser's Matrix device out too and forgets its keys, so
+// the next person to use this browser cannot read or send as you. Done straight with the token (no
+// sync first) and before the dashboard session ends, since the pass-through needs that session.
+export async function forget() {
+  const s = saved();
+  if (!s) return;
+  if (client) client.stopClient();
+  await fetch('/_matrix/client/v3/logout', { method: 'POST', credentials: 'same-origin',
+    headers: { Authorization: `Bearer ${s.accessToken}`, 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+  await wipe(s);
 }
 
 function browserName() {
