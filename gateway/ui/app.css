@@ -1118,3 +1118,6 @@ a.btn.mx-new { justify-content: center; }
 .logo-link .logo { transition: transform .2s ease; }
 .logo-link:hover .logo { transform: scale(1.06); }
 .brand-row .logo { width: 34px; height: 34px; }
+@media (max-width: 720px) {
+  .screen-tabbed .topbar-sep { visibility: hidden; }   /* no name after it; keeps the avatar on the right */
+}

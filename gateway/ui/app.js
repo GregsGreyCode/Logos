@@ -91,7 +91,11 @@ async function route() {
     if (a.dataset.view === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
   if (IN_MORE.includes(name)) moreBtn.setAttribute('aria-current', 'page'); else moreBtn.removeAttribute('aria-current');
-  document.getElementById('screen-name').textContent = NAMES[name] || '';
+  // The top bar names the screen only when the tab bar does not: Home, Chat, Brain and Notices are
+  // already lit up at the bottom; the screens under More are not (Greg, 21 Nov).
+  const tabbed = ['home', 'chat', 'brain', 'noticeboard'].includes(name);
+  document.getElementById('screen-name').textContent = tabbed ? '' : (NAMES[name] || '');
+  document.documentElement.classList.toggle('screen-tabbed', tabbed);
   document.title = NAMES[name] ? `${NAMES[name]} · Logos` : 'Logos';
   if (!views[name]) return soon(name);
   // Each visit draws into its own box. A screen that is still loading when the person moves
