@@ -184,8 +184,10 @@ export async function homeView(root) {
     h('header', { class: 'home-head' },
       h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), statusDot), statusWords),
     strip,
-    askForm, waitingSec,
-    h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox), doneSec, allLink));
+    waitingSec,
+    h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox),
+    askForm,                                     // under Today and Tomorrow (Greg, 21 Nov)
+    doneSec, allLink));
 
   fromLast();
   await load();
