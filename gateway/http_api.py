@@ -642,6 +642,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
         return resp
 
     app = web.Application(middlewares=[cors_middleware, auth_middleware])
+
+    # The dashboard's scripts and styles: the browser must ask (cheaply, by ETag) whether its copy is
+    # still current. Without this a phone browser kept some of yesterday's files after a deploy, mixed
+    # them with new ones, and the dashboard did not start (Greg's phone, 21 Nov).
+    async def _ui_revalidate(request, response):
+        if request.path.startswith("/ui/") and "Cache-Control" not in response.headers:
+            response.headers["Cache-Control"] = "no-cache"
+    app.on_response_prepare.append(_ui_revalidate)
     app["runner"] = runner
 
     # Agent sandbox runtime (NullBackend until E2), owned by the runner.
