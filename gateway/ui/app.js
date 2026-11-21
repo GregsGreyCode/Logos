@@ -11,7 +11,7 @@ import { advisorView } from './advisor.js';
 import { settingsView } from './settings.js';
 import { adoptPrefs } from './prefs.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
-import { h, api, getJSON, working, labelTables, icon, ICONS } from './util.js';
+import { h, api, getJSON, working, aiState, labelTables, icon, ICONS } from './util.js';
 import { adopt } from './appearance.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
@@ -159,10 +159,10 @@ setInterval(badge, 60000);
 const activity = async () => {
   if (document.visibilityState !== 'visible') return;
   try {
-    const { working: names } = await getJSON('/api/v2/activity');
+    const { working: names, model_up: up } = await getJSON('/api/v2/activity');
     working('agents', names.length > 0);
-    const label = names.length ? `Working: ${names.join(', ')}` : '';
-    for (const el of document.querySelectorAll('.logo')) { el.title = label; }
+    aiState(up);
+    if (names.length) for (const el of document.querySelectorAll('.logo')) el.title = `Working: ${names.join(', ')}`;
   } catch (e) { /* the dashboard restarting: try again next time */ }
 };
 activity();

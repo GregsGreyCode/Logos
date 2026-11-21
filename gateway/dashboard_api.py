@@ -581,12 +581,17 @@ async def agent_is_working(client: Any, now: float) -> bool:
 
 
 async def handle_activity(request: web.Request) -> web.Response:
-    """GET /api/v2/activity — {"working": [names]}: the user's agents that are working right now."""
+    """GET /api/v2/activity — {"working": [names], "model_up": bool|None}: the user's agents that are
+    working right now, and whether the AI computer is on (any of their agents' model servers answering;
+    None when none uses a local model). The logo shows both (Greg, 21 Nov)."""
     import time as _time
     user = _user(request)
     links = request.app.get("agent_links")
+    visible = await _visible_agents(request, user["username"])
+    ups = [await model_server_up(request, a["definition"]) for a in visible.values()]
+    model_up = True if any(u is True for u in ups) else (False if any(u is False for u in ups) else None)
     if links is None:
-        return web.json_response({"working": []})
+        return web.json_response({"working": [], "model_up": model_up})
     cache = request.app.setdefault("activity_cache", {})
     now = _time.time()
     backend = request.app.get("sandbox_backend")
@@ -595,7 +600,7 @@ async def handle_activity(request: web.Request) -> web.Response:
     except Exception:
         states = {}
     working = []
-    for name in await _visible_agents(request, user["username"]):
+    for name in visible:
         if not (states.get(name) and states[name].running):
             continue
         hit = cache.get(name)
@@ -609,7 +614,7 @@ async def handle_activity(request: web.Request) -> web.Response:
             cache[name] = (now, busy)
         if busy:
             working.append(name)
-    return web.json_response({"working": sorted(working)})
+    return web.json_response({"working": sorted(working), "model_up": model_up})
 
 
 # ── agent status ─────────────────────────────────────────────────────────────

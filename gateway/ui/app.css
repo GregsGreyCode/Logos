@@ -1378,3 +1378,10 @@ section:has(> .appearance-modes.single) { display: none; }
 /* Sliding between Home and Agents moves the main area sideways; it must never make the page wider than
    the screen, or the phone re-fits the page and the tab bar jumps (Greg, 21 Nov). */
 .shell { overflow-x: clip; }       /* not on body: the browser hands body's overflow to the window, where it does not clip */
+
+/* The logo is the AI computer's light (Greg, 21 Nov): in colour when it is on, grey when it is off, and
+   cycling through colours while an agent works (.busy, above). Replaces the dot on Home. */
+.logo, :root[data-theme="light"] .logo { filter: none; }
+.ai-off .logo:not(.busy), :root[data-theme="light"].ai-off .logo:not(.busy) { filter: grayscale(1); opacity: .45; }
+.void-field .agent-mark[data-href] { cursor: pointer; }
+.void-field .agent-mark, .void-field .agent-mark * { -webkit-user-drag: none; -webkit-tap-highlight-color: transparent; }

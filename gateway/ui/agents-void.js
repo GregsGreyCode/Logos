@@ -111,15 +111,17 @@ export async function voidView(root, agents, others = []) {
     lastMoods = m;
     if (busy) { redrawWanted = true; return; }               // never redraw under a finger
     field.replaceChildren(...all.map(({ a, mine }, i) => {
-      const el = mine ? mark(a, { size: 'big', mood: m[a.name] || 'asleep', href: `#/chat/${a.name}` })
-        : mark(a, { size: 'big', mood: a.running === false ? 'off' : 'asleep' });
+      // Not a real link (Greg, 21 Nov): a long press on one made Android offer to copy or save it. A tap
+      // still opens the chat (the click handler below), and Enter does too.
+      const el = mark(a, { size: 'big', mood: mine ? (m[a.name] || 'asleep') : (a.running === false ? 'off' : 'asleep') });
+      if (mine) { el.dataset.href = `#/chat/${a.name}`; el.setAttribute('role', 'link'); el.tabIndex = 0; }
       if (!mine) {
         el.classList.add('private');
         el.title = `${a.display_name} · private to its owner`;
         el.setAttribute('aria-label', `${a.display_name}: private to its owner`);
         el.querySelector('.mark-label span')?.replaceChildren(icon(ICONS.lock), ' Private');
       } else {
-        el.setAttribute('aria-label', `${el.getAttribute('aria-label')}. Hold to move it, or keep holding to send a voice note`);
+        el.setAttribute('aria-label', `${el.getAttribute('aria-label')}. Talk to it. Hold to move it, or keep holding to send a voice note`);
       }
       el.classList.add(`drift-${i % 3}`);
       const [x, y] = spot(i, all.length);
@@ -240,7 +242,7 @@ export async function voidView(root, agents, others = []) {
     const el = e.target.closest('.agent-mark');
     if (!el || g || (e.pointerType === 'mouse' && e.button !== 0)) return;
     swallowClick = false;
-    g = { el, name: el.dataset.agent, mine: el.tagName === 'A', id: e.pointerId, x0: e.clientX, y0: e.clientY, lifted: false, drag: false, rec: null };
+    g = { el, name: el.dataset.agent, mine: !!el.dataset.href, id: e.pointerId, x0: e.clientX, y0: e.clientY, lifted: false, drag: false, rec: null };
     busy = true;
     g.t1 = setTimeout(() => {
       if (!g) return;
@@ -253,6 +255,8 @@ export async function voidView(root, agents, others = []) {
   });
   // A hold is not a tap: no link opened, no long-press menu.
   field.addEventListener('click', (e) => { if (swallowClick) { e.preventDefault(); e.stopPropagation(); swallowClick = false; } }, true);
+  field.addEventListener('click', (e) => { const el = e.target.closest('.agent-mark[data-href]'); if (el) location.hash = el.dataset.href; });
+  field.addEventListener('keydown', (e) => { const el = e.target.closest('.agent-mark[data-href]'); if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); location.hash = el.dataset.href; } });
   field.addEventListener('contextmenu', (e) => { if (e.target.closest('.agent-mark')) e.preventDefault(); });
   field.addEventListener('dragstart', (e) => e.preventDefault());
 
