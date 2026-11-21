@@ -32,10 +32,35 @@ export async function homeView(root) {
     strip.replaceChildren(
       cell('Working', act ? String(act.working.length) : '–', act && act.working.length === 1 ? 'agent' : 'agents', act && act.working.length),
       cell('AI speed', sp && sp.median_tokens_per_s ? String(Math.round(sp.median_tokens_per_s)) : '–', 'tok/s'),
-      cell('Queue', q ? String(q.waiting) : '–', q && q.running ? `waiting · ${q.running} running` : 'waiting'));
+      // Just what is waiting: what is running is the Working tile (Greg, 21 Nov: the longer words broke the tile).
+      cell('Queue', q ? String(q.waiting) : '–', 'waiting'));
   }
 
   let data = null;
+
+  // The household's shared lists (Greg, 21 Nov), from the copy the household agent keeps in its brain
+  // (lists.md, refreshed every 15 minutes): each list, how many things are on it, and the first few.
+  const listsBox = h('div', { class: 'home-lists-row' });
+  const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists', hidden: true },
+    h('h2', { class: 'label' }, 'Lists'), listsBox);
+  async function showLists() {
+    let page;
+    try { page = await getJSON('/api/v2/agents/household/brain/page?path=lists.md'); } catch (e) { return; }
+    if (!alive || !page || !page.text) return;
+    const lists = [];
+    for (const line of String(page.text).split('\n')) {
+      const head = line.match(/^##\s+(.+)/);
+      if (head) { lists.push({ name: head[1].trim(), items: [] }); continue; }
+      const item = line.match(/^- \[ \]\s+(.+)/);
+      if (item && lists.length) lists[lists.length - 1].items.push(item[1].replace(/\s*\(due [^)]*\)\s*$/, '').trim());
+    }
+    const shown = lists.filter((l) => l.items.length);
+    listsSec.hidden = !lists.length;
+    listsBox.replaceChildren(...(shown.length ? shown.map((l) => h('a', { class: 'home-list-card', href: '#/brain/household/lists.md' },
+      h('span', { class: 'home-list-head' }, h('strong', {}, l.name), h('span', { class: 'home-list-count' }, String(l.items.length))),
+      h('span', { class: 'home-list-items' }, l.items.slice(0, 3).join(' · ') + (l.items.length > 3 ? ` · +${l.items.length - 3}` : ''))))
+      : [none('Every list is empty.')]));
+  }
 
   function showToday(today) {
     if (!today || today.error) {
@@ -111,6 +136,7 @@ export async function homeView(root) {
     // "Since yesterday" lives in Notifications now (Greg, 21 Nov).
     waitingSec.hidden = !nb.waiting.length;
     showStrip();
+    showLists();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
 
@@ -131,6 +157,7 @@ export async function homeView(root) {
     waitingSec,
     h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox),
     strip,
+    listsSec,
     askForm));                                   // at the bottom (Greg, 21 Nov)                                   // under Today and Tomorrow (Greg, 21 Nov)
 
   fromLast();

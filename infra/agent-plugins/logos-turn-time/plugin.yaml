@@ -1,0 +1,9 @@
+name: logos-turn-time
+label: Logos time since the last message
+kind: standalone
+version: 1.0.0
+description: >
+  When a message arrives an hour or more after the conversation's last one, the agent is told how
+  long it has been, so it does not read a new question as the answer to something it asked hours ago.
+author: Logos
+provides_hooks: [pre_llm_call]
