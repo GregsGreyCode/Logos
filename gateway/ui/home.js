@@ -57,7 +57,7 @@ export async function homeView(root) {
     const todays = rows.filter((e) => String(e.start).startsWith(day));
     const later = rows.filter((e) => !String(e.start).startsWith(day));
     const whose = (e) => (e.kind === 'busy' ? e.who
-      : e.calendar === 'personal' ? 'Yours' : (today.calendars || {})[e.calendar] || e.calendar);
+      : e.calendar === 'personal' ? 'Yours' : String((today.calendars || {})[e.calendar] || e.calendar).replace(/\s*\(.*\)\s*$/, ''));
     const row = (e) => h('div', { class: 'home-row' },
       h('span', { class: 'home-time' }, timeOf(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
@@ -141,8 +141,8 @@ export async function homeView(root) {
       ? new Date(data.model_off_since * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
     status.replaceChildren(h('span', { class: `status ${data.model_up === false ? 'down' : 'up'}` },
       data.model_up === false
-        ? `The AI computer is off${offSince ? ` since ${offSince}` : ''}: the agents will answer what's waiting when it's back on`
-        : 'The AI computer is on'));
+        ? `AI computer off${offSince ? ` since ${offSince}` : ''} · replies when it's back`
+        : 'AI computer on'));
     setBadge(nb.waiting.length);
     waitingLabel.textContent = nb.waiting.length ? `Waiting on you · ${nb.waiting.length}` : 'Waiting on you';
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
@@ -151,7 +151,8 @@ export async function homeView(root) {
     const anyDone = showDone(nb.log);
     const noWait = !nb.waiting.length;
     waitingSec.hidden = noWait; doneSec.hidden = !anyDone;
-    const said = [noWait ? 'nothing waiting on you' : '', anyDone ? '' : 'nothing new since yesterday'].filter(Boolean).join(' · ');
+    const said = noWait && !anyDone ? 'all clear since yesterday'
+      : [noWait ? 'nothing waiting on you' : '', anyDone ? '' : 'nothing new since yesterday'].filter(Boolean).join(' · ');
     quiet.textContent = said ? said[0].toUpperCase() + said.slice(1) + '.' : '';
     quiet.hidden = !said;
     showStrip();

@@ -8,10 +8,10 @@ import { getPref, setPref } from './prefs.js';
 import { updatesView } from './updates.js';
 
 const SECTIONS = [
-  { id: 'appearance', name: 'Appearance' },
-  { id: 'account', name: 'Your account' },
+  { id: 'appearance', name: 'Look', full: 'Appearance' },
+  { id: 'account', name: 'Account', full: 'Your account' },
   { id: 'chat', name: 'Chat' },
-  { id: 'matrix', name: 'Matrix device' },
+  { id: 'matrix', name: 'Matrix', full: 'Matrix device' },
   { id: 'updates', name: 'Updates', admin: true },
 ];
 
@@ -27,7 +27,7 @@ function colourRow(name, help, list, value, onPick, resettable) {
     swatches.replaceChildren(
       ...list.map((c) => h('button', { type: 'button', class: 'swatch-btn', role: 'radio', 'aria-checked': String(c === v),
         'aria-label': c, title: c, style: `background:${c}`, onclick: () => { paint(c); onPick(c); } })),
-      h('label', { class: 'swatch-pick' }, 'Any colour',
+      h('label', { class: 'swatch-pick', title: 'Any colour' }, h('span', { class: 'btn-words' }, 'Any colour'),
         h('input', { type: 'color', value: v || list[0], 'aria-label': `${name}: any colour`,
           onchange: (e) => { paint(e.target.value); onPick(e.target.value); } })),
       ...(resettable && v ? [h('button', { type: 'button', class: 'swatch-reset', onclick: () => { paint(''); onPick(''); } }, 'The look’s own')] : []));
@@ -44,11 +44,13 @@ function appearance() {
   const agentsBox = h('div', { class: 'settings-choices' }, h('p', { class: 'none' }, 'Loading…'));
   // Agent colours: the same for everyone. You set those you may use (your own, the household's).
   getJSON('/api/v2/agents').then((d) => {
-    const fixed = (d.others || []).map((a) => h('div', { class: 'colour-row' },
-      h('div', { class: 'who' }, h('strong', {}, a.display_name), h('span', { class: 'when' }, 'Its owner chooses this one')),
-      h('div', { class: 'swatches' }, agentColour(a.name)
-        ? h('span', { class: 'swatch-fixed', style: `background:${agentColour(a.name)}` })
-        : h('span', { class: `dot ${a.name}`, style: 'width:24px;height:24px' }))));
+    // Agents you cannot recolour: one line of their dots, set by their owners.
+    const others = d.others || [];
+    const fixed = others.length ? [h('div', { class: 'colour-row' },
+      h('div', { class: 'who' }, h('strong', {}, 'Other agents'), h('span', { class: 'when' }, 'Set by their owners')),
+      h('div', { class: 'swatches fixed-list' }, others.map((a) => h('span', { class: 'fixed-agent', title: a.display_name },
+        agentColour(a.name) ? h('span', { class: 'swatch-fixed', style: `background:${agentColour(a.name)}` })
+          : h('span', { class: `dot ${a.name}`, style: 'width:20px;height:20px' }), a.display_name.replace(/\s+agent$/i, '')))))] : [];
     agentsBox.replaceChildren(...(d.agents || []).map((a) => colourRow(a.display_name,
       a.shared ? 'Shared: either of you can change it' : 'Everyone sees this colour', SWATCHES.agent, agentColour(a.name),
       (c) => { setAgentColour(a.name, c); say(cNote, api(`/api/v2/agents/${a.name}/colour`, { method: 'PUT', body: { colour: c } }).then((r) => r.ok)); },
@@ -66,14 +68,14 @@ function appearance() {
     h('section', { 'aria-label': 'Your colours' }, heading('Your colours'),
       colourRow('Primary and glow', 'Buttons, links, the glow', SWATCHES.primary, mine.primary, pickMine('primary'), true),
       colourRow('Attention', 'Anything waiting on you, and the Noticeboard badge', SWATCHES.attention, mine.attention, pickMine('attention'), true),
-      h('p', { class: 'when' }, 'Logos keeps text readable whatever you pick, so a colour may be shown a shade lighter or darker.')),
+      h('p', { class: 'when' }, 'Colours may be adjusted slightly to stay readable.')),
     h('section', { 'aria-label': 'Agent colours' }, heading('Agent colours'), agentsBox, cNote),
     h('section', { 'aria-label': 'Motion' }, heading('Motion'),
       h('div', { class: 'settings-choices' },
         radio('motion', 'full', 'Full', 'The agents wander, breathe and cycle colour while they think.', motion, pickMotion),
         radio('motion', 'calm', 'Calm', 'Slow breathing and a slow drift; thinking still cycles colour.', motion, pickMotion),
         radio('motion', 'still', 'Still', 'Nothing moves: colour and glow show each state.', motion, pickMotion))),
-    h('section', { 'aria-label': 'Agent names' }, heading('Agent names on their marks'),
+    h('section', { 'aria-label': 'Agent names', class: 'wide-only' }, heading('Agent names on their marks'),
       h('div', { class: 'settings-choices' },
         radio('names', 'hover', 'When you point at one', 'On a phone they are always shown.', names, pickNames),
         radio('names', 'always', 'Always', 'Each mark has its name and mood under it.', names, pickNames)), mNote),
@@ -101,9 +103,9 @@ function account(state) {
       for (const el of document.querySelectorAll('.who')) el.textContent = body.display_name;
     }
   } },
-  h('p', { class: 'when' }, `You sign in as ${state.me.username}. That stays the same, so you keep your agents.`),
+  h('p', { class: 'when' }, `Username: ${state.me.username} (it never changes)`),
   nl, name, cl, cur, pl, next,
-  h('p', { class: 'when' }, 'Leave the password boxes empty to change only your name.'),
+  h('p', { class: 'when' }, 'Leave blank to keep your password.'),
   h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn' }, 'Save')), note)];
 }
 
@@ -118,7 +120,7 @@ function chat() {
     h('input', { type: 'checkbox', checked: getPref(key, false), onchange: (e) => saved(setPref(key, e.target.checked)) }),
     h('span', {}, h('strong', {}, label), h('span', { class: 'when block' }, help)));
   return [
-    h('section', { 'aria-label': 'Conversations panel' }, heading('Conversations panel (desktop)'),
+    h('section', { 'aria-label': 'Conversations panel', class: 'wide-only' }, heading('Conversations panel (desktop)'),
       h('div', { class: 'settings-choices', role: 'radiogroup', 'aria-label': 'Conversations panel' },
         choice('slide', 'Slides away', 'Shows for a moment when Chat opens, then tucks into a tab on the right.'),
         choice('open', 'Stays open', 'Always beside the conversation; hide it with its own button.'))),
@@ -182,13 +184,13 @@ function matrix(state, redraw) {
     box.replaceChildren(steps(2),
       h('div', { class: 'mx-ok', title: `This browser is a verified device of ${me}.` }, '✓ Verified'),
       h('h2', { class: 'label' }, 'Your devices'), list, msg,
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: async () => {
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn danger', onclick: async () => {
         if (!confirm('Disconnect this browser? It signs out of Matrix here and forgets its keys.')) return;
         await mx.disconnect(); show();
       } }, 'Disconnect this browser')));
     const devs = (await mx.devices()).sort((a, b) => Number(b.here) - Number(a.here) || b.lastSeen - a.lastSeen);
     list.replaceChildren(...devs.map((d) => h('div', { class: 'row-item mx-device' },
-      h('span', { class: 'row-main' }, d.here ? `${d.name} (this browser)` : d.name),
+      h('span', { class: 'row-main' }, d.here ? `${d.name.replace(/^Logos \((.*)\)$/, 'Logos · $1')} · this browser` : d.name),
       h('span', { class: `row-meta ${d.verified ? 'ok' : 'warn'}` },
         `${d.verified ? 'Verified' : 'Not verified: agents will not answer it'}${d.lastSeen ? ` · seen ${when(d.lastSeen / 1000)}` : ''}`),
       d.here ? null : h('button', { type: 'button', class: 'linkish mx-signout', onclick: async (e) => {
@@ -218,7 +220,7 @@ export async function settingsView(root, [section], state) {
   const body = h('div', { class: 'settings-body' });
   let done = null;
   const tabs = h('nav', { class: 'settings-tabs', 'aria-label': 'Settings sections' },
-    shown.map((s) => h('a', { href: `#/settings/${s.id}`, class: 'settings-tab', 'aria-current': s.id === id ? 'page' : null }, s.name)));
+    shown.map((s) => h('a', { href: `#/settings/${s.id}`, class: 'settings-tab', title: s.full || s.name, 'aria-current': s.id === id ? 'page' : null }, s.name)));
   root.replaceChildren(h('div', { class: 'page settings' },
     h('header', {}, h('h1', {}, 'Settings')),
     h('div', { class: 'settings-layout' }, tabs, body)));

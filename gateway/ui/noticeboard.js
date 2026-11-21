@@ -114,7 +114,7 @@ export async function noticeboardView(root) {
 
   root.replaceChildren(h('div', { class: 'page' },
     h('header', {}, h('h1', {}, 'Noticeboard'),
-      h('p', { class: 'when lead' }, 'What the agents have asked each other. Another agent can only ask. Nothing is answered or done until you decide.')),
+      h('p', { class: 'when lead' }, 'What the agents asked each other. Nothing happens until you decide.')),
     error,
     allNone, waitSec,
     h('section', { 'aria-label': 'Recent messages', class: 'nb-log' }, h('h2', { class: 'label' }, 'Recent messages'),

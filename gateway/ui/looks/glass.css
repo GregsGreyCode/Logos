@@ -62,14 +62,15 @@
 
 @media (max-width: 720px) {
   /* The tab bar floats above the page as one pill */
-  [data-look="glass"] .tabbar { left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom));
-    padding-bottom: 0; border: var(--card-border); border-radius: 32px; overflow: hidden;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28); }
+  /* Glued to the bottom edge (Greg, 21 Nov), solid rather than blurred: Chrome on Android sometimes
+     does not paint a fixed, backdrop-blurred bar until the page is scrolled. */
+  [data-look="glass"] .tabbar { left: 0; right: 0; bottom: 0; padding-bottom: env(safe-area-inset-bottom);
+    border: 0; border-top: 1px solid var(--line); border-radius: 0; overflow: visible; box-shadow: none;
+    background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  [data-look="glass"] .topbar { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
   [data-look="glass"] .tabbar a, [data-look="glass"] .tabbar button { border-top: 0; min-height: 58px; }
   [data-look="glass"] .tabbar [aria-current="page"] { border-image: none; background: var(--accent-soft); }
-  [data-look="glass"] .main { padding-bottom: calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom)); }
-  [data-look="glass"] .chat { height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - 24px - env(safe-area-inset-top)
-    - env(safe-area-inset-bottom)); }
+  [data-look="glass"] .main { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); }
   [data-look="glass"] .topbar { border-bottom-color: transparent; }
   [data-look="glass"] .composer { background: transparent; border-top: 0; -webkit-backdrop-filter: none; backdrop-filter: none; }
   [data-look="glass"] .chat-head { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
