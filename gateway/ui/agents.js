@@ -39,9 +39,9 @@ export async function agentsView(root, [agentArg]) {
       h('span', { class: `status ${a.running ? 'up' : ''}` }, a.running ? 'Running' : 'Not running'),
       a.shared ? h('span', { class: 'when' }, 'Shared with the household') : null)),
     data.others.map((a) => h('div', { class: 'card agent-card other' },
-      h('div', { class: 'card-head' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), h('strong', {}, a.display_name)),
-      h('span', { class: 'status' }, a.running ? 'Running' : 'Not running'),
-      h('span', { class: 'when' }, 'Private to someone else. You can see that it is up, nothing more.'))));
+      h('div', { class: 'card-head' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), h('strong', {}, a.display_name),
+        h('span', { class: 'chip-lock', title: 'Private to someone else: you can see that it is up, nothing more', 'aria-label': 'private' }, icon(ICONS.lock))),
+      h('span', { class: 'status' }, a.running ? 'Running' : 'Not running'))));
 
   // P3/P4 on a phone: the agents as a row of chips (one dot each; others' dashed and private), with
   // the chosen one's state on a quiet line under them. The desktop keeps the cards.
@@ -67,7 +67,7 @@ export async function agentsView(root, [agentArg]) {
     const rows = (st.jobs || []).map((j) => h('tr', {},
       h('td', {}, j.label), h('td', { class: 'when' }, schedule(j.schedule)),
       h('td', {}, j.managed
-        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad' }, `${runTime(j.last_run)}, ${j.last_ok ? 'fine' : 'failed'}`) : h('span', { class: 'when' }, 'Not yet run'))
+        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad', title: j.last_ok ? 'Ran fine' : 'Failed' }, `${j.last_ok ? '✓' : '✕ failed'} ${runTime(j.last_run).replace(/^Today /, '')}`) : h('span', { class: 'when' }, 'Not yet run'))
         : h('button', { type: 'button', class: 'btn quiet small-btn', onclick: async (e) => {
           e.target.disabled = true;
           const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/cancel`, { method: 'POST' });
@@ -95,35 +95,30 @@ export async function agentsView(root, [agentArg]) {
         h('div', { class: 'rows' },
           setupRow('Model', `${m.local ? 'Local' : 'Hosted'} · ${m.name}${m.up === false ? ' · not answering' : ''}`),
           setupRow('Can reach', st.reach.allowed.join(', '), 'ok'),
-          setupRow('Cannot reach', st.reach.blocked.join(', '), 'bad')),
-        h('p', { class: 'when' }, 'Enforced by the sandbox, not by the agent.'))));
+          setupRow('Cannot reach', st.reach.blocked.join(', '), 'bad')))));
     detail.replaceChildren(phone, h('div', { class: 'wide-only two-col-wrap' }, h('div', { class: 'two-col' },
       h('section', { class: 'card', 'aria-label': 'Scheduled jobs' },
         h('h2', {}, `What ${agent.display_name} does on its own`),
         st.jobs == null ? h('div', { class: 'notice' }, 'The agent did not answer, so its jobs could not be listed.')
           : h('div', { class: 'table-inline' }, h('table', { class: 'plain' },
             h('thead', {}, h('tr', {}, ['Job', 'When', 'Last run'].map((t) => h('th', { scope: 'col' }, t)))),
-            h('tbody', {}, rows))),
-        h('p', { class: 'when' }, 'Reminders the agent set for you can be cancelled here. The rest is how it keeps its brain in order.')),
+            h('tbody', {}, rows)))),
       h('div', { class: 'stack' },
         h('section', { class: 'card', 'aria-label': 'Model' },
           h('h2', {}, 'Model'),
           kv('Model', `${m.local ? 'Local' : 'Hosted'} · ${m.name}`),
           m.up === false ? h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Model server'),
-            h('span', {}, 'Not answering. The agent cannot reply or run its model jobs until it is back on.')) : null,
+            h('span', {}, 'Not answering')) : null,
           // The brain stays local: agents use only the local model. Paid providers and their
           // limit show only if one were ever attached again.
           m.paid_providers.length ? kv('Paid providers', m.paid_providers.join(', ')) : null,
           m.paid_providers.length && st.budget.monthly_usd != null
             ? kv('Monthly limit on paid models', `$${st.budget.monthly_usd.toFixed(2)}`) : null,
-          h('p', { class: 'when' }, m.paid_providers.length
-            ? 'At the limit, paid calls are refused until next month.'
-            : 'The brain stays local: this agent uses only the model on the home server, so nothing it knows is sent anywhere and nothing is spent.')),
+          m.paid_providers.length ? h('p', { class: 'when' }, 'At the limit, paid calls are refused until next month.') : null),
         h('section', { class: 'card', 'aria-label': 'What it can reach' },
           h('h2', {}, 'What it can reach'),
           h('div', { class: 'kv' }, h('span', { class: 'ok strong' }, 'Allowed'), h('span', {}, st.reach.allowed.join(', '))),
-          h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Blocked'), h('span', {}, st.reach.blocked.join(', '))),
-          h('p', { class: 'when' }, 'Enforced by the sandbox, not by the agent.'))))));
+          h('div', { class: 'kv' }, h('span', { class: 'bad strong' }, 'Blocked'), h('span', {}, st.reach.blocked.join(', '))))))));
   }
 
   root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Agents'),
