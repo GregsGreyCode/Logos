@@ -15,9 +15,10 @@ export function mark(agent, { size = 'big', mood = 'asleep', href = null, curren
   return h(tag, { class: `agent-mark ${size} mood-${mood}${current ? ' current' : ''}`, href: href || null,
     style: `--mark: var(--agent-${agent.name}, var(--${agent.name}, var(--accent)))`, 'data-agent': agent.name,
     'aria-label': `${agent.display_name}: ${MOODS[mood]}${href ? '. Talk to it' : ''}`, title: `${agent.display_name} · ${MOODS[mood]}` },
+  // The name rides inside the drifting part, so it moves and tilts with its mark (Greg, 21 Nov).
   h('span', { class: 'mark-fx', 'aria-hidden': 'true' }, h('span', { class: 'mark-fy' },
-    h('span', { class: 'mark-glow' }, h('span', { class: 'mark-glyph' })))),
-  h('span', { class: 'mark-label', 'aria-hidden': 'true' }, h('strong', {}, agent.display_name), h('span', {}, MOODS[mood])));
+    h('span', { class: 'mark-glow' }, h('span', { class: 'mark-glyph' })),
+    h('span', { class: 'mark-label' }, h('strong', {}, agent.display_name), h('span', {}, MOODS[mood])))));
 }
 
 // Each agent's state, from its Matrix room (this browser), the Noticeboard and the agent list.
