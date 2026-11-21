@@ -396,9 +396,9 @@ def lists_service(lists=None, domains=("light", "scene", "todo")):
 
 def test_list_items_open_and_done():
     svc, _ = lists_service()
-    assert svc.list_items("household") == {"lists": [{"list": "Shopping list", "open": ["Peas"]}]}
+    assert svc.list_items("household") == {"lists": [{"list": "Shopping list", "id": "todo.shopping_list", "open": ["Peas"]}]}
     assert svc.list_items("household", "the shopping list", done=True) == {
-        "lists": [{"list": "Shopping list", "open": ["Peas"], "done": ["Lemons"]}]}
+        "lists": [{"list": "Shopping list", "id": "todo.shopping_list", "open": ["Peas"], "done": ["Lemons"]}]}
 
 
 def test_add_items_skips_duplicates_and_reopens_ticked_ones():
@@ -476,6 +476,8 @@ def test_lists_mirror_writes_only_when_the_lists_change(tmp_path):
     assert "- [ ] Ceremony (due 2026-12-01)\n    banns, hymns\n" in rich
     assert "- [ ] Peas\n- [ ] 2 lemons\n" in text and "## To-do\n\nNothing on it." in text
     assert "Do not edit it here" in text
+    with_id = lm.render([{"list": "Shopping list", "id": "todo.shopping_list", "open": ["Peas"]}])
+    assert "## Shopping list\n\n<!-- todo.shopping_list -->\n- [ ] Peas\n" in with_id      # for the dashboard's links
     assert lm.write_if_changed(text, str(page)) is True
     first = page.read_text()
     assert "Last changed " in first
