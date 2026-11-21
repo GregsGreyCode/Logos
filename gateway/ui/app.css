@@ -1493,3 +1493,16 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .feed-item.type-update .feed-title { font-weight: 500; }
 .feed.needs:empty { display: none; }
 .feed.needs { margin-top: 8px; }
+
+/* Home: the household's lists (Greg, 21 Nov), one small card each. */
+.home-lists-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.home-list-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border-radius: var(--r-card);
+  background: var(--surface); border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+.home-list-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.home-list-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-list-count { flex: none; min-width: 22px; padding: 0 7px; border-radius: 999px; text-align: center; font-size: var(--t-xs); font-weight: 700;
+  color: var(--accent-text); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.home-list-items { font-size: var(--t-sm); color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+[data-look="warm"] .home-list-card { border: 0; background: var(--card-bg); box-shadow: var(--card-shadow); }
+[data-look="hud"] .home-list-card { border-radius: 0; }
+.home > .home-lists { grid-column: 1 / -1; }

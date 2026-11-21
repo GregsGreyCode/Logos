@@ -55,7 +55,7 @@ MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
 #: The advisor tools let through the sandbox rule (gateway/advisor_service.py TOOL_NAMES).
 ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
-LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat")
+LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
