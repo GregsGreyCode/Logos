@@ -1360,3 +1360,17 @@ section:has(> .appearance-modes.single) { display: none; }
 [data-motion="still"] #view.slide-in-right, [data-motion="still"] #view.slide-in-left { animation: none; }
 @media (prefers-reduced-motion: reduce) { #view.slide-in-right, #view.slide-in-left { animation: none; } }
 @media (max-width: 599px) { html.screen-tabbed:not(.in-agent) { overscroll-behavior-x: none; } }
+
+/* Holding a floating agent (agents-void): lifted after half a second, then moved onto another to swap,
+   or held still to record a voice note for it (Greg, 21 Nov). */
+.void-field .agent-mark { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.void-field .agent-mark .mark-glow { transition: transform .2s cubic-bezier(.2, .8, .2, 1), box-shadow .2s; }
+.void-field .agent-mark.lifted { z-index: 5; }
+.void-field .agent-mark.lifted .mark-glow { transform: scale(1.14); }
+.void-field .agent-mark.dragging { z-index: 6; transition: none; cursor: grabbing; }
+.void-field .agent-mark.dragging .mark-fx, .void-field .agent-mark.dragging .mark-fy { animation-play-state: paused; }
+.void-field .agent-mark.drop-target .mark-glow { transform: scale(.9); box-shadow: 0 0 0 3px var(--mark); }
+.void-field .agent-mark.recording .mark-glow { box-shadow: 0 0 0 4px var(--danger, #e5484d); animation: mark-rec 1.2s ease-in-out infinite; }
+.void-field .agent-mark.recording .mark-label > span { color: var(--danger, #e5484d); font-weight: 600; }
+@keyframes mark-rec { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--danger, #e5484d) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .void-field .agent-mark.recording .mark-glow { animation: none; } }

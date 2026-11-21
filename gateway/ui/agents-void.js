@@ -75,41 +75,194 @@ export async function moods(agents) {
   return out;
 }
 
+// A voice note recorded on the void, handed to the chat it opens (taken once, like Home's Ask).
+let handed = null;
+export function takeVoice(agent) {
+  if (!handed || handed.agent !== agent) return null;
+  const blob = handed.blob; handed = null; return blob;
+}
+
+// The order the person put the agents in (this device), by dragging them (Greg, 21 Nov).
+const ORDER_KEY = 'logos.void.order';
+const savedOrder = () => { try { return JSON.parse(localStorage.getItem(ORDER_KEY) || '[]'); } catch (e) { return []; } };
+const saveOrder = (names) => { try { localStorage.setItem(ORDER_KEY, JSON.stringify(names)); } catch (e) { /* private window */ } };
+
 // The void: every agent floating, nothing else, until you pick one.
+// Press and hold a mark (half a second) to lift it, then move it onto another to swap places. Keep holding
+// still for a second and it records: let go and the voice note goes to that agent, in its chat (Greg, 21 Nov).
 export async function voidView(root, agents, others = []) {
   let alive = true;
   const field = h('div', { class: 'void-field' });
+  const ask = h('p', { class: 'void-ask' }, 'Who do you want to talk to?');
   // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
-  // off to the left). Yours first, then the private ones.
-  const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
+  // off to the left). Yours first, then the private ones, unless the person has moved them.
+  let all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
+  const order = savedOrder();
+  const rank = (n) => { const i = order.indexOf(n); return i < 0 ? 1000 : i; };
+  all = all.map((x, i) => ({ ...x, i })).sort((x, y) => rank(x.a.name) - rank(y.a.name) || x.i - y.i);
   const spot = (i, n) => {
     const x = n === 1 ? 50 : 18 + (64 * i) / (n - 1);
     const y = [44, 34, 54, 40, 50, 36][i % 6];
     return [x, y];
   };
-  const draw = (m) => field.replaceChildren(...all.map(({ a, mine }, i) => {
-    const el = mine ? mark(a, { size: 'big', mood: m[a.name] || 'asleep', href: `#/chat/${a.name}` })
-      : mark(a, { size: 'big', mood: a.running === false ? 'off' : 'asleep' });
-    if (!mine) {
-      el.classList.add('private');
-      el.title = `${a.display_name} · private to its owner`;
-      el.setAttribute('aria-label', `${a.display_name}: private to its owner`);
-      el.querySelector('.mark-label span')?.replaceChildren(icon(ICONS.lock), ' Private');
+  let lastMoods = Object.fromEntries(agents.map((a) => [a.name, 'asleep']));
+  let busy = false, redrawWanted = false;
+  const draw = (m) => {
+    lastMoods = m;
+    if (busy) { redrawWanted = true; return; }               // never redraw under a finger
+    field.replaceChildren(...all.map(({ a, mine }, i) => {
+      const el = mine ? mark(a, { size: 'big', mood: m[a.name] || 'asleep', href: `#/chat/${a.name}` })
+        : mark(a, { size: 'big', mood: a.running === false ? 'off' : 'asleep' });
+      if (!mine) {
+        el.classList.add('private');
+        el.title = `${a.display_name} · private to its owner`;
+        el.setAttribute('aria-label', `${a.display_name}: private to its owner`);
+        el.querySelector('.mark-label span')?.replaceChildren(icon(ICONS.lock), ' Private');
+      } else {
+        el.setAttribute('aria-label', `${el.getAttribute('aria-label')}. Hold to move it, or keep holding to send a voice note`);
+      }
+      el.classList.add(`drift-${i % 3}`);
+      const [x, y] = spot(i, all.length);
+      el.style.setProperty('--x', `${x}%`);
+      el.style.setProperty('--y', `${y}%`);
+      el.draggable = false;
+      return el;
+    }));
+  };
+
+  // Smooth moves: each mark glides from where it was to where it now is (FLIP, on `translate`, which
+  // leaves the marks' own transform alone).
+  const rects = () => Object.fromEntries([...field.querySelectorAll('.agent-mark')].map((el) => [el.dataset.agent, el.getBoundingClientRect()]));
+  function glide(before) {
+    const still = document.documentElement.dataset.motion === 'still' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (still) return;
+    for (const el of field.querySelectorAll('.agent-mark')) {
+      const was = before[el.dataset.agent]; if (!was) continue;
+      const now = el.getBoundingClientRect();
+      const dx = was.left - now.left, dy = was.top - now.top;
+      if (!dx && !dy) continue;
+      el.style.transition = 'none'; el.style.translate = `${dx}px ${dy}px`;
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        el.style.transition = 'translate .45s cubic-bezier(.2, .8, .2, 1)'; el.style.translate = '0px 0px';
+        el.addEventListener('transitionend', () => { el.style.transition = ''; el.style.translate = ''; }, { once: true });
+      }));
     }
-    el.classList.add(`drift-${i % 3}`);
-    const [x, y] = spot(i, all.length);
-    el.style.setProperty('--x', `${x}%`);
-    el.style.setProperty('--y', `${y}%`);
-    return el;
-  }));
+  }
+
+  // ── press, hold, move, record ────────────────────────────────────────────────────────────────
+  let g = null, swallowClick = false;
+  const LIFT_MS = 500, RECORD_MS = 1000, SLOP = 10;
+  const label = (el) => el.querySelector('.mark-label > span');
+  const tell = (t) => { ask.textContent = t; };
+  const resetAsk = () => { ask.textContent = 'Who do you want to talk to?'; };
+  function finish() {
+    if (!g) return;
+    clearTimeout(g.t1); clearTimeout(g.t2);
+    g.el.classList.remove('lifted', 'dragging', 'recording');
+    for (const el of field.querySelectorAll('.drop-target')) el.classList.remove('drop-target');
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp);
+    document.documentElement.classList.remove('holding-mark');
+    g = null; busy = false;
+    if (redrawWanted) { redrawWanted = false; const before = rects(); draw(lastMoods); glide(before); }
+  }
+  async function record() {
+    if (!g || g.drag || !g.mine) return;
+    const mine = g;
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      tell(window.isSecureContext ? 'This browser cannot record audio.' : 'The microphone only works on the https address.'); return;
+    }
+    mine.el.classList.add('recording'); navigator.vibrate?.(20);
+    label(mine.el)?.replaceChildren('Listening…');
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {
+      tell('The microphone is blocked. Allow it for this site, then hold again.'); if (g === mine) finish(); return;
+    }
+    if (g !== mine) { stream.getTracks().forEach((t) => t.stop()); tell('Microphone ready: hold an agent again to record.'); return; }
+    const recorder = new MediaRecorder(stream); const chunks = []; const started = Date.now();
+    recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
+    recorder.addEventListener('stop', () => {
+      stream.getTracks().forEach((t) => t.stop()); clearInterval(mine.tick);
+      if (!mine.send || !chunks.length || Date.now() - started < 600) { tell('Hold a little longer to record.'); return; }
+      handed = { agent: mine.name, blob: new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }) };
+      location.hash = `#/chat/${mine.name}`;
+    });
+    recorder.start();
+    mine.rec = recorder;
+    const tick = () => { const s = Math.floor((Date.now() - started) / 1000);
+      label(mine.el)?.replaceChildren(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
+      tell('Let go to send it'); if (s >= 300) onUp({ type: 'pointerup' }); };
+    tick(); mine.tick = setInterval(tick, 500);
+  }
+  function nearest(x, y) {
+    let best = null, bestD = Infinity;
+    for (const el of field.querySelectorAll('.agent-mark')) {
+      if (el === g.el) continue;
+      const r = el.getBoundingClientRect(); const d = Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y);
+      if (d < bestD) { best = el; bestD = d; }
+    }
+    return bestD < 140 ? best : null;
+  }
+  function onMove(e) {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
+    if (!g.lifted) { if (Math.hypot(dx, dy) > SLOP) finish(); return; }     // a swipe or a scroll, not a hold
+    if (g.rec || g.el.classList.contains('recording')) return;               // recording: hold still
+    if (!g.drag && Math.hypot(dx, dy) > SLOP) { g.drag = true; clearTimeout(g.t2); g.el.classList.add('dragging'); label(g.el)?.replaceChildren('Move me'); }
+    if (!g.drag) return;
+    g.el.style.translate = `${dx}px ${dy}px`;
+    const t = nearest(e.clientX, e.clientY);
+    for (const el of field.querySelectorAll('.drop-target')) if (el !== t) el.classList.remove('drop-target');
+    t?.classList.add('drop-target');
+  }
+  function onUp(e) {
+    if (!g || (e.pointerId !== undefined && e.pointerId !== g.id)) return;
+    const was = g;
+    if (was.lifted || was.drag || was.el.classList.contains('recording')) swallowClick = true;
+    if (was.rec) { was.send = e.type === 'pointerup'; was.rec.stop(); finish(); return; }
+    if (was.drag) {
+      const target = field.querySelector('.drop-target');
+      const before = rects();
+      const r = was.el.getBoundingClientRect(); before[was.name] = r;        // it glides home from where it was let go
+      was.el.style.translate = '';
+      if (target) {
+        const i = all.findIndex((x) => x.a.name === was.name), j = all.findIndex((x) => x.a.name === target.dataset.agent);
+        [all[i], all[j]] = [all[j], all[i]];
+        saveOrder(all.map((x) => x.a.name));
+      }
+      g.lifted = false; finish();
+      draw(lastMoods); glide(before);
+      resetAsk();
+      return;
+    }
+    finish(); resetAsk();
+  }
+  field.addEventListener('pointerdown', (e) => {
+    const el = e.target.closest('.agent-mark');
+    if (!el || g || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    swallowClick = false;
+    g = { el, name: el.dataset.agent, mine: el.tagName === 'A', id: e.pointerId, x0: e.clientX, y0: e.clientY, lifted: false, drag: false, rec: null };
+    busy = true;
+    g.t1 = setTimeout(() => {
+      if (!g) return;
+      g.lifted = true; g.el.classList.add('lifted'); navigator.vibrate?.(10);
+      document.documentElement.classList.add('holding-mark');
+      tell(g.mine ? 'Move it, or keep holding to record' : 'Move it');
+    }, LIFT_MS);
+    g.t2 = setTimeout(record, RECORD_MS);
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
+  });
+  // A hold is not a tap: no link opened, no long-press menu.
+  field.addEventListener('click', (e) => { if (swallowClick) { e.preventDefault(); e.stopPropagation(); swallowClick = false; } }, true);
+  field.addEventListener('contextmenu', (e) => { if (e.target.closest('.agent-mark')) e.preventDefault(); });
+  field.addEventListener('dragstart', (e) => e.preventDefault());
+
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('h1', { class: 'visually-hidden' }, 'Chat'),
-    h('p', { class: 'void-ask' }, 'Who do you want to talk to?'), field));
-  draw(Object.fromEntries(agents.map((a) => [a.name, 'asleep'])));
+    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, field));
+  draw(lastMoods);
   const tick = async () => { const m = await moods(agents); if (alive) draw(m); };
   await tick();
   const t = setInterval(tick, 8000);
-  return () => { alive = false; clearInterval(t); };
+  return () => { alive = false; clearInterval(t); if (g) { if (g.rec) { g.send = false; g.rec.stop(); } finish(); } };
 }
 
 // In a conversation: the current agent's mark and name, then the others, small, one click to switch.
