@@ -11,7 +11,7 @@ import { h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, 
 import * as mx from './mx.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
-import { markBar, agentBar } from './agents-void.js';
+import { markBar, agentBar, takeVoice } from './agents-void.js';
 
 const ARCHIVE_DAYS = 30;
 const THREAD_DAYS = 30;
@@ -128,13 +128,15 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     tick(); rec = { recorder, timer: setInterval(tick, 500) };
   }
   function stopRecording() { if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop(); }
-  async function toWords(blob) {
+  // autoSend: a voice note recorded by holding the agent's mark (agents-void) goes straight out.
+  async function toWords(blob, autoSend = false) {
     say('Turning it into words…'); send.disabled = true;
     try {
       const r = await api(`/api/v2/agents/${agent.name}/voice`, { method: 'POST', raw: blob, headers: { 'Content-Type': blob.type || 'audio/webm' } });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.message || 'That did not work. Try again.');
       if (!d.text) say('No words were heard in that recording.');
+      else if (autoSend) { say(''); await sendText(d.text); }
       else { input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + d.text; grow(); idle(); say('Check it, then send.'); }
     } catch (e) { say(e.message); }
     send.disabled = false;
@@ -458,6 +460,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   draw(true);
   const asked = takeAsk(agent.name);           // a question asked on Home
   if (asked) sendText(asked);
+  const spoken = takeVoice(agent.name);        // a voice note recorded by holding the agent's mark
+  if (spoken) toWords(spoken, true);
   focusIfKeyboard(input);
   return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };
 }
