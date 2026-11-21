@@ -184,7 +184,10 @@ def repo(tmp_path):
 
 
 def rt(repo, runner=None, env=None):
-    return AgentRuntime(repo, runner or FakeRunner(), env={} if env is None else env)
+    # The machine's own settings (~/.config/logos: Docmost, the house, mail…) must not leak in: on the
+    # server they exist, and tests that expect "not set up" failed there (21 Nov).
+    return AgentRuntime(repo, runner or FakeRunner(),
+                        env={"HOME": str(repo), "XDG_CONFIG_HOME": str(repo / ".test-config")} if env is None else env)
 
 
 @pytest.fixture(autouse=True)
