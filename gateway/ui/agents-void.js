@@ -95,6 +95,8 @@ export async function voidView(root, agents, others = []) {
   let alive = true;
   const field = h('div', { class: 'void-field' });
   const ask = h('p', { class: 'void-ask' }, 'Who do you want to talk to?');
+  // How it works, said once under the question (Greg, 21 Nov).
+  const how = h('p', { class: 'void-how' }, 'Tap to chat · hold to move', h('br'), 'Hold longer for a voice note: swipe up to send');
   // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
   // off to the left). Yours first, then the private ones, unless the person has moved them.
   const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
@@ -165,7 +167,9 @@ export async function voidView(root, agents, others = []) {
   function finish() {
     if (!g) return;
     clearTimeout(g.t1); clearTimeout(g.t2);
-    g.el.classList.remove('lifted', 'dragging', 'recording');
+    g.el.classList.remove('lifted', 'dragging', 'recording', 'will-send', 'will-cancel');
+    g.el.querySelector('.rec-guide')?.remove();
+    if (!g.drag) g.el.style.translate = '';
     for (const el of field.querySelectorAll('.drop-target')) el.classList.remove('drop-target');
     window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp);
     document.documentElement.classList.remove('holding-mark');
@@ -189,15 +193,28 @@ export async function voidView(root, agents, others = []) {
     recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
     recorder.addEventListener('stop', () => {
       stream.getTracks().forEach((t) => t.stop()); clearInterval(mine.tick);
-      if (!mine.send || !chunks.length || Date.now() - started < 600) { tell('Hold a little longer to record.'); return; }
+      const still = document.documentElement.dataset.motion === 'still' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const play = (cls, ms) => { if (still) return; mine.el.classList.add(cls); setTimeout(() => mine.el.classList.remove(cls), ms); };
+      if (!mine.send) {
+        play('cancelling', 450);                                 // a small shake: nothing went
+        tell(mine.choice === 'cancel' ? 'Cancelled: nothing was sent.' : 'Not sent: swipe up to send it.'); return;
+      }
+      if (!chunks.length || Date.now() - started < 600) { tell('Hold a little longer to record.'); return; }
       handed = { agent: mine.name, blob: new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }) };
-      location.hash = `#/chat/${mine.name}`;
+      tell('Sending…');
+      play('sending', 600);                                      // it flies up and away, then its chat opens
+      setTimeout(() => { location.hash = `#/chat/${mine.name}`; }, still ? 0 : 320);
     });
     recorder.start();
     mine.rec = recorder;
+    // Swipe up to send, down to cancel (Greg, 21 Nov); the label says what letting go will do.
+    mine.el.append(h('span', { class: 'rec-guide', 'aria-hidden': 'true' },
+      h('span', { class: 'rec-up' }, '↑ Send'), h('span', { class: 'rec-down' }, '↓ Cancel')));
     const tick = () => { const s = Math.floor((Date.now() - started) / 1000);
-      label(mine.el)?.replaceChildren(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`);
-      tell('Let go to send it'); if (s >= 300) onUp({ type: 'pointerup' }); };
+      const time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+      label(mine.el)?.replaceChildren(mine.choice === 'send' ? `Let go to send · ${time}` : mine.choice === 'cancel' ? 'Let go to cancel' : `Recording ${time}`);
+      tell('Swipe up to send · down to cancel');
+      if (s >= 300) { mine.choice = 'send'; onUp({ type: 'pointerup' }); } };
     tick(); mine.tick = setInterval(tick, 500);
   }
   function nearest(x, y) {
@@ -213,7 +230,16 @@ export async function voidView(root, agents, others = []) {
     if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
     if (!g.lifted) { if (Math.hypot(dx, dy) > SLOP) finish(); return; }     // a swipe or a scroll, not a hold
-    if (g.rec || g.el.classList.contains('recording')) return;               // recording: hold still
+    if (g.rec || g.el.classList.contains('recording')) {
+      // Recording: up sends, down cancels; the mark follows the finger up and down.
+      const y = Math.max(-140, Math.min(140, dy));
+      g.el.style.translate = `0px ${Math.round(y * 0.6)}px`;
+      g.choice = dy < -70 ? 'send' : dy > 70 ? 'cancel' : null;
+      g.el.classList.toggle('will-send', g.choice === 'send');
+      g.el.classList.toggle('will-cancel', g.choice === 'cancel');
+      if (g.choice !== g.shown) { g.shown = g.choice; if (g.choice) navigator.vibrate?.(8); }
+      return;
+    }
     if (!g.drag && Math.hypot(dx, dy) > SLOP) { g.drag = true; clearTimeout(g.t2); g.el.classList.add('dragging'); label(g.el)?.replaceChildren('Move me'); }
     if (!g.drag) return;
     g.el.style.translate = `${dx}px ${dy}px`;
@@ -225,7 +251,7 @@ export async function voidView(root, agents, others = []) {
     if (!g || (e.pointerId !== undefined && e.pointerId !== g.id)) return;
     const was = g;
     if (was.lifted || was.drag || was.el.classList.contains('recording')) swallowClick = true;
-    if (was.rec) { was.send = e.type === 'pointerup'; was.rec.stop(); finish(); return; }
+    if (was.rec) { was.send = e.type === 'pointerup' && was.choice === 'send'; was.rec.stop(); finish(); return; }
     if (was.drag) {
       const target = field.querySelector('.drop-target');
       const before = rects();
@@ -262,7 +288,7 @@ export async function voidView(root, agents, others = []) {
       if (!g) return;
       g.lifted = true; g.el.classList.add('lifted'); navigator.vibrate?.(10);
       document.documentElement.classList.add('holding-mark');
-      tell(g.mine ? 'Move it, or keep holding to record' : 'Move it');
+      tell(g.mine ? 'Move it, or keep holding to record a voice note' : 'Move it');
     }, LIFT_MS);
     g.t2 = setTimeout(record, RECORD_MS);
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
@@ -275,7 +301,7 @@ export async function voidView(root, agents, others = []) {
   field.addEventListener('dragstart', (e) => e.preventDefault());
 
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, field));
+    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, how, field));
   draw(lastMoods);
   const tick = async () => { const m = await moods(agents); if (alive) draw(m); };
   await tick();
