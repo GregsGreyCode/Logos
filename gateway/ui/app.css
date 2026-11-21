@@ -1095,4 +1095,18 @@ a.btn.mx-new { justify-content: center; }
 @media (max-width: 720px) {
   .brain .chat-head .brain-pick { flex: 1 1 100%; }
   .brain-pick select { width: 100%; min-height: 44px; }
+@media (max-width: 720px) {
+  /* Lifted by however much of the page the browser's own toolbar covers (app.js placeTabbar). */
+  .tabbar { bottom: var(--below-visible, 0px) !important; }
+  .keyboard-open .tabbar { display: none !important; }
+  .keyboard-open .main { padding-bottom: 0; }
+}
+@media (max-width: 720px) {
+  /* Nothing may make the page wider than the phone: a wider page is shown "zoomed in" and its bottom
+     bar off-screen until you scroll (seen on Greg's Home, 21 Nov). Long words and links wrap... */
+  .home-title, .home-title > span, .home-meta, .done-text, .done-what, .done-pages, .done-page-head a, .done-summary,
+  .card-text, .when, .none, .status, .msg, .row-main, .row-meta { overflow-wrap: anywhere; min-width: 0; }
+  .home-row, .done-row, .done-msg > summary, .done-page-head { min-width: 0; }
+  /* ...and anything still too wide is clipped, never allowed to widen the page. */
+  .main, .page { overflow-x: clip; max-width: 100vw; }
 }

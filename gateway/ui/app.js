@@ -62,6 +62,20 @@ function dropSheet() {
   openSheet = null;
 }
 for (const a of document.querySelectorAll('.sheet a')) a.addEventListener('click', dropSheet);
+// The tab bar sits at the bottom of what is actually visible. Some phone browsers place "bottom: 0" as if
+// their address bar were already hidden, so on a short page (Home) the bar sat under the browser's own
+// toolbar until you scrolled. The visual viewport says where the visible bottom is. When the on-screen
+// keyboard is open the bar steps aside instead of riding on top of the keyboard.
+const vv = window.visualViewport;
+function placeTabbar() {
+  if (!vv) return;
+  const hidden = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+  const keyboard = hidden > 150;
+  document.documentElement.style.setProperty('--below-visible', `${keyboard ? 0 : hidden}px`);
+  document.documentElement.classList.toggle('keyboard-open', keyboard);
+}
+if (vv) { vv.addEventListener('resize', placeTabbar); vv.addEventListener('scroll', placeTabbar); placeTabbar(); }
+
 // Each row of the phone's panels gets its icon, then its words.
 for (const row of document.querySelectorAll('.sheet-row[data-icon]')) row.prepend(icon(ICONS[row.dataset.icon]));
 
