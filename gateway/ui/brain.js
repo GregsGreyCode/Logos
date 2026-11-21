@@ -1,5 +1,5 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
-import { h, api, getJSON, when, markdown, agentLabel, none, loading, icon, ICONS } from './util.js';
+import { h, api, getJSON, when, markdown, none, loading, icon, ICONS } from './util.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -291,10 +291,12 @@ export async function brainView(root, [agentArg, ...pathParts]) {
 
   // On a desktop this column shows only while searching; on a phone it carries "Changed this week".
   const side = h('aside', { class: 'side brain-side', 'aria-label': 'Recent changes and search' }, changes, results);
-  const tabs = agents.length > 1 ? h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Whose brain' },
-    agents.map((a) => h('button', { type: 'button', role: 'tab', 'aria-selected': String(a.name === agent.name),
-      onclick: () => { location.hash = `#/brain/${a.name}`; } }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }),
-      ...agentLabel(a.display_name)))) : null;
+  // Whose brain: a dropdown (Greg, 21 Nov), the phone's own picker on a phone.
+  const tabs = agents.length > 1 ? h('label', { class: 'brain-pick' },
+    h('span', { class: 'sr' }, 'Whose brain'),
+    h('span', { class: `dot ${agent.name}`, 'aria-hidden': 'true' }),
+    h('select', { onchange: (e) => { location.hash = `#/brain/${e.target.value}`; } },
+      agents.map((a) => h('option', { value: a.name, selected: a.name === agent.name }, a.display_name)))) : null;
 
   root.replaceChildren(h('div', { class: 'brain' },
     h('header', { class: 'chat-head' }, h('h1', {}, 'Brain'), tabs,
