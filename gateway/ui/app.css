@@ -1478,3 +1478,6 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 [data-motion="still"] .rec-guide > span { animation: none; }
 @media (prefers-reduced-motion: reduce) { .rec-guide > span, .void-field .agent-mark.sending, .void-field .agent-mark.cancelling .mark-glow { animation: none; } }
 @media (min-width: 600px) { .void-field { inset: 116px 0 0; } }
+
+/* No More tab (Greg, 21 Nov): its screens are in the account panel; your initial is ringed while on one. */
+.avatar-btn[aria-current="page"] .avatar { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent-text); }
