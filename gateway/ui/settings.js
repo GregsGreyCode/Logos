@@ -66,7 +66,7 @@ function appearance() {
     h('details', { class: 'colours-more' }, h('summary', {}, h('span', {}, 'Colours'), h('span', { class: 'when' }, 'Yours and the agents\'')),
     h('section', { 'aria-label': 'Your colours' }, heading('Your colours'),
       colourRow('Primary and glow', 'Buttons, links, the glow', SWATCHES.primary, mine.primary, pickMine('primary'), true),
-      colourRow('Attention', 'Anything waiting on you, and the Noticeboard badge', SWATCHES.attention, mine.attention, pickMine('attention'), true),
+      colourRow('Attention', 'Anything waiting on you, and its badge', SWATCHES.attention, mine.attention, pickMine('attention'), true),
       h('p', { class: 'when' }, 'Colours may be adjusted slightly to stay readable.')),
     h('section', { 'aria-label': 'Agent colours' }, heading('Agent colours'), agentsBox, cNote)),
     // Motion: one line, like Light or dark. What each does is in the tooltip.

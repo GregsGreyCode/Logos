@@ -923,7 +923,8 @@ a.btn.mx-new { justify-content: center; }
 .agent-mark.small { --glyph: 34px; }
 .agent-mark.tiny { --glyph: 24px; opacity: 0.75; }
 .agent-mark.tiny:hover, .agent-mark.tiny:focus-visible { opacity: 1; }
-.mark-fx, .mark-fy { display: block; }
+.mark-fx { display: block; }
+.mark-fy { display: flex; flex-direction: column; align-items: center; }
 .mark-glow { display: block; filter: drop-shadow(0 0 0 var(--mark)); transition: filter 0.6s ease; }
 .mark-glyph { display: block; width: var(--glyph); height: calc(var(--glyph) * 450 / 394); background: var(--mark);
   -webkit-mask: url("/static/logo.svg") center / contain no-repeat; mask: url("/static/logo.svg") center / contain no-repeat; }
@@ -1173,3 +1174,5 @@ section:has(> .appearance-modes.single) { display: none; }
 .colours-more > section { padding-bottom: 20px; }
 .colours-more > section + section { padding-top: 4px; }
 .changes.few { display: none; }
+.home-all { align-self: flex-start; font-size: var(--t-sm); color: var(--muted); text-decoration: none; padding: 10px 0; }
+.home-all:hover { color: var(--accent-text); }

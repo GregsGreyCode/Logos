@@ -19,7 +19,7 @@ const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: n
 const root = document.getElementById('view');
 let cleanup = null;
 
-const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Noticeboard', agents: 'Agents', models: 'Models',
+const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Activity', agents: 'Agents', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
 const IN_MORE = ['agents', 'advisor', 'models', 'people', 'settings'];
 

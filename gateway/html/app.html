@@ -43,10 +43,10 @@ try {
   <nav class="nav" aria-label="Main">
     <div class="brand-row"><a class="logo-link" href="#/home" title="Logos · Home"><img class="logo" src="/static/logo.svg" alt="Logos"></a></div>
     <div class="nav-links">
-      <a href="#/home" data-view="home">Home</a>
+      <a href="#/home" data-view="home">Home <span class="badge nb-badge" hidden></span></a>
       <a href="#/chat" data-view="chat">Chat</a>
       <a href="#/brain" data-view="brain">Brain</a>
-      <a href="#/noticeboard" data-view="noticeboard">Noticeboard <span class="badge nb-badge" hidden></span></a>
+      <a href="#/noticeboard" data-view="noticeboard">Activity</a>
       <a href="#/agents" data-view="agents">Agents</a>
       <a class="admin-only" hidden href="#/advisor" data-view="advisor">Claude Advisor</a>
       <a class="admin-only" hidden href="#/models" data-view="models">Models</a>
@@ -61,16 +61,14 @@ try {
 
   <main class="main" id="view"></main>
 
-  <!-- Phone: the four screens used most, and More for the rest. -->
+  <!-- Phone: the three screens used most, and More for the rest. What needs you is on Home (21 Nov). -->
   <nav class="tabbar" aria-label="Main">
     <a href="#/home" data-view="home">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6v8H4z"/><path d="M10 19v-5h4v5"/></svg>Home</a>
+      <span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6v8H4z"/><path d="M10 19v-5h4v5"/></svg><span class="tab-badge nb-badge" hidden></span></span>Home</a>
     <a href="#/chat" data-view="chat">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat</a>
     <a href="#/brain" data-view="brain">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h10l4 4v12H5z"/><path d="M9 12h6M9 16h6"/></svg>Brain</a>
-    <a href="#/noticeboard" data-view="noticeboard">
-      <span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="tab-badge nb-badge" hidden></span></span>Notices</a>
     <button type="button" id="more-btn" aria-haspopup="dialog" aria-controls="more-sheet" aria-expanded="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>More</button>
   </nav>
@@ -78,6 +76,7 @@ try {
   <div class="scrim" id="scrim" hidden></div>
   <div class="sheet" id="more-sheet" role="dialog" aria-modal="true" aria-label="More" hidden>
     <span class="sheet-grip" aria-hidden="true"></span>
+    <a class="sheet-row" href="#/noticeboard" data-view="noticeboard" data-icon="bell">Activity</a>
     <a class="sheet-row" href="#/agents" data-view="agents" data-icon="agents">Agents</a>
     <a hidden class="sheet-row admin-only" href="#/advisor" data-view="advisor" data-icon="shield">Claude Advisor</a>
     <a hidden class="sheet-row admin-only" href="#/models" data-view="models" data-icon="chip">Models</a>
