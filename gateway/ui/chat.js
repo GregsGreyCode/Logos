@@ -90,14 +90,14 @@ export function replyArrived(messages, text) {
   return last.role === 'assistant' && Boolean((last.text || '').trim());
 }
 
-let agentsKept = null;
+let agentsKept = null, othersKept = [];
 
 export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   let alive = true;
   // The agent list is kept from the last visit, so switching between chats draws at once; a fresh
   // copy is fetched in the background for next time (Greg, 21 Nov: switching lagged on a phone).
   let agents = agentsKept;
-  const fresh = getJSON('/api/v2/agents').then((d) => { agentsKept = d.agents; return d.agents; }).catch(() => null);
+  const fresh = getJSON('/api/v2/agents').then((d) => { agentsKept = d.agents; othersKept = d.others || []; return d.agents; }).catch(() => null);
   if (!agents) agents = (await fresh) || [];
   if (!agents.length) {
     root.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'No agents yet'),
@@ -106,7 +106,8 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   }
   // M4: with this browser connected, Chat opens on the floating agents; pick one to talk to it.
   if (!agentArg && mx.saved() && agents.some((a) => a.matrix_id)) {
-    return voidView(root, agents.filter((a) => a.matrix_id));
+    // Everyone's agents float here (Greg, 21 Nov); those you cannot talk to are dimmed, with a padlock.
+    return voidView(root, agents.filter((a) => a.matrix_id), othersKept);
   }
   const agent = agents.find((a) => a.name === agentArg) || agents[0];
   let chatId = chatArg || newId();

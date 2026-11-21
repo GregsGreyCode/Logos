@@ -1218,3 +1218,8 @@ section:has(> .appearance-modes.single) { display: none; }
   .in-conv .mark-bar .agent-mark.current { display: none; }
   .in-conv .mark-bar { gap: 4px; }
 }
+
+/* Floating agents you cannot talk to: dimmed, a padlock under the name, not a link. */
+.agent-mark.private { cursor: default; opacity: .42; }
+.agent-mark.private .mark-glow { animation: none; }
+.agent-mark.private .mark-label .icon { width: 12px; height: 12px; display: inline-block; vertical-align: -1px; }
