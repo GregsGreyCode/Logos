@@ -151,7 +151,8 @@ for (const el of document.querySelectorAll('.sheet-who .role')) el.textContent =
 for (const el of document.querySelectorAll('.avatar')) el.textContent = (shown || '?').trim().charAt(0).toUpperCase();
 acctBtn.setAttribute('aria-label', `Your account (${shown})`);
 // Keep the "waiting on you" count in the menu current on every screen.
-const badge = () => getJSON('/api/v2/noticeboard').then((d) => setBadge(d.waiting.length)).catch(() => {});
+// The bell's number: what waits on you plus what is new (notify.js).
+const badge = () => import('./notify.js').then((n) => n.countNew()).then(setBadge).catch(() => {});
 badge();
 setInterval(badge, 60000);
 // The logo cycles while any of your agents is working, in Element X or on a scheduled job too.
