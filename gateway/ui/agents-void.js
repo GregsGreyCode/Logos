@@ -108,3 +108,18 @@ export function markBar(agents, current) {
   const t = setInterval(() => { if (!bar.isConnected) { alive = false; clearInterval(t); } else tick(); }, 8000);
   return bar;
 }
+
+// Phone (Greg, 21 Nov): inside an agent, one bar: ‹ back to all agents, its name, and Chat | Brain | About.
+export function agentBar(agent, active) {
+  const tab = (key, label, href) => h('a', { href, class: `agent-tab${key === active ? ' on' : ''}`, 'aria-current': key === active ? 'page' : null }, label);
+  return h('nav', { class: 'agent-bar', 'aria-label': agent.display_name },
+    h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
+    h('strong', { class: 'agent-bar-name' }, agent.display_name),
+    h('span', { class: 'agent-tabs' },
+      tab('chat', 'Chat', `#/chat/${agent.name}`),
+      // On a phone Brain opens the agent's vault straight in Obsidian (Greg, 21 Nov); a desktop has no
+      // Obsidian, so there it is the reader in Logos (the desktop never shows this bar).
+      h('a', { href: `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}`, class: 'agent-tab',
+        title: 'Open this brain in Obsidian' }, 'Brain', h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗')),
+      tab('about', 'About', `#/agents/${agent.name}`)));
+}

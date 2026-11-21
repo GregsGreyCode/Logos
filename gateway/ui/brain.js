@@ -1,5 +1,6 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
 import { h, api, getJSON, when, markdown, none, loading, icon, ICONS } from './util.js';
+import { agentBar } from './agents-void.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -300,7 +301,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     h('select', { onchange: (e) => { location.hash = `#/brain/${e.target.value}`; } },
       agents.map((a) => h('option', { value: a.name, selected: a.name === agent.name }, a.display_name)))) : null;
 
-  root.replaceChildren(h('div', { class: 'brain' },
+  root.replaceChildren(h('div', { class: 'brain' }, agentBar(agent, 'brain'),
     h('header', { class: 'chat-head' }, h('h1', {}, 'Brain'), tabs,
       h('label', { for: 'q', class: 'sr' }, 'Search the brain'), search),
     conflictsBox,

@@ -80,7 +80,7 @@
 [data-look="hud"] .done-row, [data-look="hud"] .done-msg > summary { border-bottom-style: dashed; }
 [data-look="hud"] .done-what::before { content: "› "; color: var(--accent); }
 
-@media (max-width: 720px) {
+@media (max-width: 599px) {
   [data-look="hud"] .tabbar { background: rgba(5, 8, 10, 0.94); }
   [data-look="hud"] .tabbar svg { display: none; }
   [data-look="hud"] .tabbar a, [data-look="hud"] .tabbar button { font-size: 11px; letter-spacing: 0.08em;
