@@ -17,6 +17,7 @@ import { adopt } from './appearance.js';
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView, settings: settingsView };
 const root = document.getElementById('view');
+let slideNext = null;               // 'left' or 'right': the next screen slides in (swipeTabs, below)
 let cleanup = null;
 
 const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Activity', agents: 'Agents', models: 'Models',
@@ -106,6 +107,7 @@ async function route() {
   // on finishes into a box that is no longer on the page, instead of over the new screen.
   const box = document.createElement('div');
   box.className = name === 'chat' ? 'view-box view-fade' : 'view-box';   // chat screens fade in (smoother switching)
+  if (slideNext) { box.classList.remove('view-fade'); box.classList.add(`slide-in-${slideNext}`); slideNext = null; }
   root.replaceChildren(box);
   window.scrollTo(0, 0);                 // every screen starts at its top
   const done = await views[name](box, rest, state);
@@ -151,4 +153,46 @@ activity();
 setInterval(activity, 10000);
 document.addEventListener('visibilitychange', activity);
 window.addEventListener('hashchange', route);
+
+// Phone (Greg, 21 Nov): swipe between Home and Agents, the first two tabs. On Home, swipe left to the
+// agents; on the agents, swipe right back Home. The page follows the finger, then the next slides in.
+// Inside an agent the swipe right goes back to all agents (chat-mx), so it is not caught here.
+const SWIPE_TABS = ['#/home', '#/chat'];
+function swipeTabs(el) {
+  let start = null;
+  const here = () => {
+    const [, name = 'home', ...rest] = location.hash.split('/');
+    if (name === 'home') return 0;
+    if (name === 'chat' && !rest[0]) return 1;
+    return -1;
+  };
+  const phone = () => window.matchMedia('(max-width: 599px)').matches;
+  el.addEventListener('touchstart', (e) => {
+    start = null;
+    if (!phone() || e.touches.length !== 1 || here() < 0 || document.querySelector('.sheet:not([hidden])')) return;
+    if (e.target.closest('textarea, input, select, [contenteditable], .mx-chips, .table-box, .md-table, pre, .tabs')) return;
+    start = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: here() };
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (!start || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - start.x, dy = Math.abs(e.touches[0].clientY - start.y);
+    if (dy > 40 && dy > Math.abs(dx)) { start = null; el.style.transform = ''; el.style.opacity = ''; return; }
+    const next = start.at + (dx < 0 ? 1 : -1);
+    if (next < 0 || next >= SWIPE_TABS.length || dy > Math.abs(dx) / 2) return;
+    el.style.transition = 'none';
+    el.style.transform = `translateX(${dx * 0.6}px)`;
+    el.style.opacity = String(1 - Math.min(Math.abs(dx) / 500, 0.4));
+    if (Math.abs(dx) > 90) {
+      start = null;
+      slideNext = dx < 0 ? 'right' : 'left';           // the next screen comes in from where the finger went
+      el.style.transition = ''; el.style.transform = ''; el.style.opacity = '';
+      location.hash = SWIPE_TABS[next];
+    }
+  }, { passive: true });
+  el.addEventListener('touchend', () => {
+    start = null;
+    el.style.transition = 'transform .2s ease, opacity .2s ease'; el.style.transform = ''; el.style.opacity = '';
+  }, { passive: true });
+}
+swipeTabs(root);
 route();
