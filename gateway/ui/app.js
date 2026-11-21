@@ -191,6 +191,8 @@ function swipeTabs(el) {
   }, { passive: true });
   el.addEventListener('touchmove', (e) => {
     if (!start || e.touches.length !== 1) return;
+    // Holding a floating agent (moving it, or recording for it) is not a swipe.
+    if (document.documentElement.classList.contains('holding-mark')) { start = null; el.style.transform = ''; el.style.opacity = ''; return; }
     const dx = e.touches[0].clientX - start.x, dy = Math.abs(e.touches[0].clientY - start.y);
     if (dy > 40 && dy > Math.abs(dx)) { start = null; el.style.transform = ''; el.style.opacity = ''; return; }
     const next = start.at + (dx < 0 ? 1 : -1);
