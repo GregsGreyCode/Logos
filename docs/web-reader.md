@@ -85,10 +85,12 @@ Gathered on every `up` of the web reader:
 3. `~/.config/logos/home-names.txt` on the machine (created with instructions on first `up`):
    one name per line for anyone else: family, friends, children, pets, employers, schools,
    street and town. A line starting with `=` matches only exactly as written, for names that
-   are also words (`=Rose`).
+   are also words (`=Rose`). A line starting with `+` is someone the whole household knows
+   (`+Juniper`, `+=Rose`): on every `up` they also get a page in the household brain's `people/`
+   folder if they have none, so every agent knows who they are. Pages are only ever added.
 
 4. Names the agents added themselves with `add_private_name`, when their person mentions someone
-   new who should stay private. Agents can only add (never remove or read the list); the names
+   new who should stay private. For a person they also start a `people/` page in their own brain. Agents can only add (never remove or read the list); the names
    are kept in the `logos-reader-names` volume (`added.txt`: name, agent, when), at most 500.
    To remove one, edit that file:
    `docker run --rm -it -v logos-reader-names:/v alpine:3 vi /v/added.txt`, then restart

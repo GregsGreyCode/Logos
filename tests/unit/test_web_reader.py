@@ -90,6 +90,28 @@ def test_private_names_file_and_own_names():
     assert set(wh.own_names(agents)) == {"greg", "Greg"}
 
 
+def test_plus_names_are_private_and_shared():
+    text = "+Juniper\n+=Rose\nSchool Road\n=Bill\n+ Juniper\n"
+    names, exact = wh.parse_names(text)
+    assert names == ["Juniper", "School Road", "Juniper"] and exact == ["Rose", "Bill"]
+    assert wh.shared_names(text) == ["Juniper", "Rose"]
+
+
+def test_shared_names_get_a_household_people_page_once(tmp_path, monkeypatch):
+    from gateway import brain_reader
+    made = []
+    monkeypatch.setattr(brain_reader, "list_pages", lambda rt, n: {"pages": [{"folder": "people", "title": "juniper"}]})
+    monkeypatch.setattr(brain_reader, "create_page", lambda rt, n, folder, title: made.append((n, folder, title)))
+    host = wh.WebHost.__new__(wh.WebHost)
+    path = tmp_path / "home-names.txt"
+    path.write_text("+Juniper\n+=Rose\nSchool Road\n")
+    monkeypatch.setattr(wh.WebHost, "names_file", lambda self: path)
+    host.rt = None
+    agents = {"greg": {}, "household": {"role": "household"}}
+    assert host.share_with_household(agents) == ["Rose"]
+    assert made == [("household", "people", "Rose")]
+
+
 def test_reader_config_lists_only_web_agents_with_tokens():
     agents = {"greg": {"web": {"enabled": True}}, "bere": {"web": {"enabled": True}},
               "household": {"web": {"enabled": True}, "role": "household"}, "dev": {}}
