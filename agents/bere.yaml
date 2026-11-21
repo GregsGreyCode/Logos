@@ -30,6 +30,7 @@ budget:
 matrix:                           # the household's own Matrix server (docs/matrix.md)
   enabled: true
   e2ee: required
+  verified_only: true            # answer only devices the person verified (M5, docs/matrix-chat.md)
   allowed_users: []               # set in agents/bere.local.yaml (untracked): @name:example.org
 
 advisor:                        # ask Claude, each question approved on the dashboard first (docs/advisor.md)
