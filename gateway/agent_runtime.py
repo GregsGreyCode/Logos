@@ -55,7 +55,7 @@ MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
 #: The advisor tools let through the sandbox rule (gateway/advisor_service.py TOOL_NAMES).
 ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
-LOGOS_PLUGINS = ("logos-waitlist", "logos-voice")
+LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
@@ -539,6 +539,8 @@ class AgentRuntime:
         # top-level message in a group room, so the household agent forgot the message before
         # ("Try again" -> "I don't have the context"). DMs are one session already.
         cur["MATRIX_SESSION_SCOPE"] = str(mx.get("session_scope", "room"))
+        # M5: answer only messages from devices the person has verified (logos-verified-only plugin).
+        cur["LOGOS_ONLY_VERIFIED_DEVICES"] = "1" if mx.get("verified_only") else "0"
         # Cross-signing recovery key, written once (0600) into the home volume, so a rebuilt
         # sandbox can prove it is the same device and still read encrypted history.
         cur["MATRIX_RECOVERY_KEY_OUTPUT_FILE"] = f"/opt/data/{self.MATRIX_RECOVERY_FILE}"

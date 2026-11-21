@@ -113,11 +113,26 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   // M3: #/chat/<agent>/thread/<root event id> is one conversation (a thread); /thread/new starts one.
   const threadId = chatArg === 'thread' ? decodeURIComponent(threadArg || 'new') : null;
   const matrixMode = connected && (!chatArg || !!threadId);
-  const archived = connected && !!chatArg && !threadId;
-  const connectNote = agent.matrix_id && !connected
-    ? h('div', { class: 'model-line' }, 'Chat here can be your Element conversation itself: connect this browser in ',
-      h('a', { href: '#/settings/matrix' }, 'Settings › Matrix device'), '.')
-    : null;
+  // M5 (switch-over): chat with an agent on Matrix happens only in its room. Old web chats stay readable.
+  const archived = !!agent.matrix_id && !!chatArg && !threadId;
+  const connectNote = null;
+  if (agent.matrix_id && !connected && !chatArg) {
+    const old = h('div', { class: 'convs' });
+    root.replaceChildren(h('div', { class: 'page' },
+      h('header', {}, h('h1', {}, 'Chat')),
+      h('div', { class: 'connect-card' },
+        h('h2', {}, 'Connect this browser to chat here'),
+        h('p', {}, 'Chat here is your Element conversation itself. Connect this browser once, with your Matrix password and recovery key.'),
+        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Matrix device')),
+      h('section', { 'aria-label': 'Old web chats' }, h('h2', { class: 'label' }, 'Old web chats (read only)'), old)));
+    getJSON(`/api/v2/agents/${agent.name}/conversations`).then(({ conversations }) => {
+      const since = Date.now() / 1000 - 30 * 86400;
+      const list = conversations.filter((x) => x.where === 'web' && (x.last_active || 0) >= since);
+      old.replaceChildren(...(list.length ? list.map((x) => h('a', { href: `#/chat/${agent.name}/${x.chat_id}`, class: 'conv-link' },
+        h('span', { class: 'conv-title' }, x.title), h('span', { class: 'when' }, when(x.last_active)))) : [none('None in the last 30 days.')]));
+    }).catch(() => old.replaceChildren(none('Could not list them just now.')));
+    return () => {};
+  }
   let showThinking = getPref('thinking', false);
   let showJobs = getPref('jobs', false);
   let lastConversations = [];
