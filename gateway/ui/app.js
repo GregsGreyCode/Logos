@@ -20,9 +20,9 @@ const root = document.getElementById('view');
 let slideNext = null;               // 'left' or 'right': the next screen slides in (swipeTabs, below)
 let cleanup = null;
 
-const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Activity', agents: 'Agents', models: 'Models',
+const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Notifications', agents: 'Agents', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
-const IN_MORE = ['noticeboard', 'advisor', 'models', 'people', 'settings'];
+const IN_MORE = ['advisor', 'models', 'people', 'settings'];
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },
@@ -96,7 +96,7 @@ async function route() {
   if (IN_MORE.includes(name)) moreBtn.setAttribute('aria-current', 'page'); else moreBtn.removeAttribute('aria-current');
   // The top bar names the screen only when the tab bar does not: Home, Chat, Brain and Notices are
   // already lit up at the bottom; the screens under More are not (Greg, 21 Nov).
-  const tabbed = ['home', 'chat', 'brain', 'agents'].includes(name);
+  const tabbed = ['home', 'chat', 'brain', 'agents', 'noticeboard'].includes(name);
   // Inside one agent (its chat, brain or about): on a phone its own bar replaces the Logos bar.
   document.documentElement.classList.toggle('in-agent', (name === 'chat' && !!rest[0]) || name === 'brain' || (name === 'agents' && !!rest[0]));
   document.getElementById('screen-name').textContent = tabbed ? '' : (NAMES[name] || '');
@@ -170,16 +170,17 @@ setInterval(activity, 10000);
 document.addEventListener('visibilitychange', activity);
 window.addEventListener('hashchange', route);
 
-// Phone (Greg, 21 Nov): swipe between Home and Agents, the first two tabs. On Home, swipe left to the
+// Phone (Greg, 21 Nov): swipe between Home, Agents and Notifications, the first three tabs. On Home, swipe left to the
 // agents; on the agents, swipe right back Home. The page follows the finger, then the next slides in.
 // Inside an agent the swipe right goes back to all agents (chat-mx), so it is not caught here.
-const SWIPE_TABS = ['#/home', '#/chat'];
+const SWIPE_TABS = ['#/home', '#/chat', '#/noticeboard'];
 function swipeTabs(el) {
   let start = null, leaving = false;
   const here = () => {
     const [, name = 'home', ...rest] = location.hash.split('/');
     if (name === 'home') return 0;
     if (name === 'chat' && !rest[0]) return 1;
+    if (name === 'noticeboard') return 2;
     return -1;
   };
   const phone = () => window.matchMedia('(max-width: 599px)').matches;

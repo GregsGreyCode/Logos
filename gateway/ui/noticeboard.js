@@ -114,7 +114,7 @@ export async function noticeboardView(root) {
   }
 
   root.replaceChildren(h('div', { class: 'page' },
-    h('header', {}, h('h1', {}, 'Activity')),
+    h('header', {}, h('h1', {}, 'Notifications')),
     error,
     allNone, waitSec,
     h('section', { 'aria-label': 'Recent messages', class: 'nb-log' }, h('h2', { class: 'label' }, 'Recent messages'),

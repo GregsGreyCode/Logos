@@ -43,10 +43,10 @@ try {
   <nav class="nav" aria-label="Main">
     <div class="brand-row"><a class="logo-link" href="#/home" title="Logos · Home"><img class="logo" src="/static/logo.svg" alt="Logos"></a></div>
     <div class="nav-links">
-      <a href="#/home" data-view="home" data-icon="home"><span class="nav-label">Home</span><span class="badge nb-badge" hidden></span></a>
+      <a href="#/home" data-view="home" data-icon="home"><span class="nav-label">Home</span></a>
       <a href="#/chat" data-view="chat" data-icon="chat"><span class="nav-label">Chat</span></a>
       <a href="#/brain" data-view="brain" data-icon="doc"><span class="nav-label">Brain</span></a>
-      <a href="#/noticeboard" data-view="noticeboard" data-icon="bell"><span class="nav-label">Activity</span></a>
+      <a href="#/noticeboard" data-view="noticeboard" data-icon="bell"><span class="nav-label">Notifications</span><span class="badge nb-badge" hidden></span></a>
       <a href="#/agents" data-view="agents" data-icon="agents"><span class="nav-label">Agents</span></a>
       <a class="admin-only" hidden href="#/advisor" data-view="advisor" data-icon="shield"><span class="nav-label">Claude Advisor</span></a>
       <a class="admin-only" hidden href="#/models" data-view="models" data-icon="chip"><span class="nav-label">Models</span></a>
@@ -64,9 +64,11 @@ try {
   <!-- Phone (21 Nov): Home, your Agents (tap one for its Chat, Brain and About), and More. -->
   <nav class="tabbar" aria-label="Main">
     <a href="#/home" data-view="home">
-      <span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6v8H4z"/><path d="M10 19v-5h4v5"/></svg><span class="tab-badge nb-badge" hidden></span></span>Home</a>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6v8H4z"/><path d="M10 19v-5h4v5"/></svg>Home</a>
     <a href="#/chat" data-view="chat" data-also="brain agents">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>Agents</a>
+    <a href="#/noticeboard" data-view="noticeboard">
+      <span class="tab-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg><span class="tab-badge nb-badge" hidden></span></span>Notifications</a>
     <button type="button" id="more-btn" aria-haspopup="dialog" aria-controls="more-sheet" aria-expanded="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>More</button>
   </nav>
@@ -74,7 +76,6 @@ try {
   <div class="scrim" id="scrim" hidden></div>
   <div class="sheet" id="more-sheet" role="dialog" aria-modal="true" aria-label="More" hidden>
     <span class="sheet-grip" aria-hidden="true"></span>
-    <a class="sheet-row" href="#/noticeboard" data-view="noticeboard" data-icon="bell">Activity</a>
     <a hidden class="sheet-row admin-only" href="#/advisor" data-view="advisor" data-icon="shield">Claude Advisor</a>
     <a hidden class="sheet-row admin-only" href="#/models" data-view="models" data-icon="chip">Models</a>
     <a hidden class="sheet-row admin-only" href="#/people" data-view="people" data-icon="people">People</a>
