@@ -42,7 +42,9 @@ export async function homeView(root) {
   // (lists.md, refreshed every 15 minutes): each list, how many things are on it, and the first few.
   // The Home Assistant app's To-do screen (its homeassistant://navigate links), through Android's intent so
   // Chrome opens the app; without the app it falls back to the copy in Logos.
-  const HA_TODO = 'intent://navigate/todo#Intent;scheme=homeassistant;package=io.homeassistant.companion.android;'
+  // Each card opens its own list (?entity_id=todo.…, from the copy's hidden note), else the To-do screen.
+  const haTodo = (id) => `intent://navigate/todo${id ? `?entity_id=${encodeURIComponent(id)}` : ''}#Intent;scheme=homeassistant;`
+    + 'package=io.homeassistant.companion.android;'
     + `S.browser_fallback_url=${encodeURIComponent(`${location.origin}/#/brain/household/lists.md`)};end`;
   const listsBox = h('div', { class: 'home-lists-row' });
   const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists', hidden: true },
@@ -54,7 +56,9 @@ export async function homeView(root) {
     const lists = [];
     for (const line of String(page.text).split('\n')) {
       const head = line.match(/^##\s+(.+)/);
-      if (head) { lists.push({ name: head[1].trim(), items: [] }); continue; }
+      if (head) { lists.push({ name: head[1].trim(), items: [], id: '' }); continue; }
+      const id = line.match(/^<!--\s*(todo\.[\w-]+)\s*-->/);
+      if (id && lists.length) { lists[lists.length - 1].id = id[1]; continue; }
       const item = line.match(/^- \[ \]\s+(.+)/);
       if (item && lists.length) lists[lists.length - 1].items.push(item[1].replace(/\s*\(due [^)]*\)\s*$/, '').trim());
     }
@@ -63,8 +67,8 @@ export async function homeView(root) {
     // On a phone a list opens in the Home Assistant app, where the lists live (Greg, 21 Nov); a desktop has
     // no app, so there it opens the copy in Logos.
     const phone = window.matchMedia('(max-width: 599px)').matches;
-    const open = phone ? HA_TODO : '#/brain/household/lists.md';
-    listsBox.replaceChildren(...(shown.length ? shown.map((l) => h('a', { class: 'home-list-card', href: open, title: phone ? 'Open in Home Assistant' : 'Open the lists' },
+    listsBox.replaceChildren(...(shown.length ? shown.map((l) => h('a', { class: 'home-list-card', href: phone ? haTodo(l.id) : '#/brain/household/lists.md',
+      title: phone ? `Open ${l.name} in Home Assistant` : 'Open the lists' },
       h('span', { class: 'home-list-head' }, h('strong', {}, l.name), h('span', { class: 'home-list-count' }, String(l.items.length))),
       h('span', { class: 'home-list-items' }, l.items.slice(0, 3).join(' · ') + (l.items.length > 3 ? ` · +${l.items.length - 3}` : ''))))
       : [none('Every list is empty.')]));

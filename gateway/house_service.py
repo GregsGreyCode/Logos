@@ -491,7 +491,8 @@ class Service:
         lists = []
         for eid in eids:
             items = self._items(eid)
-            lists.append({"list": h.name(h.lists[eid]),
+            # "id": its Home Assistant entity, so a link can open this very list in the app (Greg, 21 Nov).
+            lists.append({"list": h.name(h.lists[eid]), "id": eid,
                           "open": [self._show(i) for i in items if not i["done"]],
                           **({"done": [i["item"] for i in items if i["done"]]} if done is True else {})})
         self.log(f"{agent} list_items {','.join(eids)}")

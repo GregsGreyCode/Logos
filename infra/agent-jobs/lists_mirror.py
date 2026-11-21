@@ -56,6 +56,8 @@ def render(lists):
     out = [HEADER]
     for lst in lists:
         out.append(f"\n## {lst.get('list') or 'List'}\n\n")
+        if lst.get("id"):                     # which Home Assistant list it is, for the dashboard's links
+            out.append(f"<!-- {lst['id']} -->\n")
         items = lst.get("open") or []
         out.append("".join(line(i) for i in items) if items else "Nothing on it.\n")
     return "".join(out)
