@@ -71,7 +71,8 @@ export async function voidView(root, agents) {
 // In a conversation: the current agent's mark and name, then the others, small, one click to switch.
 export function markBar(agents, current) {
   const bar = h('div', { class: 'mark-bar', role: 'navigation', 'aria-label': 'Agents' },
-    mark(current, { size: 'small', current: true }),
+    h('a', { href: '#/chat', class: 'mark-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
+    mark(current, { size: 'small', current: true, href: '#/chat' }),
     h('a', { href: '#/chat', class: 'mark-name', title: 'All agents' }, current.display_name),
     h('span', { class: 'mark-others' }, agents.filter((a) => a.name !== current.name)
       .map((a) => mark(a, { size: 'tiny', href: `#/chat/${a.name}` }))));

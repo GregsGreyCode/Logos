@@ -89,3 +89,4 @@
   [data-look="hud"] .topbar { background: rgba(5, 8, 10, 0.94); }
   [data-look="hud"] .topbar .brand { font-size: 13px; }
 }
+[data-look="hud"] .hud-strip:empty { display: none; }

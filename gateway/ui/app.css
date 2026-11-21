@@ -1121,3 +1121,37 @@ a.btn.mx-new { justify-content: center; }
 @media (max-width: 720px) {
   .screen-tabbed .topbar-sep { visibility: hidden; }   /* no name after it; keeps the avatar on the right */
 }
+@media (max-width: 720px) {
+  /* In a conversation: one header (the agent's mark and name, conversations on the right), no Logos bar,
+     no other agents' marks. Back: swipe right, pinch, or tap the mark. */
+  .in-conv .topbar { display: none; }
+  .in-conv .chat { height: calc(100dvh - var(--tabbar-h) - env(safe-area-inset-bottom)); padding-top: env(safe-area-inset-top); }
+  .in-conv .mark-others { display: none; }
+  .in-conv .chat-head { min-height: 56px; }
+  .in-conv .mx-chips { padding-top: 0; }
+  .in-conv .chat { touch-action: pan-y; }   /* the pinch goes back instead of zooming the page */
+}
+.mark-back { display: none; }
+@media (max-width: 720px) {
+  .in-conv .mark-back { display: inline-flex; align-items: center; justify-content: center; width: 32px; min-height: 44px;
+    margin-right: -6px; font: 400 32px/1 var(--font-body); color: var(--ink); text-decoration: none; }
+  .gesture-tip { position: absolute; left: 16px; right: 16px; bottom: 84px; z-index: 5; padding: 12px 16px; border-radius: 14px;
+    background: var(--surface-2, var(--surface)); border: 1px solid var(--line); color: var(--ink); font-size: var(--t-sm);
+    box-shadow: 0 8px 24px rgba(0,0,0,.25); transition: opacity .5s ease; text-align: center; }
+  .gesture-tip.gone { opacity: 0; }
+  .in-conv .chat { position: relative; }
+}
+@media (max-width: 720px) {
+  /* The browser's own sideways "previous page" swipe and pinch-zoom would take the gesture first. */
+  html.in-conv, html.in-conv body { overscroll-behavior-x: none; touch-action: pan-y; }
+}
+
+/* Home: the AI computer as a dot beside the date; tap it for the words. */
+.home-date-row { display: flex; align-items: center; gap: 4px; }
+.status-dot { width: 44px; height: 44px; flex: none; border: 0; padding: 0; background: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; }
+.status-dot::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.status-dot.up::before { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 18%, transparent); }
+.status-dot.down::before { background: var(--bad); box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 18%, transparent); }
+.status-dot:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -4px; }
+.home-status { margin: 0; }

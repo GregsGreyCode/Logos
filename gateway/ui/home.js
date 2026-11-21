@@ -16,9 +16,9 @@ export async function homeView(root) {
   const waitingBox = h('div', { class: 'stack home-waiting' }, loading());
   const todayBox = h('div', { class: 'home-list' });
   const doneBox = h('div', { class: 'stack' });
-  // P2: a section with nothing in it folds into one quiet line instead of a heading over "nothing".
-  const quiet = h('p', { class: 'none home-quiet', hidden: true });
-  const status = h('div', { class: 'when home-status' });
+  const statusWords = h('p', { class: 'when home-status', hidden: true, id: 'home-status-words' });
+  const statusDot = h('button', { type: 'button', class: 'status-dot', 'aria-controls': 'home-status-words', 'aria-expanded': 'false',
+    onclick: () => { statusWords.hidden = !statusWords.hidden; statusDot.setAttribute('aria-expanded', String(!statusWords.hidden)); } });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
   const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
   const doneSec = h('section', { 'aria-label': 'What happened' }, h('h2', { class: 'label' }, 'Since yesterday'), doneBox);
@@ -123,7 +123,7 @@ export async function homeView(root) {
     try {
       [data, nb] = await Promise.all([getJSON('/api/v2/home'), getJSON('/api/v2/noticeboard').catch(() => nb)]);
     } catch (e) {
-      if (alive) status.textContent = 'Home could not be loaded just now.';
+      if (alive) { statusWords.textContent = 'Home could not be loaded just now.'; statusWords.hidden = false; }
       return;
     }
     if (!alive) return;
@@ -149,10 +149,12 @@ export async function homeView(root) {
     }
     const offSince = data.model_off_since
       ? new Date(data.model_off_since * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-    status.replaceChildren(h('span', { class: `status ${data.model_up === false ? 'down' : 'up'}` },
-      data.model_up === false
-        ? `AI computer off${offSince ? ` since ${offSince}` : ''} · replies when it's back`
-        : 'AI computer on'));
+    // Just a dot beside the date (Greg, 21 Nov): green on, red off. Its words show when you tap or click it.
+    const words = data.model_up === false
+      ? `AI computer off${offSince ? ` since ${offSince}` : ''} · replies when it's back` : 'AI computer on';
+    statusDot.className = `status-dot ${data.model_up === false ? 'down' : 'up'}`;
+    statusDot.setAttribute('aria-label', words); statusDot.title = words;
+    statusWords.textContent = words;
     setBadge(nb.waiting.length);
     waitingLabel.textContent = nb.waiting.length ? `Waiting on you · ${nb.waiting.length}` : 'Waiting on you';
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
@@ -161,10 +163,6 @@ export async function homeView(root) {
     const anyDone = showDone(nb.log);
     const noWait = !nb.waiting.length;
     waitingSec.hidden = noWait; doneSec.hidden = !anyDone;
-    const said = noWait && !anyDone ? 'all clear since yesterday'
-      : [noWait ? 'nothing waiting on you' : '', anyDone ? '' : 'nothing new since yesterday'].filter(Boolean).join(' · ');
-    quiet.textContent = said ? said[0].toUpperCase() + said.slice(1) + '.' : '';
-    quiet.hidden = !said;
     showStrip();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
@@ -182,9 +180,9 @@ export async function homeView(root) {
 
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
-      h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), status),
+      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), statusDot), statusWords),
     strip,
-    askForm, quiet, waitingSec,
+    askForm, waitingSec,
     h('section', { 'aria-label': 'Today' }, h('h2', { class: 'label' }, 'Today'), todayBox), doneSec));
 
   fromLast();

@@ -29,6 +29,34 @@ function pickRoom(c, agentId) {
   return rooms[0] || null;
 }
 
+// Swipe right (starting in the left part of the screen) or pinch two fingers together: back.
+// Touch only; a mouse never triggers it. Returns the function that removes the listeners.
+export function backGestures(el, back) {
+  if (!el) return () => {};
+  let start = null, pinch = null;
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const onStart = (e) => {
+    if (e.touches.length === 2) { pinch = dist(e.touches); start = null; return; }
+    const t = e.touches[0];
+    start = e.touches.length === 1 && t.clientX < window.innerWidth * 0.4 && !e.target.closest('textarea, input, .mx-chips')
+      ? { x: t.clientX, y: t.clientY } : null;
+  };
+  const onMove = (e) => {
+    if (pinch && e.touches.length === 2 && dist(e.touches) < pinch * 0.6) { pinch = null; back(); return; }
+    if (!start || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - start.x, dy = Math.abs(e.touches[0].clientY - start.y);
+    if (dy > 40) { start = null; return; }
+    if (dx > 0 && dy < dx / 2) { el.style.transition = 'none'; el.style.transform = `translateX(${dx * 0.8}px)`; el.style.opacity = String(1 - Math.min(dx / 400, 0.5)); }
+    if (dx > 120 && dy < dx / 2) { start = null; back(); }
+  };
+  const settle = () => { el.style.transition = 'transform .2s ease, opacity .2s ease'; el.style.transform = ''; el.style.opacity = ''; };
+  const onEnd = (e) => { if (e.touches.length < 2) pinch = null; if (!e.touches.length) { start = null; settle(); } };
+  el.addEventListener('touchstart', onStart, { passive: true });
+  el.addEventListener('touchmove', onMove, { passive: true });
+  el.addEventListener('touchend', onEnd, { passive: true });
+  return () => { el.removeEventListener('touchstart', onStart); el.removeEventListener('touchmove', onMove); el.removeEventListener('touchend', onEnd); };
+}
+
 export async function matrixChat(root, agent, agents, state, sideBits, threadId = null) {
   const isNew = threadId === 'new';
   let alive = true;
@@ -60,6 +88,22 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         sideBits.viewMenu || null, sideBits.convBtn || null),
       chipsRow, modelLine, log, thinkingRow, note, form),
     sideBits.side, sideBits.sideScrim || null, sideBits.reopen || null);
+
+  // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
+  // back to all your agents by swiping right, by pinching (zooming out to the floating agents), or by
+  // tapping the agent's mark.
+  document.documentElement.classList.add('in-conv');
+  off.push(() => document.documentElement.classList.remove('in-conv'));
+  off.push(backGestures(root.querySelector('section.chat'), () => { location.hash = '#/chat'; }));
+  // Once per browser, on a touch screen: say the gestures exist.
+  try {
+    if (matchMedia('(pointer: coarse)').matches && !localStorage.getItem('logos.tip.back')) {
+      localStorage.setItem('logos.tip.back', '1');
+      const tip = h('div', { class: 'gesture-tip', role: 'status' }, 'Tip: swipe right or pinch to see all your agents');
+      root.querySelector('section.chat')?.append(tip);
+      setTimeout(() => tip.classList.add('gone'), 5000); setTimeout(() => tip.remove(), 5600);
+    }
+  } catch (e) { /* no storage: no tip */ }
 
   let c, room;
   try {
