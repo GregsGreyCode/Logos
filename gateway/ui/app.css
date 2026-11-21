@@ -1355,8 +1355,8 @@ section:has(> .appearance-modes.single) { display: none; }
 /* Swiping between Home and Agents (app.js swipeTabs): the next screen slides in from the side. */
 @keyframes slide-in-right { from { transform: translateX(28%); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes slide-in-left { from { transform: translateX(-28%); opacity: 0; } to { transform: none; opacity: 1; } }
-.view-box.slide-in-right { animation: slide-in-right .22s ease-out; }
-.view-box.slide-in-left { animation: slide-in-left .22s ease-out; }
-[data-motion="still"] .view-box.slide-in-right, [data-motion="still"] .view-box.slide-in-left { animation: none; }
-@media (prefers-reduced-motion: reduce) { .view-box.slide-in-right, .view-box.slide-in-left { animation: none; } }
+#view.slide-in-right { animation: slide-in-right .24s cubic-bezier(.2, .8, .2, 1) both; }
+#view.slide-in-left { animation: slide-in-left .24s cubic-bezier(.2, .8, .2, 1) both; }
+[data-motion="still"] #view.slide-in-right, [data-motion="still"] #view.slide-in-left { animation: none; }
+@media (prefers-reduced-motion: reduce) { #view.slide-in-right, #view.slide-in-left { animation: none; } }
 @media (max-width: 599px) { html.screen-tabbed:not(.in-agent) { overscroll-behavior-x: none; } }
