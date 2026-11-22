@@ -1,6 +1,7 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
-import { h, getJSON, when, none, loading, aiState } from './util.js';
+import { h, api, getJSON, when, none, loading, aiState } from './util.js';
+import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
 import { unreadFromAgents } from './notify.js';
@@ -135,6 +136,113 @@ export async function homeView(root) {
   }
 
 
+  // ── Your choice of widgets (Greg, 22 Nov): the calendar always; the rest as each person picks ─────
+  const WIDGETS = [['next', 'Next', 'Your next event today and how long until it'], ['weather', 'Weather', 'Today and tomorrow where you choose'],
+    ['messages', 'Messages', 'Unread from your agents and groups'], ['coming', 'Coming up', 'Birthdays and events in the next two weeks'],
+    ['lights', 'Lights', 'Which rooms are lit, and All off'], ['lists', 'Lists', 'The household\'s shared lists']];
+  const DEFAULT_WIDGETS = ['next', 'messages', 'lists'];
+  const chosen = () => { const w = getPref('widgets', null); return Array.isArray(w) ? w : DEFAULT_WIDGETS; };
+  const on = (id) => chosen().includes(id);
+  function applyWidgets() {
+    if (!on('next')) nextUp.hidden = true;
+    if (!on('messages')) msgSec.hidden = true;
+    if (!on('lists')) listsSec.hidden = true;
+    weatherSec.hidden = !on('weather');
+    lightsSec.hidden = !on('lights');
+    comingSec.hidden = !on('coming');
+  }
+
+  // Weather: one card, now and today, then tomorrow (Open-Meteo, through Logos; only the place's rounded position goes out).
+  const SKY = (c) => (c === 0 ? ['☀️', 'Clear'] : c <= 2 ? ['⛅', 'Partly cloudy'] : c === 3 ? ['☁️', 'Cloudy'] : c <= 48 ? ['🌫️', 'Fog']
+    : c <= 57 ? ['🌦️', 'Drizzle'] : c <= 67 ? ['🌧️', 'Rain'] : c <= 77 ? ['🌨️', 'Snow'] : c <= 82 ? ['🌦️', 'Showers']
+      : c <= 86 ? ['🌨️', 'Snow showers'] : ['⛈️', 'Thunder']);
+  const deg = (t) => (t === null || t === undefined ? '–' : `${Math.round(t)}°`);
+  const weatherBox = h('div', { class: 'home-weather' });
+  const weatherSec = h('section', { class: 'home-weather-sec', 'aria-label': 'Weather', hidden: true }, weatherBox);
+  async function showWeather() {
+    const w = await getJSON('/api/v2/weather').catch(() => ({ error: 'weather_unavailable' }));
+    if (!alive) return;
+    if (w.error === 'no_place') { weatherBox.replaceChildren(h('p', { class: 'when' }, 'Weather: choose your town below (Choose what Home shows).')); return; }
+    if (w.error) { weatherBox.replaceChildren(h('p', { class: 'when' }, `The weather could not be read just now${w.place ? ` for ${w.place}` : ''}.`)); return; }
+    const [icon, words] = SKY(w.now.code);
+    const [tIcon, tWords] = SKY(w.tomorrow.code);
+    weatherBox.replaceChildren(
+      h('span', { class: 'home-weather-now' }, h('span', { class: 'home-weather-icon', 'aria-hidden': 'true' }, icon), h('strong', {}, deg(w.now.temp))),
+      h('span', { class: 'home-weather-text' },
+        h('span', {}, `${words} · today ${deg(w.today.high)} / ${deg(w.today.low)}${w.today.rain ? ` · ${w.today.rain}% rain` : ''}`),
+        h('span', { class: 'when' }, `Tomorrow ${tIcon} ${tWords.toLowerCase()} ${deg(w.tomorrow.high)} / ${deg(w.tomorrow.low)}${w.tomorrow.rain ? ` · ${w.tomorrow.rain}% rain` : ''} · ${w.place.split(',')[0]}`)));
+  }
+
+  // Lights: each room, lit or not; a tap switches it (on if all off, else off), and All off.
+  const lightsBox = h('div', { class: 'home-lights' });
+  const lightsNote = h('p', { class: 'when', role: 'status' });
+  const lightsSec = h('section', { class: 'home-lights-sec', 'aria-label': 'Lights', hidden: true },
+    h('div', { class: 'home-sec-head' }, h('h2', { class: 'label' }, 'Lights'),
+      h('button', { type: 'button', class: 'linkish', onclick: () => switchLights(['everything'], false) }, 'All off')), lightsBox, lightsNote);
+  async function switchLights(targets, value) {
+    lightsNote.textContent = '';
+    for (const b of lightsSec.querySelectorAll('button')) b.disabled = true;
+    const r = await api('/api/v2/home/lights', { method: 'POST', body: { targets, on: value } }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) lightsNote.textContent = d.message || 'The lights did not answer just now.';
+    drawLights(d.rooms ? d : await getJSON('/api/v2/home/lights').catch(() => ({})));
+  }
+  function drawLights(d) {
+    if (!d || d.error || !d.rooms) { lightsBox.replaceChildren(h('p', { class: 'when' }, d && d.error === 'no_house' ? 'No agent here can work the lights.' : 'The lights could not be read just now.')); return; }
+    lightsBox.replaceChildren(...d.rooms.map((r) => h('button', { type: 'button', class: `home-light${r.on ? ' lit' : ''}`, 'aria-pressed': String(!!r.on),
+      title: r.on ? `Turn ${r.room} off` : `Turn ${r.room} on`, onclick: () => switchLights([r.room], !r.on) },
+    h('span', { class: 'home-light-name' }, r.room), h('span', { class: 'when' }, r.on ? `${r.on} of ${r.of} on` : 'off'))));
+  }
+  async function showLights() { const d = await getJSON('/api/v2/home/lights').catch(() => ({ error: 'x' })); if (alive) drawLights(d); }
+
+  // Coming up: the next two weeks after tomorrow, one line each (all-day ones, like birthdays, too).
+  const comingBox = h('div', { class: 'home-list home-agenda' });
+  const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up', hidden: true }, h('h2', { class: 'label' }, 'Coming up'), comingBox);
+  async function showComing() {
+    const d = await getJSON('/api/v2/home/coming').catch(() => ({ error: 'x' }));
+    if (!alive) return;
+    if (d.error) { comingBox.replaceChildren(h('p', { class: 'when' }, d.error === 'no_calendar' ? 'No calendar yet.' : 'The calendar could not be read just now.')); return; }
+    const events = (d.events || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start))).slice(0, 8);
+    const day = (e) => new Date(`${String(e.start).slice(0, 10)}T12:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric' });
+    const whose = (e) => (e.calendar === 'personal' ? 'Yours' : String((d.calendars || {})[e.calendar] || e.calendar).replace(/\s*\(.*\)\s*$/, ''));
+    comingBox.replaceChildren(...(events.length ? events.map((e) => h('div', { class: 'home-row home-line' },
+      h('span', { class: 'home-time' }, day(e)),
+      h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
+      h('span', { class: 'home-title' }, `${e.all_day ? '' : `${String(e.start).slice(11, 16)} `}${e.title}`),
+      h('span', { class: 'home-meta' }, whose(e)))) : [none('Nothing in the next two weeks.')]));
+  }
+
+  // "Choose what Home shows": tick the widgets; Weather asks for a town (found by name, kept with your login).
+  const choosePanel = h('section', { class: 'home-choose', 'aria-label': 'Choose what Home shows', hidden: true });
+  const chooseLink = h('button', { type: 'button', class: 'linkish home-choose-link', onclick: () => {
+    if (!choosePanel.hidden) { choosePanel.hidden = true; return; }
+    drawChoose(); choosePanel.hidden = false; choosePanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } }, 'Choose what Home shows');
+  function drawChoose() {
+    const ticks = WIDGETS.map(([id, label, help]) => h('label', { class: 'ng-pick' },
+      h('input', { type: 'checkbox', checked: on(id) ? '' : null, onchange: async (e) => {
+        const next = WIDGETS.map(([w]) => w).filter((w) => (w === id ? e.target.checked : on(w)));
+        await setPref('widgets', next);
+        applyWidgets();
+        if (e.target.checked) { if (id === 'messages') showMessages(); if (id === 'lists') showLists(); if (id === 'weather') showWeather();
+          if (id === 'lights') showLights(); if (id === 'coming') showComing(); if (id === 'next') showNext(data.today); }
+      } }), h('span', {}, label, h('small', { class: 'when' }, ` ${help}`))));
+    const place = getPref('weather_place', null);
+    const q = h('input', { type: 'search', id: 'weather-q', placeholder: 'Town or city', autocomplete: 'off', value: place ? place.name.split(',')[0] : '' });
+    const found = h('div', { class: 'ng-picks' });
+    const find = async () => {
+      found.replaceChildren(h('p', { class: 'when' }, 'Looking…'));
+      const r = await getJSON(`/api/v2/weather/places?q=${encodeURIComponent(q.value.trim())}`).catch(() => ({ places: [] }));
+      found.replaceChildren(...((r.places || []).length ? r.places.map((p) => h('button', { type: 'button', class: 'btn quiet small', onclick: async () => {
+        await setPref('weather_place', p); drawChoose(); showWeather();
+      } }, p.name)) : [h('p', { class: 'when' }, 'No place by that name.')]));
+    };
+    choosePanel.replaceChildren(h('h2', { class: 'label' }, 'Choose what Home shows'), ...ticks,
+      h('label', { for: 'weather-q', class: 'field-label' }, `Weather for${place ? `: ${place.name}` : ''}`),
+      h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); find(); } }, q, h('button', { type: 'submit', class: 'btn quiet small' }, 'Find')),
+      found, h('p', { class: 'when' }, 'Only the town\'s position (to about a kilometre) is sent to the weather service.'));
+  }
+
   async function load() {
     let nb = { waiting: [], log: [] };
     try {
@@ -171,10 +279,14 @@ export async function homeView(root) {
       : [none('Nothing is waiting on you.')]));
     showToday(data.today);
     showNext(data.today);
+    applyWidgets();
     // "Since yesterday" lives in Notifications now (Greg, 21 Nov).
     waitingSec.hidden = !nb.waiting.length;
-    showMessages();
-    showLists();
+    if (on('messages')) showMessages();
+    if (on('lists')) showLists();
+    if (on('weather')) showWeather();
+    if (on('lights')) showLights();
+    if (on('coming')) showComing();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
 
@@ -193,9 +305,13 @@ export async function homeView(root) {
     h('header', { class: 'home-head' },
       h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY))), statusWords),
     waitingSec,
+    weatherSec,
     h('section', { 'aria-label': 'Calendar', class: 'home-cal' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), nextUp, todayBox),
     msgSec,
+    comingSec,
+    lightsSec,
     listsSec,
+    chooseLink, choosePanel,
     askForm));                                   // at the bottom (Greg, 21 Nov)                                   // under Today and Tomorrow (Greg, 21 Nov)
 
   fromLast();

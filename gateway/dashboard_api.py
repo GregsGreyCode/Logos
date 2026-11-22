@@ -136,7 +136,27 @@ COLOUR_PREFS = ("primary", "attention")
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
+# Home's widgets, each person's own choice (Greg, 22 Nov); the calendar is always there.
+WIDGETS = ("next", "messages", "lists", "lights", "weather", "coming")
+
+
+def _place_ok(value: Any) -> bool:
+    if value is None:
+        return True
+    if not isinstance(value, dict) or set(value) != {"name", "lat", "lon"}:
+        return False
+    try:
+        return (isinstance(value["name"], str) and 0 < len(value["name"]) <= 120
+                and -90 <= float(value["lat"]) <= 90 and -180 <= float(value["lon"]) <= 180)
+    except (TypeError, ValueError):
+        return False
+
+
 def _pref_ok(key: str, value: Any) -> bool:
+    if key == "widgets":
+        return isinstance(value, list) and len(value) == len(set(value)) and all(w in WIDGETS for w in value)
+    if key == "weather_place":
+        return _place_ok(value)
     if key in COLOUR_PREFS:
         return isinstance(value, str) and (value == "" or bool(_HEX.match(value)))
     return key in PREFS and value in PREFS[key]
@@ -205,7 +225,9 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
         body = None
     if not isinstance(body, dict) or not body or not all(_pref_ok(k, v) for k, v in body.items()):
         return web.json_response({"error": "bad_prefs", "allowed": {**{k: list(v) for k, v in PREFS.items()},
-                                                                   **{k: "#rrggbb" for k in COLOUR_PREFS}}}, status=400)
+                                                                   **{k: "#rrggbb" for k in COLOUR_PREFS},
+                                                                   "widgets": list(WIDGETS), "weather_place": "{name, lat, lon}"}},
+                                 status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
     seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not a setting
     stored = {**merged, **({"seen_until": seen} if seen else {})}
@@ -1647,6 +1669,81 @@ async def _watch_ai(app: web.Application) -> None:
     app.on_cleanup.append(stop)
 
 
+# ── Home's widgets (Greg, 22 Nov): Coming up, Lights, Weather ─────────────────────────────────
+
+WEATHER_CACHE_SECONDS = 20 * 60
+
+
+async def handle_home_coming(request: web.Request) -> web.Response:
+    """GET /api/v2/home/coming — your calendar from the day after tomorrow to two weeks ahead."""
+    from gateway import home
+    user = _user(request)
+    agents = await _visible_agents(request, user["username"])
+    name = home.own_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_calendar"})
+    out = await asyncio.to_thread(home.calendar_coming, runtime, name, agents[name]["definition"], user["username"])
+    return web.json_response(out)
+
+
+async def handle_home_lights(request: web.Request) -> web.Response:
+    """GET /api/v2/home/lights — rooms and how many lights are on; POST {targets, on} switches them.
+    Through the house service as the household agent (or your own), with its limits."""
+    from gateway import home
+    user = _user(request)
+    agents = await _visible_agents(request, user["username"])
+    name = home.house_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_house"})
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            targets = [str(t)[:60] for t in body["targets"]][:20]
+            on = body["on"]
+            if not targets or not isinstance(on, bool):
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            return web.json_response({"error": "bad_request"}, status=400)
+        out = await asyncio.to_thread(home.set_lights, runtime, name, targets, on)
+        if out.get("error"):
+            return web.json_response(out, status=502)
+    return web.json_response(await asyncio.to_thread(home.lights, runtime, name))
+
+
+async def handle_weather(request: web.Request) -> web.Response:
+    """GET /api/v2/weather — today and tomorrow where you chose (Settings: weather_place)."""
+    from gateway import home
+    user = _user(request)
+    place = (await asyncio.to_thread(prefs_of, user["id"])).get("weather_place")
+    if not place:
+        return web.json_response({"error": "no_place"})
+    key = (round(float(place["lat"]), 2), round(float(place["lon"]), 2))
+    cache = request.app.setdefault("weather_cache", {})
+    if key in cache and time.time() - cache[key][0] < WEATHER_CACHE_SECONDS:
+        return web.json_response({**cache[key][1], "place": place["name"]})
+    try:
+        out = await asyncio.to_thread(home.weather, *key)
+    except Exception:
+        return web.json_response({"error": "weather_unavailable", "place": place["name"]})
+    cache[key] = (time.time(), out)
+    return web.json_response({**out, "place": place["name"]})
+
+
+async def handle_weather_places(request: web.Request) -> web.Response:
+    """GET /api/v2/weather/places?q=Brighton — places to pick from (name, rounded lat/lon)."""
+    from gateway import home
+    _user(request)
+    q = (request.query.get("q") or "").strip()
+    if len(q) < 2:
+        return web.json_response({"places": []})
+    try:
+        return web.json_response({"places": await asyncio.to_thread(home.places, q)})
+    except Exception:
+        return web.json_response({"error": "places_unavailable", "places": []})
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_get("/api/v2/notifications", handle_notifications)
@@ -1658,6 +1755,11 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/people", handle_people)
     app.router.add_get("/api/v2/activity", handle_activity)
     app.router.add_get("/api/v2/home", handle_home)
+    app.router.add_get("/api/v2/home/coming", handle_home_coming)
+    app.router.add_get("/api/v2/home/lights", handle_home_lights)
+    app.router.add_post("/api/v2/home/lights", require_csrf(handle_home_lights))
+    app.router.add_get("/api/v2/weather", handle_weather)
+    app.router.add_get("/api/v2/weather/places", handle_weather_places)
     app.router.add_get("/api/v2/model", handle_model)
     app.router.add_get("/api/v2/models", handle_models)
     app.router.add_get("/api/v2/models/local", handle_local_model)

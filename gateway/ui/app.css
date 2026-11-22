@@ -1628,3 +1628,24 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .ng-picks { display: flex; flex-direction: column; gap: 6px; }
 .ng-pick { display: flex; align-items: center; gap: 10px; min-height: 40px; }
 .ng-pick input { width: 20px; height: 20px; }
+
+/* Home widgets of your choice (Greg, 22 Nov): Weather, Lights, Coming up, and the chooser. */
+.home-weather { display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: var(--r-card); background: var(--surface); border: 1px solid var(--line); }
+.home-weather-now { display: flex; align-items: center; gap: 6px; flex: none; }
+.home-weather-now strong { font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
+.home-weather-icon { font-size: 26px; line-height: 1; }
+.home-weather-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: var(--t-sm); }
+.home-weather-text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.home-sec-head .label { margin: 0; }
+.home-lights { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 6px; }
+.home-light { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; min-height: 52px; font: inherit; text-align: left;
+  border: 1px solid var(--line); border-radius: var(--r-card); background: transparent; color: var(--ink); cursor: pointer; user-select: none; }
+.home-light.lit { background: color-mix(in srgb, #ffd166 18%, var(--surface)); border-color: color-mix(in srgb, #ffd166 55%, var(--line)); }
+.home-light-name { font-weight: 600; }
+.home-choose-link { align-self: center; font-size: var(--t-sm); color: var(--muted); }
+.home-choose { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.home-choose .row { display: flex; gap: 8px; }
+.home-choose input[type=search] { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--ground); color: var(--ink); }
+.home-choose .ng-picks { flex-direction: row; flex-wrap: wrap; }
+.home-coming .home-line .home-time { width: 62px; white-space: nowrap; }
