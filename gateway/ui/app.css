@@ -1821,3 +1821,15 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .routines-fold .rows { margin-top: 6px; }
 [data-anim="off"] .switch-track, [data-anim="off"] .switch-track::after { transition: none; }
 @media (max-width: 599px) { .routine-fields { padding-left: 0; } }
+/* Routines: room for the pickers' arrows (Greg, 22 Nov), the "You asked for" heading with + New routine,
+   and the New routine sheet's text box with its microphone. */
+.routine-field input, .routine-field select { padding: 0 16px; min-width: 132px; }
+.routine-field select { padding-right: 36px; }
+.routine-field input[type=time]::-webkit-calendar-picker-indicator { margin-left: 10px; margin-right: 2px; }
+.routines-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.routines-head .label { margin: 0; }
+.nr-row { display: flex; gap: 8px; align-items: flex-start; }
+.nr-row textarea { flex: 1; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--ground); color: var(--ink); font: inherit; resize: vertical; }
+.nr-mic { flex: none; width: 48px; height: 48px; padding: 0; font-size: 20px; }
+.nr-mic.recording { background: var(--bad); color: #fff; }
