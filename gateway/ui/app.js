@@ -221,7 +221,8 @@ window.addEventListener('hashchange', route);
 // The screen follows the finger one to one (and only stretches a little past the first and last tab);
 // let go past about a third of the width, or with a flick, and it carries on off the screen while the
 // next slides in from the side you swiped towards; otherwise it springs back. The tab bar's highlight
-// follows the finger. Inside an agent the swipe right goes back to all agents (chat-mx), not caught here.
+// follows the finger. Only Motion › Still (or the phone's reduced motion) stops the movement; Calm is about
+// the agents' marks, not this. Inside an agent the swipe right goes back to all agents (chat-mx), not caught here.
 const SWIPE_TABS = ['#/home', '#/chat', '#/noticeboard'];
 function swipeTabs(el) {
   let s = null, leaving = false;

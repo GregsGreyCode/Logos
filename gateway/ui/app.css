@@ -789,7 +789,6 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .sk-tile { height: 56px; border-radius: var(--r-card); }
 .reveal { animation: reveal .42s cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-[data-motion="calm"] .reveal { animation-duration: .25s; }
 [data-motion="still"] .sk::after, [data-motion="still"] .loading, [data-motion="still"] .reveal { animation: none; }
 @media (prefers-reduced-motion: reduce) { .sk::after, .loading, .reveal { animation: none; } }
 /* The Claude Advisor notice is a card shape, not a pill */
@@ -1400,12 +1399,13 @@ section:has(> .appearance-modes.single) { display: none; }
 
 /* Swiping between Home and Agents (app.js swipeTabs): the next screen slides in from the side. */
 /* The next screen glides in from the side the finger went (Greg, 22 Nov: smoother): it starts a third of
-   the way across and settles without a bump. Calm: a shorter, quicker move. */
+   the way across and settles without a bump. Motion › Still (or the phone's reduced motion) turns it off;
+   Calm is about the agents only. */
 @keyframes slide-in-right { from { transform: translateX(34%); opacity: .15; } to { transform: none; opacity: 1; } }
 @keyframes slide-in-left { from { transform: translateX(-34%); opacity: .15; } to { transform: none; opacity: 1; } }
 #view.slide-in-right { animation: slide-in-right .34s cubic-bezier(.16, 1, .3, 1) both; }
 #view.slide-in-left { animation: slide-in-left .34s cubic-bezier(.16, 1, .3, 1) both; }
-[data-motion="calm"] #view.slide-in-right, [data-motion="calm"] #view.slide-in-left { animation-duration: .2s; }
+
 [data-motion="still"] #view.slide-in-right, [data-motion="still"] #view.slide-in-left { animation: none; }
 @media (prefers-reduced-motion: reduce) { #view.slide-in-right, #view.slide-in-left { animation: none; } }
 @media (max-width: 599px) { html.screen-tabbed:not(.in-agent) { overscroll-behavior-x: none; } }
