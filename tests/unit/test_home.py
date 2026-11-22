@@ -114,11 +114,15 @@ def test_lights_go_through_the_shared_agent_and_list_rooms_only(monkeypatch):
         req = json.loads(body)
         calls.append((token, req["params"]["name"], req["params"]["arguments"]))
         if req["params"]["name"] == "list_lights":
-            return tool({"rooms": [{"room": "Lounge", "kind": "room", "on": "2 of 3"}, {"room": "TV Wall", "kind": "zone", "on": "1 of 1"}]})
+            return tool({"rooms": [{"room": "Lounge", "kind": "room", "on": "2 of 3", "lights": [
+                {"state": "on", "brightness": 40}, {"state": "on", "brightness": 61}, {"state": "off"}]},
+                {"room": "TV Wall", "kind": "zone", "on": "1 of 1"}]})
         return tool({"done": True})
-    assert home.lights(object(), "household", post=post) == {"rooms": [{"room": "Lounge", "on": 2, "of": 3}]}
+    assert home.lights(object(), "household", post=post) == {"rooms": [{"room": "Lounge", "on": 2, "of": 3, "brightness": 50}]}
     home.set_lights(object(), "household", ["everything"], False, post=post)
     assert calls[-1] == ("tok", "set_lights", {"targets": ["everything"], "on": False})
+    home.set_lights(object(), "household", ["Lounge"], True, post=post, brightness=30)
+    assert calls[-1] == ("tok", "set_lights", {"targets": ["Lounge"], "on": True, "brightness": 30})
     assert home.lights(object(), "greg", post=post) == {"error": "no_house"}
 
 
