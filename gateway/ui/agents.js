@@ -82,7 +82,7 @@ export async function agentsView(root, [agentArg]) {
     return card;
   }
   const timeField = (label, value) => h('label', { class: 'routine-field' }, h('span', { class: 'when' }, label),
-    h('input', { type: 'time', value, step: '300' }));
+    h('input', { type: 'time', value, step: '300', onclick: (e) => { try { e.target.showPicker?.(); } catch (err) { /* opens by itself */ } } }));
   const dayField = (value) => h('label', { class: 'routine-field' }, h('span', { class: 'when' }, 'Day'),
     h('select', {}, DAYS.map((d, i) => h('option', { value: String(i), selected: i === value ? '' : null }, d))));
   const val = (f) => f.querySelector('input, select').value;
