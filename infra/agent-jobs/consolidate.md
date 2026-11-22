@@ -10,7 +10,11 @@ Nightly brain consolidation. Work only inside /opt/data/brain. Read README.md th
 5. Do not delete or rewrite inbox files. Do not invent facts. If something is unclear, add it to
    topics/open-questions.md as a question for your person.
 
-6. Your person may have edited pages themselves. Keep their wording and facts. If any file name
+6. In topics/lessons.md, a line "<name> didn't like / loved this reply (… reaction)" is a reaction
+   to one of your messages. Find that message in your conversations, work out what was wrong (or
+   right) about it, and replace the line with a short general rule. If you cannot tell, leave it.
+
+7. Your person may have edited pages themselves. Keep their wording and facts. If any file name
    contains "sync-conflict", do not touch it or its original; list it in topics/open-questions.md.
 
 Finish with at most three lines saying which pages you created or changed, or "Nothing to consolidate".

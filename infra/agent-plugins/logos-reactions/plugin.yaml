@@ -1,0 +1,11 @@
+name: logos-reactions
+label: Logos reactions reach the agent
+kind: standalone
+version: 1.0.0
+description: >
+  An emoji reaction on one of the agent's messages is told to it at the start of its next turn
+  (no reply). 👎 and ❤️ also go into topics/lessons.md; ❓ and 🔁 start a turn ("Explain that
+  more." / "Try that again a different way.").
+author: Logos
+provides_hooks:
+  - pre_llm_call
