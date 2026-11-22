@@ -146,3 +146,17 @@ def test_widget_and_place_preferences_are_checked():
     assert d._pref_ok("weather_place", {"name": "Brighton", "lat": 50.83, "lon": -0.14}) and d._pref_ok("weather_place", None)
     assert not d._pref_ok("weather_place", {"name": "x", "lat": 91, "lon": 0})
     assert not d._pref_ok("weather_place", {"name": "x", "lat": 1, "lon": 2, "extra": 1})
+
+
+def test_notifications_are_read_one_by_one_and_kept_through_other_settings(monkeypatch):
+    from gateway import dashboard_api as d
+    store = {}
+    monkeypatch.setattr(d.auth_db, "get_user_settings", lambda uid: {"ui_prefs": store.get(uid, "{}")}, raising=False)
+    monkeypatch.setattr(d.auth_db, "update_user_settings", lambda uid, ui_prefs: store.__setitem__(uid, ui_prefs), raising=False)
+    d._mark_read("u1", ["brain:Sun Nov 22 2026", "mx:$e1"])
+    d._mark_read("u1", ["mx:$e1", "ai:123"])
+    assert d._read_ids("u1") == ["brain:Sun Nov 22 2026", "mx:$e1", "ai:123"]
+    d._mark_read("u1", [f"x{i}" for i in range(500)])
+    assert len(d._read_ids("u1")) == d.READ_KEEP and d._read_ids("u1")[-1] == "x499"
+    out = d._mark_read("u1", [], everything=True)
+    assert out["read_ids"] == [] and out["seen_until"] > 0 and d._seen_until("u1") == out["seen_until"]

@@ -231,8 +231,9 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
                                                                    "widgets": list(WIDGETS), "weather_place": "{name, lat, lon}"}},
                                  status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
-    seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not a setting
-    stored = {**merged, **({"seen_until": seen} if seen else {})}
+    seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not settings
+    read = await asyncio.to_thread(_read_ids, user["id"])
+    stored = {**merged, **({"seen_until": seen} if seen else {}), **({"read_ids": read} if read else {})}
     await asyncio.to_thread(auth_db.update_user_settings, user["id"], ui_prefs=json.dumps(stored, sort_keys=True))
     return web.json_response(merged)
 
@@ -1544,6 +1545,36 @@ def _seen_until(user_id: str) -> float:
         return 0.0
 
 
+READ_KEEP = 400                    # notifications read one by one, remembered (the feed holds a week)
+
+
+def _raw_ui(user_id: str) -> Dict[str, Any]:
+    row = auth_db.get_user_settings(user_id) if user_id else None
+    try:
+        raw = json.loads((row or {}).get("ui_prefs") or "{}")
+    except (ValueError, TypeError):
+        raw = {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _read_ids(user_id: str) -> List[str]:
+    ids = _raw_ui(user_id).get("read_ids")
+    return [str(i) for i in ids][-READ_KEEP:] if isinstance(ids, list) else []
+
+
+def _mark_read(user_id: str, ids: List[str], everything: bool = False) -> Dict[str, Any]:
+    """Notifications read one by one (a tap), or everything up to now (Mark all read)."""
+    raw = _raw_ui(user_id)
+    if everything:
+        raw["seen_until"] = round(time.time(), 3)
+        raw["read_ids"] = []
+    else:
+        have = [str(i) for i in raw.get("read_ids") or [] if isinstance(i, (str, int))]
+        raw["read_ids"] = (have + [i for i in ids if i not in have])[-READ_KEEP:]
+    auth_db.update_user_settings(user_id, ui_prefs=json.dumps(raw, sort_keys=True))
+    return {"seen_until": float(raw.get("seen_until") or 0), "read_ids": raw["read_ids"]}
+
+
 def _set_seen_until(user_id: str, ts: float) -> None:
     row = auth_db.get_user_settings(user_id) or {}
     try:
@@ -1637,7 +1668,8 @@ async def handle_notifications(request: web.Request) -> web.Response:
                           ("Messages wait until it is back." if current else "It came back on.")})
     items.sort(key=lambda i: -i["ts"])
     seen = await asyncio.to_thread(_seen_until, user["id"])
-    return web.json_response({"items": items[:60], "seen_until": seen})
+    read = await asyncio.to_thread(_read_ids, user["id"])
+    return web.json_response({"items": items[:60], "seen_until": seen, "read_ids": read})
 
 
 async def handle_notifications_seen(request: web.Request) -> web.Response:
@@ -1646,6 +1678,23 @@ async def handle_notifications_seen(request: web.Request) -> web.Response:
     ts = time.time()
     await asyncio.to_thread(_set_seen_until, user["id"], ts)
     return web.json_response({"seen_until": ts})
+
+
+async def handle_notifications_read(request: web.Request) -> web.Response:
+    """POST /api/v2/notifications/read {ids: [...]} (one tapped) or {all: true} (Mark all read)."""
+    user = _user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        return web.json_response({"error": "bad_request"}, status=400)
+    if body.get("all") is True:
+        return web.json_response(await asyncio.to_thread(_mark_read, user["id"], [], True))
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not ids or len(ids) > 100 or not all(isinstance(i, str) and 0 < len(i) <= 200 for i in ids):
+        return web.json_response({"error": "bad_request"}, status=400)
+    return web.json_response(await asyncio.to_thread(_mark_read, user["id"], ids))
 
 
 async def _watch_ai(app: web.Application) -> None:
@@ -1750,6 +1799,7 @@ def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_get("/api/v2/notifications", handle_notifications)
     app.router.add_post("/api/v2/notifications/seen", require_csrf(handle_notifications_seen))
+    app.router.add_post("/api/v2/notifications/read", require_csrf(handle_notifications_read))
     app.on_startup.append(_watch_ai)
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
     app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)

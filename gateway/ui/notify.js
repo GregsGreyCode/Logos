@@ -43,7 +43,8 @@ export async function unreadFromAgents(agents) {
         // A group (F36): its name first, and the link opens the group.
         const inGroup = room.getJoinedMemberCount() > 2;
         out.push({ id: `mx:${e.getId()}`, kind: 'chat', type: 'message', ts: e.getTs() / 1000, unread: true, agent: a.name, who: a.display_name,
-          title: inGroup ? `${room.name || 'Group'} · ${a.display_name}` : a.display_name, text: body.replace(/\s+/g, ' ').slice(0, 160),
+          room: room.roomId, event: e.getId(),
+          title: inGroup ? `${room.name || 'Group'} · ${a.display_name}` : a.display_name, text: body.replace(/\s+/g, ' ').slice(0, 1500),     // whole, to read when opened
           link: inGroup ? `#/chat/${a.name}/group/${encodeURIComponent(room.roomId)}`
             : root ? `#/chat/${a.name}/thread/${encodeURIComponent(root)}` : `#/chat/${a.name}` });
       }
@@ -120,6 +121,7 @@ export async function feed() {
       ts: q.created || Date.now() / 1000, title: `${nameOf[who] || who} asks for more Advisor budget`, text: q.reason, link: '#/advisor' }))),
   ] : [];
   const seen = Number(server.seen_until || 0);
+  const read = new Set(server.read_ids || []);
   const since = Date.now() / 1000 - DAYS * 86400;
   const between = (nb.log || []).filter((m) => (m.ts || 0) >= since && m.status !== 'open').map((m) => {
     const [label, tone] = outcome(m);
@@ -128,8 +130,8 @@ export async function feed() {
   });
   const chats = await unreadFromAgents(agents).catch(() => []);
   const items = [...advisor, ...chats, ...brainByDay(outages(server.items || [])), ...between].sort((a, b) => b.ts - a.ts)
-    .map((i) => ({ ...i, fresh: i.unread || i.ts > seen }));
-  return { items, waiting: nb.waiting || [], seen };
+    .map((i) => ({ ...i, fresh: !read.has(i.id) && (i.unread || i.ts > seen) }));
+  return { items, waiting: nb.waiting || [], seen, read };
 }
 
 // The number on the bell: what waits on you, plus what is new.
@@ -139,3 +141,18 @@ export async function countNew() {
 }
 
 export const markSeen = () => api('/api/v2/notifications/seen', { method: 'POST' }).catch(() => {});
+
+// One notification read (a tap, Greg 22 Nov). A chat message is also marked read in Matrix, up to it, so
+// it clears in the chat, on the phone and in Element X too.
+export async function markRead(item) {
+  const done = api('/api/v2/notifications/read', { method: 'POST', body: { ids: [item.id] } }).catch(() => {});
+  if (item.kind === 'chat' && item.room && item.event) {
+    try {
+      const c = await mx.get();
+      const ev = c.getRoom(item.room)?.findEventById(item.event);
+      if (ev) await c.sendReadReceipt(ev);
+    } catch (e) { /* the server keeps it read for Logos anyway */ }
+  }
+  await done;
+}
+export const markAllRead = () => api('/api/v2/notifications/read', { method: 'POST', body: { all: true } }).catch(() => {});
