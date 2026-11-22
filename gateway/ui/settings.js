@@ -206,7 +206,6 @@ function matrix(state, redraw) {
     const fold = h('details', { class: 'mx-devices' }, h('summary', {}, 'Your devices'), list);
     box.replaceChildren(
       h('div', { class: 'mx-ok', title: `This browser is a verified device of ${me}.` }, '✓ This device is connected and secure'),
-      h('p', { class: 'when' }, 'Your chats are end-to-end encrypted: only your own devices and the agents can read them.'),
       fold, msg);
     const devs = (await mx.devices()).sort((a, b) => Number(b.here) - Number(a.here) || b.lastSeen - a.lastSeen);
     const plain = (n) => String(n || 'A device').replace(/^Logos \((.*)\)$/, 'Logos · $1');
