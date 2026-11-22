@@ -92,7 +92,7 @@ function feedRow(i, TYPES, onOpen) {
   const second = [i.outcome, source && source !== i.title ? source : '', detail].filter(Boolean).join(' · ');
   // A tap opens it in place (the whole text, and a way to go to it) and marks it read (Greg, 22 Nov).
   const go = i.link ? h('a', { href: i.link, class: 'btn small feed-go' }, i.kind === 'chat' ? 'Open the chat' : i.kind === 'brain' ? 'Open the page'
-    : i.kind === 'agents' ? 'Open the noticeboard' : 'Open') : null;
+    : i.kind === 'agents' ? 'Open the noticeboard' : i.kind === 'logos-update' ? 'Update' : 'Open') : null;
   const row = h('div', { class: `feed-item type-${type} kind-${i.kind}${i.fresh ? ' fresh' : ''}${i.kind === 'ai' ? (i.up ? ' up' : ' down') : ''}`,
     role: 'button', tabindex: '0', 'aria-expanded': 'false' },
     h('span', { class: 'feed-dot', 'aria-hidden': 'true' }),

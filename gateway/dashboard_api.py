@@ -1798,6 +1798,13 @@ async def handle_notifications(request: web.Request) -> web.Response:
     items.sort(key=lambda i: -i["ts"])
     seen = await asyncio.to_thread(_seen_until, user["id"])
     read = await asyncio.to_thread(_read_ids, user["id"])
+    # Whoever manages Logos is reminded when an update is ready (Greg, 23 Nov); the others cannot install it.
+    if user.get("role") == "admin":
+        from gateway import updates
+        ready = updates.reminder(request.app)
+        if ready:
+            items.append(ready)
+            items.sort(key=lambda i: i.get("ts") or 0, reverse=True)
     return web.json_response({"items": items[:60], "seen_until": seen, "read_ids": read})
 
 
