@@ -142,6 +142,8 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 # Home's widgets, each person's own choice (Greg, 22 Nov); the calendar is always there.
 WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming")
+# F41: the screens whose first-visit tips someone has seen (gateway/ui/tips.js)
+TIP_SCREENS = ("home", "agents", "chat", "notifications", "routines")
 
 
 def _place_ok(value: Any) -> bool:
@@ -159,6 +161,8 @@ def _place_ok(value: Any) -> bool:
 def _pref_ok(key: str, value: Any) -> bool:
     if key == "widgets":
         return isinstance(value, list) and len(value) == len(set(value)) and all(w in WIDGETS for w in value)
+    if key == "tips_seen":
+        return isinstance(value, list) and len(value) == len(set(value)) and all(t in TIP_SCREENS for t in value)
     if key == "weather_place":
         return _place_ok(value)
     if key in COLOUR_PREFS:
@@ -230,7 +234,7 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
     if not isinstance(body, dict) or not body or not all(_pref_ok(k, v) for k, v in body.items()):
         return web.json_response({"error": "bad_prefs", "allowed": {**{k: list(v) for k, v in PREFS.items()},
                                                                    **{k: "#rrggbb" for k in COLOUR_PREFS},
-                                                                   "widgets": list(WIDGETS), "weather_place": "{name, lat, lon}"}},
+                                                                   "widgets": list(WIDGETS), "tips_seen": list(TIP_SCREENS), "weather_place": "{name, lat, lon}"}},
                                  status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
     seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not settings

@@ -194,3 +194,10 @@ def test_choices_are_kept_and_laid_over_the_definition(tmp_path):
     ar.merge(agent, {k: v for k, v in ar.load_routines(env)["bere"].items() if k in ar.ROUTINE_KEYS})
     assert ar.briefing(agent) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6"}
     assert agent["digest"] == {"enabled": False}
+
+
+def test_tips_seen_is_a_list_of_known_screens():
+    from gateway.dashboard_api import _pref_ok
+    assert _pref_ok("tips_seen", []) and _pref_ok("tips_seen", ["home", "routines"])
+    assert not _pref_ok("tips_seen", ["home", "home"]) and not _pref_ok("tips_seen", ["elsewhere"])
+    assert not _pref_ok("tips_seen", "home")

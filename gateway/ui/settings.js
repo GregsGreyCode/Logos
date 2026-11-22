@@ -5,6 +5,7 @@ import { h, api, getJSON, when, loading, revealable, ask } from './util.js';
 import * as mx from './mx.js';
 import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion, setAnimations } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
+import { reset as resetTips } from './tips.js';
 import { updatesView } from './updates.js';
 import * as push from './push.js';
 
@@ -62,6 +63,7 @@ function appearance() {
   const pickNames = (v) => { setMotion(null, v); say(mNote, setPref('names', v)); };
   const anim = getPref('animations', 'on');
   const aNote = savedNote();
+  const tNote = savedNote();
   const pickAnim = (v) => { setAnimations(v); say(aNote, setPref('animations', v)); };
   const MOTION_SAYS = { full: 'The agents wander around the Agents screen, breathe, and cycle their colour while they think.',
     calm: 'The agents drift slowly and breathe gently.', still: 'The agents stay where they are and do not move.' };
@@ -99,6 +101,10 @@ function appearance() {
         [['hover', 'On hover', 'Shown when you point at a mark (always shown on a phone)'], ['always', 'Always', 'Each mark has its name and mood under it']]
           .map(([v, label, tip]) => h('label', { class: 'appearance-mode', title: tip },
             h('input', { type: 'radio', name: 'names', value: v, checked: names === v, onchange: () => pickNames(v) }), label))), mNote),
+    // F41: the first-visit tips, once more (each screen shows its tips again next time it opens).
+    h('section', { 'aria-label': 'Tips' }, heading('Tips'),
+      h('p', { class: 'when' }, 'Each screen shows a few tips the first time you open it.'),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => say(tNote, resetTips()) }, 'Show the tips again')), tNote),
   ];
 }
 
