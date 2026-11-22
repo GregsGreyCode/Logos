@@ -226,3 +226,93 @@ def test_an_old_failure_is_not_brought_up(wl, monkeypatch):
     wl._on_error(session_id="s3", status_code=500, error={"message": "x"})
     wl.FAILED["s3"]["at"] -= wl.NOTE_MAX_AGE + 1
     assert wl._note_for_next_turn(session_id="s3") is None
+
+
+def _db(path, rows):
+    import json, sqlite3
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, "
+                "display_kind TEXT, display_metadata TEXT)")
+    for sid, role, kind, error in rows:
+        con.execute("INSERT INTO messages (session_id, role, content, display_kind, display_metadata) "
+                    "VALUES (?, ?, 'private text', ?, ?)",
+                    (sid, role, kind, json.dumps({"error": error}) if error else None))
+    con.commit(); con.close()
+
+
+LOOP = "Model output entered a repetition loop and the stream was cut mid-loop; discarding the degenerate response."
+
+
+def test_last_turn_failed_reads_only_the_last_rows_mark(wl, tmp_path):
+    db = str(tmp_path / "state.db")
+    _db(db, [("s1", "user", None, None), ("s1", "assistant", "failed_turn", LOOP),
+             ("s2", "user", None, None), ("s2", "assistant", "failed_turn", LOOP), ("s2", "assistant", None, None),
+             ("s3", "assistant", "failed_turn", "HTTP 503: ... model_server_off")])
+    assert wl.last_turn_failed("s1", db) == "the model got stuck repeating itself and was stopped"
+    assert wl.last_turn_failed("s2", db) == ""             # answered after the failure
+    assert wl.last_turn_failed("s3", db) == "the AI computer was off"
+    assert wl.last_turn_failed("nobody", db) == ""
+    assert wl.last_turn_failed("s1", str(tmp_path / "missing.db")) == ""   # cannot tell: no re-send
+
+
+def _one_waiting(wl, now):
+    wl.save({"s1": {"platform": "matrix", "since": now - 60}})
+
+
+async def _nothing(*a):
+    return False
+
+
+def test_a_resent_turn_that_loops_is_sent_once_more(wl):
+    # 21 Nov: LM Studio back at 18:05, the re-sent turn looped for twelve minutes and was cut.
+    now = 3_000_000.0
+    _one_waiting(wl, now)
+    sent, outcomes = [], iter(["the model got stuck repeating itself and was stopped", ""])
+
+    async def retry(g, origin):
+        sent.append(origin)
+
+    done = run(wl.answer_waiting(Gateway({"s1": "room"}), now, retry, _nothing, _nothing, sleep=_nothing,
+                                 failed=lambda sid: next(outcomes)))
+    assert sent == ["room", "room"] and done == [("s1", "retried twice")]
+
+
+def test_a_resent_turn_is_sent_at_most_twice(wl):
+    now = 3_000_000.0
+    _one_waiting(wl, now)
+    sent = []
+
+    async def retry(g, origin):
+        sent.append(origin)
+
+    done = run(wl.answer_waiting(Gateway({"s1": "room"}), now, retry, _nothing, _nothing, sleep=_nothing,
+                                 failed=lambda sid: "the model took too long to answer"))
+    assert len(sent) == wl.RESENDS == 2
+    assert done == [("s1", "failed: the model took too long to answer")] and wl.load() == {}
+
+
+def test_a_resent_turn_that_worked_is_sent_once(wl):
+    now = 3_000_000.0
+    _one_waiting(wl, now)
+    sent = []
+
+    async def retry(g, origin):
+        sent.append(origin)
+
+    done = run(wl.answer_waiting(Gateway({"s1": "room"}), now, retry, _nothing, _nothing, sleep=_nothing,
+                                 failed=lambda sid: ""))
+    assert sent == ["room"] and done == [("s1", "retried")]
+
+
+def test_off_again_waits_again_instead_of_a_second_send(wl):
+    now = 3_000_000.0
+    _one_waiting(wl, now)
+    sent = []
+
+    async def retry(g, origin):
+        sent.append(origin)
+        wl._on_error(session_id="s1", platform="matrix", status_code=503, error={"message": OFF})
+
+    done = run(wl.answer_waiting(Gateway({"s1": "room"}), now, retry, _nothing, _nothing, sleep=_nothing,
+                                 failed=lambda sid: "the AI computer was off"))
+    assert sent == ["room"] and done == [("s1", "off again")] and list(wl.load()) == ["s1"]

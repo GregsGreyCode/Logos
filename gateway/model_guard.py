@@ -54,6 +54,7 @@ OPTIONS_TTL = 600.0                     # how long a model's reasoning options a
 WAIT = 60.0                             # how long a request may wait for the model server (D1)
 KNOWN_OFF = 120.0                       # after a full wait in vain: answer "off" at once for this long
 RETRY_EVERY = 5.0
+HEALTH_PROBE = 1.0                      # seconds: /guard/health answers well inside its callers' 3 s
 FULL = b"Context size has been exceeded"  # LM Studio: the shared context is in use by other requests
 
 
@@ -283,14 +284,17 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(body)
+            self._write(body)
             self.close_connection = True
 
         def _health(self) -> None:
             # Tests the model server's connection (a few seconds at most), so agents waiting for
             # it and the dashboard learn when it is back without sending a model request.
+            # An off LM Studio drops connections rather than refusing them, so the probe runs its
+            # whole timeout; the dashboard asks with a 3 s limit and, given the full 3 s connect
+            # timeout here, hung up first and showed the guard itself as down (and lost the queue).
             try:
-                socket.create_connection((host, port), timeout=connect_timeout).close()
+                socket.create_connection((host, port), timeout=min(connect_timeout, HEALTH_PROBE)).close()
                 if state["off"]:
                     print("model server answering again", flush=True)
                 state["off"], state["off_since"], state["known_off_at"] = False, None, -known_off
@@ -304,7 +308,14 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             self.send_header("Content-Length", str(len(out)))
             self.send_header("Connection", "close")
             self.end_headers()
-            self.wfile.write(out)
+            self._write(out)
+
+        def _write(self, data: bytes) -> None:
+            """A caller that gave up and hung up is not an error worth a traceback."""
+            try:
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError):
+                self.close_connection = True
 
         def _connect(self, deadline: float):
             """A socket to the model server, trying every few seconds until ``deadline``; or None."""
@@ -327,7 +338,10 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
         def _pass(self) -> None:
             self.close_connection = True
             if self.command == "GET" and self.path == HEALTH_PATH:
-                return self._health()
+                try:
+                    return self._health()
+                except (BrokenPipeError, ConnectionResetError):
+                    return None                     # the caller gave up (see _health)
             body = self._body()
             if self.command == "POST":
                 body = add_presence_penalty(self.path, fix_reasoning(self.path, body, options_for))
