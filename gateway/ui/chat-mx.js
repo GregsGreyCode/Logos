@@ -333,7 +333,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // ── reactions (F35, Greg 22 Nov): a long press on a message (a phone) or its ☺ button (a mouse)
   // opens a row of emoji; a tap sends it as a Matrix reaction, tapping your own again takes it back.
   // Agents only act on reactions to their own approval prompts, so a reaction never starts a reply.
-  const QUICK = ['👍', '❤️', '😂', '😮', '🙏', '✅'];
+  // The agent hears every reaction at its next turn; 👎 and ❤️ also go into its lessons, and ❓ / 🔁
+  // ask it to explain more or try again (logos-reactions, docs/messages.md).
+  const QUICK = ['👍', '👎', '❤️', '😂', '❓', '🔁'];
+  const QUICK_HINT = { '👎': 'Not right: the agent notes it', '❤️': 'Loved it: the agent notes it',
+    '❓': 'Ask the agent to explain more', '🔁': 'Ask the agent to try again' };
   async function react(ev, key, mineId) {
     pickerFor = null;
     try {
@@ -348,7 +352,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   function closePicker() { if (pickerFor) { pickerFor = null; draw(false); } }
   function pickerOf(ev, have, text) {
     const row = h('div', { class: 'mx-picker', role: 'menu', 'aria-label': 'React' },
-      ...QUICK.map((k) => h('button', { type: 'button', role: 'menuitem', class: have.get(k) ? 'mine' : '', 'aria-label': `React ${k}`,
+      ...QUICK.map((k) => h('button', { type: 'button', role: 'menuitem', class: have.get(k) ? 'mine' : '', 'aria-label': QUICK_HINT[k] || `React ${k}`, title: QUICK_HINT[k] || '',
         'aria-pressed': String(!!have.get(k)), onclick: () => react(ev, k, have.get(k) || null) }, k)),
       text && navigator.clipboard ? h('button', { type: 'button', role: 'menuitem', class: 'mx-copy', onclick: async () => {
         closePicker();

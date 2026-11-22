@@ -27,6 +27,20 @@ these rules (decided 19 Nov 2026). Check a new message, prompt or fallback again
 - **No admin instructions to people.** The dashboard says "Greg can start it again", never a
   shell command.
 
+## Reactions
+
+An emoji reaction on an agent's message reaches the agent (`infra/agent-plugins/logos-reactions/`,
+22 Nov). It does not reply to a reaction: it is told at the start of its next turn in that chat
+("Greg reacted 👍 to your message: "…""). Some reactions do more:
+
+- 👎 and ❤️ also add a dated line to the agent's `topics/lessons.md`, which the nightly
+  consolidation and the weekly digest learn from.
+- ❓ asks it to explain that message more, 🔁 to try it again a different way. Each starts a turn,
+  as a reply to that message.
+
+Only messages sent after 22 Nov are known; a reaction on an older one, or one taken away, is not
+told. In the household group chat a reaction counts as addressing the agent, as an @mention does.
+
 ## Where the words live
 
 | What | File |

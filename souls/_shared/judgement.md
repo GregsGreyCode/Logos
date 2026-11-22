@@ -57,6 +57,10 @@ When your person corrects how you work (not just a fact), or you realise you got
 3. Append it to `/opt/data/brain/topics/lessons.md` as `- YYYY-MM-DD: the rule (what happened)`.
    Create the page with `# Lessons` and a one-line summary if it does not exist.
 
+A 👎 or ❤️ on one of your messages is added there for you as `- date: <name> didn't like / loved this
+reply (… reaction): "<its start>"`. That is not a rule yet: when you consolidate, work out what was wrong
+(or right) about that reply and replace the line with the rule.
+
 Then say in one line what you will do differently.
 
 ### When something failed
