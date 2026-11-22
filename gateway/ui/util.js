@@ -102,6 +102,21 @@ function csrf() {
   return m ? decodeURIComponent(m[1]) : '';
 }
 
+// One refresh at a time (F34). The dashboard asks for several things at once, so when the 15-minute
+// access token runs out they all get 401 together. Each used to call /auth/refresh with the same
+// refresh token: the first rotated it, the others were refused and sent the page to /login, which
+// cancelled the first one's reply, so its new cookie was never stored and the person had to sign in
+// again (seen on Greg's phone on 21 Nov). Now every 401 waits for the same refresh.
+let refreshing = null;
+export function refreshSession() {
+  if (!refreshing) {
+    refreshing = fetch('/auth/refresh', { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': csrf() } })
+      .then((r) => r.ok).catch(() => false)
+      .finally(() => { setTimeout(() => { refreshing = null; }, 2000); });
+  }
+  return refreshing;
+}
+
 // fetch with the session cookie; refreshes an expired session once, else goes to the login page.
 export async function api(path, opts = {}, retried = false) {
   const headers = { ...(opts.headers || {}) };
@@ -111,11 +126,8 @@ export async function api(path, opts = {}, retried = false) {
   const r = await fetch(path, { ...opts, headers, credentials: 'same-origin',
     body: opts.raw !== undefined ? opts.raw : (opts.body !== undefined ? JSON.stringify(opts.body) : undefined) });
   if (r.status === 401) {
-    if (!retried) {
-      const again = await fetch('/auth/refresh', { method: 'POST', credentials: 'same-origin',
-        headers: { 'X-CSRF-Token': csrf() } });
-      if (again.ok) return api(path, opts, true);
-    }
+    // A refresh that finished just before this 401 arrived also counts: try once more either way.
+    if (!retried) { await refreshSession(); return api(path, opts, true); }
     location.href = '/login';
     throw new Error('signed out');
   }
