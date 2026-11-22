@@ -438,7 +438,7 @@ export function markBar(agents, current) {
 
 // Phone (Greg, 21 Nov): inside an agent, one bar: ‹ back to all agents, its name, and one pill naming
 // where you are (Chat, About) that opens to Chat | Brain | About, so the name has the room (Greg, 21 Nov).
-const LABELS = { chat: 'Chat', brain: 'Brain', about: 'About' };
+const LABELS = { chat: 'Chat', brain: 'Brain', about: 'Routines' };
 export function agentBar(agent, active) {
   const item = (key, href, extra = {}) => h('a', { href, class: `agent-tab${key === active ? ' on' : ''}`, role: 'menuitem',
     'aria-current': key === active ? 'page' : null, ...extra }, LABELS[key],

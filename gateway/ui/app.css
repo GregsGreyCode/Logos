@@ -1787,3 +1787,37 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .mx-attach { display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
 .mx-attach .icon, .mx-file-ico .icon { width: 24px; height: 24px; }
 .mx-file-ico { display: inline-flex; color: var(--accent-text); }
+
+/* Routines (Greg, 22 Nov): built-in routines as cards with a switch and their times; the ones you asked for
+   as rows with Pause and Delete; the rest folded away. */
+.routines { display: flex; flex-direction: column; gap: 14px; max-width: 760px; }
+.routines-intro { margin: 0; color: var(--muted); }
+.routines-intro em { color: var(--ink); font-style: normal; }
+.routines .label { margin: 8px 0 0; }
+.routine-cards { display: flex; flex-direction: column; gap: 10px; }
+.routine { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.routine-head { display: flex; align-items: center; gap: 12px; }
+.routine-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.routine-status { flex: none; font-size: var(--t-xs); }
+.routine-fields { display: flex; flex-wrap: wrap; gap: 10px 16px; padding-left: 58px; }
+.routine-fields[hidden] { display: none; }
+.routine-field { display: flex; flex-direction: column; gap: 4px; }
+.routine-field input, .routine-field select { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--ground); color: var(--ink); font: inherit; }
+.switch { position: relative; flex: none; width: 46px; height: 28px; cursor: pointer; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch-track { position: absolute; inset: 0; border-radius: 999px; background: var(--chip); border: 1px solid var(--line); transition: background .2s; }
+.switch-track::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--muted);
+  transition: transform .2s cubic-bezier(.2, .8, .2, 1), background .2s; }
+.switch input:checked + .switch-track { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + .switch-track::after { transform: translateX(18px); background: var(--accent-ink); }
+.switch input:focus-visible + .switch-track { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.routine-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; align-items: center; }
+.routine-row .row-main, .routine-row .row-meta { grid-column: 1; }
+.routine-row .row-actions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 4px; }
+.routine-row.paused .row-main { color: var(--muted); }
+.danger-text { color: var(--bad); }
+.routines-fold > summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
+.routines-fold .rows { margin-top: 6px; }
+[data-anim="off"] .switch-track, [data-anim="off"] .switch-track::after { transition: none; }
+@media (max-width: 599px) { .routine-fields { padding-left: 0; } }
