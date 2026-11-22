@@ -48,3 +48,24 @@ Element and Logos devices all carry their own cross-signing signature). Since th
   an unverified device of the same account, same password, was ignored.
 - If a person's own Element X stops getting answers, check its device is verified: Element X › Settings ›
   Sessions, or Logos › Settings › Matrix device (it lists each device as verified or not).
+
+## F36: groups (22 Nov 2026)
+
+A group is a Matrix room you share with at least one of your agents and someone else, such as the
+Household Group. Logos adds no group mechanism of its own; the dashboard just shows the rooms that
+already exist.
+
+- **Where:** Chat lists your groups under the floating agents. A group opens at
+  `#/chat/<agent>/group/<room id>`, where the agent is the first of yours in the room. Notifications
+  for a group message name the group and link to it.
+- **What is different from an agent's chat:**
+  - The header shows the group's name and who is in it.
+  - Each run of someone else's messages starts with their name.
+  - Threads show inline, and a scheduled post's thread start is a small label.
+  - There are no conversation chips, and no archive of old web chats.
+- **Asking an agent:** agents in a group answer only when @mentioned (`MATRIX_REQUIRE_MENTION`).
+  Above the message box is one "@ <agent>" chip per agent in the room. With a chip on, the message
+  starts with the agent's name and carries `m.mentions` (which hermes goes by) and a mention pill.
+  With none on, only the people read it. The choice is remembered per group in this browser. "…is
+  thinking" shows only after a message that asks an agent.
+- **Not yet:** creating a group from Logos (F36 part 2).
