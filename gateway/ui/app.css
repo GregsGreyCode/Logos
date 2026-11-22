@@ -1020,7 +1020,7 @@ a.btn.mx-new { justify-content: center; }
   /* A phone: the marks in a row with their names, no drifting */
   .void-field { position: static; display: flex; flex-wrap: wrap; justify-content: center; gap: 28px 32px; padding: 96px 16px 0; }
   .void-field .agent-mark { position: static; transform: none; --glyph: 62px; }
-  .void-field .mark-fx, .void-field .mark-fy { animation: none; }
+  /* (Drifting came back on phones on 22 Nov: the marks are placed by hand now, not in a fixed row.) */
   .void-field .agent-mark .mark-label { opacity: 1; }
   .mark-name { font-size: 16px; }
 }

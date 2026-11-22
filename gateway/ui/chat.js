@@ -113,7 +113,8 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   // M4: with this browser connected, Chat opens on the floating agents; pick one to talk to it.
   if (!agentArg && mx.saved() && agents.some((a) => a.matrix_id)) {
     // Everyone's agents float here (Greg, 21 Nov); those you cannot talk to are dimmed, with a padlock.
-    return voidView(root, agents.filter((a) => a.matrix_id), othersKept);
+    // Only the agents you can talk to (Greg, 22 Nov): other people's private agents are not shown.
+    return voidView(root, agents.filter((a) => a.matrix_id), []);
   }
   // F37: a notification opens #/chat/room/<room id>; find whose chat or which group that room is.
   if (agentArg === 'room' && chatArg) {
