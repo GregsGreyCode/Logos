@@ -15,6 +15,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -117,6 +118,42 @@ async def handle_start(request: web.Request) -> web.Response:
     request.app.pop("updates_plan", None)
     logger.info("updates: started by %s", (request.get("current_user") or {}).get("username"))
     return web.json_response({"started": True})
+
+
+# The reminder (Greg, 23 Nov): whoever manages Logos sees "An update is ready" in Notifications, with a
+# button to Settings › Updates. Checked in the background at most every few hours, so Notifications never
+# waits on a git fetch; the Updates screen's own check (a minute's cache) also counts.
+REMIND_EVERY_S = 6 * 3600
+
+
+async def _refresh_plan(app: web.Application) -> None:
+    try:
+        plan = await asyncio.to_thread(check_plan)
+        app["updates_plan"] = (asyncio.get_running_loop().time(), plan)
+    except Exception:                                    # pragma: no cover - checked again later
+        logger.warning("updates: background check failed", exc_info=True)
+    finally:
+        app.pop("updates_checking", None)
+
+
+def reminder(app: web.Application) -> Optional[Dict[str, Any]]:
+    """A ``needs`` notification when there is something to install, from what was last checked; starts
+    a check in the background when that is old. None when up to date, unknown or refused."""
+    loop = asyncio.get_running_loop()
+    cached = app.get("updates_plan")
+    if (not cached or loop.time() - cached[0] > REMIND_EVERY_S) and not app.get("updates_checking"):
+        app["updates_checking"] = asyncio.ensure_future(_refresh_plan(app))
+    plan = cached[1] if cached else None
+    commits = (plan or {}).get("commits") or []
+    if not commits or (plan or {}).get("refused"):
+        return None
+    newest = str(commits[0].get("sha") or "")
+    first_seen = app.setdefault("updates_first_seen", {}).setdefault(newest, time.time())
+    n = len(commits)
+    return {"id": f"logos-update:{newest}", "kind": "logos-update", "type": "needs", "ts": first_seen,
+            "title": "An update for Logos is ready",
+            "text": f"{n} change{'' if n == 1 else 's'} to install, the newest: {commits[0].get('subject') or ''}".strip(),
+            "link": "#/settings/updates"}
 
 
 def register(app: web.Application) -> None:
