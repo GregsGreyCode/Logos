@@ -311,12 +311,64 @@ export async function voidView(root, agents, others = []) {
   // Today's messages by their time alone; older ones as everywhere else ("Yesterday 18:02").
   const short = (ms) => (new Date(ms).toDateString() === new Date().toDateString()
     ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : when(ms / 1000));
+  // F36 part 2 (Greg, 22 Nov): start a group from here, and answer an invitation to one.
+  const form = h('div', { class: 'void-newgroup', hidden: true });
+  convBox.after(form);
+  async function openForm() {
+    const c = await mx.get();
+    const me = c.getUserId();
+    const server = me.split(':').slice(1).join(':');
+    const people = ((await getJSON('/api/v2/people').catch(() => ({ people: [] }))).people || []).filter((p) => !p.is_you);
+    const name = h('input', { id: 'ng-name', type: 'text', placeholder: 'e.g. Holiday planning', maxlength: '60', autocomplete: 'off' });
+    const tick = (id, label, sub, checked) => h('label', { class: 'ng-pick' },
+      h('input', { type: 'checkbox', value: id, checked: checked ? '' : null }), h('span', {}, label, sub ? h('small', { class: 'when' }, ` ${sub}`) : null));
+    const peopleBox = h('div', { class: 'ng-picks' }, ...people.map((p) => tick(`@${p.username}:${server}`, p.display_name, '', false)));
+    const agentBox = h('div', { class: 'ng-picks' }, ...agents.filter((a) => a.matrix_id).map((a) =>
+      tick(a.matrix_id, a.display_name, a.shared ? '' : '· answers only you', !!a.shared)));
+    const msg = h('p', { class: 'when', role: 'status' });
+    const go = h('button', { type: 'submit', class: 'btn' }, 'Create group');
+    const picked = (box) => [...box.querySelectorAll('input:checked')].map((i) => i.value);
+    form.replaceChildren(h('form', { class: 'settings-form', onsubmit: async (e) => {
+      e.preventDefault();
+      const ppl = picked(peopleBox), bots = picked(agentBox), title = name.value.trim();
+      if (!title) { msg.textContent = 'Give the group a name.'; name.focus(); return; }
+      if (!bots.length) { msg.textContent = 'Pick at least one agent: a group is people and agents together.'; return; }
+      go.disabled = true; msg.textContent = 'Creating the group…';
+      try {
+        const r = await c.createRoom({ name: title, preset: 'private_chat', invite: [...ppl, ...bots],
+          initial_state: [{ type: 'm.room.encryption', state_key: '', content: { algorithm: 'm.megolm.v1.aes-sha2' } }] });
+        for (let i = 0; i < 50 && !c.getRoom(r.room_id); i++) await new Promise((ok) => setTimeout(ok, 200));
+        const agent = agents.find((a) => a.matrix_id === bots[0]);
+        location.hash = `#/chat/${agent.name}/group/${encodeURIComponent(r.room_id)}`;
+      } catch (err) { msg.textContent = `The group could not be created: ${err.message}`; go.disabled = false; }
+    } },
+    h('h2', { class: 'label' }, 'New group'),
+    h('label', { for: 'ng-name', class: 'field-label' }, 'Name'), name,
+    people.length ? h('p', { class: 'field-label' }, 'People') : null, people.length ? peopleBox : null,
+    h('p', { class: 'field-label' }, 'Agents'), agentBox,
+    h('p', { class: 'when' }, 'Agents answer in a group when someone asks them with the @ button. Everyone invited gets an invitation to accept.'),
+    h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => { form.hidden = true; } }, 'Cancel')), msg));
+    form.hidden = false;
+    name.focus();
+  }
+  const newBtn = h('button', { type: 'button', class: 'linkish void-new', onclick: () => { if (form.hidden) openForm(); else form.hidden = true; } }, '+ New group');
+
   const showConvs = async () => {
     try {
       const [{ conversationsOf }, c] = await Promise.all([import('./chat-mx.js'), mx.get()]);
       const list = conversationsOf(c, agents);
-      if (!alive || !list.length) return;
-      convBox.replaceChildren(h('h2', { class: 'label' }, 'Conversations'), ...list.map((r) => h('a', { href: r.link, class: `void-group${r.unread ? ' unread' : ''}` },
+      // Invitations to groups waiting for you: Join or Decline (agents accept theirs by themselves).
+      const invites = c.getRooms().filter((r) => r.getMyMembership() === 'invite');
+      if (!alive) return;
+      const inviter = (r) => { const m = r.getMember(c.getUserId()); const by = m?.events?.member?.getSender?.(); return by ? (r.getMember(by)?.name || by) : ''; };
+      convBox.replaceChildren(h('div', { class: 'void-convs-head' }, h('h2', { class: 'label' }, 'Conversations'), newBtn),
+        ...invites.map((r) => h('div', { class: 'void-group invite' },
+          h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name || 'A group'), h('span', { class: 'void-unread' }, 'Invited')),
+          h('span', { class: 'void-group-last' }, inviter(r) ? `${inviter(r)} invited you` : 'You are invited'),
+          h('span', { class: 'row' },
+            h('button', { type: 'button', class: 'btn small', onclick: async (e) => { e.target.disabled = true; try { await c.joinRoom(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Join'),
+            h('button', { type: 'button', class: 'btn quiet small', onclick: async (e) => { e.target.disabled = true; try { await c.leave(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Decline')))),
+        ...list.map((r) => h('a', { href: r.link, class: `void-group${r.unread ? ' unread' : ''}` },
         h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name),
           h('span', { class: 'when' }, r.ts ? short(r.ts) : ''),
           r.unread ? h('span', { class: 'void-unread', 'aria-label': `${r.unread} unread` }, String(r.unread)) : null),
