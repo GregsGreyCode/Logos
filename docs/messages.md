@@ -27,6 +27,18 @@ these rules (decided 19 Nov 2026). Check a new message, prompt or fallback again
 - **No admin instructions to people.** The dashboard says "Greg can start it again", never a
   shell command.
 
+## Promises in the interface
+
+Say what a thing does, not what Logos guarantees behind it (Greg, 22 Nov). A reassurance ("…never
+messages other agents", "…end-to-end encrypted") belongs on a screen only where it helps someone
+decide:
+
+- **where they are about to share something:** a location ("Only the town's position… goes to the
+  weather service"), a password ("used once, never kept"), a recovery key;
+- **where it describes what they will see:** "notifications say who wrote, not what".
+
+Anywhere else it is plumbing: leave it to the docs and the code.
+
 ## Reactions
 
 An emoji reaction on an agent's message reaches the agent (`infra/agent-plugins/logos-reactions/`,
