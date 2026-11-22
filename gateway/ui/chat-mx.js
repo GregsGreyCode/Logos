@@ -32,7 +32,7 @@ const titleOf = (ev) => (ev && ev.isDecryptionFailure && ev.isDecryptionFailure(
   : cronJob(ev) ? jobTitle(cronJob(ev))
     : String(ev?.getContent()?.body || 'Conversation').replace(/^💬\s*/, '').slice(0, 80));
 
-function pickRoom(c, agentId) {
+export function pickRoom(c, agentId) {
   const rooms = c.getRooms().filter((r) => r.getMyMembership() === 'join'
     && ['join', 'invite'].includes(r.getMember(agentId)?.membership));
   // The direct room with the agent first (two members), else the busiest room it shares with you.
