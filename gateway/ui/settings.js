@@ -6,12 +6,14 @@ import * as mx from './mx.js';
 import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
 import { updatesView } from './updates.js';
+import * as push from './push.js';
 
 const SECTIONS = [
   { id: 'appearance', name: 'Look', full: 'Appearance' },
   { id: 'account', name: 'Account', full: 'Your account' },
   { id: 'chat', name: 'Chat' },
   { id: 'matrix', name: 'Matrix', full: 'Matrix device' },
+  { id: 'notifications', name: 'Alerts', full: 'Phone notifications' },
   { id: 'updates', name: 'Updates', admin: true },
 ];
 
@@ -215,6 +217,43 @@ function matrix(state, redraw) {
   return [h('section', { 'aria-label': 'Matrix device' }, heading('This browser and Matrix'), box)];
 }
 
+// Phone notifications (F37): on or off for this device, a test, and your other devices that have them.
+function notifications(state) {
+  const box = h('div', { class: 'settings-body-inner' }, loading());
+  const msg = h('p', { class: 'when', role: 'status' });
+  async function show() {
+    if (!state.me.matrix_id) { box.replaceChildren(h('p', { class: 'none' }, 'Matrix is not set up on this Logos.')); return; }
+    if (!mx.saved()) {
+      box.replaceChildren(h('p', {}, 'Connect this browser to Matrix first: notifications come from your chats.'),
+        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Matrix device'));
+      return;
+    }
+    const st = await push.status().catch(() => 'off');
+    const info = await getJSON('/api/v2/push').catch(() => ({ devices: [] }));
+    const busy = (b) => { for (const el of box.querySelectorAll('button')) el.disabled = b; };
+    const act = (label, fn, cls = 'btn') => h('button', { type: 'button', class: cls, onclick: async () => {
+      busy(true); msg.textContent = '';
+      try { await fn(); } catch (e) { msg.textContent = e.message; }
+      busy(false); show();
+    } }, label);
+    const words = {
+      on: 'On for this phone. Your agents\' messages, and the people in your groups, arrive as notifications: who wrote, not what (it stays encrypted).',
+      off: 'Off for this phone. Turn them on to hear about new messages without opening Logos.',
+      blocked: 'Notifications are blocked for this site. Allow them in the browser\'s site settings, then come back.',
+      unsupported: 'This browser cannot show notifications. On Android, open Logos from its icon on your home screen (in Chrome).',
+    }[st];
+    const others = (info.devices || []).filter((d) => d.pushkey !== (localStorage.getItem('logos.push.pushkey') || ''));
+    box.replaceChildren(h('p', {}, words),
+      h('div', { class: 'row' },
+        st === 'on' ? act('Turn off', () => push.turnOff(), 'btn quiet') : st === 'off' ? act('Turn on', () => push.turnOn()) : null,
+        st === 'on' ? act('Send a test', async () => { msg.textContent = (await push.test()) ? 'Sent: it should appear in a few seconds.' : 'The test could not be sent.'; }, 'btn quiet') : null),
+      ...(others.length ? [h('p', { class: 'when' }, `Also on: ${others.map((d) => d.device || 'another device').join(', ')}.`)] : []),
+      msg);
+  }
+  show();
+  return [h('section', { 'aria-label': 'Phone notifications' }, heading('Phone notifications'), box)];
+}
+
 export async function settingsView(root, [section], state) {
   const isAdmin = state.me.role === 'admin';
   const shown = SECTIONS.filter((s) => !s.admin || isAdmin);
@@ -230,6 +269,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'account') body.replaceChildren(...account(state));
   else if (id === 'chat') body.replaceChildren(...chat());
   else if (id === 'matrix') body.replaceChildren(...matrix(state));
+  else if (id === 'notifications') body.replaceChildren(...notifications(state));
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   return () => { if (done) done(); };
 }

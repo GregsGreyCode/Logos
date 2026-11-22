@@ -115,6 +115,19 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     // Everyone's agents float here (Greg, 21 Nov); those you cannot talk to are dimmed, with a padlock.
     return voidView(root, agents.filter((a) => a.matrix_id), othersKept);
   }
+  // F37: a notification opens #/chat/room/<room id>; find whose chat or which group that room is.
+  if (agentArg === 'room' && chatArg) {
+    const roomId = decodeURIComponent(chatArg);
+    const c = mx.saved() ? await mx.get().catch(() => null) : null;
+    const room = c && c.getRoom(roomId);
+    const all = [...agents, ...(othersKept || [])].filter((a) => a.matrix_id);
+    const inRoom = room ? agents.filter((a) => a.matrix_id && ['join', 'invite'].includes(room.getMember(a.matrix_id)?.membership)) : [];
+    const people = room ? room.getMembers().filter((m) => m.membership === 'join' && !all.some((a) => a.matrix_id === m.userId)) : [];
+    const to = !inRoom.length ? '#/chat' : people.length > 1
+      ? `#/chat/${inRoom[0].name}/group/${encodeURIComponent(roomId)}` : `#/chat/${inRoom[0].name}`;
+    location.replace(to);
+    return () => {};
+  }
   const agent = agents.find((a) => a.name === agentArg) || agents[0];
   let chatId = chatArg || newId();
   let readOnly = false;

@@ -14,6 +14,7 @@ import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, aiState, labelTables, icon, ICONS } from './util.js';
 import { adopt } from './appearance.js';
 import * as mx from './mx.js';
+import * as push from './push.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView, settings: settingsView };
@@ -143,6 +144,10 @@ for (const b of document.querySelectorAll('.logout-btn')) b.addEventListener('cl
   await api('/auth/logout', { method: 'POST' }).catch(() => {});
   location.href = '/login';
 });
+
+// F37: a tapped notification opens its chat; with notifications on, keep the service worker current.
+push.listen();
+try { if (localStorage.getItem('logos.push.pushkey') && push.supported()) push.worker().catch(() => {}); } catch (e) { /* no storage */ }
 
 state.me = await getJSON('/api/v2/me');
 mx.bind(state.me.matrix_id);
