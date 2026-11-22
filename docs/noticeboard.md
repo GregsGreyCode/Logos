@@ -122,3 +122,23 @@ digest sent one anyway.
 
 **Cleanup:** the message (noticeboard id 45) was deleted. The household agent's noticeboard check
 had stayed silent, and nothing from it was in the household brain or memory.
+
+## Routines (22 Nov 2026)
+
+Agents › an agent › **Routines** replaces the About page. It has four parts:
+
+- **Built in:** the morning briefing (a person's own agent), the weekly digest, and what changed (the
+  household agent). Each has a switch and its times or day, and a change is saved at once.
+- **You asked for:** the jobs a person set up by asking the agent in chat, with Pause/Resume and
+  Delete. To add or change one, ask the agent.
+- **Behind the scenes:** folded away; read-only.
+- **About:** the agent's model and what it can reach, folded away.
+
+**Where choices are kept:** `~/.logos/routines.json` (`gateway/agent_runtime.py`), outside git. They
+are laid over the agent's definition whenever it is loaded, so every deploy keeps them. A change
+also re-creates only the routine jobs at once (`refresh_routines`, `ROUTINE_JOBS`); everything else
+is left alone.
+
+**Who may change them:** anyone who may use the agent (a person their own; either person the
+household agent's). An agent only offers the routines it has: no briefing for the household
+agent, and no daily changes for a personal one.

@@ -764,6 +764,129 @@ async def handle_agent_status(request: web.Request) -> web.Response:
     })
 
 
+# ── Routines (Greg, 22 Nov): the built-in jobs people may change, and the ones they asked for ─────
+
+_HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def cron_at(hhmm: str, dow: str = "*") -> str:
+    """"07:30", "1-5" -> "30 7 * * 1-5"."""
+    m = _HHMM.match(hhmm or "")
+    if not m:
+        raise ValueError("bad time")
+    return f"{int(m.group(2))} {int(m.group(1))} * * {dow}"
+
+
+def time_of(cron: str) -> str:
+    """"30 7 * * 1-5" -> "07:30" ("" for anything else)."""
+    parts = str(cron or "").split()
+    if len(parts) == 5 and parts[0].isdigit() and parts[1].isdigit():
+        return f"{int(parts[1]):02d}:{int(parts[0]):02d}"
+    return ""
+
+
+def routines_view(runtime: Any, name: str) -> dict:
+    """What the Routines page shows for one agent's built-in jobs: only those it can have."""
+    import yaml
+    from gateway import agent_runtime as ar
+    agent = runtime.load(name)
+    plain = yaml.safe_load(runtime.definition_path(name).read_text()) or {}   # before anyone's choices
+    out: Dict[str, Any] = {}
+    if ar.delivery(agent) == "local":
+        return out
+    cal_person = (agent.get("calendar") or {}).get("person")
+    if agent.get("role") != "household" and ((plain.get("briefing") or {}).get("enabled", bool(cal_person))):
+        cfg = agent.get("briefing") or {}
+        out["briefing"] = {"enabled": cfg.get("enabled", True), "weekdays": time_of(cfg.get("weekdays", "0 7 * * 1-5")),
+                           "weekends": time_of(cfg.get("weekends", "0 9 * * 0,6"))}
+    dg = agent.get("digest") or {}
+    sched = str(dg.get("schedule", "0 18 * * 0")).split()
+    out["digest"] = {"enabled": dg.get("enabled", True), "time": time_of(dg.get("schedule", "0 18 * * 0")),
+                     "day": int(sched[4]) % 7 if len(sched) == 5 and sched[4].isdigit() else 0}
+    if (plain.get("changes") or {}).get("enabled"):
+        ch = agent.get("changes") or {}
+        out["changes"] = {"enabled": ch.get("enabled", True), "time": time_of(ch.get("daily", "0 16 * * *"))}
+    return out
+
+
+def routines_choice(body: Mapping[str, Any], allowed: Mapping[str, Any]) -> dict:
+    """The dashboard's change, checked and turned into the definition's own keys."""
+    out: Dict[str, Any] = {}
+    b = body.get("briefing")
+    if isinstance(b, dict) and "briefing" in allowed:
+        out["briefing"] = {"enabled": bool(b.get("enabled")), "weekdays": cron_at(b["weekdays"], "1-5"),
+                           "weekends": cron_at(b["weekends"], "0,6")}
+    d = body.get("digest")
+    if isinstance(d, dict) and "digest" in allowed:
+        day = int(d.get("day", 0))
+        if not 0 <= day <= 6:
+            raise ValueError("bad day")
+        out["digest"] = {"enabled": bool(d.get("enabled")), "schedule": cron_at(d["time"], str(day))}
+    c = body.get("changes")
+    if isinstance(c, dict) and "changes" in allowed:
+        daily = cron_at(c["time"])
+        h, m = int(c["time"][:2]), int(c["time"][3:])
+        later = lambda mins: f"{(h * 60 + m + mins) % 60} {min((h * 60 + m + mins) // 60, 23)}"
+        # The week's roll-up ten minutes later on Sundays, and the plain fallback twenty minutes later.
+        out["changes"] = {"enabled": bool(c.get("enabled")), "daily": daily,
+                          "week": f"{later(10)} * * 0", "check": f"{later(20)} * * *"}
+    if not out:
+        raise ValueError("nothing to change")
+    return out
+
+
+async def handle_routines(request: web.Request) -> web.Response:
+    """GET /api/v2/agents/{name}/routines — the built-in jobs this agent has, as people may set them.
+    PUT with {briefing|digest|changes: {...}} keeps the choice and puts those jobs back at once."""
+    from gateway import agent_runtime as ar
+    name, _info, user = await _agent_or_404(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return web.json_response({"error": "no_runtime"}, status=503)
+    allowed = await asyncio.to_thread(routines_view, runtime, name)
+    if request.method == "GET":
+        return web.json_response({"routines": allowed})
+    try:
+        choice = routines_choice(await request.json(), allowed)
+    except (ValueError, KeyError, TypeError):
+        return web.json_response({"error": "bad_request", "message": "That time or day could not be used."}, status=400)
+    await asyncio.to_thread(ar.save_routines, runtime.env, name, choice)
+    try:
+        await asyncio.to_thread(runtime.refresh_routines, name)
+    except Exception as e:
+        logger.warning("routines: %s: %s", name, e)
+        return web.json_response({"error": "agent_unreachable", "saved": True,
+                                  "message": "Saved; the agent will use it when it next starts."}, status=202)
+    auth_db.write_audit_log(user["id"], "agent_routines", target_type="agent", target_id=name, ip_address=request.remote)
+    return web.json_response({"routines": await asyncio.to_thread(routines_view, runtime, name)})
+
+
+async def handle_job_action(request: web.Request) -> web.Response:
+    """POST /api/v2/agents/{name}/jobs/{job}/{pause|resume|remove} — for jobs people asked their agent
+    for. Logos's own jobs are changed on the Routines page, not here."""
+    import re as _re
+    name, _info, user = await _agent_or_404(request)
+    job_id, action = request.match_info["job"], request.match_info["action"]
+    if not _re.fullmatch(r"[0-9a-f]{8,32}", job_id) or action not in ("pause", "resume", "remove"):
+        return web.json_response({"error": "invalid_request"}, status=400)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    hermes = "export HERMES_HOME=/opt/data; hermes cron"
+    try:
+        jobs = parse_jobs(await asyncio.to_thread(runtime.sbx, name, f"{hermes} list"))
+        job = next((j for j in jobs if j["id"] == job_id), None)
+        if job is None:
+            return web.json_response({"error": "not_found"}, status=404)
+        if job["managed"]:
+            return web.json_response({"error": "managed", "message": "That one is part of how the agent works."}, status=400)
+        await asyncio.to_thread(runtime.sbx, name, f"{hermes} {action} {job_id}")
+    except Exception as e:
+        logger.warning("job %s: %s: %s", action, name, e)
+        return web.json_response({"error": "agent_unreachable", "message": "Could not reach the agent."}, status=503)
+    auth_db.write_audit_log(user["id"], f"agent_job_{action}", target_type="agent_job",
+                            target_id=f"{name}:{job['name']}", ip_address=request.remote)
+    return web.json_response({"ok": True})
+
+
 async def handle_job_cancel(request: web.Request) -> web.Response:
     """POST /api/v2/agents/{name}/jobs/{job}/cancel — remove a reminder the agent set. The jobs
     Logos installs cannot be removed here."""
@@ -1806,6 +1929,9 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
     app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
+    app.router.add_post("/api/v2/agents/{name}/jobs/{job}/{action}", require_csrf(handle_job_action))
+    app.router.add_get("/api/v2/agents/{name}/routines", handle_routines)
+    app.router.add_put("/api/v2/agents/{name}/routines", require_csrf(handle_routines))
     app.router.add_get("/api/v2/people", handle_people)
     app.router.add_get("/api/v2/activity", handle_activity)
     app.router.add_get("/api/v2/home", handle_home)

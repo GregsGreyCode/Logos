@@ -160,3 +160,33 @@ def test_notifications_are_read_one_by_one_and_kept_through_other_settings(monke
     assert len(d._read_ids("u1")) == d.READ_KEEP and d._read_ids("u1")[-1] == "x499"
     out = d._mark_read("u1", [], everything=True)
     assert out["read_ids"] == [] and out["seen_until"] > 0 and d._seen_until("u1") == out["seen_until"]
+
+
+# ── Routines (Greg, 22 Nov) ────────────────────────────────────────────────────────────────
+
+def test_routine_times_and_days_become_the_definition_keys():
+    from gateway import dashboard_api as d
+    assert d.cron_at("07:30", "1-5") == "30 7 * * 1-5" and d.time_of("30 7 * * 1-5") == "07:30" and d.time_of("*/10 * * * *") == ""
+    allowed = {"briefing": {}, "digest": {}, "changes": {}}
+    got = d.routines_choice({"briefing": {"enabled": True, "weekdays": "06:45", "weekends": "09:30"},
+                             "digest": {"enabled": False, "day": 5, "time": "19:00"},
+                             "changes": {"enabled": True, "time": "09:55"}}, allowed)
+    assert got["briefing"] == {"enabled": True, "weekdays": "45 6 * * 1-5", "weekends": "30 9 * * 0,6"}
+    assert got["digest"] == {"enabled": False, "schedule": "0 19 * * 5"}
+    assert got["changes"] == {"enabled": True, "daily": "55 9 * * *", "week": "5 10 * * 0", "check": "15 10 * * *"}
+    for bad in ({"digest": {"enabled": True, "day": 9, "time": "19:00"}}, {"briefing": {"enabled": True, "weekdays": "25:00", "weekends": "09:00"}},
+                {"changes": {"enabled": True, "time": "10:00"}}):
+        with pytest.raises((ValueError, KeyError)):
+            d.routines_choice(bad, {"digest": {}, "briefing": {}})   # an agent without changes cannot get them
+
+
+def test_choices_are_kept_and_laid_over_the_definition(tmp_path):
+    from gateway import agent_runtime as ar
+    env = {"LOGOS_HOME": str(tmp_path)}
+    ar.save_routines(env, "bere", {"briefing": {"weekdays": "30 6 * * 1-5"}, "nonsense": {"x": 1}})
+    ar.save_routines(env, "bere", {"digest": {"enabled": False}})
+    assert ar.load_routines(env) == {"bere": {"briefing": {"weekdays": "30 6 * * 1-5"}, "digest": {"enabled": False}}}
+    agent = {"briefing": {"weekends": "0 9 * * 0,6"}, "calendar": {"person": "bere"}, "matrix": {"enabled": True}}
+    ar.merge(agent, {k: v for k, v in ar.load_routines(env)["bere"].items() if k in ar.ROUTINE_KEYS})
+    assert ar.briefing(agent) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6"}
+    assert agent["digest"] == {"enabled": False}
