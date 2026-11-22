@@ -385,9 +385,11 @@
             if (d && !d.completed) {
               this.needsSetup = true;
             } else {
-              // Setup is done — check if already authenticated
+              // Setup is done — check if already authenticated. The access token lasts 15 minutes,
+              // the refresh token 7 days: try a refresh before asking for the password (F34).
               fetch('/auth/me', { credentials: 'same-origin' })
-                .then(r => { if (r.ok) window.location.href = '/'; })
+                .then(r => r.ok || fetch('/auth/refresh', { method: 'POST', credentials: 'same-origin' }).then(x => x.ok))
+                .then(ok => { if (ok) window.location.href = '/'; })
                 .catch(() => {});
             }
           })
