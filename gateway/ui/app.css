@@ -1606,3 +1606,15 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .home-line.over { opacity: .5; }
 
 .void-ask[hidden] { display: none; }
+
+/* Notifications, tidied (Greg, 22 Nov): two lines a row (title and time, then where from and what),
+   grouped by day, no "Update" label, one quiet line when all is caught up. */
+.notifications .feed-item { padding: 10px 0; gap: 10px; }
+.notifications .feed-top { align-items: baseline; font-size: inherit; color: var(--ink); justify-content: flex-start; }
+.notifications .feed-top .feed-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notifications .feed-top .when { flex: none; font-size: var(--t-xs); color: var(--muted); }
+.notifications .feed-text { display: block; -webkit-line-clamp: unset; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.notifications .feed-type { align-self: center; }
+.notifications .feed-days > section + section { margin-top: 14px; }
+.notifications .feed-days .label { margin: 0 0 2px; }
+.feed-caught { margin: 0; color: var(--muted); font-size: var(--t-sm); }
