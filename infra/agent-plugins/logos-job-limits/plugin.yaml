@@ -1,0 +1,12 @@
+name: logos-job-limits
+label: Logos scheduled jobs do not send messages
+kind: standalone
+version: 1.0.0
+description: >
+  During a scheduled job (a digest, a briefing, the noticeboard check) a call to send_message is
+  refused: a job's reply goes to its person only. Béré's weekly digest reached the household agent
+  on 22 Nov because a job sent it.
+author: Logos
+provides_hooks:
+  - pre_llm_call
+  - pre_tool_call

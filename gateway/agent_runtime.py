@@ -56,7 +56,7 @@ MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
 ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time",
-                 "logos-reactions")
+                 "logos-reactions", "logos-job-limits")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
@@ -155,6 +155,18 @@ def _sibling(module: str):
     spec.loader.exec_module(mod)
     return mod
 
+
+
+def digest_prompt(jobs_dir: Path, agent: Mapping[str, Any]) -> str:
+    """The weekly digest's instructions. Only the household agent's is about the household (22 Nov:
+    a line for it in everyone's instructions read, to Béré's agent, like "send it to the household
+    agent", and her week went there)."""
+    text = (Path(jobs_dir) / "weekly_digest.md").read_text()
+    if agent.get("role") == "household":
+        text += ('\nYou are the household agent and this goes to the household group chat: start with '
+                 '"**The household\'s week, ...**" instead of "Your week", and keep to shared household '
+                 'matters.\n')
+    return text
 
 class AgentRuntimeError(Exception):
     """A step failed; the message is what the CLI prints before exiting 1."""
@@ -703,7 +715,7 @@ class AgentRuntime:
             self.sbx(name, f'{HERMES} cron create --name weekly-digest --workdir /opt/data/brain '
                            f'--timezone {tz} --deliver {delivery(agent)} --failure-deliver local '
                            f'"{digest.get("schedule", "0 18 * * 0")}" "$(cat)"',
-                     input=(self.jobs_dir / "weekly_digest.md").read_text())
+                     input=digest_prompt(self.jobs_dir, agent))
         if _sibling("noticeboard_host").uses_noticeboard(agent):
             # Every ten minutes a script asks the noticeboard whether anything new is waiting. The
             # model runs only when it is, and what it reports goes to the person (or stays silent).

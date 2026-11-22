@@ -188,6 +188,10 @@ def repo(tmp_path):
     rx_plugin.mkdir(parents=True)
     (rx_plugin / "plugin.yaml").write_text("name: logos-reactions\n")
     (rx_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
+    jl_plugin = tmp_path / "infra" / "agent-plugins" / "logos-job-limits"
+    jl_plugin.mkdir(parents=True)
+    (jl_plugin / "plugin.yaml").write_text("name: logos-job-limits\n")
+    (jl_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
     (jobs / "brain_index.py").write_text("# index\n")
@@ -972,7 +976,7 @@ network_policies:
             "cron": {"wrap_response": False, "mirror_delivery": True},         # no header; agent sees its own jobs
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
-            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions"]},
+            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits"]},
             "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
@@ -980,10 +984,10 @@ network_policies:
         agent = r.load("alpha")
         agent["session_reset"] = {"mode": "daily", "at_hour": 3}
         cfg = art.yaml.safe_load(r.config_text("alpha", agent))
-        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "hermes-session-reset-policy"]}
+        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "hermes-session-reset-policy"]}
         assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
         agent["session_reset"] = {"mode": "none"}
-        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions"]}
+        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits"]}
 
     def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
         r = rt(repo)
@@ -1013,7 +1017,8 @@ network_policies:
             "plugins/logos-verified-only/__init__.py", "plugins/logos-verified-only/plugin.yaml",
             "plugins/logos-matrix-flat/__init__.py", "plugins/logos-matrix-flat/plugin.yaml",
             "plugins/logos-turn-time/__init__.py", "plugins/logos-turn-time/plugin.yaml",
-            "plugins/logos-reactions/__init__.py", "plugins/logos-reactions/plugin.yaml", "SOUL.md"]
+            "plugins/logos-reactions/__init__.py", "plugins/logos-reactions/plugin.yaml",
+            "plugins/logos-job-limits/__init__.py", "plugins/logos-job-limits/plugin.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out
@@ -1287,3 +1292,12 @@ class TestCli:
         real = mod._runtime_module()
         assert real.AgentRuntime(REPO).repo == REPO
         assert hasattr(real, "SubprocessRunner")
+
+
+def test_only_the_household_digest_speaks_of_the_household(tmp_path):
+    from gateway.agent_runtime import digest_prompt
+    (tmp_path / "weekly_digest.md").write_text((Path(__file__).resolve().parents[2] / "infra/agent-jobs/weekly_digest.md").read_text())
+    private = digest_prompt(tmp_path, {"name": "bere"})
+    house = digest_prompt(tmp_path, {"name": "household", "role": "household"})
+    assert "household" not in private.lower() and "Do not send it" in private
+    assert "The household's week" in house and "Do not send it" in house

@@ -94,3 +94,21 @@ its person says so each time.
 - No noticeboard page in the dashboard (S6.4).
 - Standing permissions in `sharing.md` are a record only; agents still ask every time.
 - The model gateway lists model names to a caller with no key (`/v1/models`). Inference needs a key.
+
+## Scheduled jobs never send (22 Nov 2026)
+
+A scheduled job (a digest, a briefing, the noticeboard check) cannot call `send_message`: the
+`logos-job-limits` plugin refuses it, and the model is told why. A job's reply goes to its person
+only.
+
+**Why:** on 22 Nov Béré's agent, writing her weekly digest, sent it to the household agent as an
+FYI. Her own notes reached the shared agent, and so Greg's Notifications. A line in the digest's
+instructions about the household chat had been read as "send it to the household agent". That
+line is now given only to the household agent, and the digest says it is not to be sent anywhere
+else. Because a model can misread instructions again, the plugin enforces the rule in code.
+
+**How:** hermes's `pre_tool_call` does not say which platform a turn is on, so the plugin
+remembers which sessions are scheduled jobs from `pre_llm_call` (platform `cron`).
+
+**Cleanup:** the message (noticeboard id 45) was deleted. The household agent's noticeboard check
+had stayed silent, and nothing from it was in the household brain or memory.
