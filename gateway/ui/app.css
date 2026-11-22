@@ -1000,7 +1000,7 @@ a.btn.mx-new { justify-content: center; }
 @media (max-width: 599px) {
   /* A phone: the marks in a row with their names, no drifting */
   .void-field { position: static; display: flex; flex-wrap: wrap; justify-content: center; gap: 28px 32px; padding: 96px 16px 0; }
-  .void-field .agent-mark { position: static; transform: none; --glyph: 72px; }
+  .void-field .agent-mark { position: static; transform: none; --glyph: 62px; }
   .void-field .mark-fx, .void-field .mark-fy { animation: none; }
   .void-field .agent-mark .mark-label { opacity: 1; }
   .mark-name { font-size: 16px; }
@@ -1415,7 +1415,7 @@ section:has(> .appearance-modes.single) { display: none; }
 @media (max-width: 599px) {
   .chat.void { height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-bottom) - 8px); min-height: 0; overflow: hidden; }
   .void-field { position: relative; display: block; flex: 1; min-height: 0; padding: 0; margin: 0 0 12px; }
-  .void-field .agent-mark { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); --glyph: 64px; }
+  .void-field .agent-mark { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); --glyph: 56px; }
 }
 
 /* Notifications feed (Greg, 21 Nov): one row per thing that happened, a dot on the new ones. */
@@ -1598,3 +1598,5 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .home-line .home-title { flex: 1 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-line .home-meta { flex: none; max-width: 40%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); }
 .home-line.over { opacity: .5; }
+
+.void-ask[hidden] { display: none; }

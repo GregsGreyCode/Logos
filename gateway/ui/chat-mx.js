@@ -63,16 +63,22 @@ export function conversationsOf(c, agents) {
   const me = c.getUserId();
   const rows = [];
   const summary = (room) => {
-    const evs = room.getLiveTimeline().getEvents().filter((e) => e.getType() === 'm.room.message' && !e.isRedacted?.()
-      && !(e.getContent()['m.relates_to']?.rel_type === 'm.replace') && e.getContent().msgtype !== 'm.notice'
-      && !CRON_ROOT.test(String(e.getContent().body || '')));
-    const last = evs[evs.length - 1];
+    // Unread: the others' messages after your read marker and after your own last message. The marker
+    // is found in the whole timeline, where it usually sits on a reaction (the agent's ✅), not a
+    // message; looked for among the messages only, it was never found and the count never cleared.
+    const all = room.getLiveTimeline().getEvents();
     const readId = room.getEventReadUpTo?.(me);
-    let from = 0;
-    evs.forEach((e, i) => { if (e.getId() === readId || e.getSender() === me) from = i + 1; });
+    let seenUpTo = -1;
+    all.forEach((e, i) => { if (e.getId() === readId || e.getSender() === me) seenUpTo = i; });
+    const isMsg = (e) => e.getType() === 'm.room.message' && !e.isRedacted?.()
+      && !(e.getContent()['m.relates_to']?.rel_type === 'm.replace') && e.getContent().msgtype !== 'm.notice'
+      && !CRON_ROOT.test(String(e.getContent().body || ''));
+    const msgs = all.map((e, i) => [e, i]).filter(([e]) => isMsg(e));
+    const last = msgs.length ? msgs[msgs.length - 1][0] : null;
+    const unread = msgs.filter(([e, i]) => i > seenUpTo && e.getSender() !== me).length;
     const who = last ? (last.getSender() === me ? 'You' : room.getMember(last.getSender())?.name || '') : '';
     const text = last ? (last.isDecryptionFailure?.() ? 'Locked message' : String(last.getContent().body || '').replace(/\s+/g, ' ').replace(/[*_`#>]/g, '')) : '';
-    return { ts: last ? last.getTs() : 0, text, who, unread: evs.length - from };
+    return { ts: last ? last.getTs() : 0, text, who, unread };
   };
   for (const a of agents.filter((x) => x.matrix_id)) {
     const room = pickRoom(c, a.matrix_id);
