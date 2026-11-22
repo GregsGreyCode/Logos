@@ -1836,3 +1836,22 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   background: var(--ground); color: var(--ink); font: inherit; resize: vertical; }
 .nr-mic { flex: none; width: 48px; height: 48px; padding: 0; font-size: 20px; }
 .nr-mic.recording { background: var(--bad); color: #fff; }
+/* Routines as one list (Greg, 23 Nov): + New routine at the top; each routine a card with its switch, name and
+   when; a tap opens what can be done with it (times for a built-in one; how to change it and Delete for one
+   you asked for). */
+.routines-top { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.routines-top .btn { align-self: stretch; }
+@media (min-width: 600px) { .routines-top { flex-direction: row; align-items: center; justify-content: space-between; } .routines-top .btn { align-self: auto; } }
+.routine { padding: 12px 14px; gap: 0; }
+.routine-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 4px 0; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.routine-open .routine-title { flex: 1; }
+.routine-sum { overflow: hidden; text-overflow: ellipsis; }
+.routine-chev { flex: none; color: var(--muted); font-size: 22px; transition: transform .2s; }
+.routine-open[aria-expanded="true"] .routine-chev { transform: rotate(90deg); }
+.routine-more { padding: 12px 0 2px 58px; display: flex; flex-direction: column; gap: 10px; }
+.routine-more[hidden] { display: none; }
+.routine-more .routine-fields { padding-left: 0; }
+.routine.off .routine-title strong { color: var(--muted); }
+@media (max-width: 599px) { .routine-more { padding-left: 0; } }
+[data-anim="off"] .routine-chev { transition: none; }
