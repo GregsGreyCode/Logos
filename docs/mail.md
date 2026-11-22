@@ -37,23 +37,32 @@ The morning briefing gets one line: how many emails wait for a reply, and the fi
 
 ## Connecting a mailbox
 
-**Outlook.com / Hotmail** (Microsoft turned off password sign-in for personal accounts in
-September 2024, so this is OAuth with your own app registration):
+**In the dashboard (F40, 23 Nov 2026):** Settings › Email. Each person connects only their own
+mailbox (their username is the `mail.person` of their agent). Nothing comes back to the browser but
+the address; the login goes to `~/.config/logos/mail/<person>.json` (0600) and the mail service
+restarts with it (`gateway/mail_connect.py`). The page also lists "Never read mail from" senders,
+and Disconnect (which removes the file and, if no mailbox is left, stops the service).
 
-1. entra.microsoft.com, signed in with the Outlook account: App registrations, New registration,
-   name `Logos mail`, **Personal Microsoft accounts only**, no redirect URI.
-2. Authentication: **Allow public client flows: Yes**.
-3. API permissions, Microsoft Graph, Delegated: `Mail.Read`, `offline_access` (read only: Logos
-   never sends, deletes or moves mail). A mailbox connected before 21 Nov 2026 asked for write and
-   send too: remove `Mail.ReadWrite` and `Mail.Send` here and connect again to drop them.
-4. On the server: `scripts/logos-mail connect greg --outlook --address <address> --client-id <Application ID>`,
-   then open the address it shows on any device and type the code. Microsoft renews the token by
-   itself; if it is unused for 90 days, connect again.
+- **Gmail:** the page links to Google's 2-Step Verification and App passwords pages; the person
+  pastes the 16 letters and Logos checks them with a real read-only sign-in before keeping them.
+  Revoking the app password cuts Logos off at once.
+- **Outlook.com / Hotmail:** ONE app registration for the whole install (Microsoft turned off
+  password sign-in for personal accounts in September 2024). Whoever manages Logos sets it up once;
+  the page walks them through it:
+  1. entra.microsoft.com, App registrations, New registration, name `Logos mail`,
+     **Personal Microsoft accounts only**, no redirect URI.
+  2. Authentication: **Allow public client flows: Yes**.
+  3. API permissions, Microsoft Graph, Delegated: `Mail.Read`, `offline_access` (read only). A
+     registration made before 21 Nov 2026 asked for write and send too: remove `Mail.ReadWrite` and
+     `Mail.Send` there.
+  4. Paste the Application (client) ID into Settings › Email (kept in `outlook-app.json`).
 
-**Gmail:** 2-step verification on, then an app password at myaccount.google.com/apppasswords.
-On the server: `scripts/logos-mail connect bere --gmail --address <address>`; it asks for the
-password without showing it and checks it with a real sign-in. Revoking the app password cuts
-Logos off at once.
+  Then anyone presses **Get a sign-in code**, opens microsoft.com/devicelogin and types the code; the
+  dashboard waits for the sign-in in the background. Microsoft renews the token by itself; if it is
+  unused for 90 days, connect again.
+
+**From the server** (the same files): `scripts/logos-mail connect greg --outlook --address <address>`
+(uses the Logos app unless `--client-id` is given) or `scripts/logos-mail connect bere --gmail --address <address>`.
 
 Then `scripts/logos-agent up <agent>` (or a deploy) starts the service. `scripts/logos-mail status`
 shows who is connected and the last refresh; the dashboard's Models screen shows the service.

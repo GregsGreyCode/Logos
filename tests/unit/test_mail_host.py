@@ -53,7 +53,15 @@ def write_box(tmp_path, person, box):
 
 def test_nothing_starts_until_a_mailbox_is_connected(tmp_path):
     rt = FakeRuntime({"XDG_CONFIG_HOME": str(tmp_path)}, AGENTS, HOMES)
-    assert mh.MailHost(rt).up() is False and rt.calls == []
+    assert mh.MailHost(rt).up() is False
+    assert [c for c in rt.calls if c[:2] != ["docker", "ps"]] == []          # only asks whether it is running
+
+
+def test_the_last_mailbox_disconnected_stops_the_service(tmp_path, monkeypatch):
+    rt = FakeRuntime({"XDG_CONFIG_HOME": str(tmp_path)}, AGENTS, HOMES)
+    monkeypatch.setattr(mh.MailHost, "running", lambda self: True)
+    assert mh.MailHost(rt).up() is False
+    assert ["docker", "rm", "-f", mh.CONTAINER] in rt.calls
 
 
 def test_up_passes_logins_on_stdin_and_locks_the_container_down(tmp_path):

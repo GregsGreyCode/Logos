@@ -1880,3 +1880,15 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .tip-dots span.on { background: var(--accent-text); }
 .tip-target { outline: 2px solid var(--accent-text); outline-offset: 4px; border-radius: var(--r-card); transition: outline-color .2s; }
 [data-anim="off"] .tip-card { animation: none; }
+
+/* F40 Settings › Email */
+.mail-steps { display: grid; gap: 14px; margin: 8px 0 12px; padding: 0; list-style: none; }
+.mail-step { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
+.mail-n { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: var(--t-xs);
+  background: color-mix(in srgb, var(--accent-text) 18%, var(--surface)); color: var(--ink); }
+.mail-step p { margin: 2px 0 6px; }
+.mail-step .form, .mail-step form.row { margin-top: 6px; }
+.mail-code { font: 600 1.6rem/1.2 ui-monospace, monospace; letter-spacing: .12em; margin: 4px 0 8px; }
+.mail-choose .btn { flex: 1; }
+.mail-excl li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
+.mail-card { margin-bottom: 14px; }

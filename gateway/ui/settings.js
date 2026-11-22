@@ -14,6 +14,7 @@ const SECTIONS = [
   { id: 'account', name: 'Account', full: 'Your account' },
   { id: 'matrix', name: 'Devices', full: 'This device and your chats' },
   { id: 'notifications', name: 'Phone alerts', full: 'Notifications on this phone' },
+  { id: 'email', name: 'Email', full: 'Your email, for your agent to read' },
   { id: 'updates', name: 'Updates', admin: true },
 ];
 
@@ -299,6 +300,142 @@ function notifications(state) {
   return [h('section', { 'aria-label': 'Phone alerts' }, heading('Phone alerts'), box)];
 }
 
+// F40 Email (Greg, 23 Nov): connect your own mailbox here, no server commands. Gmail with an app password
+// (links straight to Google's pages); Outlook.com with Microsoft's sign-in code, through the one Logos app
+// that whoever manages Logos adds once (walked through below). Only your own mailbox; read only.
+function email(body) {
+  let alive = true, timer = null;
+  const box = h('div', { class: 'mail-box' }, loading('rows', 2));
+  const msg = h('p', { class: 'when', role: 'status' });
+  body.replaceChildren(h('section', { 'aria-label': 'Email' }, heading('Email'),
+    h('p', { class: 'when' }, 'Your agent can read your email to tell you what needs a reply and find things for you. '
+      + 'It can never send, delete or move mail, and no other agent can see it.'), box, msg));
+  const step = (n, ...kids) => h('li', { class: 'mail-step' }, h('span', { class: 'mail-n', 'aria-hidden': 'true' }, String(n)), h('div', {}, ...kids));
+  const ext = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text);
+  const errOf = async (r) => { const d = await r.json().catch(() => ({})); return d.message || d.error || 'That did not work.'; };
+
+  async function load() {
+    clearTimeout(timer);
+    let d;
+    try { d = await getJSON('/api/v2/mail'); } catch (e) { box.replaceChildren(h('p', { class: 'none' }, 'Email settings could not be loaded just now.')); return; }
+    if (!alive) return;
+    if (!d.agent) { box.replaceChildren(h('p', { class: 'none' }, 'Your agent is not set up to read email yet. Ask whoever manages Logos to turn it on.')); return; }
+    if (d.signin && d.signin.state === 'waiting') return showCode(d);
+    if (d.mailbox) return connected(d);
+    choose(d);
+  }
+
+  function connected(d) {
+    const m = d.mailbox, hl = d.health;
+    const state = !hl ? 'Starting to read it…' : hl.error ? `The last refresh failed: ${hl.error}` : hl.synced ? `Up to date (checked ${String(hl.synced).replace('T', ' ').slice(0, 16)})` : 'Copying your recent mail…';
+    const sender = h('input', { type: 'text', placeholder: 'mybank.example or someone@…', 'aria-label': 'Never read mail from', autocomplete: 'off' });
+    const exclude = async (s, remove = false) => {
+      const r = await api('/api/v2/mail/exclude', { method: 'POST', body: { sender: s, remove } });
+      msg.textContent = r.ok ? '' : await errOf(r); if (r.ok) load();
+    };
+    box.replaceChildren(
+      h('div', { class: 'card mail-card' },
+        h('div', { class: 'card-head' }, h('strong', {}, m.address || 'Your mailbox'), h('span', { class: `status ${hl && hl.error ? 'down' : 'up'}` }, '')),
+        h('p', { class: 'when' }, `${m.kind === 'gmail' ? 'Gmail' : 'Outlook.com'} · ${state}`)),
+      h('h3', { class: 'label' }, 'Never read mail from'),
+      h('p', { class: 'when' }, 'A bank or a doctor, say: their emails are never copied, and any already copied are removed.'),
+      ...(m.exclude.length ? [h('ul', { class: 'plain mail-excl' }, m.exclude.map((s) => h('li', {}, s,
+        h('button', { type: 'button', class: 'linkish', 'aria-label': `Read mail from ${s} again`, onclick: () => exclude(s, true) }, 'Remove'))))] : []),
+      h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); if (sender.value.trim()) exclude(sender.value.trim()); } },
+        sender, h('button', { type: 'submit', class: 'btn quiet' }, 'Add')),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet danger', onclick: async () => {
+        if (!await ask({ title: 'Disconnect your email?', text: 'Your agent stops reading it, and Logos forgets the login. Its copy of your mail is removed on the next refresh.', yes: 'Disconnect', danger: true })) return;
+        const r = await api('/api/v2/mail', { method: 'DELETE' }); msg.textContent = r.ok ? 'Disconnected.' : await errOf(r); load();
+      } }, 'Disconnect')));
+  }
+
+  function choose(d) {
+    const pick = (kind) => (kind === 'gmail' ? gmail() : outlook(d));
+    box.replaceChildren(h('p', {}, 'Which email do you use?'),
+      h('div', { class: 'row mail-choose' },
+        h('button', { type: 'button', class: 'btn quiet', onclick: () => pick('gmail') }, 'Gmail'),
+        h('button', { type: 'button', class: 'btn quiet', onclick: () => pick('outlook') }, 'Outlook.com / Hotmail')));
+  }
+
+  function gmail() {
+    const addr = h('input', { id: 'mail-addr', type: 'email', autocomplete: 'email', placeholder: 'you@gmail.com' });
+    const pw = h('input', { id: 'mail-pw', type: 'password', autocomplete: 'off', placeholder: 'abcd efgh ijkl mnop' });
+    const go = h('button', { type: 'submit', class: 'btn' }, 'Connect');
+    box.replaceChildren(h('ol', { class: 'plain mail-steps' },
+      step(1, h('strong', {}, 'Turn on 2-Step Verification'), h('p', { class: 'when' }, 'Google only allows app passwords with it on. ', ext('https://myaccount.google.com/signinoptions/twosv', 'Open Google\'s page'))),
+      step(2, h('strong', {}, 'Make an app password'), h('p', { class: 'when' }, 'Name it "Logos" and Google shows 16 letters. ', ext('https://myaccount.google.com/apppasswords', 'Open App passwords'))),
+      step(3, h('strong', {}, 'Paste it here'),
+        h('form', { class: 'form', onsubmit: async (e) => {
+          e.preventDefault(); go.disabled = true; msg.textContent = 'Checking with Gmail…';
+          const r = await api('/api/v2/mail/gmail', { method: 'POST', body: { address: addr.value.trim(), app_password: pw.value } });
+          go.disabled = false;
+          if (!r.ok) { msg.textContent = await errOf(r); return; }
+          const out = await r.json(); pw.value = '';
+          msg.textContent = `Connected: ${out.inbox} emails in your Inbox. Your agent starts reading in a few minutes.`; load();
+        } }, h('label', { for: 'mail-addr', class: 'field-label' }, 'Gmail address'), addr,
+        h('label', { for: 'mail-pw', class: 'field-label' }, 'App password'), revealable(pw),
+        h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => load() }, 'Back'))))),
+    h('p', { class: 'when' }, 'Removing the app password in your Google account cuts Logos off at once.'));
+  }
+
+  function outlook(d) {
+    if (!d.outlook_ready && !d.is_admin) {
+      box.replaceChildren(h('p', { class: 'none' }, 'Outlook is not set up on this Logos yet. Whoever manages Logos adds it once, then you can connect here.'),
+        h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => load() }, 'Back')));
+      return;
+    }
+    if (!d.outlook_ready) return outlookApp();
+    const go = h('button', { type: 'button', class: 'btn', onclick: async () => {
+      go.disabled = true; msg.textContent = 'Asking Microsoft for a code…';
+      const r = await api('/api/v2/mail/outlook', { method: 'POST' });
+      go.disabled = false;
+      if (!r.ok) { msg.textContent = await errOf(r); return; }
+      msg.textContent = ''; load();
+    } }, 'Get a sign-in code');
+    box.replaceChildren(h('p', {}, 'You sign in on Microsoft\'s own page with a short code: Logos never sees your password.'),
+      h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => load() }, 'Back')));
+  }
+
+  function showCode(d) {
+    const s = d.signin;
+    box.replaceChildren(h('ol', { class: 'plain mail-steps' },
+      step(1, h('strong', {}, 'Open Microsoft\'s sign-in page'), h('p', {}, ext(s.url, s.url.replace(/^https:\/\//, '')))),
+      step(2, h('strong', {}, 'Type this code'), h('p', { class: 'mail-code' }, s.code),
+        navigator.clipboard ? h('button', { type: 'button', class: 'btn quiet small', onclick: async () => { try { await navigator.clipboard.writeText(s.code); msg.textContent = 'Code copied.'; } catch (e) { /* type it */ } } }, 'Copy the code') : ''),
+      step(3, h('strong', {}, 'Sign in and allow "Logos mail"'), h('p', { class: 'when' }, 'It asks to read your mail only. This page carries on by itself.'))),
+    h('p', { class: 'when' }, 'Waiting for you to sign in…'));
+    timer = setTimeout(async () => {
+      const r = await getJSON('/api/v2/mail').catch(() => null);
+      if (!alive || !r) return;
+      if (r.signin && r.signin.state === 'failed') { msg.textContent = r.signin.error; outlook(r); return; }
+      if (r.signin && r.signin.state === 'connected') msg.textContent = 'Connected. Your agent starts reading in a few minutes.';
+      load();
+    }, 3000);
+  }
+
+  // Once per Logos, by whoever manages it: the one app registration every Outlook.com user signs in through.
+  function outlookApp() {
+    const id = h('input', { id: 'mail-app', type: 'text', autocomplete: 'off', placeholder: '1a2b3c4d-…', spellcheck: 'false' });
+    box.replaceChildren(h('p', {}, 'One-time setup for this Logos (about 5 minutes). After this, everyone connects Outlook with a code.'),
+      h('ol', { class: 'plain mail-steps' },
+        step(1, h('strong', {}, 'Register the app'), h('p', { class: 'when' }, 'At ', ext('https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade', 'Entra › App registrations'),
+          ', sign in with your Microsoft account, then New registration: name "Logos mail", account type "Personal Microsoft accounts only", no redirect URI. Register.')),
+        step(2, h('strong', {}, 'Allow sign-in with a code'), h('p', { class: 'when' }, 'Authentication › "Allow public client flows": Yes › Save.')),
+        step(3, h('strong', {}, 'Read-only permission'), h('p', { class: 'when' }, 'API permissions › Add a permission › Microsoft Graph › Delegated: Mail.Read and offline_access (User.Read is there already). Nothing that sends or deletes.')),
+        step(4, h('strong', {}, 'Paste the Application (client) ID'), h('p', { class: 'when' }, 'From the app\'s Overview page.'),
+          h('form', { class: 'row', onsubmit: async (e) => {
+            e.preventDefault();
+            const r = await api('/api/v2/mail/outlook-app', { method: 'PUT', body: { client_id: id.value.trim() } });
+            msg.textContent = r.ok ? 'Saved: Outlook can be connected now.' : await errOf(r);
+            if (r.ok) outlook({ outlook_ready: true, is_admin: true });
+          } }, id, h('button', { type: 'submit', class: 'btn' }, 'Save')))),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => load() }, 'Back')));
+  }
+
+  load();
+  return () => { alive = false; clearTimeout(timer); };
+}
+
 export async function settingsView(root, [section], state) {
   const isAdmin = state.me.role === 'admin';
   const shown = SECTIONS.filter((s) => !s.admin || isAdmin);
@@ -315,6 +452,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'account') body.replaceChildren(...account(state));
   else if (id === 'matrix') body.replaceChildren(...matrix(state));
   else if (id === 'notifications') body.replaceChildren(...notifications(state));
+  else if (id === 'email') done = email(body);
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   return () => { if (done) done(); };
 }

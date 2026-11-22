@@ -110,6 +110,9 @@ class MailHost:
         agents = {n: a for n, a in agents.items() if tokens[n]}       # joins on its first `up`
         boxes = mailboxes(self.rt.env, [person_of(a) for a in agents.values()])
         if not agents or not boxes:
+            # Nothing (left) to read: the last mailbox was disconnected (F40), so stop the service too.
+            if self.running():
+                self.down()
             return False
         config = json.dumps(service_config(agents, tokens, boxes), indent=1, sort_keys=True, ensure_ascii=False)
         stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + IMAGE).encode()).hexdigest()[:16]
