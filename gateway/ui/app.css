@@ -1071,7 +1071,9 @@ a.btn.mx-new { justify-content: center; }
   .appearance-modes .appearance-mode { justify-content: center; border: 0; border-radius: var(--r-pill); }
   .appearance-modes .appearance-mode input { position: absolute; opacity: 0; width: 1px; height: 1px; }
   .appearance-modes p { grid-column: 1 / -1; padding: 6px 10px 2px; }
-  .settings-tabs { flex-wrap: nowrap; }
+  /* Six sections: a 3 x 2 grid, every tab on screen (Greg, 22 Nov: Updates ran off the edge). */
+  .settings-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .settings-tabs .settings-tab { justify-content: center; padding: 0 6px; }
   .settings-tab { flex: 1; justify-content: center; padding: 0 8px; }
   /* the void: the agents in the middle of the screen */
   .chat.void { min-height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - 40px); display: flex; flex-direction: column; }
@@ -1543,8 +1545,12 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .mx-ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 24px 8px;
   padding-left: max(24px, calc((100% - 760px) / 2)); padding-right: max(24px, calc((100% - 760px) / 2)); }
 @media (max-width: 599px) { .mx-ask { padding: 4px 16px 8px; } }
-.mx-ask-chip { cursor: pointer; user-select: none; }
-.mx-ask-chip.on { background: var(--accent); color: var(--on-accent, #fff); border-color: var(--accent); }
+.mx-ask-chip { cursor: pointer; user-select: none; font: inherit; font-size: var(--t-sm); min-height: 34px; padding: 0 14px;
+  border: 1px dashed var(--line); border-radius: 999px; background: transparent; color: var(--muted); }
+.mx-ask-chip.on { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); font-weight: 600; }
+/* A long post (the daily changes) folds after about twelve lines, with Show all under it (Greg, 22 Nov). */
+.msg.folded { max-height: 18em; overflow: hidden; -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent); mask-image: linear-gradient(to bottom, #000 75%, transparent); }
+.mx-fold { align-self: flex-start; margin: 2px 0 0 4px; font-size: var(--t-sm); }
 .void-groups { position: absolute; z-index: 1; left: 0; right: 0; bottom: 16px; display: flex; flex-direction: column; gap: 8px;
   max-width: 520px; margin: 0 auto; padding: 8px 16px; }
 @media (max-width: 599px) { .void-groups { position: static; width: 100%; padding: 8px 16px 16px; } }

@@ -41,7 +41,7 @@ export async function updatesView(root, _args, state, embedded = false) {
     }
     if (!p.commits.length) {
       planBox.replaceChildren(h('h2', {}, 'Up to date'),
-        h('p', { class: 'when' }, `Running ${p.before.slice(0, 7)}, the latest on v2.`), h('div', { class: 'row' }, recheck));
+        h('p', { class: 'when' }, 'Logos is running the latest version.'), h('div', { class: 'row' }, recheck));
       return;
     }
     const go = h('button', { type: 'button', class: 'btn', onclick: async () => {
@@ -69,13 +69,15 @@ export async function updatesView(root, _args, state, embedded = false) {
     // replaceChildren() prints a null as the word "null", so the parts left out are filtered away.
     lastBox.replaceChildren(...[
       h('div', { class: 'card-head' }, h('h2', {}, label), cls ? h('span', { class: `status ${cls}` }, '') : null),
+      // Plain words (Greg, 22 Nov); the version numbers are in Output for whoever needs them.
       s ? h('p', { class: 'when' },
-        [s.before && s.after ? `${s.before.slice(0, 7)} → ${s.after.slice(0, 7)}` : '',
-          s.started ? `started ${time(s.started)}` : '', s.finished ? `finished ${time(s.finished)}` : '']
+        [s.finished ? `finished ${time(s.finished)}` : s.started ? `started ${time(s.started)}` : '',
+          s.before && s.after && s.before === s.after ? 'nothing new to install' : '']
           .filter(Boolean).join(' · ')) : null,
       s?.error ? h('p', { class: 'notice', style: 'white-space: pre-wrap' }, s.error) : null,
       d.output.length ? h('details', { open: d.running || (s && s.state !== 'done') },
-        h('summary', {}, 'Output'), h('pre', { class: 'log-output' }, d.output.join('\n'))) : null,
+        h('summary', {}, 'Output'), h('pre', { class: 'log-output' },
+          [s && s.before && s.after ? `Version ${s.before.slice(0, 7)} → ${s.after.slice(0, 7)}` : '', ...d.output].filter(Boolean).join('\n'))) : null,
     ].filter(Boolean));
   }
 
@@ -96,7 +98,7 @@ export async function updatesView(root, _args, state, embedded = false) {
     else if (wasRunning) { wasRunning = false; refresh(true, true); }   // finished: show what is left
   }
 
-  const lead = h('p', { class: 'when lead' }, 'Install the latest Logos from the v2 branch on this machine. Only the parts that changed are restarted.');
+  const lead = h('p', { class: 'when lead' }, 'Install the newest Logos on this machine. Only the parts that changed restart.');
   // Inside Settings (ST1) it is a section, not a screen of its own.
   if (embedded) root.replaceChildren(lead, planBox, lastBox);
   else root.replaceChildren(h('div', { class: 'page' }, h('header', {}, h('h1', {}, 'Updates'), lead), planBox, lastBox));

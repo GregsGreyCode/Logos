@@ -253,8 +253,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   try {
     c = await mx.get();
   } catch (e) {
-    log.replaceChildren(h('div', { class: 'notice' }, `This browser's Matrix device could not start (${e.message}). `,
-      h('a', { href: '#/settings/matrix' }, 'Check Settings › Matrix device'), '.'));
+    log.replaceChildren(h('div', { class: 'notice' }, `This device could not connect to your chats (${e.message}). `,
+      h('a', { href: '#/settings/matrix' }, 'Check Settings › Devices'), '.'));
     return () => {};
   }
   if (!alive) return () => {};
@@ -302,14 +302,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     try { asking = new Set(JSON.parse(localStorage.getItem(askKey) || '[]')); } catch (e) { asking = new Set(); }
     const drawAsk = () => {
       for (const id of [...asking]) if (!inRoom().some((a) => a.matrix_id === id)) asking.delete(id);
-      askRow.replaceChildren(h('span', { class: 'when' }, 'Ask'), ...inRoom().map((a) => h('button', {
+      askRow.replaceChildren(...inRoom().map((a) => h('button', {
         type: 'button', class: `chip mx-ask-chip${asking.has(a.matrix_id) ? ' on' : ''}`, 'aria-pressed': String(asking.has(a.matrix_id)),
         title: asking.has(a.matrix_id) ? `Your message goes to ${a.display_name} too` : `Only people read it; tap to ask ${a.display_name}`,
         onclick: () => {
           if (asking.has(a.matrix_id)) asking.delete(a.matrix_id); else asking.add(a.matrix_id);
           try { localStorage.setItem(askKey, JSON.stringify([...asking])); } catch (e) { /* remembered for this visit only */ }
           drawAsk();
-        } }, `@ ${a.display_name}`)));
+        } }, asking.has(a.matrix_id) ? `✓ ${a.display_name} will answer` : `@ ${a.display_name}`)));
     };
     drawAsk();
   }
@@ -367,6 +367,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       words, sentHere ? h('span', { class: `mx-tick${seen ? ' seen' : ''}`, 'aria-label': seen ? 'seen' : 'sent' }, icon(ICONS.check)) : null);
   }
   const ACK = new Set(['✅', '✔️', '👀']);
+  const unfolded = new Set();              // long posts opened with Show all (kept across redraws)
 
   function bubbleFor(ev, edits, reactions, inMain, showTime = true, showName = false) {
     const mine = ev.getSender() === me;
@@ -406,9 +407,16 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const think = ev.getSender() === agent.matrix_id && kind === 'm.text' && content.body && getPref('thinking', false) ? thinking(String(content.body)) : null;
     const canReact = ev.getId() && !ev.getId().startsWith('~') && !(ev.isDecryptionFailure && ev.isDecryptionFailure());
     const bubble = h('div', { class: `msg ${mine ? 'user' : 'assistant'}${mine || fromAgent ? '' : ' person'}` }, ...body);
+    const text = String(content.body || '');
+    const long = !mine && (text.length > 700 || text.split('\n').length > 12);
+    if (long && !unfolded.has(ev.getId())) bubble.classList.add('folded');
     const turn = h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
       showName ? h('span', { class: `mx-sender${fromAgent ? ' bot' : ''}` }, nameOf(ev.getSender())) : null,
       bubble,
+      long ? h('button', { type: 'button', class: 'linkish mx-fold', onclick: () => {
+        if (unfolded.has(ev.getId())) unfolded.delete(ev.getId()); else unfolded.add(ev.getId());
+        draw(false);
+      } }, unfolded.has(ev.getId()) ? 'Show less' : 'Show all') : null,
       chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, r]) => h('button', {
         type: 'button', class: `chip mx-react${r.mine ? ' mine' : ''}`, 'aria-pressed': String(!!r.mine),
         title: r.mine ? 'Take your reaction back' : 'React with this too', onclick: () => react(ev, k, r.mine),

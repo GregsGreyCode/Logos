@@ -12,7 +12,7 @@ const SECTIONS = [
   { id: 'appearance', name: 'Look', full: 'Appearance' },
   { id: 'account', name: 'Account', full: 'Your account' },
   { id: 'chat', name: 'Chat' },
-  { id: 'matrix', name: 'Matrix', full: 'Matrix device' },
+  { id: 'matrix', name: 'Devices', full: 'This device and your chats' },
   { id: 'notifications', name: 'Alerts', full: 'Phone notifications' },
   { id: 'updates', name: 'Updates', admin: true },
 ];
@@ -142,7 +142,7 @@ function matrix(state, redraw) {
   const box = h('div', { class: 'settings-body-inner' }, loading());
   const me = state.me.matrix_id;
   if (!me) return [h('p', { class: 'none' }, 'Matrix is not set up on this Logos.')];
-  const steps = (n) => h('div', { class: 'mx-steps', role: 'list' }, ['Connect', 'Unlock history', 'Done'].map((t, i) =>
+  const steps = (n) => h('div', { class: 'mx-steps', role: 'list' }, ['Connect', 'Unlock', 'Done'].map((t, i) =>
     h('span', { role: 'listitem', class: `mx-step${i === n ? ' now' : ''}${i < n ? ' done' : ''}` }, `${i < n ? '✓ ' : ''}${t}`)));
   const field = (id, label, input) => [h('label', { for: id, class: 'field-label' }, label), input];
   const note = () => h('p', { class: 'when', role: 'status' });
@@ -157,9 +157,9 @@ function matrix(state, redraw) {
       try { await mx.connect(me, pass.value); pass.value = ''; show(); }
       catch (err) { msg.textContent = err.httpStatus === 403 ? 'That password was not accepted.' : `Could not connect: ${err.message}`; go.disabled = false; }
     } },
-    h('p', {}, 'Chat here becomes your Element conversation itself: the same messages, encrypted, here and on your phone. This browser becomes one of your Matrix devices.'),
-    ...field('mx-user', 'Matrix account', h('input', { id: 'mx-user', type: 'text', value: me, readonly: true })),
-    ...field('mx-pass', 'Matrix password (used once, never kept)', revealable(pass)),
+    h('p', {}, 'Connect this device to your chats: the same encrypted messages as on your other devices.'),
+    ...field('mx-user', 'Your chat account', h('input', { id: 'mx-user', type: 'text', value: me, readonly: true })),
+    ...field('mx-pass', 'Chat password (used once, never kept)', revealable(pass)),
     h('div', { class: 'row' }, go), msg));
   }
 
@@ -176,45 +176,68 @@ function matrix(state, redraw) {
         if (out.verified) show(); else { msg.textContent = 'The key was accepted but this browser is not verified yet. Try again, or verify it from Element.'; go.disabled = false; }
       } catch (err) { msg.textContent = /key|decode|checksum|parity/i.test(err.message) ? 'That recovery key was not accepted. Check it and try again.' : `Could not unlock: ${err.message}`; go.disabled = false; }
     } },
-    h('p', {}, 'Enter the recovery key Element gave you (in Element: Settings › Security). It proves this browser is you and unlocks your earlier messages. It is used once and not kept.'),
+    h('p', {}, 'Enter your recovery key (the long code you saved when you first set up your chats; in Element: Settings › Security). It proves this device is yours and unlocks your earlier messages. It is used once and not kept.'),
     ...field('mx-key', 'Recovery key', key),
     h('div', { class: 'row' }, go), msg,
     h('p', { class: 'when' }, 'Or verify this browser from Element on your phone: it shows up there as a new device to verify.')));
   }
 
+  // Done (Greg, 22 Nov: the person need not know the plumbing): one line saying all is well; the
+  // devices folded away, with the old ones marked and signed out together.
   async function stepDone() {
     const list = h('div', { class: 'rows' }, loading());
     const msg = note();
-    box.replaceChildren(steps(2),
-      h('div', { class: 'mx-ok', title: `This browser is a verified device of ${me}.` }, '✓ Verified'),
-      h('h2', { class: 'label' }, 'Your devices'), list, msg,
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn danger', onclick: async () => {
-        if (!confirm('Disconnect this browser? It signs out of Matrix here and forgets its keys.')) return;
-        await mx.disconnect(); show();
-      } }, 'Disconnect this browser')));
+    const fold = h('details', { class: 'mx-devices' }, h('summary', {}, 'Your devices'), list);
+    box.replaceChildren(
+      h('div', { class: 'mx-ok', title: `This browser is a verified device of ${me}.` }, '✓ This device is connected and secure'),
+      h('p', { class: 'when' }, 'Your chats are end-to-end encrypted: only your own devices and the agents can read them.'),
+      fold, msg);
     const devs = (await mx.devices()).sort((a, b) => Number(b.here) - Number(a.here) || b.lastSeen - a.lastSeen);
-    list.replaceChildren(...devs.map((d) => h('div', { class: 'row-item mx-device' },
-      h('span', { class: 'row-main' }, d.here ? `${d.name.replace(/^Logos \((.*)\)$/, 'Logos · $1')} · this browser` : d.name),
-      h('span', { class: `row-meta ${d.verified ? 'ok' : 'warn'}` },
-        `${d.verified ? 'Verified' : 'Not verified: agents will not answer it'}${d.lastSeen ? ` · seen ${when(d.lastSeen / 1000)}` : ''}`),
-      d.here ? null : h('button', { type: 'button', class: 'linkish mx-signout', onclick: async (e) => {
-        const pw = prompt(`Sign out "${d.name}"? Matrix asks for your password to do it.`);
-        if (!pw) return;
-        e.target.disabled = true;
-        try { await mx.signOut(d.id, pw); stepDone(); }
-        catch (err) { msg.textContent = `Could not sign it out: ${err.message}`; e.target.disabled = false; }
-      } }, 'Sign out'))));
+    const plain = (n) => String(n || 'A device').replace(/^Logos \((.*)\)$/, 'Logos · $1');
+    // Old: not used for three days, not verified (agents ignore it anyway), or an older copy of a device
+    // that is listed again (a browser connected twice).
+    const week = Date.now() - 3 * 86400000;
+    const old = (d, i) => !d.here && (!d.verified || !d.lastSeen || d.lastSeen < week
+      || devs.slice(0, i).some((x) => plain(x.name) === plain(d.name)));
+    const olds = devs.filter(old);
+    fold.querySelector('summary').textContent = `Your devices (${devs.length})${olds.length ? ` · ${olds.length} not used lately` : ''}`;
+    const signOut = async (targets, button) => {
+      const pw = prompt(targets.length === 1 ? `Sign out "${plain(targets[0].name)}"? Enter your chat password to confirm.`
+        : `Sign out ${targets.length} old devices? Enter your chat password to confirm.`);
+      if (!pw) return;
+      button.disabled = true;
+      let done = 0;
+      for (const d of targets) {
+        try { await mx.signOut(d.id, pw); done += 1; }
+        catch (err) { msg.textContent = `Could not sign out "${plain(d.name)}": ${err.message}`; break; }
+      }
+      if (done) msg.textContent = `Signed out ${done} device${done === 1 ? '' : 's'}.`;
+      stepDone();
+    };
+    list.replaceChildren(...devs.map((d, i) => h('div', { class: 'row-item mx-device' },
+      h('span', { class: 'row-main' }, d.here ? `${plain(d.name)} · this device` : plain(d.name)),
+      h('span', { class: `row-meta ${old(d, i) ? 'warn' : 'ok'}` },
+        [d.here ? 'in use now' : d.lastSeen ? `last used ${when(d.lastSeen / 1000)}` : 'never used',
+          !d.verified ? 'not trusted: agents ignore it' : '', old(d, i) && d.verified ? 'not used lately' : ''].filter(Boolean).join(' · ')),
+      d.here ? null : h('button', { type: 'button', class: 'linkish mx-signout', onclick: (e) => signOut([d], e.target) }, 'Sign out'))),
+      ...(olds.length ? [h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: (e) => signOut(olds, e.target) },
+        `Sign out ${olds.length} old device${olds.length === 1 ? '' : 's'}`))] : []),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn danger', onclick: async () => {
+        if (!confirm('Disconnect this device? It signs out of your chats here and forgets its keys.')) return;
+        await mx.disconnect(); show();
+      } }, 'Disconnect this device')));
+    if (olds.length) fold.open = true;
   }
 
   async function show() {
     if (!mx.saved()) return stepConnect();
     box.replaceChildren(loading());
     try { (await mx.isVerified()) ? stepDone() : stepUnlock(); }
-    catch (e) { box.replaceChildren(h('div', { class: 'notice' }, `This browser's Matrix device could not start: ${e.message}`),
+    catch (e) { box.replaceChildren(h('div', { class: 'notice' }, `This device could not connect to your chats: ${e.message}`),
       h('button', { type: 'button', class: 'btn quiet', onclick: async () => { await mx.disconnect(); show(); } }, 'Start again')); }
   }
   show();
-  return [h('section', { 'aria-label': 'Matrix device' }, heading('This browser and Matrix'), box)];
+  return [h('section', { 'aria-label': 'This device' }, heading('This device'), box)];
 }
 
 // Phone notifications (F37): on or off for this device, a test, and your other devices that have them.
@@ -224,8 +247,8 @@ function notifications(state) {
   async function show() {
     if (!state.me.matrix_id) { box.replaceChildren(h('p', { class: 'none' }, 'Matrix is not set up on this Logos.')); return; }
     if (!mx.saved()) {
-      box.replaceChildren(h('p', {}, 'Connect this browser to Matrix first: notifications come from your chats.'),
-        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Matrix device'));
+      box.replaceChildren(h('p', {}, 'Connect this device to your chats first (Settings › Devices): notifications come from them.'),
+        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Devices'));
       return;
     }
     const st = await push.status().catch(() => 'off');
