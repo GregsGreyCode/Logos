@@ -69,4 +69,8 @@ already exist.
   starts with the agent's name and carries `m.mentions` (which hermes goes by) and a mention pill.
   With none on, only the people read it. The choice is remembered per group in this browser. "…is
   thinking" shows only after a message that asks an agent.
-- **Not yet:** creating a group from Logos (F36 part 2).
+- **New group** (F36 part 2): "+ New group" in Conversations asks for a name, people and agents (at
+  least one agent). It creates an encrypted room and invites them. An agent joins by itself when
+  someone allowed to use it invites it (hermes `_on_invite`). A private agent therefore joins only
+  when its owner adds it, and in a group it still answers only its owner. People see the invitation
+  at the top of their Conversations, with Join and Decline.
