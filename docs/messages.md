@@ -38,6 +38,9 @@ An emoji reaction on an agent's message reaches the agent (`infra/agent-plugins/
 - ❓ asks it to explain that message more, 🔁 to try it again a different way. Each starts a turn,
   as a reply to that message.
 
+`/emojis` (or `/reactions`) in a chat lists these, answered without the model. It is the one
+message that has emoji in its text.
+
 Only messages sent after 22 Nov are known; a reaction on an older one, or one taken away, is not
 told. In the household group chat a reaction counts as addressing the agent, as an @mention does.
 

@@ -171,5 +171,11 @@ def test_registers_the_hook_and_waits_for_the_adapter(rx, monkeypatch):
     monkeypatch.setattr(rx.threading, "Thread", lambda **k: types.SimpleNamespace(start=lambda: started.append(k["name"])))
     for name in [n for n in sys.modules if n.endswith(rx.ADAPTER_MODULE_SUFFIX)]:
         monkeypatch.delitem(sys.modules, name)
-    rx.register(types.SimpleNamespace(register_hook=lambda name, fn: hooks.append(name)))
+    commands = {}
+    rx.register(types.SimpleNamespace(register_hook=lambda name, fn: hooks.append(name),
+                                      register_command=lambda name, handler, description="": commands.update({name: handler})))
     assert hooks == ["pre_llm_call"] and started == ["logos-reactions"]
+    assert sorted(commands) == ["emojis", "reactions"]
+    listed = commands["emojis"]("")
+    for emoji in [*rx.COMMANDS, *rx.LESSON_WORDS]:
+        assert emoji in listed or emoji in ("❔", "🔄")      # the look-alikes work but are not listed

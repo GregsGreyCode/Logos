@@ -10,7 +10,8 @@ answer told the agent nothing. With this plugin a reaction on one of the agent's
 - for 👎 and ❤️, also adds a dated line to ``topics/lessons.md`` in the agent's brain, so the
   nightly consolidation and the weekly digest learn from it (judgement.md);
 - for ❓ and 🔁, starts a turn, as if the person had replied to that message "Explain that
-  more." or "Try that again a different way." (docs/messages.md lists them).
+  more." or "Try that again a different way." (docs/messages.md lists them);
+- answers ``/emojis`` (or ``/reactions``) with that list, without the model.
 
 Only messages the agent sent since this plugin was installed are known: Matrix sends are now
 recorded in hermes's own sent-message index (``rich_sent_store``, which Telegram already uses),
@@ -38,6 +39,14 @@ COMMANDS = {"❓": "Explain that more.", "❔": "Explain that more.",
             "🔁": "Try that again a different way.", "🔄": "Try that again a different way."}
 LESSON_WORDS = {"👎": "didn't like", "❤️": "loved"}
 LESSONS_HEAD = "# Lessons\n\nHow I work better: rules from what went wrong, and reactions to work out.\n\n"
+
+HELP = ("React to any of my messages and I'll see it the next time we talk. I don't reply to a reaction, "
+        "except these:\n"
+        "- ❓ explain that more\n"
+        "- 🔁 try that again a different way\n"
+        "- 👎 that wasn't right: I note it and learn from it\n"
+        "- ❤️ that was just right: I note that too\n"
+        "Any other emoji, like 👍, just tells me how it landed.")
 
 NOTES: dict = {}               # session id -> [{"text", "at"}]
 _lock = threading.Lock()
@@ -232,8 +241,14 @@ def _patch_when_loaded(timeout: float = 600.0) -> None:
     logger.error("Matrix: the adapter never loaded; reactions stay unheard")
 
 
+def _help(raw_args: str = "", **_) -> str:
+    return HELP
+
+
 def register(ctx):
     ctx.register_hook("pre_llm_call", _note_for_next_turn)
+    for name in ("emojis", "reactions"):
+        ctx.register_command(name, handler=_help, description="What reacting with an emoji does")
     cls = _find_adapter_class()
     if cls is not None:
         patch(cls)

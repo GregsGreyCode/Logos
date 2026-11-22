@@ -334,7 +334,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // opens a row of emoji; a tap sends it as a Matrix reaction, tapping your own again takes it back.
   // Agents only act on reactions to their own approval prompts, so a reaction never starts a reply.
   // The agent hears every reaction at its next turn; 👎 and ❤️ also go into its lessons, and ❓ / 🔁
-  // ask it to explain more or try again (logos-reactions, docs/messages.md).
+  // ask it to explain more or try again (logos-reactions, docs/messages.md; /emojis lists them).
   const QUICK = ['👍', '👎', '❤️', '😂', '❓', '🔁'];
   const QUICK_HINT = { '👎': 'Not right: the agent notes it', '❤️': 'Loved it: the agent notes it',
     '❓': 'Ask the agent to explain more', '🔁': 'Ask the agent to try again' };
