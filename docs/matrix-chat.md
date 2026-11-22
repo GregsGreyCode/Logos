@@ -74,3 +74,32 @@ already exist.
   someone allowed to use it invites it (hermes `_on_invite`). A private agent therefore joins only
   when its owner adds it, and in a group it still answers only its owner. People see the invitation
   at the top of their Conversations, with Join and Decline.
+
+## Voice notes, images and files (22 Nov 2026)
+
+Logos plays, shows and sends them itself, so Element X is not needed for them (`gateway/ui/media.js`).
+
+- **How a file is protected:** in an encrypted room it is encrypted on its own, using the Matrix
+  attachment format v2 (AES-256-CTR, with the key, counter and SHA-256 in the message, which is
+  itself end-to-end encrypted).
+- **Receiving:** the browser downloads the ciphertext through the dashboard's Matrix pass-through,
+  from the authenticated media API (`/_matrix/client/v1/media/download`, which refuses requests
+  without a login). It checks the hash and decrypts the file in the page. Nothing readable passes
+  through the server.
+- **Sending:** 📎 works the same way back. The file is encrypted, then the ciphertext is uploaded.
+  In a group, the "@ agent" choice goes with the file.
+- **In a chat:**
+  - a voice note has ▶, its length and a bar to drag;
+  - an image shows as a thumbnail; a tap opens it full screen (double-tap or pinch to zoom, Save,
+    ✕ or Escape or a swipe down to close);
+  - a file shows its name and size, and a tap opens or downloads it;
+  - a video plays in the bubble.
+- **What the agents do with a photo:** the agents' model is a vision model (LM Studio lists it as
+  one). `model.vision: true` in an agent's definition becomes `model.supports_vision` in hermes's
+  config, so a photo reaches the model as an image rather than a description.
+
+Checked:
+- **The format:** a file encrypted in the browser was decrypted by an independent implementation
+  of the spec, and a tampered file was refused.
+- **The dev server:** an upload downloaded through the client v1 API with a login, and was refused
+  (401) without one.

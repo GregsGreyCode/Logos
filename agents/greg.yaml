@@ -22,6 +22,7 @@ model:
   load_context_length: 96512      # LM Studio's window, shared by its 4 parallel slots (Greg, 20 Nov):
                                   # room beside a long chat. Loaded with this if LM Studio reloads it.
   gateway: true                 # model calls go through the model gateway (docs/model-gateway.md)
+  vision: true                  # it sees photos sent in a chat (LM Studio lists it as a vision model)
   # No paid fallbacks: the brain stays local (gateway/model_gateway.py BRAIN_STAYS_LOCAL).
 budget:
   monthly_usd: 10               # hard cap on paid model spend a month; beyond it only the local model answers
