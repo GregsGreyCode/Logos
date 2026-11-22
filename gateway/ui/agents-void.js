@@ -94,12 +94,9 @@ const saveSpots = (v) => { try { localStorage.setItem(SPOTS_KEY, JSON.stringify(
 export async function voidView(root, agents, others = []) {
   let alive = true;
   const field = h('div', { class: 'void-field' });
-  const ask = h('p', { class: 'void-ask' }, 'Who do you want to talk to?');
-  // How it works, said once under the question (Greg, 21 Nov).
-  // Said on the first three visits only (Greg, 22 Nov: once learnt, two lines of help every time is noise).
-  let visits = 0;
-  try { visits = Number(localStorage.getItem('logos.void.visits') || 0) + 1; localStorage.setItem('logos.void.visits', String(visits)); } catch (e) { /* no storage: always say it */ }
-  const how = h('p', { class: 'void-how', hidden: visits > 3 }, 'Tap to chat · hold to move', h('br'), 'Hold longer for a voice note: swipe up to send');
+  // No question or how-to above the agents (Greg, 22 Nov: that belongs in onboarding). The line is
+  // there only while it says something: recording, sending, or what went wrong.
+  const ask = h('p', { class: 'void-ask', role: 'status', hidden: true });
   // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
   // off to the left). Yours first, then the private ones, unless the person has moved them.
   const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
@@ -165,8 +162,8 @@ export async function voidView(root, agents, others = []) {
   let g = null, swallowClick = false;
   const LIFT_MS = 500, RECORD_MS = 1000, SLOP = 10;
   const label = (el) => el.querySelector('.mark-label > span');
-  const tell = (t) => { ask.textContent = t; };
-  const resetAsk = () => { ask.textContent = 'Who do you want to talk to?'; };
+  const tell = (t) => { ask.textContent = t; ask.hidden = !t; };
+  const resetAsk = () => { ask.textContent = ''; ask.hidden = true; };
   // An outcome ("Cancelled", "Not sent…") shows for a few seconds, then the question comes back
   // (Greg, 21 Nov: "Not sent" stayed there for good).
   const flash = (t) => { tell(t); setTimeout(() => { if (ask.textContent === t) resetAsk(); }, 4000); };
@@ -310,7 +307,7 @@ export async function voidView(root, agents, others = []) {
   // with its last message and an unread count, so more groups and agents only add rows.
   const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Conversations', hidden: true });
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, how, field, convBox));
+    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, field, convBox));
   // Today's messages by their time alone; older ones as everywhere else ("Yesterday 18:02").
   const short = (ms) => (new Date(ms).toDateString() === new Date().toDateString()
     ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : when(ms / 1000));
