@@ -4,7 +4,7 @@
 // or the agent is not running). Click a mark to talk to that agent. In a conversation the marks sit in the
 // header: the current one with its name, the others small, one click to switch. Names show when you point
 // at a mark, or always (Settings; always on a phone). Motion follows Settings: Full, Calm or Still.
-import { h, getJSON, icon, ICONS, when, loading, reveal } from './util.js';
+import { h, getJSON, icon, ICONS, when, loading, reveal, focusIfKeyboard } from './util.js';
 import * as mx from './mx.js';
 
 // Moods (Greg, 21 Nov): unplugged when the AI computer (LM Studio) is off; asleep when it is on but the
@@ -331,8 +331,14 @@ export async function voidView(root, agents, others = []) {
   const short = (ms) => (new Date(ms).toDateString() === new Date().toDateString()
     ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : when(ms / 1000));
   // F36 part 2 (Greg, 22 Nov): start a group from here, and answer an invitation to one.
-  const form = h('div', { class: 'void-newgroup', hidden: true });
-  convBox.after(form);
+  // A sheet over the screen (Greg, 22 Nov: inside the page it squeezed the agents to a sliver on a phone).
+  const form = h('div', { class: 'void-newgroup', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New group' });
+  const scrim = h('div', { class: 'void-scrim', onclick: () => closeForm() });
+  const sheet = h('div', { class: 'void-sheet', hidden: true }, scrim, form);
+  document.body.append(sheet);
+  const onKey = (e) => { if (e.key === 'Escape' && !sheet.hidden) closeForm(); };
+  document.addEventListener('keydown', onKey);
+  function closeForm() { sheet.hidden = true; document.documentElement.classList.remove('sheet-open'); }
   async function openForm() {
     const c = await mx.get();
     const me = c.getUserId();
@@ -366,11 +372,13 @@ export async function voidView(root, agents, others = []) {
     people.length ? h('p', { class: 'field-label' }, 'People') : null, people.length ? peopleBox : null,
     h('p', { class: 'field-label' }, 'Agents'), agentBox,
     h('p', { class: 'when' }, 'Agents answer in a group when someone asks them with the @ button. Everyone invited gets an invitation to accept.'),
-    h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => { form.hidden = true; } }, 'Cancel')), msg));
-    form.hidden = false;
-    name.focus();
+    h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => closeForm() }, 'Cancel')), msg));
+    sheet.hidden = false;
+    document.documentElement.classList.add('sheet-open');
+    form.scrollTop = 0;
+    focusIfKeyboard(name);              // a phone keeps its keyboard down until the box is tapped
   }
-  const newBtn = h('button', { type: 'button', class: 'linkish void-new', onclick: () => { if (form.hidden) openForm(); else form.hidden = true; } }, '+ New group');
+  const newBtn = h('button', { type: 'button', class: 'linkish void-new', onclick: () => openForm() }, '+ New group');
 
   const showConvs = async () => {
     try {
@@ -402,7 +410,8 @@ export async function voidView(root, agents, others = []) {
   const tick = async () => { const m = await moods(agents); if (alive) draw(m); };
   await tick();
   const t = setInterval(tick, 8000);
-  return () => { alive = false; clearInterval(t); clearInterval(convTimer); if (g) { if (g.rec) { g.send = false; g.rec.stop(); } finish(); } };
+  return () => { alive = false; clearInterval(t); clearInterval(convTimer); sheet.remove(); document.removeEventListener('keydown', onKey);
+    document.documentElement.classList.remove('sheet-open'); if (g) { if (g.rec) { g.send = false; g.rec.stop(); } finish(); } };
 }
 
 // In a conversation: the current agent's mark and name, then the others, small, one click to switch.
