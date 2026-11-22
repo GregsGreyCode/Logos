@@ -66,3 +66,83 @@ def test_calendar_today_asks_for_today_and_tomorrow_with_the_agents_token(monkey
     assert seen[0][0] == "tok-agent"             # no calendar account: what the agent sees
     failing = home.calendar_today(object(), "greg", {}, "greg", post=lambda *a: (_ for _ in ()).throw(OSError("down")))
     assert failing["error"] == "calendar_unavailable"
+
+
+# ── Home's widgets (Greg, 22 Nov) ────────────────────────────────────────────────────────────
+
+def tool(answer):
+    return {"result": {"content": [{"type": "text", "text": json.dumps(answer)}]}}
+
+
+def test_coming_up_asks_from_the_day_after_tomorrow_for_two_weeks(monkeypatch):
+    from gateway import calendar_host
+
+    class Host:
+        def __init__(self, rt): pass
+        def token_for(self, name): return "tok-agent"
+        def reader_token(self, name): return "tok-reader"
+        def service_url(self): return "http://svc/mcp"
+    monkeypatch.setattr(calendar_host, "CalendarHost", Host)
+    monkeypatch.setattr(calendar_host, "uses_calendar", lambda d: True)
+    monkeypatch.setattr(home, "today_in", lambda tz, now=None: __import__("datetime").date(2026, 11, 22))
+    seen = []
+
+    def post(url, body, token):
+        req = json.loads(body)
+        seen.append(req["params"]["arguments"])
+        return tool({"events": [{"title": "Deborah's birthday"}]} if req["params"]["name"] == "list_events" else {"calendars": []})
+    out = home.calendar_coming(object(), "greg", {}, "greg", post=post)
+    assert seen[0] == {"start": "2026-11-24", "end": "2026-12-06"} and out["events"][0]["title"] == "Deborah's birthday"
+
+
+def test_lights_go_through_the_shared_agent_and_list_rooms_only(monkeypatch):
+    from gateway import house_host
+    agents = {"household": {"owners": ["greg", "bere"], "definition": {"house": {"enabled": True}}},
+              "greg": {"owners": ["greg"], "definition": {"house": {"enabled": True}}},
+              "bere": {"owners": ["bere"], "definition": {}}}
+    assert home.house_agent(agents, "greg") == "household" and home.house_agent(agents, "bere") == "household"
+    assert home.house_agent({"greg": agents["greg"]}, "greg") == "greg" and home.house_agent({"greg": agents["greg"]}, "bere") is None
+
+    class Host:
+        def __init__(self, rt): pass
+        def token_for(self, name): return "tok" if name == "household" else ""
+        def url(self): return "http://house/mcp"
+    monkeypatch.setattr(house_host, "HouseHost", Host)
+    calls = []
+
+    def post(url, body, token):
+        req = json.loads(body)
+        calls.append((token, req["params"]["name"], req["params"]["arguments"]))
+        if req["params"]["name"] == "list_lights":
+            return tool({"rooms": [{"room": "Lounge", "kind": "room", "on": "2 of 3"}, {"room": "TV Wall", "kind": "zone", "on": "1 of 1"}]})
+        return tool({"done": True})
+    assert home.lights(object(), "household", post=post) == {"rooms": [{"room": "Lounge", "on": 2, "of": 3}]}
+    home.set_lights(object(), "household", ["everything"], False, post=post)
+    assert calls[-1] == ("tok", "set_lights", {"targets": ["everything"], "on": False})
+    assert home.lights(object(), "greg", post=post) == {"error": "no_house"}
+
+
+def test_weather_sends_only_rounded_coordinates():
+    asked = []
+
+    def get(url):
+        asked.append(url)
+        return {"current": {"temperature_2m": 9.4, "weather_code": 61, "is_day": 0},
+                "daily": {"weather_code": [61, 3], "temperature_2m_max": [11, 12], "temperature_2m_min": [4, 6],
+                          "precipitation_probability_max": [80, 20]}}
+    out = home.weather(50.82345, -0.13789, get=get)
+    assert "latitude=50.82" in asked[0] and "longitude=-0.14" in asked[0] and "50.823" not in asked[0]
+    assert out == {"now": {"temp": 9.4, "code": 61, "day": False}, "today": {"code": 61, "high": 11, "low": 4, "rain": 80},
+                   "tomorrow": {"code": 3, "high": 12, "low": 6, "rain": 20}}
+    found = home.places("Brighton", get=lambda url: {"results": [{"name": "Brighton", "admin1": "England", "country": "United Kingdom",
+                                                                  "latitude": 50.82838, "longitude": -0.13947}]})
+    assert found == [{"name": "Brighton, England, United Kingdom", "lat": 50.83, "lon": -0.14}]
+
+
+def test_widget_and_place_preferences_are_checked():
+    from gateway import dashboard_api as d
+    assert d._pref_ok("widgets", ["next", "weather"]) and d._pref_ok("widgets", [])
+    assert not d._pref_ok("widgets", ["next", "next"]) and not d._pref_ok("widgets", ["tiles"]) and not d._pref_ok("widgets", "next")
+    assert d._pref_ok("weather_place", {"name": "Brighton", "lat": 50.83, "lon": -0.14}) and d._pref_ok("weather_place", None)
+    assert not d._pref_ok("weather_place", {"name": "x", "lat": 91, "lon": 0})
+    assert not d._pref_ok("weather_place", {"name": "x", "lat": 1, "lon": 2, "extra": 1})

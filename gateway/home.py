@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import time
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Mapping, Optional
 from zoneinfo import ZoneInfo
@@ -75,6 +76,105 @@ def calendar_today(runtime: Any, agent: str, definition: Mapping[str, Any], user
         return {"error": "calendar_unavailable", "message": str(e)[:200]}
     return {"date": day.isoformat(), "events": out.get("events") or [], "busy": out.get("busy") or [],
             "calendars": {c["name"]: c.get("shows") or c["name"] for c in cals.get("calendars") or []}}
+
+
+def calendar_coming(runtime: Any, agent: str, definition: Mapping[str, Any], username: str = "",
+                    days: int = 14, post=None) -> Dict[str, Any]:
+    """Home's "Coming up" (Greg, 22 Nov): events from the day after tomorrow to ``days`` ahead, or ``{"error"}``."""
+    from gateway import calendar_host
+    host = calendar_host.CalendarHost(runtime)
+    token = host.reader_token(username) if username else ""
+    if not token and calendar_host.uses_calendar(definition):
+        token = host.token_for(agent)
+    if not token:
+        return {"error": "no_calendar"}
+    day = today_in(str(definition.get("timezone") or "UTC"))
+    post = post or _post
+    try:
+        out = rpc_result(post(host.service_url(), _call("list_events", {
+            "start": (day + dt.timedelta(days=2)).isoformat(), "end": (day + dt.timedelta(days=days)).isoformat()}), token))
+        cals = rpc_result(post(host.service_url(), _call("list_calendars", {}), token))
+    except Exception as e:
+        return {"error": "calendar_unavailable", "message": str(e)[:200]}
+    return {"date": day.isoformat(), "events": out.get("events") or [],
+            "calendars": {c["name"]: c.get("shows") or c["name"] for c in cals.get("calendars") or []}}
+
+
+# ── Lights (Greg, 22 Nov): Home's Lights widget, through the house service as the household agent ──
+
+def house_agent(agents: Mapping[str, Mapping[str, Any]], username: str) -> Optional[str]:
+    """The agent whose house access Home uses: a shared one (the household agent) first, else your own."""
+    from gateway import agent_chat, house_host
+    usable = [n for n, a in agents.items() if house_host.uses_house(a.get("definition") or {})
+              and agent_chat.may_use(a.get("owners"), username)]
+    shared = [n for n in usable if (agents[n].get("owners") is None or len(agents[n].get("owners") or []) > 1)]
+    return (shared or usable or [None])[0]
+
+
+def lights(runtime: Any, agent: str, post=None) -> Dict[str, Any]:
+    """Rooms with how many lights are on: ``{"rooms": [{"room", "on", "of"}]}`` or ``{"error"}``."""
+    from gateway import house_host
+    host = house_host.HouseHost(runtime)
+    token = host.token_for(agent)
+    if not token:
+        return {"error": "no_house"}
+    try:
+        out = rpc_result((post or _post)(host.url(), _call("list_lights", {}), token))
+    except Exception as e:
+        return {"error": "house_unavailable", "message": str(e)[:200]}
+    rooms = []
+    for r in out.get("rooms") or []:
+        if r.get("kind") != "room":
+            continue
+        on, _, of = str(r.get("on") or "0 of 0").partition(" of ")
+        rooms.append({"room": r.get("room"), "on": int(on or 0), "of": int(of or 0)})
+    return {"rooms": rooms}
+
+
+def set_lights(runtime: Any, agent: str, targets: List[str], on: bool, post=None) -> Dict[str, Any]:
+    from gateway import house_host
+    host = house_host.HouseHost(runtime)
+    token = host.token_for(agent)
+    if not token:
+        return {"error": "no_house"}
+    try:
+        return rpc_result((post or _post)(host.url(), _call("set_lights", {"targets": targets, "on": bool(on)}), token))
+    except Exception as e:
+        return {"error": "house_unavailable", "message": str(e)[:200]}
+
+
+# ── Weather (Greg, 22 Nov): Open-Meteo, no key. Only a place's rounded coordinates (about 1 km) or the
+# name typed to find it leave the machine: never who is asking.
+
+WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+PLACES_URL = "https://geocoding-api.open-meteo.com/v1/search"
+
+
+def _get_json(url: str, timeout: float = 8) -> Dict[str, Any]:
+    req = urllib.request.Request(url, headers={"User-Agent": "logos-dashboard"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def weather(lat: float, lon: float, get=None) -> Dict[str, Any]:
+    q = urllib.parse.urlencode({
+        "latitude": f"{round(float(lat), 2):.2f}", "longitude": f"{round(float(lon), 2):.2f}", "timezone": "auto",
+        "current": "temperature_2m,weather_code,is_day",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max", "forecast_days": 2})
+    d = (get or _get_json)(f"{WEATHER_URL}?{q}")
+    cur, daily = d.get("current") or {}, d.get("daily") or {}
+    day = lambda i: {"code": (daily.get("weather_code") or [None, None])[i], "high": (daily.get("temperature_2m_max") or [None, None])[i],
+                     "low": (daily.get("temperature_2m_min") or [None, None])[i], "rain": (daily.get("precipitation_probability_max") or [None, None])[i]}
+    return {"now": {"temp": cur.get("temperature_2m"), "code": cur.get("weather_code"), "day": bool(cur.get("is_day", 1))},
+            "today": day(0), "tomorrow": day(1)}
+
+
+def places(name: str, get=None) -> List[Dict[str, Any]]:
+    q = urllib.parse.urlencode({"name": name[:80], "count": 5, "language": "en", "format": "json"})
+    d = (get or _get_json)(f"{PLACES_URL}?{q}")
+    return [{"name": ", ".join(x for x in (r.get("name"), r.get("admin1"), r.get("country")) if x),
+             "lat": round(float(r["latitude"]), 2), "lon": round(float(r["longitude"]), 2)}
+            for r in d.get("results") or [] if "latitude" in r and "longitude" in r]
 
 
 def _post(url: str, body: bytes, token: str) -> Dict[str, Any]:
