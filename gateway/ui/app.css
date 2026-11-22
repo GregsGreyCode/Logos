@@ -788,10 +788,10 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .sk-bubble { height: 44px; border-radius: 18px; align-self: flex-start; }
 .sk-bubble.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 30%, var(--chip)); }
 .sk-tile { height: 56px; border-radius: var(--r-card); }
-.reveal { animation: reveal .42s cubic-bezier(.2, .8, .2, 1) both; }
-@keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-[data-anim="off"] .sk::after, [data-anim="off"] .loading, [data-anim="off"] .reveal { animation: none; }
-@media (prefers-reduced-motion: reduce) { .sk::after, .loading, .reveal { animation: none; } }
+.fade-up { animation: fade-up .42s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+[data-anim="off"] .sk::after, [data-anim="off"] .loading, [data-anim="off"] .fade-up { animation: none; }
+@media (prefers-reduced-motion: reduce) { .sk::after, .loading, .fade-up { animation: none; } }
 /* The Claude Advisor notice is a card shape, not a pill */
 .notice { border-radius: var(--r-small); }
 .home-quiet { padding: 0; }

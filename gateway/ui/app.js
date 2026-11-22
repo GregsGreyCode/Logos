@@ -247,7 +247,7 @@ function swipeTabs(el) {
   el.addEventListener('touchstart', (e) => {
     s = null;
     if (leaving || !phone() || e.touches.length !== 1 || here() < 0 || document.querySelector('.sheet:not([hidden])')) return;
-    if (e.target.closest('textarea, input, select, [contenteditable], .mx-chips, .table-box, .md-table, pre, .tabs, .home-widgets.editing, .widget-handle, .home-light')) return;
+    if (e.target.closest('textarea, input, select, [contenteditable], .mx-chips, .table-box, .md-table, pre, .tabs, .home-widgets.editing, .widget-handle, .home-light, .home-lights-sec')) return;
     const t = e.touches[0];
     s = { x: t.clientX, y: t.clientY, at: here(), dx: 0, lock: null, v: 0, t: e.timeStamp, lx: t.clientX };
   }, { passive: true });
