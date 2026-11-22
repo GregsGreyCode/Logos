@@ -160,15 +160,47 @@ export async function getJSON(path) {
   return r.json();
 }
 
+// When something happened, the same everywhere: "19:54" today, "Yesterday 18:02", then the weekday,
+// then the date.
 export function when(ts) {
   if (!ts) return '';
   const d = new Date(ts * 1000), now = new Date();
   const days = Math.floor((new Date(now.toDateString()) - new Date(d.toDateString())) / 86400000);
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  if (days === 0) return `Today ${time}`;
+  if (days === 0) return time;            // today: the time alone, everywhere (Greg, 22 Nov)
   if (days === 1) return `Yesterday ${time}`;
   if (days < 7) return d.toLocaleDateString([], { weekday: 'long' });
   return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+
+// A daily note's title is its date: shown as "Notes of 21 Nov" everywhere (Brain, Notifications).
+export const noteTitle = (t) => (/^\d{4}-\d{2}-\d{2}$/.test(String(t))
+  ? `Notes of ${new Date(`${t}T12:00:00`).toLocaleDateString([], { day: 'numeric', month: 'short' })}` : t);
+
+// Asking before something that cannot be undone, or for a password, in Logos's own sheet (Greg, 22 Nov:
+// not the browser's grey boxes, whose password prompt showed what was typed). Resolves to true (or the
+// password typed) when confirmed, null when cancelled.
+export function ask({ title, text = '', yes = 'OK', danger = false, password = '' }) {
+  return new Promise((done) => {
+    const pw = password ? h('input', { type: 'password', id: 'ask-pw', autocomplete: 'current-password' }) : null;
+    const msg = h('p', { class: 'when', role: 'status' });
+    const layer = h('div', { class: 'ask-layer' });
+    const close = (v) => { layer.remove(); document.removeEventListener('keydown', key); done(v); };
+    const key = (e) => { if (e.key === 'Escape') close(null); };
+    document.addEventListener('keydown', key);
+    layer.append(h('div', { class: 'ask-scrim', onclick: () => close(null) }),
+      h('form', { class: 'ask-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, onsubmit: (e) => {
+        e.preventDefault();
+        if (pw && !pw.value) { msg.textContent = 'Enter the password to go on.'; return; }
+        close(pw ? pw.value : true);
+      } },
+      h('h2', {}, title), text ? h('p', {}, text) : null,
+      pw ? h('label', { for: 'ask-pw', class: 'field-label' }, password) : null, pw ? revealable(pw) : null, msg,
+      h('div', { class: 'row' }, h('button', { type: 'submit', class: `btn${danger ? ' danger' : ''}` }, yes),
+        h('button', { type: 'button', class: 'btn quiet', onclick: () => close(null) }, 'Cancel'))));
+    document.body.append(layer);
+    if (pw) focusIfKeyboard(pw);
+  });
 }
 
 // A small, safe Markdown subset: everything is escaped by building DOM nodes, never innerHTML.

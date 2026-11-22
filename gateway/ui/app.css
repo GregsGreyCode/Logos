@@ -1744,3 +1744,15 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .tab-glow[hidden] { display: none; }
 @media (min-width: 600px) { .tab-glow { display: none; } }
 [data-anim="off"] .tab-glow { transition: none; }
+/* Asking before something that cannot be undone, or for a password: Logos's own sheet, not the browser's box. */
+.ask-layer { position: fixed; inset: 0; z-index: 80; display: flex; align-items: flex-end; justify-content: center; }
+.ask-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); animation: scrim-in .2s ease both; }
+.ask-panel { position: relative; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 10px;
+  padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--surface);
+  border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -12px 40px rgba(0, 0, 0, .4); animation: sheet-up .3s cubic-bezier(.16, 1, .3, 1) both; }
+.ask-panel h2 { margin: 0; font-size: 18px; }
+.ask-panel p { margin: 0; }
+.ask-panel .row { display: flex; gap: 8px; margin-top: 6px; }
+@media (min-width: 600px) { .ask-layer { align-items: center; } .ask-panel { border-radius: 22px; border-bottom: 1px solid var(--line); } }
+[data-anim="off"] .ask-panel, [data-anim="off"] .ask-scrim { animation: none; }
+@media (prefers-reduced-motion: reduce) { .ask-panel, .ask-scrim { animation: none; } }

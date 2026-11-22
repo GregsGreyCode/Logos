@@ -41,8 +41,7 @@ export async function homeView(root) {
     const rows = items.filter((i) => !seen.has(i.link) && seen.add(i.link)).slice(0, 3);
     msgSec.hidden = !rows.length;
     msgBox.replaceChildren(...rows.map((i) => h('a', { class: 'home-msg', href: i.link },
-      h('span', { class: 'home-msg-head' }, h('strong', {}, i.title), h('span', { class: 'when' }, new Date(i.ts * 1000).toDateString() === new Date().toDateString()
-        ? new Date(i.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : when(i.ts))),
+      h('span', { class: 'home-msg-head' }, h('strong', {}, i.title), h('span', { class: 'when' }, when(i.ts))),
       h('span', { class: 'home-msg-text' }, i.text))));
   }
   // "Next · 15:00 Call Maman · in 40 min": the next timed event today, while it is still to come.
