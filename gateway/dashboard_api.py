@@ -130,14 +130,16 @@ def look_of(user_id: str) -> Optional[Dict[str, str]]:
 # ST1: the dashboard's options each person sets in Settings, kept with their login (user_settings.ui_prefs).
 PREFS = {"panel": ("slide", "open"), "thinking": (True, False), "jobs": (True, False),
          # ST3: how much the agents move, and when their names show on their marks
-         "motion": ("full", "calm", "still"), "names": ("hover", "always")}
+         "motion": ("full", "calm", "still"), "names": ("hover", "always"),
+         # Home's widgets were rearranged once the calendar became one (22 Nov): an older choice gets it added
+         "widgets_v2": (True, False)}
 # ST2: your own colours, any "#rrggbb" (the page keeps text readable whatever is picked); "" = the look's own
 COLOUR_PREFS = ("primary", "attention")
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 # Home's widgets, each person's own choice (Greg, 22 Nov); the calendar is always there.
-WIDGETS = ("next", "messages", "lists", "lights", "weather", "coming")
+WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming")
 
 
 def _place_ok(value: Any) -> bool:

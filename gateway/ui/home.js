@@ -136,33 +136,28 @@ export async function homeView(root) {
   }
 
 
-  // ── Your choice of widgets (Greg, 22 Nov): the calendar always; the rest as each person picks ─────
-  const WIDGETS = [['next', 'Next', 'Your next event today and how long until it'], ['weather', 'Weather', 'Today and tomorrow where you choose'],
-    ['messages', 'Messages', 'Unread from your agents and groups'], ['coming', 'Coming up', 'Birthdays and events in the next two weeks'],
-    ['lights', 'Lights', 'Which rooms are lit, and All off'], ['lists', 'Lists', 'The household\'s shared lists']];
-  const DEFAULT_WIDGETS = ['next', 'messages', 'lists'];
-  const chosen = () => { const w = getPref('widgets', null); return Array.isArray(w) ? w : DEFAULT_WIDGETS; };
+  // ── Home is yours to arrange (Greg, 22 Nov): widgets in your order, dragged into place in Edit ──
+  const WIDGETS = { next: 'Next', weather: 'Weather', calendar: 'Calendar', messages: 'Messages', coming: 'Coming up', lights: 'Lights', lists: 'Lists' };
+  const DEFAULT_WIDGETS = ['next', 'calendar', 'messages', 'lists'];
+  const chosen = () => {
+    const w = getPref('widgets', null);
+    if (!Array.isArray(w)) return DEFAULT_WIDGETS;
+    // Chosen before the calendar became a widget: it stays, after Next.
+    if (!w.includes('calendar') && !getPref('widgets_v2', false)) { const i = w.indexOf('next'); return [...w.slice(0, i + 1), 'calendar', ...w.slice(i + 1)]; }
+    return w.filter((x) => x in WIDGETS);
+  };
   const on = (id) => chosen().includes(id);
-  function applyWidgets() {
-    if (!on('next')) nextUp.hidden = true;
-    if (!on('messages')) msgSec.hidden = true;
-    if (!on('lists')) listsSec.hidden = true;
-    weatherSec.hidden = !on('weather');
-    lightsSec.hidden = !on('lights');
-    comingSec.hidden = !on('coming');
-  }
-
   // Weather: one card, now and today, then tomorrow (Open-Meteo, through Logos; only the place's rounded position goes out).
   const SKY = (c) => (c === 0 ? ['☀️', 'Clear'] : c <= 2 ? ['⛅', 'Partly cloudy'] : c === 3 ? ['☁️', 'Cloudy'] : c <= 48 ? ['🌫️', 'Fog']
     : c <= 57 ? ['🌦️', 'Drizzle'] : c <= 67 ? ['🌧️', 'Rain'] : c <= 77 ? ['🌨️', 'Snow'] : c <= 82 ? ['🌦️', 'Showers']
       : c <= 86 ? ['🌨️', 'Snow showers'] : ['⛈️', 'Thunder']);
   const deg = (t) => (t === null || t === undefined ? '–' : `${Math.round(t)}°`);
   const weatherBox = h('div', { class: 'home-weather' });
-  const weatherSec = h('section', { class: 'home-weather-sec', 'aria-label': 'Weather', hidden: true }, weatherBox);
+  const weatherSec = h('section', { class: 'home-weather-sec', 'aria-label': 'Weather' }, weatherBox);
   async function showWeather() {
     const w = await getJSON('/api/v2/weather').catch(() => ({ error: 'weather_unavailable' }));
     if (!alive) return;
-    if (w.error === 'no_place') { weatherBox.replaceChildren(h('p', { class: 'when' }, 'Weather: choose your town below (Choose what Home shows).')); return; }
+    if (w.error === 'no_place') { weatherBox.replaceChildren(h('div', {}, h('p', { class: 'when' }, 'Weather: which town?'), placePicker())); return; }
     if (w.error) { weatherBox.replaceChildren(h('p', { class: 'when' }, `The weather could not be read just now${w.place ? ` for ${w.place}` : ''}.`)); return; }
     const [icon, words] = SKY(w.now.code);
     const [tIcon, tWords] = SKY(w.tomorrow.code);
@@ -176,7 +171,7 @@ export async function homeView(root) {
   // Lights: each room, lit or not; a tap switches it (on if all off, else off), and All off.
   const lightsBox = h('div', { class: 'home-lights' });
   const lightsNote = h('p', { class: 'when', role: 'status' });
-  const lightsSec = h('section', { class: 'home-lights-sec', 'aria-label': 'Lights', hidden: true },
+  const lightsSec = h('section', { class: 'home-lights-sec', 'aria-label': 'Lights' },
     h('div', { class: 'home-sec-head' }, h('h2', { class: 'label' }, 'Lights'),
       h('button', { type: 'button', class: 'linkish', onclick: () => switchLights(['everything'], false) }, 'All off')), lightsBox, lightsNote);
   async function switchLights(targets, value) {
@@ -197,7 +192,7 @@ export async function homeView(root) {
 
   // Coming up: the next two weeks after tomorrow, one line each (all-day ones, like birthdays, too).
   const comingBox = h('div', { class: 'home-list home-agenda' });
-  const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up', hidden: true }, h('h2', { class: 'label' }, 'Coming up'), comingBox);
+  const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up' }, h('h2', { class: 'label' }, 'Coming up'), comingBox);
   async function showComing() {
     const d = await getJSON('/api/v2/home/coming').catch(() => ({ error: 'x' }));
     if (!alive) return;
@@ -212,35 +207,134 @@ export async function homeView(root) {
       h('span', { class: 'home-meta' }, whose(e)))) : [none('Nothing in the next two weeks.')]));
   }
 
-  // "Choose what Home shows": tick the widgets; Weather asks for a town (found by name, kept with your login).
-  const choosePanel = h('section', { class: 'home-choose', 'aria-label': 'Choose what Home shows', hidden: true });
-  const chooseLink = h('button', { type: 'button', class: 'linkish home-choose-link', onclick: () => {
-    if (!choosePanel.hidden) { choosePanel.hidden = true; return; }
-    drawChoose(); choosePanel.hidden = false; choosePanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  } }, 'Choose what Home shows');
-  function drawChoose() {
-    const ticks = WIDGETS.map(([id, label, help]) => h('label', { class: 'ng-pick' },
-      h('input', { type: 'checkbox', checked: on(id) ? '' : null, onchange: async (e) => {
-        const next = WIDGETS.map(([w]) => w).filter((w) => (w === id ? e.target.checked : on(w)));
-        await setPref('widgets', next);
-        applyWidgets();
-        if (e.target.checked) { if (id === 'messages') showMessages(); if (id === 'lists') showLists(); if (id === 'weather') showWeather();
-          if (id === 'lights') showLights(); if (id === 'coming') showComing(); if (id === 'next') showNext(data.today); }
-      } }), h('span', {}, label, h('small', { class: 'when' }, ` ${help}`))));
+  // Weather's town, chosen in the widget itself: found by name, kept with your login.
+  function placePicker() {
     const place = getPref('weather_place', null);
-    const q = h('input', { type: 'search', id: 'weather-q', placeholder: 'Town or city', autocomplete: 'off', value: place ? place.name.split(',')[0] : '' });
-    const found = h('div', { class: 'ng-picks' });
+    const q = h('input', { type: 'search', placeholder: 'Town or city', autocomplete: 'off', 'aria-label': 'Town or city for the weather',
+      value: place ? place.name.split(',')[0] : '' });
+    const found = h('div', { class: 'home-places' });
     const find = async () => {
       found.replaceChildren(h('p', { class: 'when' }, 'Looking…'));
       const r = await getJSON(`/api/v2/weather/places?q=${encodeURIComponent(q.value.trim())}`).catch(() => ({ places: [] }));
-      found.replaceChildren(...((r.places || []).length ? r.places.map((p) => h('button', { type: 'button', class: 'btn quiet small', onclick: async () => {
-        await setPref('weather_place', p); drawChoose(); showWeather();
-      } }, p.name)) : [h('p', { class: 'when' }, 'No place by that name.')]));
+      found.replaceChildren(...((r.places || []).length ? r.places.map((pl) => h('button', { type: 'button', class: 'btn quiet small', onclick: async () => {
+        await setPref('weather_place', pl); showWeather();
+      } }, pl.name)) : [h('p', { class: 'when' }, 'No place by that name.')]));
     };
-    choosePanel.replaceChildren(h('h2', { class: 'label' }, 'Choose what Home shows'), ...ticks,
-      h('label', { for: 'weather-q', class: 'field-label' }, `Weather for${place ? `: ${place.name}` : ''}`),
+    return h('div', { class: 'home-place' },
       h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); find(); } }, q, h('button', { type: 'submit', class: 'btn quiet small' }, 'Find')),
-      found, h('p', { class: 'when' }, 'Only the town\'s position (to about a kilometre) is sent to the weather service.'));
+      found, h('p', { class: 'when' }, 'Only the town\'s position, to about a kilometre, goes to the weather service.'));
+  }
+
+  // ── Edit: drag a widget by its handle (finger or mouse), ✕ takes it off, Add puts one back ──────
+  const nextSec = h('section', { class: 'home-next-sec', 'aria-label': 'Next' }, nextUp);
+  const calSec = h('section', { 'aria-label': 'Calendar', class: 'home-cal' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox);
+  const SECS = { next: nextSec, weather: weatherSec, calendar: calSec, messages: msgSec, coming: comingSec, lights: lightsSec, lists: listsSec };
+  for (const [id, el] of Object.entries(SECS)) { el.dataset.widget = id; el.classList.add('home-widget'); }
+  const board = h('div', { class: 'home-widgets' });
+  let editing = false;
+  const tray = h('div', { class: 'home-tray', hidden: true });
+  const editBtn = h('button', { type: 'button', class: 'linkish home-edit-link', onclick: () => setEditing(!editing) }, 'Edit Home');
+  const SHOW = { next: () => showNext(data && data.today), weather: () => showWeather(), messages: () => showMessages(), coming: () => showComing(),
+    lights: () => showLights(), lists: () => showLists(), calendar: () => {} };
+
+  function applyWidgets() {
+    const order = chosen();
+    for (const id of order) board.append(SECS[id]);                       // in your order
+    for (const [id, el] of Object.entries(SECS)) {
+      el.classList.toggle('off', !order.includes(id));
+      if (!order.includes(id)) board.append(el);                           // kept, out of sight, after the rest
+    }
+    drawTray();
+  }
+  async function save(order) {
+    await setPref('widgets', order);
+    if (!getPref('widgets_v2', false)) await setPref('widgets_v2', true).catch(() => {});
+  }
+  const orderNow = () => [...board.children].filter((el) => !el.classList.contains('off')).map((el) => el.dataset.widget);
+  function drawTray() {
+    const hidden = Object.keys(WIDGETS).filter((id) => !on(id));
+    tray.replaceChildren(h('span', { class: 'label' }, hidden.length ? 'Add' : 'Every widget is on Home'),
+      ...hidden.map((id) => h('button', { type: 'button', class: 'chip home-add', onclick: async () => {
+        await save([...orderNow(), id]); applyWidgets(); decorate(); SHOW[id]();
+      } }, `+ ${WIDGETS[id]}`)));
+  }
+  function decorate() {
+    for (const [id, el] of Object.entries(SECS)) {
+      el.querySelector(':scope > .widget-bar')?.remove();
+      if (!editing) continue;
+      const handle = h('button', { type: 'button', class: 'widget-handle', 'aria-label': `Move ${WIDGETS[id]}`, title: 'Drag to move' }, '⠿');
+      handle.addEventListener('pointerdown', (e) => drag(el, e));
+      handle.addEventListener('keydown', (e) => {                         // keyboard: arrows move it
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        e.preventDefault();
+        const sib = e.key === 'ArrowUp' ? el.previousElementSibling : el.nextElementSibling;
+        if (sib && !sib.classList.contains('off')) { if (e.key === 'ArrowUp') sib.before(el); else sib.after(el); save(orderNow()); handle.focus(); }
+      });
+      el.prepend(h('div', { class: 'widget-bar' }, handle, h('span', { class: 'widget-name' }, WIDGETS[id]),
+        id === 'weather' ? h('button', { type: 'button', class: 'linkish small', onclick: () => {
+          const open = el.querySelector('.home-place'); if (open) open.remove(); else el.querySelector('.widget-bar').after(placePicker());
+        } }, 'Town') : null,
+        h('button', { type: 'button', class: 'widget-remove', 'aria-label': `Take ${WIDGETS[id]} off Home`, title: 'Take off Home', onclick: async () => {
+          await save(orderNow().filter((w) => w !== id)); applyWidgets(); decorate();
+        } }, '✕')));
+    }
+  }
+  function setEditing(v) {
+    editing = v;
+    board.classList.toggle('editing', v);
+    tray.hidden = !v;
+    editBtn.textContent = v ? 'Done' : 'Edit Home';
+    editBtn.classList.toggle('btn', v); editBtn.classList.toggle('linkish', !v);
+    if (!v) for (const el of board.querySelectorAll('.home-place')) el.remove();
+    decorate(); drawTray();
+  }
+  // A long press on a widget also starts Edit (as a phone's home screen does).
+  let pressT = null;
+  board.addEventListener('pointerdown', (e) => {
+    if (editing || e.pointerType === 'mouse' || e.target.closest('a, button, input')) return;
+    const x = e.clientX, y = e.clientY;
+    pressT = setTimeout(() => { navigator.vibrate?.(10); setEditing(true); }, 550);
+    const cancel = (ev) => { if (!ev || ev.type !== 'pointermove' || Math.hypot(ev.clientX - x, ev.clientY - y) > 10) { clearTimeout(pressT); off(); } };
+    const off = () => { board.removeEventListener('pointermove', cancel); board.removeEventListener('pointerup', cancel); board.removeEventListener('pointercancel', cancel); };
+    board.addEventListener('pointermove', cancel); board.addEventListener('pointerup', cancel); board.addEventListener('pointercancel', cancel);
+  });
+
+  // Dragging: the widget follows the pointer; it swaps places with the widget it is moved over (a list on a
+  // phone, two columns on a wide screen), and the page scrolls when the pointer nears the top or bottom.
+  function drag(el, e) {
+    e.preventDefault();
+    // Listened for on the window: moving the widget in the page would end a pointer capture on its handle.
+    const id = e.pointerId;
+    const r0 = el.getBoundingClientRect();
+    const grab = { x: e.clientX - r0.left, y: e.clientY - r0.top };
+    el.classList.add('dragging');
+    let last = e;
+    const place = () => {
+      el.style.transform = '';
+      const r = el.getBoundingClientRect();
+      el.style.transform = `translate(${last.clientX - grab.x - r.left}px, ${last.clientY - grab.y - r.top}px)`;
+    };
+    const move = (ev) => {
+      if (ev.pointerId !== id) return;
+      ev.preventDefault();
+      last = ev;
+      const over = [...board.children].find((s) => s !== el && !s.classList.contains('off') && (() => {
+        const b = s.getBoundingClientRect(); return ev.clientX >= b.left && ev.clientX <= b.right && ev.clientY >= b.top && ev.clientY <= b.bottom;
+      })());
+      if (over) {
+        const kids = [...board.children];
+        if (kids.indexOf(over) > kids.indexOf(el)) over.after(el); else over.before(el);
+      }
+      if (ev.clientY < 90) window.scrollBy(0, -12); else if (ev.clientY > window.innerHeight - 160) window.scrollBy(0, 12);
+      place();
+    };
+    const up = (ev) => {
+      if (ev.pointerId !== id) return;
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      el.classList.remove('dragging'); el.style.transform = '';
+      save(orderNow());
+    };
+    window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   }
 
   async function load() {
@@ -279,14 +373,11 @@ export async function homeView(root) {
       : [none('Nothing is waiting on you.')]));
     showToday(data.today);
     showNext(data.today);
+    nextSec.hidden = nextUp.hidden;
     applyWidgets();
     // "Since yesterday" lives in Notifications now (Greg, 21 Nov).
     waitingSec.hidden = !nb.waiting.length;
-    if (on('messages')) showMessages();
-    if (on('lists')) showLists();
-    if (on('weather')) showWeather();
-    if (on('lights')) showLights();
-    if (on('coming')) showComing();
+    for (const id of chosen()) if (id !== 'next') SHOW[id]();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
 
@@ -305,14 +396,11 @@ export async function homeView(root) {
     h('header', { class: 'home-head' },
       h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY))), statusWords),
     waitingSec,
-    weatherSec,
-    h('section', { 'aria-label': 'Calendar', class: 'home-cal' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), nextUp, todayBox),
-    msgSec,
-    comingSec,
-    lightsSec,
-    listsSec,
-    chooseLink, choosePanel,
-    askForm));                                   // at the bottom (Greg, 21 Nov)                                   // under Today and Tomorrow (Greg, 21 Nov)
+    board,
+    tray,
+    editBtn,
+    askForm));                                   // the Ask box stays at the bottom (Greg, 21 Nov)
+  applyWidgets();
 
   fromLast();
   await load();
