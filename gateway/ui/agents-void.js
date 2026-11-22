@@ -34,7 +34,7 @@ export function mark(agent, { size = 'big', mood = 'asleep', href = null, curren
   return h(tag, { class: `agent-mark ${size} mood-${mood}${current ? ' current' : ''}`, href: href || null,
     style: `--mark: var(--agent-${agent.name}, var(--${agent.name}, var(--accent)))`, 'data-agent': agent.name,
     'aria-label': `${agent.display_name}: ${MOODS[mood]}${href ? '. Talk to it' : ''}`, title: `${agent.display_name} · ${MOODS[mood]}` },
-  // The name rides inside the drifting part, so it moves and tilts with its mark (Greg, 21 Nov).
+  // The name rides inside the drifting part, so it moves with its mark (Greg, 21 Nov).
   h('span', { class: 'mark-fx', 'aria-hidden': 'true' }, h('span', { class: 'mark-fy' },
     h('span', { class: 'mark-glow' }, h('span', { class: 'mark-glyph' })),
     h('span', { class: 'mark-label' }, h('strong', {}, agent.display_name), h('span', {}, moodWords(mood))))));
@@ -114,26 +114,44 @@ export async function voidView(root, agents, others = []) {
   const placeOf = (name, i) => (spots[layout()] || {})[name] || spot(i, all.length);
   let lastMoods = Object.fromEntries(agents.map((a) => [a.name, 'asleep']));
   let busy = false, redrawWanted = false;
+  // Each mark is made once and then updated in place (Greg, 22 Nov: the marks jumped every few seconds
+  // when they were remade for a new mood, their drift starting again from the beginning). Only a change
+  // in which agents there are makes them anew.
+  const moodOf = (a, mine, m) => (mine ? (m[a.name] || 'asleep') : (a.running === false ? 'off' : 'asleep'));
+  const fill = (el, a, mine, i, m) => {
+    const mood = moodOf(a, mine, m);
+    el.className = el.className.replace(/\bmood-[\w-]+/, `mood-${mood}`);
+    if (mine) {
+      el.title = `${a.display_name} · ${MOODS[mood]}`;
+      el.setAttribute('aria-label', `${a.display_name}: ${MOODS[mood]}. Talk to it. Hold to move it, or keep holding to send a voice note`);
+      const words = el.querySelector('.mark-label > span');
+      if (words && words.textContent !== moodWords(mood)) words.textContent = moodWords(mood);
+    }
+    const [x, y] = placeOf(a.name, i);
+    if (el.style.getPropertyValue('--x') !== `${x}%`) el.style.setProperty('--x', `${x}%`);
+    if (el.style.getPropertyValue('--y') !== `${y}%`) el.style.setProperty('--y', `${y}%`);
+  };
   const draw = (m) => {
     lastMoods = m;
     if (busy) { redrawWanted = true; return; }               // never redraw under a finger
+    const have = [...field.querySelectorAll(':scope > .agent-mark')];
+    if (have.length === all.length && have.every((el, i) => el.dataset.agent === all[i].a.name)) {
+      all.forEach(({ a, mine }, i) => fill(have[i], a, mine, i, m));
+      return;
+    }
     field.replaceChildren(...all.map(({ a, mine }, i) => {
       // Not a real link (Greg, 21 Nov): a long press on one made Android offer to copy or save it. A tap
       // still opens the chat (the click handler below), and Enter does too.
-      const el = mark(a, { size: 'big', mood: mine ? (m[a.name] || 'asleep') : (a.running === false ? 'off' : 'asleep') });
+      const el = mark(a, { size: 'big', mood: moodOf(a, mine, m) });
       if (mine) { el.dataset.href = `#/chat/${a.name}`; el.setAttribute('role', 'link'); el.tabIndex = 0; }
       if (!mine) {
         el.classList.add('private');
         el.title = `${a.display_name} · private to its owner`;
         el.setAttribute('aria-label', `${a.display_name}: private to its owner`);
         el.querySelector('.mark-label span')?.replaceChildren(icon(ICONS.lock), ' Private');
-      } else {
-        el.setAttribute('aria-label', `${el.getAttribute('aria-label')}. Talk to it. Hold to move it, or keep holding to send a voice note`);
       }
       el.classList.add(`drift-${i % 3}`);
-      const [x, y] = placeOf(a.name, i);
-      el.style.setProperty('--x', `${x}%`);
-      el.style.setProperty('--y', `${y}%`);
+      fill(el, a, mine, i, m);
       el.draggable = false;
       return el;
     }));

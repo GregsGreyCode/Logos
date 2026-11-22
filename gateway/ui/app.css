@@ -1002,7 +1002,8 @@ a.btn.mx-new { justify-content: center; }
 .void-field .drift-2 .mark-fx { animation-duration: 29s; animation-delay: -12s; }
 .void-field .drift-2 .mark-fy { animation-duration: 11s; animation-delay: -9s; }
 @keyframes void-fx { 0%, 100% { transform: translateX(0); } 22% { transform: translateX(22px); } 47% { transform: translateX(-4px); } 71% { transform: translateX(-26px); } 88% { transform: translateX(-9px); } }
-@keyframes void-fy { 0%, 100% { transform: translateY(0) rotate(0); } 18% { transform: translateY(-15px) rotate(3deg); } 43% { transform: translateY(6px) rotate(-2deg); } 64% { transform: translateY(13px) rotate(1deg); } 83% { transform: translateY(-6px) rotate(-3deg); } }
+/* No tilt (Greg, 22 Nov): the marks only float up and down. */
+@keyframes void-fy { 0%, 100% { transform: translateY(0); } 18% { transform: translateY(-15px); } 43% { transform: translateY(6px); } 64% { transform: translateY(13px); } 83% { transform: translateY(-6px); } }
 /* Calm (default): slower and smaller; Still: nothing moves */
 [data-motion="calm"] .void-field .mark-fx { animation-duration: 34s; }
 [data-motion="calm"] .void-field .mark-fy { animation-duration: 21s; }
@@ -1361,7 +1362,7 @@ section:has(> .appearance-modes.single) { display: none; }
 .mood-awake .mark-glow { opacity: 1; filter: drop-shadow(0 0 10px var(--mark)); }
 .mood-waking .mark-glow { animation: mark-breathe 2.2s ease-in-out infinite; }
 [data-motion="full"] .mood-waking .mark-glow { animation: mark-bounce .9s cubic-bezier(.3, 1.6, .5, 1) infinite alternate, mark-breathe 1.6s ease-in-out infinite; }
-@keyframes mark-bounce { from { transform: translateY(0) rotate(-4deg); } to { transform: translateY(-10px) rotate(4deg); } }
+@keyframes mark-bounce { from { transform: translateY(0); } to { transform: translateY(-10px); } }
 [data-motion="still"] .mood-waking .mark-glow { animation: none; opacity: 0.85; }
 .mood-waking .mark-label > span { transition: opacity .3s ease; }
 
