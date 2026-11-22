@@ -1677,8 +1677,11 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .home-sec-head .label { margin: 0; }
 .home-lights { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 6px; }
-.home-light { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; min-height: 52px; font: inherit; text-align: left;
-  border: 1px solid var(--line); border-radius: var(--r-card); background: transparent; color: var(--ink); cursor: pointer; user-select: none; }
+.home-light { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-height: 52px;
+  border: 1px solid var(--line); border-radius: var(--r-card); background: transparent; color: var(--ink); user-select: none; }
+.home-light-switch { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 0; border: 0; background: none;
+  color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.home-light-level { width: 100%; accent-color: #ffd166; touch-action: pan-y; }
 .home-light.lit { background: color-mix(in srgb, #ffd166 18%, var(--surface)); border-color: color-mix(in srgb, #ffd166 55%, var(--line)); }
 .home-light-name { font-weight: 600; }
 /* Home is yours to arrange (Greg, 22 Nov): Edit Home, drag by the handle, ✕ to take off, Add to put back. */

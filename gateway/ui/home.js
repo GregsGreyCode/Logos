@@ -174,19 +174,32 @@ export async function homeView(root) {
   const lightsSec = h('section', { class: 'home-lights-sec', 'aria-label': 'Lights' },
     h('div', { class: 'home-sec-head' }, h('h2', { class: 'label' }, 'Lights'),
       h('button', { type: 'button', class: 'linkish', onclick: () => switchLights(['everything'], false) }, 'All off')), lightsBox, lightsNote);
-  async function switchLights(targets, value) {
+  async function switchLights(targets, value, brightness) {
     lightsNote.textContent = '';
-    for (const b of lightsSec.querySelectorAll('button')) b.disabled = true;
-    const r = await api('/api/v2/home/lights', { method: 'POST', body: { targets, on: value } }).catch(() => null);
+    for (const b of lightsSec.querySelectorAll('button, input')) b.disabled = true;
+    const r = await api('/api/v2/home/lights', { method: 'POST', body: { targets, on: value, ...(brightness ? { brightness } : {}) } }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
     if (!r || !r.ok) lightsNote.textContent = d.message || 'The lights did not answer just now.';
     drawLights(d.rooms ? d : await getJSON('/api/v2/home/lights').catch(() => ({})));
   }
   function drawLights(d) {
     if (!d || d.error || !d.rooms) { lightsBox.replaceChildren(h('p', { class: 'when' }, d && d.error === 'no_house' ? 'No agent here can work the lights.' : 'The lights could not be read just now.')); return; }
-    lightsBox.replaceChildren(...d.rooms.map((r) => h('button', { type: 'button', class: `home-light${r.on ? ' lit' : ''}`, 'aria-pressed': String(!!r.on),
-      title: r.on ? `Turn ${r.room} off` : `Turn ${r.room} on`, onclick: () => switchLights([r.room], !r.on) },
-    h('span', { class: 'home-light-name' }, r.room), h('span', { class: 'when' }, r.on ? `${r.on} of ${r.of} on` : 'off'))));
+    // A tap switches the room; a lit room also has a slider for how bright (Greg, 22 Nov), set when let go.
+    lightsBox.replaceChildren(...d.rooms.map((r) => {
+      const tile = h('div', { class: `home-light${r.on ? ' lit' : ''}` },
+        h('button', { type: 'button', class: 'home-light-switch', 'aria-pressed': String(!!r.on),
+          title: r.on ? `Turn ${r.room} off` : `Turn ${r.room} on`, onclick: () => switchLights([r.room], !r.on) },
+        h('span', { class: 'home-light-name' }, r.room),
+        h('span', { class: 'when' }, r.on ? (r.brightness ? `${r.brightness}%` : `${r.on} of ${r.of} on`) : 'off')));
+      if (r.on) {
+        const level = h('input', { type: 'range', class: 'home-light-level', min: '1', max: '100', step: '1', value: String(r.brightness || 100),
+          'aria-label': `${r.room} brightness` });
+        level.addEventListener('input', () => { tile.querySelector('.when').textContent = `${level.value}%`; });
+        level.addEventListener('change', () => switchLights([r.room], true, Number(level.value)));
+        tile.append(level);
+      }
+      return tile;
+    }));
   }
   async function showLights() { const d = await getJSON('/api/v2/home/lights').catch(() => ({ error: 'x' })); if (alive) drawLights(d); }
 
