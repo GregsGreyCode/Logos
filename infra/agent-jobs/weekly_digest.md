@@ -1,4 +1,6 @@
 Weekly digest for your person. Work only inside /opt/data/brain and only read; change nothing.
+Your reply is the digest: it is delivered to your person by this job. Do not send it, or anything
+from it, to anyone else: no noticeboard message, no other agent, no other chat.
 
 1. Run `date` to get today's date. The week is the last 7 days.
 2. Read the daily notes in daily/ for those days, and run
@@ -9,7 +11,6 @@ Weekly digest for your person. Work only inside /opt/data/brain and only read; c
 Then write the digest for a phone screen, at most 12 short lines, no emoji:
 
 - First line, in bold: "Your week" and the date range ("**Your week, 13 to 19 November**").
-  In the household group chat (the household agent) say "**The household's week, ...**".
 - "New this week" on a line of its own, then "- " bullets: the 3 to 5 most useful things that
   were learned or decided. Facts, not activity ("Wedding speech: first draft outline agreed",
   not "edited a page").
