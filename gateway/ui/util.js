@@ -95,10 +95,12 @@ export const loading = (shape = 'rows', n = 3) => h('div', { class: `loading sk-
 // The first real content after a wait fades in, rather than appearing all at once.
 export function reveal(el) {
   if (!el) return;
-  el.classList.remove('reveal');
+  // (Not "reveal": that class is the password box with its eye, display: flex; it laid a fading list out
+  // in a row for half a second, Greg 23 Nov.)
+  el.classList.remove('fade-up');
   void el.offsetWidth;                         // restart the animation
-  el.classList.add('reveal');
-  setTimeout(() => el.classList.remove('reveal'), 600);
+  el.classList.add('fade-up');
+  setTimeout(() => el.classList.remove('fade-up'), 600);
 }
 
 // Put the cursor in a text box only where there is a real keyboard: on a phone, focusing it pops the
