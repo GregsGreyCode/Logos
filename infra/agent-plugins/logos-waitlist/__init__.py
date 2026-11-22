@@ -14,6 +14,10 @@ When LM Studio is closed (Greg is gaming), the model guard answers a model reque
 - when it is, re-sends each waiting conversation's last message with hermes' own ``/retry``,
   oldest first and one at a time, so LM Studio is not flooded. A message older than 12 hours
   gets a short note instead of an answer to an old question.
+- checks that the re-sent turn got its answer through. A model just loaded can loop in its
+  thinking (21 Nov: twelve minutes, then hermes cut it and Greg read "Your request was not
+  processed"), so a re-sent turn that failed for any reason but the model being off again is
+  sent once more. Only the transcript's last row is read (its role and failure mark, no text).
 
 - in the chat, replaces hermes's own words for that failed turn ("... temporarily unavailable ...
   add a backup provider ... Your request was not processed. Send it again ...") with the one
@@ -33,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import threading
 import time
 import urllib.request
@@ -43,6 +48,8 @@ LOG = os.path.join(HOME, "logs", "waitlist.log")
 POLL = 30.0                       # seconds between "is LM Studio back?" while something waits
 MAX_AGE = 12 * 3600               # older than this: a note instead of an answer (decided 19 Nov)
 TURN_LIMIT = 15 * 60              # longest wait for one re-sent answer before the next
+RESENDS = 2                       # tries per waiting conversation: the re-send, and once more if it failed
+DB = os.path.join(HOME, "state.db")
 SKIP_PLATFORMS = {"cron", "api", "api_server", "cli", "local", ""}   # handled elsewhere
 OFF_CODE = "model_server_off"
 EXPIRED_NOTE = ("The AI computer was off when you sent your last message, more than 12 hours ago, "
@@ -166,7 +173,39 @@ async def _busy(gateway) -> bool:
     return bool(getattr(gateway, "_running_agents", None))
 
 
-async def answer_waiting(gateway, now: float, send_retry, send_note, busy, sleep=asyncio.sleep) -> list:
+def last_turn_failed(session_id: str, db: str = "") -> str:
+    """Why the conversation's last turn failed, in plain words; "" when it was answered.
+
+    hermes closes a failed turn with an assistant row marked ``failed_turn`` (its metadata holds
+    the error). Only that row's role and marks are read, never message text."""
+    try:
+        con = sqlite3.connect(f"file:{db or DB}?mode=ro", uri=True, timeout=5)
+        try:
+            row = con.execute("SELECT role, display_kind, display_metadata FROM messages "
+                              "WHERE session_id = ? ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return ""                     # cannot tell: do not send it again on a guess
+    if not row or row[0] != "assistant" or row[1] != "failed_turn":
+        return ""
+    try:
+        error = str((json.loads(row[2] or "{}") or {}).get("error") or "")
+    except (ValueError, AttributeError):
+        error = ""
+    return why(error={"message": error})
+
+
+async def _wait_for_turn(gateway, busy, sleep) -> None:
+    waited = 0.0
+    await sleep(5)
+    while await busy(gateway) and waited < TURN_LIMIT:
+        await sleep(5)
+        waited += 5
+
+
+async def answer_waiting(gateway, now: float, send_retry, send_note, busy, sleep=asyncio.sleep,
+                         failed=last_turn_failed) -> list:
     """Answer every waiting conversation, oldest first, one at a time. Returns what was done."""
     done = []
     for session_id, item in sorted(load().items(), key=lambda kv: kv[1].get("since", 0)):
@@ -184,13 +223,22 @@ async def answer_waiting(gateway, now: float, send_retry, send_note, busy, sleep
                 await send_note(gateway, origin)
                 done.append((session_id, "too old"))
             else:
-                await send_retry(gateway, origin)
-                done.append((session_id, "retried"))
-                waited = 0.0
-                await sleep(5)
-                while await busy(gateway) and waited < TURN_LIMIT:
-                    await sleep(5)
-                    waited += 5
+                outcome = "retried"
+                for attempt in range(1, RESENDS + 1):
+                    await send_retry(gateway, origin)
+                    await _wait_for_turn(gateway, busy, sleep)
+                    if session_id in load():
+                        outcome = "off again"        # the error hook put it back on the list
+                        break
+                    cause = failed(session_id)
+                    if cause == why(error={"message": OFF_CODE}):
+                        outcome = "off again"
+                        break
+                    if not cause:
+                        outcome = "retried" if attempt == 1 else "retried twice"
+                        break
+                    outcome = f"failed: {cause}"
+                done.append((session_id, outcome))
         except Exception as e:
             done.append((session_id, f"failed: {type(e).__name__}"))
     return done
