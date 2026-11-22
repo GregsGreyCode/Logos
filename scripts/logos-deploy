@@ -243,9 +243,12 @@ def images_for(rt, names):
 
 
 def update_services(rt):
-    """Model gateway (+ guard), noticeboard, voice and calendar: each restarts only if it changed."""
+    """Matrix server, model gateway (+ guard), noticeboard, voice, calendar and the rest: each restarts only if it changed."""
     sys.path.insert(0, str(REPO))
-    for module, cls, container, label in (("gateway.model_gateway", "ModelGateway", "logos-models", "model gateway"),
+    # The Matrix server first (F37: its settings let it call the dashboard for phone notifications);
+    # it restarts only when its settings changed, and chat reconnects by itself within seconds.
+    for module, cls, container, label in (("gateway.matrix_host", "MatrixHost", "logos-matrix", "matrix server"),
+                                          ("gateway.model_gateway", "ModelGateway", "logos-models", "model gateway"),
                                           ("gateway.noticeboard_host", "NoticeboardHost", "logos-noticeboard", "noticeboard"),
                                           ("gateway.voice_host", "VoiceHost", "logos-voice", "voice"),
                                           ("gateway.calendar_host", "CalendarHost", "logos-calendar", "calendar"),

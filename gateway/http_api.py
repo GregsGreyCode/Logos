@@ -747,11 +747,19 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/",              _handle_app)
     from gateway import dashboard_api as _dashboard_api
     _dashboard_api.register(app)
+    from gateway import push as _push                   # F37: phone notifications; its /_matrix/push route goes first
+    _push.register(app, _hermes_home)
     from gateway import matrix_proxy as _matrix_proxy   # M1: the browser's Matrix device reaches the server here
     _matrix_proxy.register(app)
     from gateway import updates as _updates
     _updates.register(app)
     app.router.add_static("/ui", str(Path(__file__).parent / "ui"), show_index=False)
+
+    async def _handle_sw(request):
+        # F37: the service worker, at the site's root so it may handle the whole app.
+        return web.FileResponse(Path(__file__).parent / "ui" / "sw.js",
+                                headers={"Content-Type": "text/javascript", "Cache-Control": "no-cache"})
+    app.router.add_get("/sw.js", _handle_sw)
     # Addresses of the old v1 dashboard (removed in S6.8): bookmarks lead to the dashboard.
     for _tab_path in (
         "/classic",

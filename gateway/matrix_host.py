@@ -59,6 +59,14 @@ def parse_env(text: str) -> Dict[str, str]:
     return dict(l.split("=", 1) for l in (text or "").splitlines() if "=" in l and not l.startswith("#"))
 
 
+# continuwuity's default denylist with 172.16.0.0/12 split so that 172.17.0.0/16 (the Docker bridge,
+# where the dashboard listens) is left out.
+IP_DENYLIST = ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/16", "172.18.0.0/15", "172.20.0.0/14", "172.24.0.0/13",
+               "192.168.0.0/16", "100.64.0.0/10", "192.0.0.0/24", "169.254.0.0/16", "192.88.99.0/24", "198.18.0.0/15",
+               "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "::1/128", "fe80::/10", "fc00::/7",
+               "2001:db8::/32", "ff00::/8", "fec0::/10"]
+
+
 def server_env(settings: Mapping[str, str]) -> Dict[str, str]:
     """The container's environment: a private, invite-by-token server with no federation."""
     name = settings["MATRIX_SERVER_NAME"]
@@ -77,6 +85,10 @@ def server_env(settings: Mapping[str, str]) -> Dict[str, str]:
         "CONDUWUIT_WELL_KNOWN__CLIENT": settings.get("MATRIX_CLIENT_URL") or f"https://{name}",
         "CONDUWUIT_NEW_USER_DISPLAYNAME_SUFFIX": "",                  # no emoji added to new accounts' names
         "CONDUWUIT_ALLOW_ANNOUNCEMENTS_CHECK": "false",               # no periodic call to continuwuity.org
+        # Outgoing requests may not go to private addresses, as by default, except the Docker bridge:
+        # the dashboard there is the push gateway for Logos's phone notifications (F37). With
+        # federation off, push is the only thing the server sends anywhere.
+        "CONDUWUIT_IP_RANGE_DENYLIST": json.dumps(IP_DENYLIST),
     }
 
 
