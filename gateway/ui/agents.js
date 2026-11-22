@@ -59,28 +59,41 @@ export async function agentsView(root, [agentArg]) {
   const note = h('p', { class: 'when', role: 'status' });
   const say = (t) => { note.textContent = t; };
 
-  // One built-in routine: a switch, its times, and what it does. A change is saved at once.
-  function routineCard(key, r, title, what, fields, save) {
-    const sw = h('input', { type: 'checkbox', checked: r.enabled ? '' : null, 'aria-label': `${title}: on or off` });
-    const body = h('div', { class: 'routine-fields', hidden: !r.enabled }, ...fields);
+  // One routine (Greg, 23 Nov: one list; whether it is built in or asked for only changes how it is
+  // changed): a switch, its name and when, and a tap opens what can be done with it.
+  const opened = new Set();                 // cards left open across a reload
+  function routineCard({ key, title, summary, on, toggle, body }) {
+    const sw = h('input', { type: 'checkbox', checked: on ? '' : null, 'aria-label': `${title}: on or off` });
+    const sum = h('span', { class: 'when routine-sum' }, summary);
     const status = h('span', { class: 'when routine-status' });
-    const commit = async () => {
+    const more = h('div', { class: 'routine-more', hidden: !opened.has(key) }, ...body);
+    const head = h('button', { type: 'button', class: 'routine-open', 'aria-expanded': String(opened.has(key)) },
+      h('span', { class: 'routine-title' }, h('strong', {}, title), sum),
+      h('span', { class: 'routine-chev', 'aria-hidden': 'true' }, '›'));
+    const card = h('section', { class: `card routine${on ? '' : ' off'}`, 'aria-label': title },
+      h('div', { class: 'routine-head' }, h('label', { class: 'switch' }, sw, h('span', { class: 'switch-track', 'aria-hidden': 'true' })), head, status),
+      more);
+    head.addEventListener('click', () => {
+      const open = more.hidden;
+      more.hidden = !open; head.setAttribute('aria-expanded', String(open));
+      if (open) opened.add(key); else opened.delete(key);
+    });
+    const busy = async (fn) => {
       status.textContent = 'Saving…';
-      for (const el of card.querySelectorAll('input, select')) el.disabled = true;
-      const r2 = await api(`/api/v2/agents/${agent.name}/routines`, { method: 'PUT', body: { [key]: save(sw.checked) } }).catch(() => null);
-      const d = r2 ? await r2.json().catch(() => ({})) : {};
-      status.textContent = !r2 ? 'Not saved: Logos did not answer.' : r2.ok ? 'Saved' : (d.message || 'Not saved.');
-      for (const el of card.querySelectorAll('input, select')) el.disabled = false;
+      for (const el of card.querySelectorAll('input, select, button')) el.disabled = true;
+      const msg = await fn().catch(() => 'Not saved: Logos did not answer.');
+      status.textContent = msg || 'Saved';
+      for (const el of card.querySelectorAll('input, select, button')) el.disabled = false;
       setTimeout(() => { if (status.textContent === 'Saved') status.textContent = ''; }, 2500);
     };
-    sw.addEventListener('change', () => { body.hidden = !sw.checked; commit(); });
-    for (const el of fields.flatMap((f) => [...f.querySelectorAll('input, select')])) el.addEventListener('change', commit);
-    const card = h('section', { class: 'card routine', 'aria-label': title },
-      h('div', { class: 'routine-head' }, h('label', { class: 'switch' }, sw, h('span', { class: 'switch-track', 'aria-hidden': 'true' })),
-        h('span', { class: 'routine-title' }, h('strong', {}, title), h('span', { class: 'when' }, what)), status),
-      body);
-    return card;
+    sw.addEventListener('change', () => { card.classList.toggle('off', !sw.checked); busy(() => toggle(sw.checked)); });
+    return { card, busy, setSummary: (t) => { sum.textContent = t; } };
   }
+  const putRoutine = async (key, value) => {
+    const r = await api(`/api/v2/agents/${agent.name}/routines`, { method: 'PUT', body: { [key]: value } });
+    const d = await r.json().catch(() => ({}));
+    return r.ok ? '' : (d.message || 'Not saved.');
+  };
   const timeField = (label, value) => h('label', { class: 'routine-field' }, h('span', { class: 'when' }, label),
     h('input', { type: 'time', value, step: '300', onclick: (e) => { try { e.target.showPicker?.(); } catch (err) { /* opens by itself */ } } }));
   const dayField = (value) => h('label', { class: 'routine-field' }, h('span', { class: 'when' }, 'Day'),
@@ -154,37 +167,51 @@ export async function agentsView(root, [agentArg]) {
     }
     if (!alive) return;
     const R = rt.routines || {};
-    const built = [];
+    const cards = [];
+    // A built-in routine: its times in the card; a change is saved at once.
+    const builtIn = (key, title, fields, value, summary, cfg) => {
+      const c = routineCard({ key, title, summary: summary(), on: cfg.enabled, body: [h('div', { class: 'routine-fields' }, ...fields)],
+        toggle: (on) => { cfg.enabled = on; return putRoutine(key, value()); } });
+      for (const el of fields.flatMap((f) => [...f.querySelectorAll('input, select')])) {
+        el.addEventListener('change', () => { c.setSummary(summary()); c.busy(() => putRoutine(key, value())); });
+      }
+      cards.push(c.card);
+    };
     if (R.briefing) {
       const wd = timeField('Weekdays', R.briefing.weekdays), we = timeField('Weekends', R.briefing.weekends);
-      built.push(routineCard('briefing', R.briefing, 'Morning briefing', 'The day ahead: your calendar, the weather and anything waiting.',
-        [wd, we], (on) => ({ enabled: on, weekdays: val(wd), weekends: val(we) })));
+      builtIn('briefing', 'Morning briefing', [wd, we], () => ({ enabled: R.briefing.enabled, weekdays: val(wd), weekends: val(we) }),
+        () => `Weekdays ${val(wd)}, weekends ${val(we)}`, R.briefing);
     }
     if (R.digest) {
       const day = dayField(R.digest.day), t = timeField('Time', R.digest.time);
-      built.push(routineCard('digest', R.digest, 'Weekly digest', 'What it learned and what is still open, once a week.',
-        [day, t], (on) => ({ enabled: on, day: Number(val(day)), time: val(t) })));
+      builtIn('digest', 'Weekly digest', [day, t], () => ({ enabled: R.digest.enabled, day: Number(val(day)), time: val(t) }),
+        () => `${DAYS[Number(val(day))]}s ${val(t)}`, R.digest);
     }
     if (R.changes) {
       const t = timeField('Time', R.changes.time);
-      built.push(routineCard('changes', R.changes, 'What changed', 'The day\'s changes to the agents and home servers, in the group chat; the week\'s on Sundays.',
-        [t], (on) => ({ enabled: on, time: val(t) })));
+      builtIn('changes', 'What changed', [t], () => ({ enabled: R.changes.enabled, time: val(t) }), () => `Daily ${val(t)} in the group chat`, R.changes);
     }
-
+    // One asked for: on/off pauses it; to change it, ask the agent; or delete it.
     const jobs = st.jobs || [];
     const yours = jobs.filter((j) => !j.managed);
     const behind = jobs.filter((j) => j.managed && !ROUTINE_JOBS.has(j.name));
-    const act = (j, action, label) => h('button', { type: 'button', class: `btn ${action === 'remove' ? 'quiet danger-text' : 'quiet'} small`, onclick: async (e) => {
-      if (action === 'remove' && !await ask({ title: `Delete "${named(j)}"?`, text: `${agent.display_name} will stop doing it. You can always ask again.`, yes: 'Delete', danger: true })) return;
-      e.target.disabled = true;
-      const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/${action}`, { method: 'POST' }).catch(() => null);
-      if (r && r.ok) load(); else { e.target.disabled = false; say('That did not work just now. Try again in a moment.'); }
-    } }, label);
-    const yourRow = (j) => h('div', { class: `row-item routine-row${j.active ? '' : ' paused'}` },
-      h('span', { class: 'row-main' }, named(j)),
-      h('span', { class: 'row-meta' }, schedule(j.schedule),
-        j.active ? (j.next_run ? ` · next: ${runTime(j.next_run)}` : '') : ' · paused'),
-      h('span', { class: 'row-actions' }, j.active ? act(j, 'pause', 'Pause') : act(j, 'resume', 'Resume'), act(j, 'remove', 'Delete')));
+    const jobAction = async (j, action) => {
+      const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/${action}`, { method: 'POST' });
+      return r.ok ? '' : 'That did not work just now.';
+    };
+    for (const j of yours) {
+      const del = h('button', { type: 'button', class: 'btn quiet small danger-text', onclick: async () => {
+        if (!await ask({ title: `Delete "${named(j)}"?`, text: `${agent.display_name} will stop doing it. You can always ask again.`, yes: 'Delete', danger: true })) return;
+        const msg = await jobAction(j, 'remove').catch(() => 'That did not work just now.');
+        if (msg) say(msg); else load();
+      } }, 'Delete');
+      const c = routineCard({ key: `job:${j.id}`, title: named(j),
+        summary: `${schedule(j.schedule)}${j.active ? (j.next_run ? ` · next ${runTime(j.next_run)}` : '') : ' · paused'}`,
+        on: j.active, toggle: async (on) => { const m = await jobAction(j, on ? 'resume' : 'pause'); if (!m) setTimeout(load, 300); return m; },
+        body: [h('p', { class: 'when' }, `You asked ${agent.display_name} for this. To change it, ask it, for example "move this to 9am".`),
+          h('div', { class: 'row' }, del)] });
+      cards.push(c.card);
+    }
     const behindRow = (j) => h('div', { class: 'row-item' },
       h('span', { class: 'row-main' }, j.label),
       h('span', { class: 'row-meta' }, schedule(j.schedule), ' · ',
@@ -192,16 +219,13 @@ export async function agentsView(root, [agentArg]) {
 
     const m = st.model;
     const kv = (k, v, cls) => h('div', { class: 'row-item' }, h('span', { class: `row-meta ${cls || ''}` }, k), h('span', { class: 'row-main' }, v));
-    detail.replaceChildren(
-      h('p', { class: 'routines-intro' }, `What ${agent.display_name} does on its own. To add something, just ask it, for example `,
-        h('em', {}, '"remind me every Friday at 6 to put the bins out"'), '.'),
-      h('h2', { class: 'label' }, 'Built in'),
-      built.length ? h('div', { class: 'routine-cards' }, ...built) : none('None for this agent.'),
-      h('div', { class: 'routines-head' }, h('h2', { class: 'label' }, 'You asked for'),
-        h('button', { type: 'button', class: 'btn small', onclick: () => newRoutine(yours.length) }, '+ New routine')),
-      st.jobs == null ? h('div', { class: 'notice' }, `${agent.display_name} did not answer, so these could not be listed.`)
-        : yours.length ? h('div', { class: 'rows' }, ...yours.map(yourRow))
-          : none(`Nothing yet. Ask ${agent.display_name} to remind you of something, or to check in every morning.`),
+    detail.replaceChildren(...[                  // (a null would print as the word "null")
+      h('div', { class: 'routines-top' },
+        h('p', { class: 'routines-intro' }, `What ${agent.display_name} does on its own.`),
+        h('button', { type: 'button', class: 'btn', onclick: () => newRoutine(yours.length) }, '+ New routine')),
+      st.jobs == null ? h('div', { class: 'notice' }, `${agent.display_name} did not answer, so the ones you asked for could not be listed.`) : null,
+      cards.length ? h('div', { class: 'routine-cards' }, ...cards)
+        : none(`Nothing yet. Tap + New routine, or ask ${agent.display_name} to remind you of something.`),
       note,
       h('details', { class: 'routines-fold' }, h('summary', {}, `Behind the scenes (${behind.length})`),
         h('p', { class: 'when' }, 'How the agent keeps itself going. Nothing to set here.'),
@@ -210,7 +234,8 @@ export async function agentsView(root, [agentArg]) {
         h('div', { class: 'rows' },
           kv('Model', `${m.local ? 'Local' : 'Hosted'} · ${modelName(m.name)}${m.up === false ? ' · not answering' : ''}`),
           kv('Can reach', st.reach.allowed.join(', '), 'ok'),
-          kv('Cannot reach', st.reach.blocked.join(', '), 'bad'))));
+          kv('Cannot reach', st.reach.blocked.join(', '), 'bad'))),
+    ].filter(Boolean));
     reveal(detail);
   }
 

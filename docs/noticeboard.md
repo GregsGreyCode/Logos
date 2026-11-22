@@ -125,12 +125,15 @@ had stayed silent, and nothing from it was in the household brain or memory.
 
 ## Routines (22 Nov 2026)
 
-Agents › an agent › **Routines** replaces the About page. It has four parts:
+Agents › an agent › **Routines** replaces the About page. **+ New routine** is at the top: say or
+type what and when, and the agent sets it up. Below it is one list of routines (23 Nov: whether a
+routine is built in or asked for only changes how it is changed). Each card has a switch, the
+routine's name and when it runs, and a tap opens its options:
 
-- **Built in:** the morning briefing (a person's own agent), the weekly digest, and what changed (the
-  household agent). Each has a switch and its times or day, and a change is saved at once.
-- **You asked for:** the jobs a person set up by asking the agent in chat, with Pause/Resume and
-  Delete. To add or change one, ask the agent.
+- **built in** (the morning briefing on a person's own agent, the weekly digest, what changed on the
+  household agent): their times or day, saved at once; the switch turns it on or off;
+- **asked for** (set up through the agent): how to change it (ask the agent) and Delete; the switch
+  pauses and resumes it.
 - **Behind the scenes:** folded away; read-only.
 - **About:** the agent's model and what it can reach, folded away.
 
