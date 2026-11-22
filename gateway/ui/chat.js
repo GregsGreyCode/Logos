@@ -124,9 +124,11 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   const connected = !!(agent.matrix_id && mx.saved());
   // M3: #/chat/<agent>/thread/<root event id> is one conversation (a thread); /thread/new starts one.
   const threadId = chatArg === 'thread' ? decodeURIComponent(threadArg || 'new') : null;
-  const matrixMode = connected && (!chatArg || !!threadId);
+  // F36: #/chat/<agent>/group/<room id> is a group room that agent is in (the Household Group).
+  const groupId = chatArg === 'group' && threadArg ? decodeURIComponent(threadArg) : null;
+  const matrixMode = connected && (!chatArg || !!threadId || !!groupId);
   // M5 (switch-over): chat with an agent on Matrix happens only in its room. Old web chats stay readable.
-  const archived = !!agent.matrix_id && !!chatArg && !threadId;
+  const archived = !!agent.matrix_id && !!chatArg && !threadId && !groupId;
   const connectNote = null;
   if (agent.matrix_id && !connected && !chatArg) {
     const old = h('div', { class: 'convs' });
@@ -587,7 +589,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     document.addEventListener('click', (e) => { if (mxView.open && !mxView.contains(e.target)) mxView.open = false; });
     const sideTop = h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
       title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6'])));
-    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: mxView }, threadId);
+    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: mxView, others: othersKept || [] }, threadId, groupId);
     return () => { alive = false; done(); document.removeEventListener('keydown', onKey); };
   }
 

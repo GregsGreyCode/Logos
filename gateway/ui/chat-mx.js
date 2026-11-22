@@ -39,6 +39,27 @@ function pickRoom(c, agentId) {
   return rooms[0] || null;
 }
 
+// F36 (Greg, 22 Nov): a group is a Matrix room you share with at least one agent and someone else
+// (the Household Group). Each opens like an agent's chat, at #/chat/<agent>/group/<room id>.
+export function groupsOf(c, agents) {
+  const ids = new Set(agents.map((a) => a.matrix_id).filter(Boolean));
+  const me = c.getUserId();
+  const out = [];
+  for (const room of c.getRooms()) {
+    if (room.getMyMembership() !== 'join') continue;
+    const members = room.getMembers().filter((mb) => ['join', 'invite'].includes(mb.membership));
+    const bots = members.filter((mb) => ids.has(mb.userId));
+    const people = members.filter((mb) => !ids.has(mb.userId) && mb.userId !== me);
+    if (!bots.length || !people.length) continue;
+    const agent = agents.find((a) => a.matrix_id === bots[0].userId);
+    out.push({ room, agent, name: room.name || 'Group', link: groupLink(agent, room.roomId),
+      people: people.map((mb) => mb.name), agents: bots.map((mb) => mb.userId) });
+  }
+  return out.sort((a, b) => b.room.getLastActiveTimestamp() - a.room.getLastActiveTimestamp());
+}
+export const groupLink = (agent, roomId) => `#/chat/${agent.name}/group/${encodeURIComponent(roomId)}`;
+const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
 // Swipe right (starting in the left part of the screen) or pinch two fingers together: back.
 // Touch only; a mouse never triggers it. Returns the function that removes the listeners.
 export function backGestures(el, back) {
@@ -67,7 +88,9 @@ export function backGestures(el, back) {
   return () => { el.removeEventListener('touchstart', onStart); el.removeEventListener('touchmove', onMove); el.removeEventListener('touchend', onEnd); };
 }
 
-export async function matrixChat(root, agent, agents, state, sideBits, threadId = null) {
+export async function matrixChat(root, agent, agents, state, sideBits, threadId = null, groupId = null) {
+  const group = groupId || null;
+  if (group) threadId = null;               // a group is one conversation (hermes: one session per room)
   const isNew = threadId === 'new';
   let alive = true;
   const off = [];
@@ -85,7 +108,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     input.classList.toggle('tall', hgt > 60);
   };
   input.addEventListener('input', grow);
-  const main = `#/chat/${agent.name}`;
+  const main = group ? groupLink(agent, group) : `#/chat/${agent.name}`;
   const crumb = threadId ? h('a', { href: main, class: 'mx-crumb' }, 'Main conversation ›') : null;
   const convTitle = h('span', { class: 'mx-conv-title' }, isNew ? 'New conversation' : '');
   const chipsRow = h('div', { class: 'mx-chips phone-only', role: 'tablist', 'aria-label': 'Conversations' });
@@ -157,15 +180,26 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   send.addEventListener('contextmenu', (e) => e.preventDefault());
   off.push(() => { held = false; clearTimeout(holdTimer); stopRecording(); });
 
+  // In a group: ‹ back, the group's name and who is in it; and above the box, the agents to ask. Agents
+  // answer in a group only when asked (an @mention), so the message says whom it is for.
+  const groupTitle = h('span', { class: 'mark-name' }, 'Group');
+  const groupWho = h('span', { class: 'when group-who' });
+  const groupHead = h('div', { class: 'mark-bar group-bar', role: 'navigation', 'aria-label': 'Group' },
+    h('a', { href: '#/chat', class: 'mark-back', 'aria-label': 'All agents and groups', title: 'All agents and groups' }, '‹'),
+    h('span', { class: 'group-title' }, groupTitle, groupWho));
+  const askRow = h('div', { class: 'mx-ask', hidden: !group });
+  let asking = new Set();                    // the agents your next message in the group is for
+  const askKey = `logos.group.ask.${group}`;
+
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
       h('header', { class: 'chat-head' },
-        // M4: the agents' marks replace the agent tabs; inside a thread, its title.
-        threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
-        threadId ? null : agentBar(agent, 'chat'),
+        // M4: the agents' marks replace the agent tabs; inside a thread, its title; in a group, its name.
+        group ? groupHead : threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
+        threadId || group ? null : agentBar(agent, 'chat'),
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
         sideBits.viewMenu || null, sideBits.convBtn || null),
-      chipsRow, log, thinkingRow, note, modelLine, form),
+      group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, form),
     sideBits.side, sideBits.sideScrim || null, sideBits.reopen || null);
 
   // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
@@ -219,7 +253,35 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     return name ? `from ${name}` : 'from another of your devices';
   };
 
-  room = pickRoom(c, agent.matrix_id);
+  room = group ? c.getRoom(group) : pickRoom(c, agent.matrix_id);
+  const allAgents = [...agents, ...(sideBits.others || [])].filter((a) => a.matrix_id);
+  const agentIds = new Set(allAgents.map((a) => a.matrix_id));
+  const inRoom = () => allAgents.filter((a) => ['join', 'invite'].includes(room?.getMember(a.matrix_id)?.membership));
+  const nameOf = (id) => room?.getMember(id)?.name || allAgents.find((a) => a.matrix_id === id)?.display_name || id;
+  if (group && (!room || room.getMyMembership() !== 'join')) {
+    log.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, 'Not in this group'),
+      h('p', {}, 'You are not in this group any more, or it has not reached this browser yet.')));
+    return () => { alive = false; for (const f of off) f(); };
+  }
+  if (group) {
+    groupTitle.textContent = room.name || 'Group';
+    const people = room.getMembers().filter((mb) => mb.membership === 'join' && !agentIds.has(mb.userId)).map((mb) => (mb.userId === me ? 'you' : mb.name));
+    groupWho.textContent = [...people, ...inRoom().map((a) => a.display_name)].join(', ');
+    input.placeholder = `Message ${room.name || 'the group'}`;
+    try { asking = new Set(JSON.parse(localStorage.getItem(askKey) || '[]')); } catch (e) { asking = new Set(); }
+    const drawAsk = () => {
+      for (const id of [...asking]) if (!inRoom().some((a) => a.matrix_id === id)) asking.delete(id);
+      askRow.replaceChildren(h('span', { class: 'when' }, 'Ask'), ...inRoom().map((a) => h('button', {
+        type: 'button', class: `chip mx-ask-chip${asking.has(a.matrix_id) ? ' on' : ''}`, 'aria-pressed': String(asking.has(a.matrix_id)),
+        title: asking.has(a.matrix_id) ? `Your message goes to ${a.display_name} too` : `Only people read it; tap to ask ${a.display_name}`,
+        onclick: () => {
+          if (asking.has(a.matrix_id)) asking.delete(a.matrix_id); else asking.add(a.matrix_id);
+          try { localStorage.setItem(askKey, JSON.stringify([...asking])); } catch (e) { /* remembered for this visit only */ }
+          drawAsk();
+        } }, `@ ${a.display_name}`)));
+    };
+    drawAsk();
+  }
   if (!room) {
     log.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, `No room with ${agent.display_name} yet`),
       h('p', {}, 'Start the conversation here; it appears in Element X too.'),
@@ -275,13 +337,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   }
   const ACK = new Set(['✅', '✔️', '👀']);
 
-  function bubbleFor(ev, edits, reactions, inMain, showTime = true) {
+  function bubbleFor(ev, edits, reactions, inMain, showTime = true, showName = false) {
     const mine = ev.getSender() === me;
+    const fromAgent = agentIds.has(ev.getSender());
     const content = edits.get(ev.getId()) || ev.getContent();
     const kind = content.msgtype;
     const thread = inMain ? replyMap.get(ev.getId()) : null;
     const job = cronJob(ev);
-    if (job && !inMain) return h('p', { class: 'when mx-thread-start' }, `${jobTitle(job)} · ${when(ev.getTs() / 1000)}`);
+    if (job && (!inMain || group)) return h('p', { class: 'when mx-thread-start' }, `${jobTitle(job)} · ${when(ev.getTs() / 1000)}`);
     if (job && briefs.has(ev.getId())) {
       // The message itself, under a small label; only a conversation that went on links onwards.
       const turn = bubbleFor(briefs.get(ev.getId()), edits, reactions, false, showTime);
@@ -309,10 +372,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const chips = rx.filter(([k, r]) => !(mine && ACK.has(k) && !r.mine));
     const meta = metaFor(ev, mine, edits.has(ev.getId()), showTime, seen);
     // "Thinking ›" under a reply only with Settings > Show thinking on (Greg, 21 Nov: off by default).
-    const think = !mine && kind === 'm.text' && content.body && getPref('thinking', false) ? thinking(String(content.body)) : null;
+    const think = ev.getSender() === agent.matrix_id && kind === 'm.text' && content.body && getPref('thinking', false) ? thinking(String(content.body)) : null;
     const canReact = ev.getId() && !ev.getId().startsWith('~') && !(ev.isDecryptionFailure && ev.isDecryptionFailure());
-    const bubble = h('div', { class: `msg ${mine ? 'user' : 'assistant'}` }, ...body);
+    const bubble = h('div', { class: `msg ${mine ? 'user' : 'assistant'}${mine || fromAgent ? '' : ' person'}` }, ...body);
     const turn = h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
+      showName ? h('span', { class: `mx-sender${fromAgent ? ' bot' : ''}` }, nameOf(ev.getSender())) : null,
       bubble,
       chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, r]) => h('button', {
         type: 'button', class: `chip mx-react${r.mine ? ' mine' : ''}`, 'aria-pressed': String(!!r.mine),
@@ -414,6 +478,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   function threadReplies() {
     const n = new Map();
     briefs = new Map();
+    if (group) return n;
     for (const e of room.getLiveTimeline().getEvents()) {
       const r = e.threadRootId;
       if (r && r !== e.getId() && e.getType() === 'm.room.message') {
@@ -446,7 +511,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const inMain = !threadId;
     const shown = events.filter((ev) => (ev.getType() === 'm.room.message' || (ev.isEncrypted() && ev.isDecryptionFailure()))
       && !(ev.getContent()['m.relates_to']?.rel_type === 'm.replace') && !ev.isRedacted()
-      && (!inMain || !ev.threadRootId || ev.threadRootId === ev.getId()));
+      && (!inMain || group || !ev.threadRootId || ev.threadRootId === ev.getId()));
     if (isNew) { log.replaceChildren(none('A new conversation: write its first message below. It becomes its title.')); return; }
     if (threadId) { const t = shown[0]; convTitle.textContent = t ? titleOf(t) : 'Conversation'; }
     const older = h('button', { type: 'button', class: 'linkish mx-older', onclick: async (e) => {
@@ -456,7 +521,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       // The time shows at the end of a run: the next message is from someone else, or 5+ minutes later.
       const next = shown[i + 1];
       const showTime = !next || next.getSender() !== ev.getSender() || next.getTs() - ev.getTs() > 5 * 60000;
-      return bubbleFor(ev, edits, reactions, inMain, showTime);
+      // In a group, who said it: once at the start of each run of someone else's messages.
+      const prev = shown[i - 1];
+      const showName = !!group && ev.getSender() !== me && (!prev || cronJob(prev) || prev.getSender() !== ev.getSender() || ev.getTs() - prev.getTs() > 5 * 60000);
+      return bubbleFor(ev, edits, reactions, inMain, showTime, showName);
     }) : [none('Nothing said here yet.')]));
     // Read: tell Matrix this chat has been read up to its newest message (as Element X does), so it
     // leaves Notifications here and on the phone (Greg, 21 Nov). Only while the page is on screen.
@@ -471,7 +539,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // Waiting for the agent: your newest readable message, under 15 minutes old, that is not a conversation's
     // opening (its title notice, or a message whose thread already has replies).
     const waitingOnAgent = !!(last && last.getSender() === me && !last.isDecryptionFailure()
-      && last.getContent().msgtype !== 'm.notice' && !replyMap.has(last.getId()) && Date.now() - last.getTs() < 15 * 60000);
+      && last.getContent().msgtype !== 'm.notice' && !replyMap.has(last.getId()) && Date.now() - last.getTs() < 15 * 60000
+      && (!group || (last.getContent()['m.mentions']?.user_ids || []).some((id) => agentIds.has(id))));
     thinkingRow.hidden = !waitingOnAgent && !typing;
     askedAt = waitingOnAgent ? last.getTs() : (typing ? askedAt || Date.now() : 0);
     progress();
@@ -516,7 +585,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const onTimeline = (ev, r) => { if (room && r && r.roomId === room.roomId) redraw(); };
   const onDecrypted = (ev) => { if (room && ev.getRoomId() === room.roomId) redraw(); };
   const onTyping = (ev, member) => {
-    if (!room || member.roomId !== room.roomId || member.userId !== agent.matrix_id) return;
+    if (!room || member.roomId !== room.roomId || !(group ? agentIds.has(member.userId) : member.userId === agent.matrix_id)) return;
     typing = member.typing; thinkingRow.hidden = !typing && thinkingRow.hidden; redraw();
   };
   const onEcho = () => redraw();
@@ -524,6 +593,17 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   c.on(m.MatrixEventEvent.Decrypted, onDecrypted); off.push(() => c.off(m.MatrixEventEvent.Decrypted, onDecrypted));
   c.on(m.RoomMemberEvent.Typing, onTyping); off.push(() => c.off(m.RoomMemberEvent.Typing, onTyping));
   c.on(m.RoomEvent.LocalEchoUpdated, onEcho); off.push(() => c.off(m.RoomEvent.LocalEchoUpdated, onEcho));
+
+  // A group message for the agents picked above: their names first (as Element writes a mention) and
+  // m.mentions, which is what hermes goes by. With none picked, only the people read it.
+  function groupMessage(text) {
+    const to = inRoom().filter((a) => asking.has(a.matrix_id));
+    if (!to.length) return { msgtype: 'm.text', body: text, 'm.mentions': {} };
+    const names = to.map((a) => a.display_name).join(', ');
+    const pills = to.map((a) => `<a href="https://matrix.to/#/${escapeHtml(a.matrix_id)}">${escapeHtml(a.display_name)}</a>`).join(', ');
+    return { msgtype: 'm.text', body: `${names}: ${text}`, format: 'org.matrix.custom.html',
+      formatted_body: `${pills}: ${escapeHtml(text).replace(/\n/g, '<br>')}`, 'm.mentions': { user_ids: to.map((a) => a.matrix_id) } };
+  }
 
   async function sendText(text) {
     text = String(text || '').trim();
@@ -540,6 +620,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         return;
       }
       if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text });
+      else if (group) await c.sendMessage(room.roomId, groupMessage(text));
       else await c.sendMessage(room.roomId, { msgtype: 'm.text', body: text });
     } catch (e) { note.textContent = `Not sent: ${e.message}. It is kept above; send it again.`; input.value = text; grow(); }
     draw(true);
@@ -547,12 +628,18 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
 
   // Panel: the main conversation (threads arrive with M3), then old web chats for 30 days.
   const archive = h('div', { class: 'convs' });
-  sideBits.side.replaceChildren(sideBits.sideTop || '',
+  if (group) {
+    const members = room.getMembers().filter((mb) => ['join', 'invite'].includes(mb.membership));
+    sideBits.side.replaceChildren(sideBits.sideTop || '', h('h2', { class: 'label' }, 'In this group'),
+      h('div', { class: 'convs' }, members.map((mb) => h('p', { class: 'conv-link' },
+        h('span', { class: 'conv-title' }, mb.userId === me ? `${mb.name} (you)` : mb.name),
+        h('span', { class: 'when' }, agentIds.has(mb.userId) ? 'agent · answers when asked' : mb.membership === 'invite' ? 'invited' : '')))));
+  } else sideBits.side.replaceChildren(sideBits.sideTop || '',
     h('a', { href: `${main}/thread/new`, class: 'btn mx-new' }, 'New conversation'),
     h('h2', { class: 'label' }, 'Conversations'), convList,
     h('h2', { class: 'label' }, 'Archive (old web chats)'), archive,
     ...(sideBits.toggles || []));
-  getJSON(`/api/v2/agents/${agent.name}/conversations`).then(({ conversations }) => {
+  if (!group) getJSON(`/api/v2/agents/${agent.name}/conversations`).then(({ conversations }) => {
     const since = Date.now() / 1000 - ARCHIVE_DAYS * 86400;
     const old = conversations.filter((x) => x.where === 'web' && (x.last_active || 0) >= since);
     archive.replaceChildren(...(old.length ? old.map((x) => h('a', { href: `#/chat/${agent.name}/${x.chat_id}`, class: 'conv-link' },
@@ -569,9 +656,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     }
   }
   draw(true);
-  const asked = takeAsk(agent.name);           // a question asked on Home
+  const asked = group ? null : takeAsk(agent.name);           // a question asked on Home
   if (asked) sendText(asked);
-  const spoken = takeVoice(agent.name);        // a voice note recorded by holding the agent's mark
+  const spoken = group ? null : takeVoice(agent.name);        // a voice note recorded by holding the agent's mark
   if (spoken) toWords(spoken, true);
   focusIfKeyboard(input);
   return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };

@@ -40,9 +40,12 @@ export async function unreadFromAgents(agents) {
         if (e.getSender() !== a.matrix_id || e.getType() !== 'm.room.message' || e.getTs() < since) continue;
         if (e.getContent().msgtype === 'm.notice' || !body || CRON_ROOT.test(body)) continue;
         const root = e.threadRootId && e.threadRootId !== e.getId() ? e.threadRootId : null;
+        // A group (F36): its name first, and the link opens the group.
+        const inGroup = room.getJoinedMemberCount() > 2;
         out.push({ id: `mx:${e.getId()}`, kind: 'chat', type: 'message', ts: e.getTs() / 1000, unread: true, agent: a.name, who: a.display_name,
-          title: a.display_name, text: body.replace(/\s+/g, ' ').slice(0, 160),
-          link: root ? `#/chat/${a.name}/thread/${encodeURIComponent(root)}` : `#/chat/${a.name}` });
+          title: inGroup ? `${room.name || 'Group'} · ${a.display_name}` : a.display_name, text: body.replace(/\s+/g, ' ').slice(0, 160),
+          link: inGroup ? `#/chat/${a.name}/group/${encodeURIComponent(room.roomId)}`
+            : root ? `#/chat/${a.name}/thread/${encodeURIComponent(root)}` : `#/chat/${a.name}` });
       }
     }
   }
