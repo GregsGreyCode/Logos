@@ -95,11 +95,19 @@ its person says so each time.
 - Standing permissions in `sharing.md` are a record only; agents still ask every time.
 - The model gateway lists model names to a caller with no key (`/v1/models`). Inference needs a key.
 
-## Scheduled jobs never send (22 Nov 2026)
+## Logos's own jobs never send (22 Nov 2026)
 
-A scheduled job (a digest, a briefing, the noticeboard check) cannot call `send_message`: the
-`logos-job-limits` plugin refuses it, and the model is told why. A job's reply goes to its person
-only.
+Logos's own model jobs cannot call `send_message`: the weekly digest, the morning briefings, the
+brain tidy-up, the noticeboard check and the daily changes. Their prompts start with
+`LOGOS_JOB_MARK`, the `logos-job-limits` plugin refuses the call in a job carrying it, and the model
+is told why. Their reply goes to the person only.
+
+A job a person set up in chat ("every Friday, remind Béré's agent the bins go out") has no mark and
+may send, because the person asked for it ahead of time. The noticeboard's rules still apply: the
+other agent passes it to its person, and requests wait for that person's answer.
+
+The household agent's digest covers only the household: the house, shared lists, shared plans
+and dates. It never includes one person's own matters, even if they reached the household agent.
 
 **Why:** on 22 Nov Béré's agent, writing her weekly digest, sent it to the household agent as an
 FYI. Her own notes reached the shared agent, and so Greg's Notifications. A line in the digest's
@@ -108,7 +116,9 @@ line is now given only to the household agent, and the digest says it is not to 
 else. Because a model can misread instructions again, the plugin enforces the rule in code.
 
 **How:** hermes's `pre_tool_call` does not say which platform a turn is on, so the plugin
-remembers which sessions are scheduled jobs from `pre_llm_call` (platform `cron`).
+remembers from `pre_llm_call` which sessions are Logos jobs (platform `cron` and the mark in the
+job's prompt). hermes's own notice to scheduled jobs already says "do NOT use send_message"; the
+digest sent one anyway.
 
 **Cleanup:** the message (noticeboard id 45) was deleted. The household agent's noticeboard check
 had stayed silent, and nothing from it was in the household brain or memory.

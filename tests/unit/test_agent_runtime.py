@@ -1075,7 +1075,8 @@ network_policies:
         assert any("python /opt/data/scripts/brain_index.py" in s for s in scripts)   # run once at `up`
         (con,) = [s for s in scripts if "--name consolidate" in s]
         assert '--workdir /opt/data/brain --timezone Europe/London --continuity --deliver local "0 3 * * *" "$(cat)"' in con
-        assert runner.inputs[runner.calls.index(next(c for c in runner.calls if c[-1] == con))] == "Consolidate the inbox.\n"
+        from gateway.agent_runtime import LOGOS_JOB_MARK                   # Logos's own job: marked, may not send
+        assert runner.inputs[runner.calls.index(next(c for c in runner.calls if c[-1] == con))] == f"{LOGOS_JOB_MARK}\n\nConsolidate the inbox.\n"
 
     def test_job_ids(self, repo):
         assert rt(repo).job_ids("alpha") == {"brain-commit": "0123456789ab", "consolidate": "ba9876543210"}
@@ -1301,3 +1302,6 @@ def test_only_the_household_digest_speaks_of_the_household(tmp_path):
     house = digest_prompt(tmp_path, {"name": "household", "role": "household"})
     assert "household" not in private.lower() and "Do not send it" in private
     assert "The household's week" in house and "Do not send it" in house
+    assert "Leave out anything about one person alone" in house
+    from gateway.agent_runtime import LOGOS_JOB_MARK
+    assert private.startswith(LOGOS_JOB_MARK) and house.startswith(LOGOS_JOB_MARK)
