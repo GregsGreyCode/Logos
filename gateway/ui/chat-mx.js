@@ -303,17 +303,74 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     else if (kind === 'm.image' || kind === 'm.file' || kind === 'm.video') body = [h('em', {}, `${content.body || 'A file'}: open it in Element X.`)];
     else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));
     const rx = [...(reactions.get(ev.getId()) || [])];
-    const seen = mine && rx.some(([k]) => ACK.has(k));
-    const chips = rx.filter(([k]) => !(mine && ACK.has(k)));
+    const seen = mine && rx.some(([k, r]) => ACK.has(k) && r.n > (r.mine ? 1 : 0));
+    const chips = rx.filter(([k, r]) => !(mine && ACK.has(k) && !r.mine));
     const meta = metaFor(ev, mine, edits.has(ev.getId()), showTime, seen);
     // "Thinking ›" under a reply only with Settings > Show thinking on (Greg, 21 Nov: off by default).
     const think = !mine && kind === 'm.text' && content.body && getPref('thinking', false) ? thinking(String(content.body)) : null;
-    return h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
-      h('div', { class: `msg ${mine ? 'user' : 'assistant'}` }, ...body),
-      chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, n]) => h('span', { class: 'chip' }, `${k} ${n > 1 ? n : ''}`))) : null,
+    const canReact = ev.getId() && !ev.getId().startsWith('~') && !(ev.isDecryptionFailure && ev.isDecryptionFailure());
+    const bubble = h('div', { class: `msg ${mine ? 'user' : 'assistant'}` }, ...body);
+    const turn = h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
+      bubble,
+      chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, r]) => h('button', {
+        type: 'button', class: `chip mx-react${r.mine ? ' mine' : ''}`, 'aria-pressed': String(!!r.mine),
+        title: r.mine ? 'Take your reaction back' : 'React with this too', onclick: () => react(ev, k, r.mine),
+      }, `${k}${r.n > 1 ? ` ${r.n}` : ''}`))) : null,
       meta || think ? h('div', { class: 'mx-foot' }, meta, think) : null,
       thread ? h('a', { class: 'mx-thread-link', href: `${main}/thread/${encodeURIComponent(ev.getId())}` },
         `↳ ${thread.count} repl${thread.count === 1 ? 'y' : 'ies'} · open this conversation`) : null);
+    if (canReact) {
+      const open = () => { pickerFor = ev.getId(); draw(false); };
+      bubble.append(h('button', { type: 'button', class: 'mx-react-open', 'aria-label': 'React to this message', title: 'React', onclick: (e) => { e.stopPropagation(); open(); } }, '☺'));
+      longPress(bubble, open);
+      if (pickerFor === ev.getId()) turn.insertBefore(pickerOf(ev, new Map(rx.map(([k, r]) => [k, r.mine])), String(content.body || '')), bubble.nextSibling);
+    }
+    return turn;
+  }
+
+  // ── reactions (F35, Greg 22 Nov): a long press on a message (a phone) or its ☺ button (a mouse)
+  // opens a row of emoji; a tap sends it as a Matrix reaction, tapping your own again takes it back.
+  // Agents only act on reactions to their own approval prompts, so a reaction never starts a reply.
+  const QUICK = ['👍', '❤️', '😂', '😮', '🙏', '✅'];
+  async function react(ev, key, mineId) {
+    pickerFor = null;
+    try {
+      if (mineId) await c.redactEvent(room.roomId, mineId);
+      else await c.sendEvent(room.roomId, 'm.reaction', { 'm.relates_to': { rel_type: 'm.annotation', event_id: ev.getId(), key } });
+      note.textContent = '';
+    } catch (e) { note.textContent = `Reaction not sent: ${e.message}`; }
+    draw(false);
+  }
+  // Which message has its emoji row open; kept here because every new event redraws the chat.
+  let pickerFor = null;
+  function closePicker() { if (pickerFor) { pickerFor = null; draw(false); } }
+  function pickerOf(ev, have, text) {
+    const row = h('div', { class: 'mx-picker', role: 'menu', 'aria-label': 'React' },
+      ...QUICK.map((k) => h('button', { type: 'button', role: 'menuitem', class: have.get(k) ? 'mine' : '', 'aria-label': `React ${k}`,
+        'aria-pressed': String(!!have.get(k)), onclick: () => react(ev, k, have.get(k) || null) }, k)),
+      text && navigator.clipboard ? h('button', { type: 'button', role: 'menuitem', class: 'mx-copy', onclick: async () => {
+        closePicker();
+        try { await navigator.clipboard.writeText(text.trim()); note.textContent = 'Copied.'; } catch { note.textContent = 'Could not copy.'; }
+      } }, 'Copy') : null);
+    requestAnimationFrame(() => { if (row.isConnected && !row.contains(document.activeElement)) row.querySelector('button')?.focus({ preventScroll: true }); });
+    return row;
+  }
+  const outside = (e) => { if (pickerFor && !e.target.closest('.mx-picker, .mx-react-open')) closePicker(); };
+  const escape = (e) => { if (e.key === 'Escape') closePicker(); };
+  document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
+  off.push(() => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); });
+  function longPress(el, fire) {
+    let t = null, x = 0, y = 0;
+    const stop = () => { clearTimeout(t); t = null; };
+    el.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' || e.target.closest('a, button, summary')) return;
+      x = e.clientX; y = e.clientY; stop();
+      t = setTimeout(() => { t = null; navigator.vibrate?.(10); fire(); }, 450);
+    });
+    el.addEventListener('pointermove', (e) => { if (t && Math.hypot(e.clientX - x, e.clientY - y) > 10) stop(); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((n) => el.addEventListener(n, stop));
+    // On a touch screen the long press is ours: no system menu or word selection on the bubble.
+    el.addEventListener('contextmenu', (e) => { if (matchMedia('(pointer: coarse)').matches) e.preventDefault(); });
   }
 
   // ── the conversations: Main, then threads (newest first, those quiet for 30 days left out) ──────
@@ -372,8 +429,12 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     for (const ev of events) {
       const rel = ev.getContent()['m.relates_to'] || ev.getWireContent()?.['m.relates_to'];
       if (ev.getType() === 'm.room.message' && ev.getContent()['m.new_content'] && rel?.rel_type === 'm.replace') edits.set(rel.event_id, ev.getContent()['m.new_content']);
-      if (ev.getType() === 'm.reaction' && rel?.rel_type === 'm.annotation') {
-        const map = reactions.get(rel.event_id) || new Map(); map.set(rel.key, (map.get(rel.key) || 0) + 1); reactions.set(rel.event_id, map);
+      if (ev.getType() === 'm.reaction' && rel?.rel_type === 'm.annotation' && !ev.isRedacted()) {
+        // Per message: each emoji, how many, and your own reaction's id (so tapping it again takes it back).
+        const map = reactions.get(rel.event_id) || new Map();
+        const r = map.get(rel.key) || { n: 0, mine: null };
+        r.n += 1; if (ev.getSender() === me && ev.getId() && !ev.getId().startsWith('~')) r.mine = ev.getId();
+        map.set(rel.key, r); reactions.set(rel.event_id, map);
       }
     }
     const inMain = !threadId;
