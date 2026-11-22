@@ -1863,3 +1863,20 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .routine.off .routine-title strong { color: var(--muted); }
 @media (max-width: 599px) { .routine-more { padding-left: 0; } }
 [data-anim="off"] .routine-chev { transition: none; }
+
+/* F41 first-visit tips: a card above the tab bar (bottom right on a wide screen); what it is about is outlined. */
+.tip-card { position: fixed; z-index: 60; left: 12px; right: 12px; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px);
+  max-width: 420px; margin: 0 auto; padding: 14px 16px 10px; border: 1px solid var(--line); border-radius: var(--r-card);
+  background: var(--surface); color: var(--ink); box-shadow: 0 12px 32px rgb(0 0 0 / .35); animation: fade-up .3s ease both; }
+/* (top: when what it points at would be underneath) */
+.tip-card.tip-top { bottom: auto; top: calc(var(--topbar-h) + 12px); }
+@media (min-width: 761px) { .tip-card { left: auto; right: 24px; bottom: 24px; width: 360px; } }
+.tip-title { display: block; margin-bottom: 4px; }
+.tip-text { margin: 0 0 10px; color: var(--muted); line-height: 1.45; }
+.tip-row { display: flex; align-items: center; gap: 10px; }
+.tip-skip { color: var(--muted); }
+.tip-dots { display: flex; gap: 5px; flex: 1; justify-content: center; }
+.tip-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--line); }
+.tip-dots span.on { background: var(--accent-text); }
+.tip-target { outline: 2px solid var(--accent-text); outline-offset: 4px; border-radius: var(--r-card); transition: outline-color .2s; }
+[data-anim="off"] .tip-card { animation: none; }

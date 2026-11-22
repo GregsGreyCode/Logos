@@ -10,6 +10,7 @@ import { updatesView } from './updates.js';
 import { advisorView } from './advisor.js';
 import { settingsView } from './settings.js';
 import { adoptPrefs } from './prefs.js';
+import * as tips from './tips.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, aiState, labelTables, icon, ICONS } from './util.js';
 import { adopt } from './appearance.js';
@@ -122,6 +123,7 @@ async function route() {
   const [, name = 'home', ...rest] = location.hash.split('/');
   const mine = ++visit;
   dropSheet();
+  tips.hide();
   if (cleanup) { cleanup(); cleanup = null; }
   for (const a of document.querySelectorAll('.nav-links a, .tabbar a, .sheet a')) {
     const on = a.dataset.view === name || (a.closest('.tabbar') && (a.dataset.also || '').split(' ').includes(name));
@@ -170,6 +172,7 @@ async function route() {
   progress(true);
   const done = await views[name](box, rest, state);
   if (mine === visit) progress(false);
+  if (mine === visit) tips.show(tips.keyFor(name, rest), () => mine === visit);    // F41: first visit only
   if (mine === visit) cleanup = done; else if (done) done();
 }
 
