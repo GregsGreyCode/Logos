@@ -157,7 +157,7 @@ function chat() {
 function matrix(state, redraw) {
   const box = h('div', { class: 'settings-body-inner' }, loading());
   const me = state.me.matrix_id;
-  if (!me) return [h('p', { class: 'none' }, 'Matrix is not set up on this Logos.')];
+  if (!me) return [h('p', { class: 'none' }, 'Chat is not set up on this Logos.')];
   const steps = (n) => h('div', { class: 'mx-steps', role: 'list' }, ['Connect', 'Unlock', 'Done'].map((t, i) =>
     h('span', { role: 'listitem', class: `mx-step${i === n ? ' now' : ''}${i < n ? ' done' : ''}` }, `${i < n ? '✓ ' : ''}${t}`)));
   const field = (id, label, input) => [h('label', { for: id, class: 'field-label' }, label), input];
@@ -189,13 +189,13 @@ function matrix(state, redraw) {
       go.disabled = true; msg.textContent = 'Unlocking, then verifying this browser… this can take up to half a minute.';
       try {
         const out = await mx.unlock(key.value); key.value = '';
-        if (out.verified) show(); else { msg.textContent = 'The key was accepted but this browser is not verified yet. Try again, or verify it from Element.'; go.disabled = false; }
+        if (out.verified) show(); else { msg.textContent = 'The key was accepted but this device is not confirmed yet. Try again, or confirm it from another of your devices that is already connected.'; go.disabled = false; }
       } catch (err) { msg.textContent = /key|decode|checksum|parity/i.test(err.message) ? 'That recovery key was not accepted. Check it and try again.' : `Could not unlock: ${err.message}`; go.disabled = false; }
     } },
-    h('p', {}, 'Enter your recovery key (the long code you saved when you first set up your chats; in Element: Settings › Security). It proves this device is yours and unlocks your earlier messages. It is used once and not kept.'),
+    h('p', {}, 'Enter your recovery key: the long code saved when your chats were set up (Greg has a copy if you cannot find yours). It proves this device is yours and unlocks your earlier messages. It is used once and not kept.'),
     ...field('mx-key', 'Recovery key', key),
     h('div', { class: 'row' }, go), msg,
-    h('p', { class: 'when' }, 'Or verify this browser from Element on your phone: it shows up there as a new device to verify.')));
+    h('p', { class: 'when' }, 'Or confirm it from another of your devices that is already connected: it shows up there as a new device.')));
   }
 
   // Done (Greg, 22 Nov: the person need not know the plumbing): one line saying all is well; the
@@ -262,7 +262,7 @@ function notifications(state) {
   const box = h('div', { class: 'settings-body-inner' }, loading());
   const msg = h('p', { class: 'when', role: 'status' });
   async function show() {
-    if (!state.me.matrix_id) { box.replaceChildren(h('p', { class: 'none' }, 'Matrix is not set up on this Logos.')); return; }
+    if (!state.me.matrix_id) { box.replaceChildren(h('p', { class: 'none' }, 'Chat is not set up on this Logos.')); return; }
     if (!mx.saved()) {
       box.replaceChildren(h('p', {}, 'Connect this device to your chats first (Settings › Devices): notifications come from them.'),
         h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Devices'));

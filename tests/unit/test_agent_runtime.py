@@ -480,6 +480,15 @@ network_policies:
         assert r.policy_path("alpha", agent) == src
         assert not (repo / ".rendered").exists()
 
+    def test_a_model_that_can_see_gets_photos_as_images(self, repo):
+        self._with_policy(repo)
+        r = rt(repo)
+        agent = r.load("alpha")
+        assert "supports_vision" not in yaml.safe_load(r.config_text("alpha", agent))["model"]
+        agent["model"]["vision"] = True
+        agent["model"]["gateway"] = True
+        assert yaml.safe_load(r.config_text("alpha", agent))["model"]["supports_vision"] is True
+
     def test_policy_for_a_hostname_drops_the_ip_pin(self, repo):
         self._with_policy(repo)
         r = rt(repo)

@@ -357,6 +357,10 @@ class AgentRuntime:
             model = {"default": mg.gateway_model(agent), "provider": "custom",
                      "base_url": mg.ModelGateway(self).base_url(), "key_env": mg.KEY_ENV,
                      "context_length": int(m["context_length"])}
+        # A photo sent in a chat goes to the model as an image (hermes image_routing: model.supports_vision
+        # is read first), for a model that can see; hermes's catalog does not know LM Studio's models.
+        if m.get("vision"):
+            model["supports_vision"] = True
         cfg = {"_config_version": CONFIG_VERSION,
                "timezone": agent.get("timezone", "UTC"),
                "model": model}
