@@ -1552,3 +1552,49 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
   border-radius: 14px; background: var(--surface); color: var(--ink); text-decoration: none; user-select: none; }
 .void-group:hover { border-color: var(--accent); }
 .void-group-name { font-weight: 600; }
+
+/* Home, tidied (Greg, 22 Nov): no empty header above the calendar on a phone; an event in two lines
+   (time and title, then whose and where); "Next" and unread Messages in place of the figures; the
+   pinned Ask box fades the content passing under it. */
+@media (max-width: 599px) {
+  .home > .home-head:has(> .home-status[hidden]) { display: none; }
+  .home-day .home-row { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 0; align-items: baseline; padding: 7px 0; }
+  .home-day .home-title { flex-basis: auto; }
+  .home > .home-ask::before { content: ''; position: absolute; left: 0; right: 0; top: -18px; height: 18px; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--ground)); }
+}
+.home-day .home-time { color: var(--accent-text); }
+.home-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.home-meta .dot { width: 8px; height: 8px; }
+.home-cal { display: flex; flex-direction: column; gap: 12px; }
+.home-next { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 10px 14px; border-radius: var(--r-card);
+  background: var(--accent-soft); color: var(--ink); }
+.home-next .label { margin: 0; color: var(--accent-text); }
+.home-next strong { font-weight: 600; }
+.home-msgs { display: flex; flex-direction: column; }
+.home-msg { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--ink); text-decoration: none; user-select: none; }
+.home-msg:last-child { border-bottom: 0; }
+.home-msg-head { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.home-msg-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-msg-head .when { flex: none; }
+.home-msg-text { color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.void-group-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.void-group-head .void-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.void-group-head .when { flex: none; font-size: var(--t-xs); }
+.void-unread { flex: none; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink);
+  font-size: var(--t-xs); font-weight: 700; text-align: center; line-height: 20px; }
+.void-group-last { color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.void-group.unread .void-group-last { color: var(--ink); }
+.void-groups { gap: 6px; }
+.void-group { padding: 10px 14px; }
+@media (min-width: 600px) { .void-groups { max-height: 40%; overflow-y: auto; } }
+/* The calendar as one list, one line an event (Greg, 22 Nov). */
+.home-days:has(> .home-agenda) { display: block; }
+.home-agenda > .sub-label { margin: 10px 0 2px; }
+.home-agenda > .sub-label:first-child { margin-top: 0; }
+.home-row.home-line { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 0; flex-wrap: nowrap; }
+.home-line .home-time { width: 52px; flex: none; font-size: 14px; color: var(--accent-text); }
+.home-line .dot { width: 8px; height: 8px; }
+.home-line .home-title { flex: 1 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-line .home-meta { flex: none; max-width: 40%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); }
+.home-line.over { opacity: .5; }

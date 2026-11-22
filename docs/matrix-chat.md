@@ -55,7 +55,8 @@ A group is a Matrix room you share with at least one of your agents and someone 
 Household Group. Logos adds no group mechanism of its own; the dashboard just shows the rooms that
 already exist.
 
-- **Where:** Chat lists your groups under the floating agents. A group opens at
+- **Where:** the Conversations list under the floating agents holds each agent's chat and each group,
+  newest first, with its last message and an unread count (22 Nov). A group opens at
   `#/chat/<agent>/group/<room id>`, where the agent is the first of yours in the room. Notifications
   for a group message name the group and link to it.
 - **What is different from an agent's chat:**

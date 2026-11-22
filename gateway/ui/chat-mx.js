@@ -57,6 +57,30 @@ export function groupsOf(c, agents) {
   }
   return out.sort((a, b) => b.room.getLastActiveTimestamp() - a.room.getLastActiveTimestamp());
 }
+// The Agents screen's list (Greg, 22 Nov): each agent's own chat and each group, newest first, with its
+// last message and how many of the others' messages you have not read.
+export function conversationsOf(c, agents) {
+  const me = c.getUserId();
+  const rows = [];
+  const summary = (room) => {
+    const evs = room.getLiveTimeline().getEvents().filter((e) => e.getType() === 'm.room.message' && !e.isRedacted?.()
+      && !(e.getContent()['m.relates_to']?.rel_type === 'm.replace') && e.getContent().msgtype !== 'm.notice'
+      && !CRON_ROOT.test(String(e.getContent().body || '')));
+    const last = evs[evs.length - 1];
+    const readId = room.getEventReadUpTo?.(me);
+    let from = 0;
+    evs.forEach((e, i) => { if (e.getId() === readId || e.getSender() === me) from = i + 1; });
+    const who = last ? (last.getSender() === me ? 'You' : room.getMember(last.getSender())?.name || '') : '';
+    const text = last ? (last.isDecryptionFailure?.() ? 'Locked message' : String(last.getContent().body || '').replace(/\s+/g, ' ').replace(/[*_`#>]/g, '')) : '';
+    return { ts: last ? last.getTs() : 0, text, who, unread: evs.length - from };
+  };
+  for (const a of agents.filter((x) => x.matrix_id)) {
+    const room = pickRoom(c, a.matrix_id);
+    if (room && room.getJoinedMemberCount() <= 2) rows.push({ kind: 'agent', agent: a, name: a.display_name, link: `#/chat/${a.name}`, ...summary(room) });
+  }
+  for (const g of groupsOf(c, agents)) rows.push({ kind: 'group', agent: g.agent, name: g.name, link: g.link, ...summary(g.room) });
+  return rows.sort((x, y) => y.ts - x.ts);
+}
 export const groupLink = (agent, roomId) => `#/chat/${agent.name}/group/${encodeURIComponent(roomId)}`;
 const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
