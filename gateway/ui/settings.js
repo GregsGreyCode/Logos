@@ -1,7 +1,7 @@
 // Settings (ST1): one screen for everything you set for yourself. Sections on the left (a row of
 // tabs on a phone): Appearance, Your account, Chat, Matrix device, and Updates for whoever
-// manages Logos. Each section is its own address (#/settings/chat), so it can be linked to.
-import { h, api, getJSON, when, loading, revealable } from './util.js';
+// manages Logos. Each section is its own address (#/settings/devices…), so it can be linked to.
+import { h, api, getJSON, when, loading, revealable, ask } from './util.js';
 import * as mx from './mx.js';
 import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion, setAnimations } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
@@ -11,9 +11,8 @@ import * as push from './push.js';
 const SECTIONS = [
   { id: 'appearance', name: 'Look', full: 'Appearance' },
   { id: 'account', name: 'Account', full: 'Your account' },
-  { id: 'chat', name: 'Chat' },
   { id: 'matrix', name: 'Devices', full: 'This device and your chats' },
-  { id: 'notifications', name: 'Alerts', full: 'Phone notifications' },
+  { id: 'notifications', name: 'Phone alerts', full: 'Notifications on this phone' },
   { id: 'updates', name: 'Updates', admin: true },
 ];
 
@@ -112,7 +111,7 @@ function account(state) {
   const [cl, cur] = field('acc-cur', 'Current password', 'password', { autocomplete: 'current-password' });
   const [pl, next] = field('acc-new', 'New password', 'password', { autocomplete: 'new-password', placeholder: 'At least 8 characters' });
   const note = h('p', { class: 'result when', role: 'status' });
-  return [h('form', { class: 'settings-form form', 'aria-label': 'Your account', onsubmit: async (e) => {
+  return [heading('Your account'), h('form', { class: 'settings-form form', 'aria-label': 'Your account', onsubmit: async (e) => {
     e.preventDefault();
     const body = { display_name: name.value.trim() };
     if (next.value) { body.current_password = cur.value; body.new_password = next.value; }
@@ -141,11 +140,11 @@ function chat() {
     h('input', { type: 'checkbox', checked: getPref(key, false), onchange: (e) => saved(setPref(key, e.target.checked)) }),
     h('span', {}, h('strong', {}, label), h('span', { class: 'when block' }, help)));
   return [
-    h('section', { 'aria-label': 'Conversations panel', class: 'wide-only' }, heading('Conversations panel (desktop)'),
+    h('section', { 'aria-label': 'Conversations panel', class: 'wide-only' }, heading('Chat: conversations panel (desktop)'),
       h('div', { class: 'settings-choices', role: 'radiogroup', 'aria-label': 'Conversations panel' },
         choice('slide', 'Slides away', 'Shows for a moment when Chat opens, then tucks into a tab on the right.'),
         choice('open', 'Stays open', 'Always beside the conversation; hide it with its own button.'))),
-    h('section', { 'aria-label': 'In each conversation' }, heading('In each conversation'),
+    h('section', { 'aria-label': 'In each conversation' }, heading('Chat: in each conversation'),
       h('div', { class: 'settings-choices' },
         // "Show scheduled jobs" is gone (21 Nov): scheduled messages arrive in the chat itself now.
         toggle('thinking', 'Show thinking', "The agent's reasoning and each tool it used, under its reply.")),
@@ -219,8 +218,9 @@ function matrix(state, redraw) {
     const olds = devs.filter(old);
     fold.querySelector('summary').textContent = `Your devices (${devs.length})${olds.length ? ` · ${olds.length} not used lately` : ''}`;
     const signOut = async (targets, button) => {
-      const pw = prompt(targets.length === 1 ? `Sign out "${plain(targets[0].name)}"? Enter your chat password to confirm.`
-        : `Sign out ${targets.length} old devices? Enter your chat password to confirm.`);
+      const pw = await ask({ title: targets.length === 1 ? `Sign out "${plain(targets[0].name)}"?` : `Sign out ${targets.length} old devices?`,
+        text: targets.length === 1 ? 'It will need to sign in again to read your chats.' : targets.map((d) => plain(d.name)).join(', '),
+        yes: 'Sign out', danger: true, password: 'Your chat password' });
       if (!pw) return;
       button.disabled = true;
       let done = 0;
@@ -240,7 +240,7 @@ function matrix(state, redraw) {
       ...(olds.length ? [h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: (e) => signOut(olds, e.target) },
         `Sign out ${olds.length} old device${olds.length === 1 ? '' : 's'}`))] : []),
       h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn danger', onclick: async () => {
-        if (!confirm('Disconnect this device? It signs out of your chats here and forgets its keys.')) return;
+        if (!await ask({ title: 'Disconnect this device?', text: 'It signs out of your chats here and forgets its keys. You can connect it again with your password and recovery key.', yes: 'Disconnect', danger: true })) return;
         await mx.disconnect(); show();
       } }, 'Disconnect this device')));
     if (olds.length) fold.open = true;
@@ -291,7 +291,7 @@ function notifications(state) {
       msg);
   }
   show();
-  return [h('section', { 'aria-label': 'Phone notifications' }, heading('Phone notifications'), box)];
+  return [h('section', { 'aria-label': 'Phone alerts' }, heading('Phone alerts'), box)];
 }
 
 export async function settingsView(root, [section], state) {
@@ -305,9 +305,9 @@ export async function settingsView(root, [section], state) {
   root.replaceChildren(h('div', { class: 'page settings' },
     h('header', {}, h('h1', {}, 'Settings')),
     h('div', { class: 'settings-layout' }, tabs, body)));
-  if (id === 'appearance') body.replaceChildren(...appearance());
+  // Chat's two options live under Look now (Greg, 22 Nov: a tab for one checkbox on a phone); old links land there.
+  if (id === 'appearance') body.replaceChildren(...appearance(), ...chat());
   else if (id === 'account') body.replaceChildren(...account(state));
-  else if (id === 'chat') body.replaceChildren(...chat());
   else if (id === 'matrix') body.replaceChildren(...matrix(state));
   else if (id === 'notifications') body.replaceChildren(...notifications(state));
   else if (id === 'updates') done = await updatesView(body, [], state, true);

@@ -327,9 +327,7 @@ export async function voidView(root, agents, others = []) {
   let convShown = false;
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
     h('h1', { class: 'visually-hidden' }, 'Chat'), ask, field, convBox));
-  // Today's messages by their time alone; older ones as everywhere else ("Yesterday 18:02").
-  const short = (ms) => (new Date(ms).toDateString() === new Date().toDateString()
-    ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : when(ms / 1000));
+  const short = (ms) => when(ms / 1000);
   // F36 part 2 (Greg, 22 Nov): start a group from here, and answer an invitation to one.
   // A sheet over the screen (Greg, 22 Nov: inside the page it squeezed the agents to a sliver on a phone).
   const form = h('div', { class: 'void-newgroup', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New group' });

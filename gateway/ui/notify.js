@@ -14,7 +14,7 @@
 // Only the first three count on the bell; updates are there when you look.
 export const TYPES = { needs: 'Needs you', problem: 'Problem', message: 'Message', update: 'Update' };
 export const urgent = (i) => i.type === 'needs' || i.type === 'problem';
-import { getJSON, api } from './util.js';
+import { getJSON, api, noteTitle } from './util.js';
 import * as mx from './mx.js';
 import { outcome } from './noticeboard.js';
 
@@ -57,8 +57,7 @@ export async function unreadFromAgents(agents) {
 // per agent). The time is when the brain was saved (on the hour), so only the day is shown. A daily
 // note's title is its date: say so in words. A page's summary loses its "Last changed 2026-…" tail.
 const dayKey = (ts) => new Date(ts * 1000).toDateString();
-const pageTitle = (t) => (/^\d{4}-\d{2}-\d{2}$/.test(t)
-  ? `Notes of ${new Date(`${t}T12:00:00`).toLocaleDateString([], { day: 'numeric', month: 'short' })}` : t);
+const pageTitle = noteTitle;
 export const cleanSummary = (t) => String(t || '').replace(/\s*·?\s*Last (changed|updated)\s+\d{4}-\d{2}-\d{2}[^.·]*\.?/gi, '').trim();
 export function brainByDay(items) {
   const groups = new Map(), rest = [];

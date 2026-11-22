@@ -8,7 +8,7 @@ function runTime(iso) {
   if (Number.isNaN(d.getTime())) return iso;
   const sameDay = d.toDateString() === new Date().toDateString();
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return sameDay ? `Today ${time}` : `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })} ${time}`;
+  return sameDay ? time : `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })} ${time}`;
 }
 
 // "0 * * * *" and friends, in words, for the handful of shapes Logos uses.
@@ -68,7 +68,7 @@ export async function agentsView(root, [agentArg]) {
     const rows = (st.jobs || []).map((j) => h('tr', {},
       h('td', {}, j.label), h('td', { class: 'when' }, schedule(j.schedule)),
       h('td', {}, j.managed
-        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad', title: j.last_ok ? 'Ran fine' : 'Failed' }, `${j.last_ok ? '✓' : '✕ failed'} ${runTime(j.last_run).replace(/^Today /, '')}`) : h('span', { class: 'when' }, 'Not yet run'))
+        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad', title: j.last_ok ? 'Ran fine' : 'Failed' }, `${j.last_ok ? '✓' : '✕ failed'} ${runTime(j.last_run)}`) : h('span', { class: 'when' }, 'Not yet run'))
         : h('button', { type: 'button', class: 'btn quiet small-btn', onclick: async (e) => {
           e.target.disabled = true;
           const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/cancel`, { method: 'POST' });
@@ -78,7 +78,7 @@ export async function agentsView(root, [agentArg]) {
     const jobRows = (st.jobs || []).map((j) => h('div', { class: 'row-item' },
       h('span', { class: 'row-main' }, j.label),
       h('span', { class: 'row-meta' }, schedule(j.schedule), ' · ', j.managed
-        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad', title: j.last_ok ? 'Ran fine' : 'Failed' }, `${j.last_ok ? '✓' : '✕ failed'} ${runTime(j.last_run).replace(/^Today /, '')}`) : 'not yet run')
+        ? (j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad', title: j.last_ok ? 'Ran fine' : 'Failed' }, `${j.last_ok ? '✓' : '✕ failed'} ${runTime(j.last_run)}`) : 'not yet run')
         : h('button', { type: 'button', class: 'linkish', onclick: async (e) => {
           e.target.disabled = true;
           const r = await api(`/api/v2/agents/${agent.name}/jobs/${j.id}/cancel`, { method: 'POST' });
