@@ -3,7 +3,7 @@
 // manages Logos. Each section is its own address (#/settings/chat), so it can be linked to.
 import { h, api, getJSON, when, loading, revealable } from './util.js';
 import * as mx from './mx.js';
-import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion } from './appearance.js';
+import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion, setAnimations } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
 import { updatesView } from './updates.js';
 import * as push from './push.js';
@@ -61,6 +61,15 @@ function appearance() {
   const motion = getPref('motion', 'calm'), names = getPref('names', 'hover');
   const pickMotion = (v) => { setMotion(v, null); say(mNote, setPref('motion', v)); };
   const pickNames = (v) => { setMotion(null, v); say(mNote, setPref('names', v)); };
+  const anim = getPref('animations', 'on');
+  const aNote = savedNote();
+  const pickAnim = (v) => { setAnimations(v); say(aNote, setPref('animations', v)); };
+  const MOTION_SAYS = { full: 'The agents wander around the Agents screen, breathe, and cycle their colour while they think.',
+    calm: 'The agents drift slowly and breathe gently.', still: 'The agents stay where they are and do not move.' };
+  const ANIM_SAYS = { on: 'Screens slide in when you swipe, content fades in, and loading shows soft placeholders.',
+    off: 'Screens change at once, with nothing sliding, fading or shimmering.' };
+  const motionSays = h('p', { class: 'when' }, MOTION_SAYS[motion] || '');
+  const animSays = h('p', { class: 'when' }, ANIM_SAYS[anim] || '');
   return [
     h('section', { 'aria-label': 'Look' }, heading('Look'), looksBox),
     h('section', { 'aria-label': 'Light or dark' }, heading('Light or dark'), modeBox, note),
@@ -71,13 +80,21 @@ function appearance() {
       colourRow('Attention', 'Anything waiting on you, and its badge', SWATCHES.attention, mine.attention, pickMine('attention'), true),
       h('p', { class: 'when' }, 'Colours may be adjusted slightly to stay readable.')),
     h('section', { 'aria-label': 'Agent colours' }, heading('Agent colours'), agentsBox, cNote)),
-    // Motion: one line, like Light or dark. What each does is in the tooltip.
-    h('section', { 'aria-label': 'Motion' }, heading('Motion'),
-      h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'Motion' },
-        [['full', 'Full', 'The agents wander, breathe and cycle colour while they think'],
-          ['calm', 'Calm', 'Slow breathing and a slow drift'], ['still', 'Still', 'Nothing moves']]
-          .map(([v, label, tip]) => h('label', { class: 'appearance-mode', title: tip },
-            h('input', { type: 'radio', name: 'motion', value: v, checked: motion === v, onchange: () => pickMotion(v) }), label)))),
+    // Two separate choices (Greg, 22 Nov): how much the agents move, and whether the screens animate.
+    h('section', { 'aria-label': 'Agent movement' }, heading('Agent movement'),
+      h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'Agent movement' },
+        [['full', 'Full'], ['calm', 'Calm'], ['still', 'Still']]
+          .map(([v, label]) => h('label', { class: 'appearance-mode', title: MOTION_SAYS[v] },
+            h('input', { type: 'radio', name: 'motion', value: v, checked: motion === v,
+              onchange: () => { motionSays.textContent = MOTION_SAYS[v]; pickMotion(v); } }), label))),
+      motionSays),
+    h('section', { 'aria-label': 'Animations' }, heading('Animations'),
+      h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'Animations' },
+        [['on', 'On'], ['off', 'Off']]
+          .map(([v, label]) => h('label', { class: 'appearance-mode', title: ANIM_SAYS[v] },
+            h('input', { type: 'radio', name: 'animations', value: v, checked: anim === v,
+              onchange: () => { animSays.textContent = ANIM_SAYS[v]; pickAnim(v); } }), label))),
+      animSays, aNote),
     h('section', { 'aria-label': 'Agent names', class: 'wide-only' }, heading('Agent names on their marks'),
       h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'Agent names' },
         [['hover', 'On hover', 'Shown when you point at a mark (always shown on a phone)'], ['always', 'Always', 'Each mark has its name and mood under it']]

@@ -221,8 +221,8 @@ window.addEventListener('hashchange', route);
 // The screen follows the finger one to one (and only stretches a little past the first and last tab);
 // let go past about a third of the width, or with a flick, and it carries on off the screen while the
 // next slides in from the side you swiped towards; otherwise it springs back. The tab bar's highlight
-// follows the finger. Only Motion › Still (or the phone's reduced motion) stops the movement; Calm is about
-// the agents' marks, not this. Inside an agent the swipe right goes back to all agents (chat-mx), not caught here.
+// follows the finger. Settings › Animations › Off (or the phone's reduced motion) stops the movement; Agent
+// movement is only about the agents' marks. Inside an agent the swipe right goes back to all agents (chat-mx), not caught here.
 const SWIPE_TABS = ['#/home', '#/chat', '#/noticeboard'];
 function swipeTabs(el) {
   let s = null, leaving = false;
@@ -234,7 +234,8 @@ function swipeTabs(el) {
     return -1;
   };
   const phone = () => window.matchMedia('(max-width: 599px)').matches;
-  const motion = () => (window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'still' : document.documentElement.dataset.motion || 'full');
+  // Settings › Animations (Greg, 22 Nov: kept apart from the agents' movement), or the phone's reduced motion.
+  const motion = () => (window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.dataset.anim === 'off' ? 'still' : 'full');
   const reset = (animate) => {
     el.style.transition = animate ? 'transform .38s cubic-bezier(.2, 1.3, .4, 1), opacity .3s ease' : 'none';
     el.style.transform = ''; el.style.opacity = '';
