@@ -1475,8 +1475,8 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 [data-look="warm"] .hud-cell { border: 0; background: var(--card-bg); box-shadow: var(--card-shadow); }
 @media (max-width: 599px) {
   /* The date in the top bar, between the logo and your initial; the Ask box at the bottom, above the tabs. */
-  .on-home .topbar-sep { display: none; }
-  .on-home .screen-name { color: var(--ink); font: 600 17px/1.2 var(--font-display); }
+  .title-centred .topbar-sep { display: none; }
+  .title-centred .screen-name { color: var(--ink); font: 600 17px/1.2 var(--font-display); }
   .on-home .home-date-row { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .home { display: flex; flex-direction: column; padding-bottom: 6px; min-height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 6px); }
   .home > .home-ask { margin-top: auto; position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--below-visible, 0px)); padding: 10px 0; background: var(--ground); z-index: 5; }
@@ -1487,7 +1487,7 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 /* Home (Greg, 21 Nov): the figures and the top bar's date centred. */
 .hud-cell { align-items: center; text-align: center; }
 @media (max-width: 599px) {
-  .on-home .screen-name { text-align: center; }
+  .title-centred .screen-name { text-align: center; }
 }
 
 /* Claude Advisor (Greg, 21 Nov): one compact row per person's budget; what is left, said first. */
@@ -1823,9 +1823,12 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 @media (max-width: 599px) { .routine-fields { padding-left: 0; } }
 /* Routines: room for the pickers' arrows (Greg, 22 Nov), the "You asked for" heading with + New routine,
    and the New routine sheet's text box with its microphone. */
-.routine-field input, .routine-field select { padding: 0 16px; min-width: 132px; }
-.routine-field select { padding-right: 36px; }
-.routine-field input[type=time]::-webkit-calendar-picker-indicator { margin-left: 10px; margin-right: 2px; }
+.routine-field input, .routine-field select { min-width: 150px; padding: 0 46px 0 18px; -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ba3b2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 18px center; background-size: 16px 16px; }
+/* Our own arrow, a fixed 18px in from the end of the pill (Greg, 23 Nov: the phone's sat on the curve); a tap
+   anywhere in the pill opens the picker. */
+.routine-field input[type=time]::-webkit-calendar-picker-indicator { display: none; }
 .routines-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .routines-head .label { margin: 0; }
 .nr-row { display: flex; gap: 8px; align-items: flex-start; }
