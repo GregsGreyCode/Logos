@@ -260,7 +260,7 @@ async def handle_test(request: web.Request) -> web.Response:
     sub = _store(request).get(pushkey)
     if not sub or sub["username"] != user["username"]:
         return web.json_response({"error": "unknown_device"}, status=404)
-    status = await send(request.app["push_session"], sub, {"title": "Logos", "body": "Notifications work on this phone.",
+    status = await send(request.app["push_session"], sub, {"title": "Test notification", "body": "Messages from your agents and groups will arrive like this.",
                                                            "link": "#/home", "room": "test"}, _store(request).vapid_key())
     return web.json_response({"sent": 200 <= status < 300, "status": status})
 

@@ -13,6 +13,9 @@ self.addEventListener('push', (e) => {
     tag: m.room || 'logos',
     renotify: true,
     icon: '/static/apple-touch-icon.png',
+    // The small status-bar icon: Android draws it from the alpha of a one-colour image; without it Chrome
+    // shows a plain bell (Greg, 22 Nov).
+    badge: '/static/badge-96.png',
     data: { link: m.link || '#/home', room: m.room || '' },
   }));
 });
