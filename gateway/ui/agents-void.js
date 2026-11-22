@@ -303,8 +303,22 @@ export async function voidView(root, agents, others = []) {
   field.addEventListener('contextmenu', (e) => { if (e.target.closest('.agent-mark')) e.preventDefault(); });
   field.addEventListener('dragstart', (e) => e.preventDefault());
 
+  // F36 (Greg, 22 Nov): your groups (rooms with an agent and other people, the Household Group) under
+  // the agents, one row each; a group opens like an agent's chat.
+  const groupsBox = h('nav', { class: 'void-groups', 'aria-label': 'Groups', hidden: true });
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, how, field));
+    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, how, field, groupsBox));
+  (async () => {
+    try {
+      const [{ groupsOf }, c] = await Promise.all([import('./chat-mx.js'), mx.get()]);
+      const list = groupsOf(c, agents);
+      if (!alive || !list.length) return;
+      groupsBox.replaceChildren(h('h2', { class: 'label' }, 'Groups'), ...list.map((g) => h('a', { href: g.link, class: 'void-group' },
+        h('span', { class: 'void-group-name' }, g.name),
+        h('span', { class: 'when' }, [...g.people, ...g.agents.map((id) => agents.find((a) => a.matrix_id === id)?.display_name || 'an agent')].join(', ')))));
+      groupsBox.hidden = false;
+    } catch (e) { /* no Matrix in this browser: no groups to show */ }
+  })();
   draw(lastMoods);
   const tick = async () => { const m = await moods(agents); if (alive) draw(m); };
   await tick();
