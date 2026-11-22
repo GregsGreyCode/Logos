@@ -4,7 +4,7 @@
 // or the agent is not running). Click a mark to talk to that agent. In a conversation the marks sit in the
 // header: the current one with its name, the others small, one click to switch. Names show when you point
 // at a mark, or always (Settings; always on a phone). Motion follows Settings: Full, Calm or Still.
-import { h, getJSON, icon, ICONS, when } from './util.js';
+import { h, getJSON, icon, ICONS, when, loading, reveal } from './util.js';
 import * as mx from './mx.js';
 
 // Moods (Greg, 21 Nov): unplugged when the AI computer (LM Studio) is off; asleep when it is on but the
@@ -305,7 +305,8 @@ export async function voidView(root, agents, others = []) {
 
   // Conversations (Greg, 22 Nov): under the agents, each agent's chat and each group (F36), newest first,
   // with its last message and an unread count, so more groups and agents only add rows.
-  const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Conversations', hidden: true });
+  const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Conversations' }, loading('cards', 2));
+  let convShown = false;
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
     h('h1', { class: 'visually-hidden' }, 'Chat'), ask, field, convBox));
   // Today's messages by their time alone; older ones as everywhere else ("Yesterday 18:02").
@@ -361,6 +362,7 @@ export async function voidView(root, agents, others = []) {
       const invites = c.getRooms().filter((r) => r.getMyMembership() === 'invite');
       if (!alive) return;
       const inviter = (r) => { const m = r.getMember(c.getUserId()); const by = m?.events?.member?.getSender?.(); return by ? (r.getMember(by)?.name || by) : ''; };
+      if (!convShown) { convShown = true; reveal(convBox); }
       convBox.replaceChildren(h('div', { class: 'void-convs-head' }, h('h2', { class: 'label' }, 'Conversations'), newBtn),
         ...invites.map((r) => h('div', { class: 'void-group invite' },
           h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name || 'A group'), h('span', { class: 'void-unread' }, 'Invited')),
@@ -374,7 +376,7 @@ export async function voidView(root, agents, others = []) {
           r.unread ? h('span', { class: 'void-unread', 'aria-label': `${r.unread} unread` }, String(r.unread)) : null),
         h('span', { class: 'void-group-last' }, r.text ? `${r.kind === 'group' && r.who ? `${r.who}: ` : r.who === 'You' ? 'You: ' : ''}${r.text}` : 'Nothing said yet'))));
       convBox.hidden = false;
-    } catch (e) { /* no Matrix in this browser: no list to show */ }
+    } catch (e) { convBox.hidden = true; /* no Matrix in this browser: no list to show */ }
   };
   showConvs();
   const convTimer = setInterval(() => { if (document.visibilityState === 'visible') showConvs(); }, 15000);

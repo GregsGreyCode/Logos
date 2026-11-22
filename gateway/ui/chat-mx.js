@@ -7,7 +7,7 @@
 // (agents ignore notices) and the first message inside the thread, so the agent answers there, as its own
 // conversation. Its title is that first message; threads quiet for 30 days leave the list (Greg, 21 Nov).
 // On a phone the conversations are chips above the chat (Greg chose K2).
-import { h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
+import { reveal, h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
 import { clearRoom } from './push.js';
 import { stepsView } from './chat.js';
@@ -125,7 +125,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const isNew = threadId === 'new';
   let alive = true;
   const off = [];
-  const log = h('div', { class: 'log', role: 'log', 'aria-live': 'polite' }, loading());
+  const log = h('div', { class: 'log', role: 'log', 'aria-live': 'polite' }, loading('bubbles', 6));
   const input = h('textarea', { id: 'chat-input', rows: '1', placeholder: isNew ? 'Start a new conversation: its first message is its title'
     : threadId ? 'Reply' : `Message ${agent.display_name}` });
   // The box grows with what is in it, up to about half the screen, so a long message or a voice
@@ -529,8 +529,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     return n;
   }
 
+  let drawnOnce = false;
   function draw(stick) {
     if (!room || !alive) return;
+    if (!drawnOnce) { drawnOnce = true; reveal(log); }
     const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
     const events = eventsNow();
     replyMap = threadReplies();
