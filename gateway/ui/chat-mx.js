@@ -9,6 +9,7 @@
 // On a phone the conversations are chips above the chat (Greg chose K2).
 import { h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
+import { clearRoom } from './push.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
 import { markBar, agentBar, takeVoice } from './agents-void.js';
@@ -553,6 +554,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // Read: tell Matrix this chat has been read up to its newest message (as Element X does), so it
     // leaves Notifications here and on the phone (Greg, 21 Nov). Only while the page is on screen.
     const newest = [...room.getLiveTimeline().getEvents()].reverse().find((e) => e.getId() && !e.getId().startsWith('~') && e.getSender() !== me);
+    if (document.visibilityState === 'visible') clearRoom(room.roomId);   // its phone notification, if any (F37)
     if (newest && newest.getId() !== lastReceipt && document.visibilityState === 'visible') {
       lastReceipt = newest.getId();
       c.sendReadReceipt(newest).catch(() => { lastReceipt = null; });

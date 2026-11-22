@@ -32,6 +32,7 @@ _PUBLIC_PATHS = frozenset({
     "/auth/refresh",
     "/chat_logo.png",
     "/favicon.ico",
+    "/sw.js",          # F37: the service worker (code, no data); the browser fetches it to update
     # "/ws/worker" removed — Plan A refactor (TASKS.md #24) deleted the
     # reverse-connection WebSocket endpoint. Workers are now subprocess-
     # per-sandbox, launched via `openshell sandbox exec` from the host

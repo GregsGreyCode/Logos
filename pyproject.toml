@@ -15,7 +15,8 @@ license = { text = "MIT" }
 dependencies = [
   "aiohttp>=3.9.0",       # the HTTP server and the gateway's own HTTP calls
   "argon2-cffi>=23.1.0",  # password hashes
-  "PyJWT>=2.8",           # session tokens (HS256)
+  "PyJWT>=2.8",           # session tokens (HS256); ES256 for phone notifications (VAPID)
+  "cryptography>=41",     # phone notifications: Web Push encryption and the VAPID key
   "python-dotenv",        # ~/.logos/.env
   "pyyaml",               # agent definitions
 ]
