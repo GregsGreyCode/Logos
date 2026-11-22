@@ -138,7 +138,8 @@ export async function homeView(root) {
 
   // ── Home is yours to arrange (Greg, 22 Nov): widgets in your order, dragged into place in Edit ──
   const WIDGETS = { next: 'Next', weather: 'Weather', calendar: 'Calendar', messages: 'Messages', coming: 'Coming up', lights: 'Lights', lists: 'Lists' };
-  const DEFAULT_WIDGETS = ['next', 'calendar', 'messages', 'lists'];
+  // Everyone starts with Greg's own arrangement (23 Nov), then moves things as they like.
+  const DEFAULT_WIDGETS = ['weather', 'calendar', 'messages', 'next', 'lists', 'lights', 'coming'];
   const chosen = () => {
     const w = getPref('widgets', null);
     if (!Array.isArray(w)) return DEFAULT_WIDGETS;
