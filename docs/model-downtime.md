@@ -27,6 +27,17 @@ fallback: agents wait, and nothing is lost. People see this as "the AI computer 
     "Context size has been exceeded".
   - After one full minute in vain, it answers "off" at once for the next 2 minutes, so hermes'
     own retries do not each wait another minute.
+  - It watches each reply's thinking as it streams (F33). Thinking that goes round in circles
+    compresses far better than real thinking, so when the newest 12,000 characters compress 8 times
+    or more (`GUARD_LOOP_RATIO`; real replies stay under 5, loops score 27 or more) it drops the
+    connection. hermes takes that as a dropped stream and asks again by itself, and the guard sends
+    that same request on with a little more temperature (+0.3) so it does not loop the same way.
+    Answers are not watched: hermes's own check covers them. Each chat log line has `loop_ratio`,
+    and a cut logs `"status": "loop_cut"`.
+  - `/guard/health` lists the replies streaming now (`live`: seconds, thinking and answer
+    characters, loop score; numbers only). The chat's "is thinking" line reads it through
+    `GET /api/v2/models/progress`: after a minute it shows the time since your message and how far
+    the reply has got.
   - `GET /guard/health` tests the connection to LM Studio (for at most a second, so it answers
     inside the dashboard's 3 s limit) and says since when it is off.
 - **`logos-waitlist`** (`infra/agent-plugins/logos-waitlist/`): a hermes plugin that `logos-agent

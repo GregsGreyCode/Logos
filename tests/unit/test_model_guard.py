@@ -415,3 +415,136 @@ def test_a_caller_that_hangs_up_leaves_no_traceback(capsys):
     finally:
         g.shutdown()
     assert "Traceback" not in capsys.readouterr().err
+
+
+# ── F33: the loop watch ───────────────────────────────────────────────────────
+
+LOOP = ("Wait, the user asked about holding the button. Let me check that again. Actually, hold, then "
+        "swipe up to send or down to cancel. But is that what they meant? Let me re-read. ")
+def _thinking(n=400, seed=7):
+    """Varied, non-repeating text standing in for real thinking (real replies score under 5)."""
+    import random
+    rnd = random.Random(seed)
+    words = ("the user asked about calendar events tomorrow morning dentist appointment bins collection "
+             "rent payment trains delayed Béré wedding tiles kitchen budget shopping list milk eggs check "
+             "whether brain page notes mention previous conversation answer briefly politely include time "
+             "source date maybe ask clarify first second third option better worse because however then").split()
+    return [" ".join(rnd.choice(words) for _ in range(rnd.randint(12, 30))) + ". " for _ in range(n)]
+
+
+THINK = _thinking()
+
+
+class Thinker(BaseHTTPRequestHandler):
+    """Streams thinking as LM Studio does, looping or not, then an answer. Records each request body."""
+    protocol_version = "HTTP/1.1"
+    pieces: list = []
+    bodies: list = []
+    delay = 0.0
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        Thinker.bodies.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        try:
+            for piece in Thinker.pieces + ["\n\n"]:
+                time.sleep(Thinker.delay)
+                ev = b"data: " + json.dumps({"choices": [{"delta": {"reasoning_content": piece}}]}).encode() + b"\n\n"
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(ev), ev)); self.wfile.flush()
+            for ev in (b'data: {"choices": [{"delta": {"content": "Hold, then swipe up."}}]}\n\n', b"data: [DONE]\n\n"):
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(ev), ev))
+            self.wfile.write(b"0\r\n\r\n")
+        except OSError:
+            pass
+
+
+def guard_on(up, logs):
+    return serve(model_guard.make_handler(f"http://127.0.0.1:{up.server_address[1]}",
+                                          log=lambda line, **_: logs.append(line)))
+
+
+def test_the_loop_score_tells_thinking_from_circles():
+    assert model_guard.compress_ratio("".join(THINK)[-model_guard.LOOP_WINDOW:]) < 5
+    assert model_guard.compress_ratio((LOOP * 200)[-model_guard.LOOP_WINDOW:]) > 20
+
+
+def test_thinking_that_loops_is_cut_without_a_closing_chunk():
+    import httpx
+    Thinker.pieces, Thinker.bodies, logs = [LOOP] * 400, [], []
+    up = serve(Thinker); g = guard_on(up, logs)
+    try:
+        with pytest.raises(httpx.RemoteProtocolError):   # what hermes sees: a dropped stream, which it retries
+            with httpx.stream("POST", f"http://127.0.0.1:{g.server_address[1]}/v1/chat/completions",
+                              json={"model": "qwen/q", "stream": True}, timeout=10) as r:
+                got = b"".join(r.iter_bytes())
+        time.sleep(0.2)
+        line = json.loads(logs[-1])
+        assert line["status"] == "loop_cut" and line["loop_ratio"] >= model_guard.LOOP_RATIO
+        assert line["chars"] < len(LOOP) * 400 / 2         # cut early, not at the end
+    finally:
+        g.shutdown(); up.shutdown()
+
+
+def test_the_same_request_after_a_cut_goes_a_little_warmer():
+    import httpx
+    Thinker.pieces, Thinker.bodies, logs = [LOOP] * 400, [], []
+    up = serve(Thinker); g = guard_on(up, logs)
+    url = f"http://127.0.0.1:{g.server_address[1]}/v1/chat/completions"
+    req = {"model": "qwen/q", "stream": True, "messages": [{"role": "user", "content": "voice notes?"}]}
+    try:
+        for _ in range(2):
+            with pytest.raises(httpx.RemoteProtocolError):
+                with httpx.stream("POST", url, json=req, timeout=10) as r:
+                    b"".join(r.iter_bytes())
+        Thinker.pieces = THINK[:50]                     # a fresh question is not warmed
+        with httpx.stream("POST", url, json={**req, "messages": [{"role": "user", "content": "other"}]}, timeout=10) as r:
+            b"".join(r.iter_bytes())
+        temps = [b.get("temperature") for b in Thinker.bodies]
+        assert temps == [None, 0.9, None]
+    finally:
+        g.shutdown(); up.shutdown()
+
+
+def test_long_real_thinking_and_its_answer_pass_whole():
+    Thinker.pieces, Thinker.bodies, logs = THINK, [], []
+    up = serve(Thinker); g = guard_on(up, logs)
+    try:
+        body = post(g.server_address[1]).read()
+        assert body.endswith(b"data: [DONE]\n\n") and b"swipe up" in body
+        time.sleep(0.2)
+        line = json.loads(logs[-1])
+        assert line["status"] == 200 and 0 < line["loop_ratio"] < model_guard.LOOP_RATIO
+    finally:
+        g.shutdown(); up.shutdown()
+
+
+def test_a_repetitive_answer_is_not_watched():
+    # A long list in the answer can repeat itself and still be right; only thinking is watched.
+    w = model_guard.LoopWatch()
+    ev = b'data: ' + json.dumps({"choices": [{"delta": {"content": LOOP}}]}).encode() + b"\n\n"
+    assert not any(w.feed(ev) for _ in range(400))
+
+
+def test_health_shows_each_streaming_reply_as_numbers_only():
+    Thinker.pieces, Thinker.bodies, Thinker.delay, logs = THINK[:30], [], 0.05, []
+    up = serve(Thinker); g = guard_on(up, logs)
+    try:
+        t = threading.Thread(target=lambda: post(g.server_address[1], timeout=20).read(), daemon=True)
+        t.start(); time.sleep(0.8)
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+        conn.request("GET", "/guard/health")
+        live = json.loads(conn.getresponse().read())["live"]
+        assert len(live) == 1 and live[0]["who"] == "person" and live[0]["thinking_chars"] > 0
+        assert live[0]["answer_chars"] == 0 and set(live[0]) == {"seconds", "who", "thinking_chars", "answer_chars", "loop_ratio"}
+        t.join(10)
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=5)
+        conn.request("GET", "/guard/health")
+        assert json.loads(conn.getresponse().read())["live"] == []      # gone once it finished
+    finally:
+        Thinker.delay = 0.0
+        g.shutdown(); up.shutdown()
