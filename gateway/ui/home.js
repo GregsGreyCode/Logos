@@ -176,28 +176,64 @@ export async function homeView(root) {
       h('button', { type: 'button', class: 'linkish', onclick: () => switchLights(['everything'], false) }, 'All off')), lightsBox, lightsNote);
   async function switchLights(targets, value, brightness) {
     lightsNote.textContent = '';
-    for (const b of lightsSec.querySelectorAll('button, input')) b.disabled = true;
+    for (const b of lightsSec.querySelectorAll('button')) b.disabled = true;
+    lightsSec.classList.add('busy');
     const r = await api('/api/v2/home/lights', { method: 'POST', body: { targets, on: value, ...(brightness ? { brightness } : {}) } }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
+    lightsSec.classList.remove('busy');
     if (!r || !r.ok) lightsNote.textContent = d.message || 'The lights did not answer just now.';
     drawLights(d.rooms ? d : await getJSON('/api/v2/home/lights').catch(() => ({})));
   }
   function drawLights(d) {
     if (!d || d.error || !d.rooms) { lightsBox.replaceChildren(h('p', { class: 'when' }, d && d.error === 'no_house' ? 'No agent here can work the lights.' : 'The lights could not be read just now.')); return; }
-    // A tap switches the room; a lit room also has a slider for how bright (Greg, 22 Nov), set when let go.
+    // Each room is a pill (Greg, 23 Nov): a tap switches it; sliding along it sets how bright, the pill
+    // filling as the finger moves (from off too), set when let go. Up and down still scrolls the page.
     lightsBox.replaceChildren(...d.rooms.map((r) => {
-      const tile = h('div', { class: `home-light${r.on ? ' lit' : ''}` },
-        h('button', { type: 'button', class: 'home-light-switch', 'aria-pressed': String(!!r.on),
-          title: r.on ? `Turn ${r.room} off` : `Turn ${r.room} on`, onclick: () => switchLights([r.room], !r.on) },
-        h('span', { class: 'home-light-name' }, r.room),
-        h('span', { class: 'when' }, r.on ? (r.brightness ? `${r.brightness}%` : `${r.on} of ${r.of} on`) : 'off')));
-      if (r.on) {
-        const level = h('input', { type: 'range', class: 'home-light-level', min: '1', max: '100', step: '1', value: String(r.brightness || 100),
-          'aria-label': `${r.room} brightness` });
-        level.addEventListener('input', () => { tile.querySelector('.when').textContent = `${level.value}%`; });
-        level.addEventListener('change', () => switchLights([r.room], true, Number(level.value)));
-        tile.append(level);
-      }
+      const level = r.on ? (r.brightness || 100) : 0;
+      const fill = h('span', { class: 'home-light-fill', 'aria-hidden': 'true' });
+      const words = h('span', { class: 'when' }, r.on ? (r.brightness ? `${r.brightness}%` : `${r.on} of ${r.of} on`) : 'off');
+      const tile = h('div', { class: `home-light${r.on ? ' lit' : ''}`, role: 'slider', tabindex: '0', 'aria-label': `${r.room} brightness`,
+        'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(level), 'aria-valuetext': r.on ? `${level}%` : 'off',
+        title: 'Tap to switch, slide to dim or brighten' },
+      fill, h('span', { class: 'home-light-name' }, r.room), words);
+      const show = (pct) => { fill.style.width = `${pct}%`; tile.classList.toggle('lit', pct > 0); words.textContent = pct ? `${pct}%` : 'off';
+        tile.setAttribute('aria-valuenow', String(pct)); tile.setAttribute('aria-valuetext', pct ? `${pct}%` : 'off'); };
+      fill.style.width = `${level}%`;
+      let g = null;
+      tile.addEventListener('pointerdown', (e) => {
+        if (e.button > 0) return;
+        g = { id: e.pointerId, x: e.clientX, y: e.clientY, sliding: false, pct: level, rect: tile.getBoundingClientRect() };
+      });
+      tile.addEventListener('pointermove', (e) => {
+        if (!g || e.pointerId !== g.id) return;
+        const dx = e.clientX - g.x, dy = e.clientY - g.y;
+        if (!g.sliding) {
+          if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { g = null; return; }      // a scroll
+          if (Math.abs(dx) < 8) return;
+          g.sliding = true; tile.classList.add('sliding');
+          try { tile.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+        }
+        g.pct = Math.max(0, Math.min(100, Math.round(((e.clientX - g.rect.left) / g.rect.width) * 100)));
+        show(g.pct);
+      });
+      const end = (e) => {
+        if (!g || e.pointerId !== g.id) return;
+        const was = g; g = null; tile.classList.remove('sliding');
+        if (!was.sliding) { switchLights([r.room], !r.on); return; }                     // a tap
+        if (was.pct === 0) switchLights([r.room], false);
+        else switchLights([r.room], true, Math.max(1, was.pct));
+      };
+      tile.addEventListener('pointerup', end);
+      tile.addEventListener('pointercancel', () => { g = null; tile.classList.remove('sliding'); show(level); });
+      tile.addEventListener('keydown', (e) => {                                            // keyboard: arrows, Enter
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchLights([r.room], !r.on); return; }
+        const step = { ArrowRight: 10, ArrowUp: 10, ArrowLeft: -10, ArrowDown: -10 }[e.key];
+        if (!step) return;
+        e.preventDefault();
+        const pct = Math.max(0, Math.min(100, (Number(tile.getAttribute('aria-valuenow')) || 0) + step));
+        show(pct);
+        clearTimeout(tile._t); tile._t = setTimeout(() => (pct ? switchLights([r.room], true, pct) : switchLights([r.room], false)), 500);
+      });
       return tile;
     }));
   }

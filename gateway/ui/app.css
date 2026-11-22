@@ -1677,12 +1677,17 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .home-sec-head .label { margin: 0; }
 .home-lights { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 6px; }
-.home-light { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-height: 52px;
-  border: 1px solid var(--line); border-radius: var(--r-card); background: transparent; color: var(--ink); user-select: none; }
-.home-light-switch { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 0; border: 0; background: none;
-  color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.home-light-level { width: 100%; accent-color: #ffd166; touch-action: pan-y; }
-.home-light.lit { background: color-mix(in srgb, #ffd166 18%, var(--surface)); border-color: color-mix(in srgb, #ffd166 55%, var(--line)); }
+.home-light { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; min-height: 56px;
+  border: 1px solid var(--line); border-radius: var(--r-card); background: transparent; color: var(--ink); user-select: none;
+  touch-action: pan-y; cursor: ew-resize; -webkit-tap-highlight-color: transparent; }
+.home-light > :not(.home-light-fill) { position: relative; }
+.home-light-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: color-mix(in srgb, #ffd166 28%, var(--surface));
+  transition: width .25s cubic-bezier(.2, .8, .2, 1); }
+.home-light.sliding .home-light-fill { transition: none; }
+.home-light.lit { border-color: color-mix(in srgb, #ffd166 55%, var(--line)); }
+.home-light:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.home-lights-sec.busy .home-light { opacity: .7; pointer-events: none; }
+[data-anim="off"] .home-light-fill { transition: none; }
 .home-light-name { font-weight: 600; }
 /* Home is yours to arrange (Greg, 22 Nov): Edit Home, drag by the handle, ✕ to take off, Add to put back. */
 .home-widgets { display: flex; flex-direction: column; gap: 22px; }
