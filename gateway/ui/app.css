@@ -1618,3 +1618,13 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .notifications .feed-days > section + section { margin-top: 14px; }
 .notifications .feed-days .label { margin: 0 0 2px; }
 .feed-caught { margin: 0; color: var(--muted); font-size: var(--t-sm); }
+/* F36 part 2: New group, and invitations in Conversations. */
+.void-convs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.void-new { font-size: var(--t-sm); }
+.void-group.invite { border-style: dashed; }
+.void-group.invite .row { display: flex; gap: 8px; margin-top: 6px; }
+.void-newgroup { position: relative; z-index: 2; max-width: 520px; margin: 0 auto; padding: 0 16px 16px; width: 100%; }
+.void-newgroup form { padding: 14px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.ng-picks { display: flex; flex-direction: column; gap: 6px; }
+.ng-pick { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.ng-pick input { width: 20px; height: 20px; }
