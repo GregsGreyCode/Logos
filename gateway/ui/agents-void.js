@@ -4,7 +4,7 @@
 // or the agent is not running). Click a mark to talk to that agent. In a conversation the marks sit in the
 // header: the current one with its name, the others small, one click to switch. Names show when you point
 // at a mark, or always (Settings; always on a phone). Motion follows Settings: Full, Calm or Still.
-import { h, getJSON, icon, ICONS } from './util.js';
+import { h, getJSON, icon, ICONS, when } from './util.js';
 import * as mx from './mx.js';
 
 // Moods (Greg, 21 Nov): unplugged when the AI computer (LM Studio) is off; asleep when it is on but the
@@ -96,7 +96,10 @@ export async function voidView(root, agents, others = []) {
   const field = h('div', { class: 'void-field' });
   const ask = h('p', { class: 'void-ask' }, 'Who do you want to talk to?');
   // How it works, said once under the question (Greg, 21 Nov).
-  const how = h('p', { class: 'void-how' }, 'Tap to chat · hold to move', h('br'), 'Hold longer for a voice note: swipe up to send');
+  // Said on the first three visits only (Greg, 22 Nov: once learnt, two lines of help every time is noise).
+  let visits = 0;
+  try { visits = Number(localStorage.getItem('logos.void.visits') || 0) + 1; localStorage.setItem('logos.void.visits', String(visits)); } catch (e) { /* no storage: always say it */ }
+  const how = h('p', { class: 'void-how', hidden: visits > 3 }, 'Tap to chat · hold to move', h('br'), 'Hold longer for a voice note: swipe up to send');
   // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
   // off to the left). Yours first, then the private ones, unless the person has moved them.
   const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
@@ -303,27 +306,34 @@ export async function voidView(root, agents, others = []) {
   field.addEventListener('contextmenu', (e) => { if (e.target.closest('.agent-mark')) e.preventDefault(); });
   field.addEventListener('dragstart', (e) => e.preventDefault());
 
-  // F36 (Greg, 22 Nov): your groups (rooms with an agent and other people, the Household Group) under
-  // the agents, one row each; a group opens like an agent's chat.
-  const groupsBox = h('nav', { class: 'void-groups', 'aria-label': 'Groups', hidden: true });
+  // Conversations (Greg, 22 Nov): under the agents, each agent's chat and each group (F36), newest first,
+  // with its last message and an unread count, so more groups and agents only add rows.
+  const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Conversations', hidden: true });
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, how, field, groupsBox));
-  (async () => {
+    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, how, field, convBox));
+  // Today's messages by their time alone; older ones as everywhere else ("Yesterday 18:02").
+  const short = (ms) => (new Date(ms).toDateString() === new Date().toDateString()
+    ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : when(ms / 1000));
+  const showConvs = async () => {
     try {
-      const [{ groupsOf }, c] = await Promise.all([import('./chat-mx.js'), mx.get()]);
-      const list = groupsOf(c, agents);
+      const [{ conversationsOf }, c] = await Promise.all([import('./chat-mx.js'), mx.get()]);
+      const list = conversationsOf(c, agents);
       if (!alive || !list.length) return;
-      groupsBox.replaceChildren(h('h2', { class: 'label' }, 'Groups'), ...list.map((g) => h('a', { href: g.link, class: 'void-group' },
-        h('span', { class: 'void-group-name' }, g.name),
-        h('span', { class: 'when' }, [...g.people, ...g.agents.map((id) => agents.find((a) => a.matrix_id === id)?.display_name || 'an agent')].join(', ')))));
-      groupsBox.hidden = false;
-    } catch (e) { /* no Matrix in this browser: no groups to show */ }
-  })();
+      convBox.replaceChildren(h('h2', { class: 'label' }, 'Conversations'), ...list.map((r) => h('a', { href: r.link, class: `void-group${r.unread ? ' unread' : ''}` },
+        h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name),
+          h('span', { class: 'when' }, r.ts ? short(r.ts) : ''),
+          r.unread ? h('span', { class: 'void-unread', 'aria-label': `${r.unread} unread` }, String(r.unread)) : null),
+        h('span', { class: 'void-group-last' }, r.text ? `${r.kind === 'group' && r.who ? `${r.who}: ` : r.who === 'You' ? 'You: ' : ''}${r.text}` : 'Nothing said yet'))));
+      convBox.hidden = false;
+    } catch (e) { /* no Matrix in this browser: no list to show */ }
+  };
+  showConvs();
+  const convTimer = setInterval(() => { if (document.visibilityState === 'visible') showConvs(); }, 15000);
   draw(lastMoods);
   const tick = async () => { const m = await moods(agents); if (alive) draw(m); };
   await tick();
   const t = setInterval(tick, 8000);
-  return () => { alive = false; clearInterval(t); if (g) { if (g.rec) { g.send = false; g.rec.stop(); } finish(); } };
+  return () => { alive = false; clearInterval(t); clearInterval(convTimer); if (g) { if (g.rec) { g.send = false; g.rec.stop(); } finish(); } };
 }
 
 // In a conversation: the current agent's mark and name, then the others, small, one click to switch.

@@ -3,6 +3,7 @@
 import { h, getJSON, when, none, loading, aiState } from './util.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
+import { unreadFromAgents } from './notify.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
 const ASK_KEY = 'logos-ask';           // Chat picks the question up from here and sends it
@@ -19,21 +20,40 @@ export async function homeView(root) {
   const statusWords = h('p', { class: 'when home-status', hidden: true, id: 'home-status-words' });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
   const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
-  // A live strip of figures (L6), in every look since 21 Nov (Greg): agents working, how fast the AI
-  // computer answers, and messages waiting their turn.
-  const strip = h('div', { class: 'hud-strip', 'aria-label': 'Live figures' });
-  const cell = (label, value, unit, live) => h('div', { class: 'hud-cell' }, h('span', {}, label),
-    h('strong', { class: live ? 'live' : null }, value, unit ? h('small', {}, ` ${unit}`) : null));
-  async function showStrip() {
-    const [local, act] = await Promise.all([getJSON('/api/v2/models/local').catch(() => null),
-      getJSON('/api/v2/activity').catch(() => null)]);
+  // Greg, 22 Nov: the figures (agents working, AI speed, queue) left Home; they are for whoever runs
+  // Logos (Models), not for the day. In their place, what helps Béré as much as Greg: what is next,
+  // and the messages from your agents and groups you have not read.
+  const nextUp = h('div', { class: 'home-next', hidden: true });
+  const msgBox = h('div', { class: 'home-msgs' });
+  const msgSec = h('section', { class: 'home-messages', 'aria-label': 'Messages', hidden: true },
+    h('h2', { class: 'label' }, 'Messages'), msgBox);
+  async function showMessages() {
+    let items = [];
+    try {
+      const agents = (await getJSON('/api/v2/agents')).agents || [];
+      items = (await unreadFromAgents(agents)).sort((a, b) => b.ts - a.ts);
+    } catch (e) { return; }
     if (!alive) return;
-    const q = local && local.queue, sp = local && local.speed && (local.speed.alone || {});
-    strip.replaceChildren(
-      cell('Working', act ? String(act.working.length) : '–', act && act.working.length === 1 ? 'agent' : 'agents', act && act.working.length),
-      cell('AI speed', sp && sp.median_tokens_per_s ? String(Math.round(sp.median_tokens_per_s)) : '–', 'tok/s'),
-      // Just what is waiting: what is running is the Working tile (Greg, 21 Nov: the longer words broke the tile).
-      cell('Queue', q ? String(q.waiting) : '–', 'waiting'));
+    // One row per chat (its newest unread message), at most three.
+    const seen = new Set();
+    const rows = items.filter((i) => !seen.has(i.link) && seen.add(i.link)).slice(0, 3);
+    msgSec.hidden = !rows.length;
+    msgBox.replaceChildren(...rows.map((i) => h('a', { class: 'home-msg', href: i.link },
+      h('span', { class: 'home-msg-head' }, h('strong', {}, i.title), h('span', { class: 'when' }, new Date(i.ts * 1000).toDateString() === new Date().toDateString()
+        ? new Date(i.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : when(i.ts))),
+      h('span', { class: 'home-msg-text' }, i.text))));
+  }
+  // "Next · 15:00 Call Maman · in 40 min": the next timed event today, while it is still to come.
+  function showNext(today) {
+    const now = new Date();
+    const next = (today && !today.error ? today.events : []).filter((e) => !e.all_day && String(e.start).startsWith(today.date))
+      .map((e) => ({ e, at: new Date(String(e.start).replace(' ', 'T')) })).filter((x) => x.at > now)
+      .sort((a, b) => a.at - b.at)[0];
+    nextUp.hidden = !next;
+    if (!next) return;
+    const mins = Math.round((next.at - now) / 60000);
+    const inWords = mins < 60 ? `in ${mins} min` : mins < 120 ? 'in an hour' : `in ${Math.round(mins / 60)} hours`;
+    nextUp.replaceChildren(h('span', { class: 'label' }, 'Next'), h('strong', {}, `${timeOf(next.e)} ${next.e.title}`), h('span', { class: 'when' }, inWords));
   }
 
   let data = null;
@@ -98,11 +118,13 @@ export async function homeView(root) {
       const rest = String(loc).replace(url[0], '').replace(/[\s,·-]+$/, '').trim();
       return h('span', {}, ` · ${rest ? `${rest} · ` : ''}`, h('a', { href: url[0], target: '_blank', rel: 'noopener' }, label));
     };
+    // Two lines an event (Greg, 22 Nov: three lines each filled the screen): the time and title, then
+    // whose (its colour dot) and where.
     const row = (e) => h('div', { class: 'home-row' },
       h('span', { class: 'home-time' }, timeOf(e)),
-      h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, h('span', {}, e.title),
-        h('span', { class: 'home-meta' }, whose(e), place(e.location))));
+        h('span', { class: 'home-meta' }, h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
+          whose(e), place(e.location))));
     // Today and Tomorrow side by side, on a phone too (Greg, 21 Nov): each its own column.
     const col = (label, list, empty) => h('div', { class: 'home-list home-day' },
       h('h3', { class: 'sub-label' }, label), ...(list.length ? list.map(row) : [none(empty)]));
@@ -145,9 +167,10 @@ export async function homeView(root) {
     waitingBox.replaceChildren(...(nb.waiting.length ? nb.waiting.map((m) => requestCard(m, doing, load))
       : [none('Nothing is waiting on you.')]));
     showToday(data.today);
+    showNext(data.today);
     // "Since yesterday" lives in Notifications now (Greg, 21 Nov).
     waitingSec.hidden = !nb.waiting.length;
-    showStrip();
+    showMessages();
     showLists();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
@@ -167,8 +190,8 @@ export async function homeView(root) {
     h('header', { class: 'home-head' },
       h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY))), statusWords),
     waitingSec,
-    h('section', { 'aria-label': 'Calendar' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox),
-    strip,
+    h('section', { 'aria-label': 'Calendar', class: 'home-cal' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), nextUp, todayBox),
+    msgSec,
     listsSec,
     askForm));                                   // at the bottom (Greg, 21 Nov)                                   // under Today and Tomorrow (Greg, 21 Nov)
 
