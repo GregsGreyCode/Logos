@@ -74,6 +74,7 @@ def adapter_class():
             return body, True, "dm", None, "Greg", types.SimpleNamespace(chat_id=room_id, user_id=sender)
 
         async def _build_inbound_event(self, room_id, sender, event_id, body, content, relates, ctx=None, **extra):
+            body = ctx[0]                       # as hermes does: the text comes from the context
             return types.SimpleNamespace(text=body, message_id=event_id, source=ctx[5],
                                          reply_to_message_id=None, reply_to_text=None, reply_to_author_id=None)
 
@@ -135,6 +136,7 @@ def test_question_mark_and_repeat_start_a_turn_as_a_reply(rx):
     assert [e.text for e in a.handled] == ["Explain that more.", "Try that again a different way."]
     assert all(e.reply_to_message_id == eid and e.reply_to_text == REPLY and e.reply_to_author_id == BOT
                for e in a.handled)
+    assert all(e.message_id == eid for e in a.handled)     # a real event, for hermes's 👀 / ✅
     assert rx._note_for_next_turn(session_id="sess-1") is None
 
 

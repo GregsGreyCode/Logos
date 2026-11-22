@@ -160,8 +160,13 @@ async def on_reaction(adapter, room_id: str, reacts_to: str, key: str, sender: s
     text = _lookup(room_id, reacts_to)
     if not text:
         return False
+    emoji = plain(key)
+    command = COMMANDS.get(emoji)
+    body = command or ""
+    content = {"msgtype": "m.text", "body": body}
     # The reaction addresses the agent as plainly as an @mention would (group rooms ask for one).
-    ctx = await adapter._resolve_message_context(room_id, sender, reacts_to, "", {}, {}, mention_claimed=True)
+    # hermes takes the message text from this context, not from what _build_inbound_event is given.
+    ctx = await adapter._resolve_message_context(room_id, sender, reacts_to, body, content, {}, mention_claimed=True)
     if ctx is None:
         return True
     display_name, source = ctx[4], ctx[5]
@@ -169,11 +174,10 @@ async def on_reaction(adapter, room_id: str, reacts_to: str, key: str, sender: s
         _log("refused", room=room_id[:12])
         return True
     name = display_name or sender
-    emoji = plain(key)
-    command = COMMANDS.get(emoji)
     if command:
-        event = await adapter._build_inbound_event(
-            room_id, sender, f"{reacts_to}:{emoji}", command, {"msgtype": "m.text", "body": command}, {}, ctx=ctx)
+        # The turn's id is the reacted message's: hermes puts its 👀 / ✅ on it. An id of no real
+        # event showed in Element X as two "Unsupported event" lines (22 Nov).
+        event = await adapter._build_inbound_event(room_id, sender, reacts_to, body, content, {}, ctx=ctx)
         if event is not None:
             event.reply_to_message_id = reacts_to
             event.reply_to_text = text
