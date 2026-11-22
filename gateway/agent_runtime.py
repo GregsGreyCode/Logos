@@ -157,15 +157,28 @@ def _sibling(module: str):
 
 
 
+# Logos's own model jobs carry this line. The logos-job-limits plugin refuses send_message in a job
+# whose prompt has it (22 Nov: Béré's digest went to the household agent). Jobs a person set up in
+# chat ("every Friday remind Béré's agent…") do not have it: that sending is the person's own ask.
+LOGOS_JOB_MARK = "[Logos job: its reply goes to your person only; it sends nothing to anyone else.]"
+
+
+def logos_job(path: Path) -> str:
+    return f"{LOGOS_JOB_MARK}\n\n{Path(path).read_text()}"
+
+
 def digest_prompt(jobs_dir: Path, agent: Mapping[str, Any]) -> str:
     """The weekly digest's instructions. Only the household agent's is about the household (22 Nov:
     a line for it in everyone's instructions read, to Béré's agent, like "send it to the household
     agent", and her week went there)."""
-    text = (Path(jobs_dir) / "weekly_digest.md").read_text()
+    text = logos_job(Path(jobs_dir) / "weekly_digest.md")
     if agent.get("role") == "household":
+        # Greg, 22 Nov: the household's recap is about the household, never about one person.
         text += ('\nYou are the household agent and this goes to the household group chat: start with '
-                 '"**The household\'s week, ...**" instead of "Your week", and keep to shared household '
-                 'matters.\n')
+                 '"**The household\'s week, ...**" instead of "Your week". Include only what belongs to the '
+                 'household: the house, the shared lists, shared plans and dates. Leave out anything about '
+                 'one person alone (their memories, hobbies, health, work or plans), even if it reached you '
+                 'from their agent.\n')
     return text
 
 class AgentRuntimeError(Exception):
@@ -708,7 +721,7 @@ class AgentRuntime:
             self.sbx(name, f'{HERMES} cron create --name consolidate --monitor-script brain_inbox_state.sh '
                            f'--workdir /opt/data/brain --timezone {tz} --continuity --deliver local {model}'
                            f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
-                     input=(self.jobs_dir / "consolidate.md").read_text())
+                     input=logos_job(self.jobs_dir / "consolidate.md"))
         digest = agent.get("digest") or {}
         if digest.get("enabled", True) and delivery(agent) != "local":
             # Sunday evening: what the brain learned this week, sent to the person.
@@ -723,7 +736,7 @@ class AgentRuntime:
             self.sbx(name, f'{HERMES} cron create --name noticeboard-check '
                            f'--monitor-script noticeboard_state.py --timezone {tz} '
                            f'--deliver {deliver} --failure-deliver local "*/10 * * * *" "$(cat)"',
-                     input=(self.jobs_dir / "noticeboard_check.md").read_text())
+                     input=logos_job(self.jobs_dir / "noticeboard_check.md"))
             # Every minute, no model: an urgent message is shown to the person at once.
             self.sbx(name, f'{HERMES} cron create --name noticeboard-urgent --no-agent '
                            f'--script noticeboard_urgent.py --timezone {tz} --deliver {deliver} '
@@ -732,7 +745,7 @@ class AgentRuntime:
         if brief:
             # Story C4: the day ahead, sent in the morning. The script puts today's weather and events
             # into the prompt; a morning missed while the machine was off is skipped, never sent late.
-            prompt = (self.jobs_dir / "morning_briefing.md").read_text()
+            prompt = logos_job(self.jobs_dir / "morning_briefing.md")
             for job, when in (("morning-briefing", brief["weekdays"]), ("morning-briefing-weekend", brief["weekends"])):
                 self.sbx(name, f'{HERMES} cron create --name {job} --script briefing_today.py '
                                f'--workdir /opt/data/brain --timezone {tz} --catch-up off '
@@ -769,7 +782,7 @@ class AgentRuntime:
                 self.sbx(name, f'{HERMES} cron create --name {job} --script {script} --workdir /opt/data/brain '
                                f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
                                f'--failure-deliver local "{when}" "$(cat)"',
-                         input=(self.jobs_dir / "changes_summary.md").read_text())
+                         input=logos_job(self.jobs_dir / "changes_summary.md"))
         self.sbx(name, f"{HERMES_PY} restore")
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")
