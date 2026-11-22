@@ -10,6 +10,7 @@
 import { reveal, h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
 import { clearRoom } from './push.js';
+import { voiceNote, imageThumb, fileCard, sendFile, fileSize } from './media.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
 import { markBar, agentBar, takeVoice } from './agents-void.js';
@@ -154,8 +155,32 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     thinkingMore);
   const modelLine = h('div', { class: 'model-line down', role: 'status', hidden: agent.model_up !== false },
     'AI computer off · your message will queue');
+  // 📎 (Greg, 22 Nov): a photo or a file, shown first with Send and ✕; on a phone the picker offers the camera.
+  const picker = h('input', { type: 'file', class: 'visually-hidden', tabindex: '-1', 'aria-hidden': 'true',
+    accept: 'image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.md' });
+  const attach = h('button', { type: 'button', class: 'mx-attach', 'aria-label': 'Send a photo or a file', title: 'Send a photo or a file',
+    onclick: () => picker.click() }, icon(ICONS.clip));
+  const pending = h('div', { class: 'mx-pending', hidden: true });
+  picker.addEventListener('change', () => {
+    const f = picker.files && picker.files[0];
+    picker.value = '';
+    if (!f) return;
+    if (f.size > 45 * 1024 * 1024) { note.textContent = 'That file is too big to send (45 MB at most).'; return; }
+    const preview = f.type.startsWith('image/') ? h('img', { class: 'mx-pending-img', alt: '', src: URL.createObjectURL(f) }) : h('span', { class: 'mx-file-ico' }, icon(ICONS.file));
+    const go = h('button', { type: 'button', class: 'btn small', onclick: async () => {
+      go.disabled = true; note.textContent = `Sending ${f.name}…`;
+      try {
+        const extra = group ? (() => { const g = groupMessage(''); return { 'm.mentions': g['m.mentions'] || {} }; })() : {};
+        await sendFile(c, room.roomId, f, { threadId: threadId && !isNew ? threadId : null, extra });
+        note.textContent = ''; pending.hidden = true; pending.replaceChildren();
+      } catch (err) { note.textContent = `Not sent: ${err.message}`; go.disabled = false; }
+    } }, 'Send');
+    pending.replaceChildren(preview, h('span', { class: 'mx-pending-text' }, h('strong', {}, f.name), h('span', { class: 'when' }, fileSize(f.size))),
+      go, h('button', { type: 'button', class: 'btn quiet small', 'aria-label': 'Do not send it', onclick: () => { pending.hidden = true; pending.replaceChildren(); } }, '✕'));
+    pending.hidden = false;
+  });
   const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); sendText(input.value); } },
-    h('label', { for: 'chat-input', class: 'sr' }, 'Message'), input, send);
+    h('label', { for: 'chat-input', class: 'sr' }, 'Message'), attach, picker, input, send);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(input.value); } });
   const idle = () => send.classList.toggle('idle', !input.value.trim());
   input.addEventListener('input', idle);
@@ -230,7 +255,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         threadId || group ? null : agentBar(agent, 'chat'),
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
         sideBits.viewMenu || null, sideBits.convBtn || null),
-      group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, form),
+      group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, pending, form),
     sideBits.side, sideBits.sideScrim || null, sideBits.reopen || null);
 
   // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
@@ -278,7 +303,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const fromWhere = (ev) => {
     if (ev.status) return ev.status === 'not_sent' ? 'not sent' : 'sending…';
     const key = ev.getSenderKey && ev.getSenderKey();
-    if (!key || key === ownKey) return 'sent · also in Element X';
+    if (!key || key === ownKey) return 'sent';
     const name = deviceNames.get(key);
     if (!name && !looking) { looking = true; readNames().then(() => { looking = false; redraw(); }); }
     return name ? `from ${name}` : 'from another of your devices';
@@ -315,7 +340,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   }
   if (!room) {
     log.replaceChildren(h('div', { class: 'empty' }, h('h1', {}, `No room with ${agent.display_name} yet`),
-      h('p', {}, 'Start the conversation here; it appears in Element X too.'),
+      h('p', {}, 'Start the conversation here.'),
       h('button', { type: 'button', class: 'btn', onclick: async (e) => {
         e.target.disabled = true;
         try {
@@ -360,10 +385,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // turns green once the agent has acknowledged it (its ✅ reaction, no longer shown as a chip).
   function metaFor(ev, mine, edited, showTime = true, seen = false) {
     const where = mine ? fromWhere(ev) : '';
-    const sentHere = where === 'sent · also in Element X';
+    const sentHere = where === 'sent';
     const words = [showTime ? when(ev.getTs() / 1000) : '', sentHere ? '' : where, edited ? 'edited' : ''].filter(Boolean).join(' · ');
     if (!words && !sentHere) return null;
-    return h('span', { class: 'when mx-meta', title: sentHere ? `Sent · also in Element X${seen ? ` · seen by ${agent.display_name}` : ''}` : null },
+    return h('span', { class: 'when mx-meta', title: sentHere ? `Sent${seen ? ` · seen by ${agent.display_name}` : ''}` : null },
       words, sentHere ? h('span', { class: `mx-tick${seen ? ' seen' : ''}`, 'aria-label': seen ? 'seen' : 'sent' }, icon(ICONS.check)) : null);
   }
   const ACK = new Set(['✅', '✔️', '👀']);
@@ -392,12 +417,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       return inMain
         ? h('a', { class: 'mx-thread-link', href: `${main}/thread/${encodeURIComponent(ev.getId())}` },
           `↳ ${titleOf(ev)}`, h('span', { class: 'when' }, ` · ${n} message${n === 1 ? '' : 's'} · open this conversation`))
-        : h('p', { class: 'when mx-thread-start' }, `Started ${when(ev.getTs() / 1000)} · in Element X under “${titleOf(ev)}”`);
+        : h('p', { class: 'when mx-thread-start' }, `Started ${when(ev.getTs() / 1000)}`);
     }
     let body;
     if (ev.isDecryptionFailure && ev.isDecryptionFailure()) body = [h('em', { class: 'when' }, 'Could not decrypt this message (sent before this browser was connected, and not in your key backup).')];
-    else if (kind === 'm.audio') body = [h('em', {}, 'Voice note: play it in Element X.')];
-    else if (kind === 'm.image' || kind === 'm.file' || kind === 'm.video') body = [h('em', {}, `${content.body || 'A file'}: open it in Element X.`)];
+    // Voice notes, images and files open here (Greg, 22 Nov), decrypted in this browser (media.js).
+    else if (kind === 'm.audio') body = [voiceNote(c, content)];
+    else if (kind === 'm.image') body = [imageThumb(c, content)];
+    else if (kind === 'm.file' || kind === 'm.video') body = [fileCard(c, content, kind)];
     else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));
     const rx = [...(reactions.get(ev.getId()) || [])];
     const seen = mine && rx.some(([k, r]) => ACK.has(k) && r.n > (r.mine ? 1 : 0));

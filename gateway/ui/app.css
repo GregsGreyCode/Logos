@@ -1756,3 +1756,34 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 @media (min-width: 600px) { .ask-layer { align-items: center; } .ask-panel { border-radius: 22px; border-bottom: 1px solid var(--line); } }
 [data-anim="off"] .ask-panel, [data-anim="off"] .ask-scrim { animation: none; }
 @media (prefers-reduced-motion: reduce) { .ask-panel, .ask-scrim { animation: none; } }
+
+/* Voice notes, images and files in a chat, and 📎 to send one (Greg, 22 Nov). */
+.mx-voice { display: flex; align-items: center; gap: 10px; min-width: 220px; }
+.mx-play { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 14px; cursor: pointer; }
+.mx-seek { flex: 1; min-width: 0; accent-color: var(--accent); }
+.mx-dur { flex: none; font-variant-numeric: tabular-nums; }
+.mx-media-err:empty { display: none; }
+.mx-img-box { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; max-width: 100%; }
+.mx-img { display: block; max-width: min(280px, 100%); max-height: 320px; border-radius: 12px; background: var(--chip); object-fit: cover; }
+.mx-file { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.mx-file-ico { font-size: 26px; line-height: 1; }
+.mx-file-text { display: flex; flex-direction: column; min-width: 0; }
+.mx-file-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.mx-video { max-width: min(300px, 100%); border-radius: 12px; }
+.mx-view { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; background: rgba(0, 0, 0, .92); }
+.mx-view-bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px calc(10px); padding-top: calc(10px + env(safe-area-inset-top)); color: #fff; }
+.mx-view-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-view-stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; touch-action: pinch-zoom pan-x pan-y; }
+.mx-view-img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.mx-view-img.zoomed { max-width: none; max-height: none; width: 200%; }
+.mx-attach { flex: none; align-self: flex-end; width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; font-size: 20px; cursor: pointer; }
+.mx-attach:hover { background: var(--chip); }
+.mx-pending { display: flex; align-items: center; gap: 10px; padding: 8px 24px; padding-left: max(24px, calc((100% - 760px) / 2)); padding-right: max(24px, calc((100% - 760px) / 2)); }
+.mx-pending[hidden] { display: none; }
+.mx-pending-img { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; }
+.mx-pending-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mx-pending-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 599px) { .mx-pending { padding: 8px 16px; } }
+.mx-attach { display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.mx-attach .icon, .mx-file-ico .icon { width: 24px; height: 24px; }
+.mx-file-ico { display: inline-flex; color: var(--accent-text); }

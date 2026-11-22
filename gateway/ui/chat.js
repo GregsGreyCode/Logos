@@ -11,7 +11,7 @@ const newId = () => Math.random().toString(36).slice(2, 12);
 // Per-browser view settings: show the agent's reasoning and tool calls; list scheduled jobs too.
 const WHERE = { web: 'web', matrix: 'Matrix', telegram: 'Telegram', scheduled: 'Scheduled job' };
 const READ_ONLY_NOTE = {
-  matrix: 'This conversation happened in Element X. Continue it there, or start a new one here.',
+  matrix: 'This conversation carries on in your chat with the agent.',
   telegram: 'This conversation happened on Telegram, which is no longer used. Start a new one here.',
   scheduled: 'This is a scheduled job the agent ran on its own. It is shown to see what it did.',
 };
@@ -150,7 +150,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
       h('header', {}, h('h1', {}, 'Chat')),
       h('div', { class: 'connect-card' },
         h('h2', {}, 'Connect this browser to chat here'),
-        h('p', {}, 'Chat here is your Element conversation itself. Connect this browser once, with your Matrix password and recovery key.'),
+        h('p', {}, 'Connect this device to your chats once, with your chat password and recovery key.'),
         h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Devices')),
       h('section', { 'aria-label': 'Old web chats' }, h('h2', { class: 'label' }, 'Old web chats (read only)'), old)));
     getJSON(`/api/v2/agents/${agent.name}/conversations`).then(({ conversations }) => {
@@ -299,7 +299,9 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
       placeMark(lastReply, false);
       if (readOnly) log.append(h('div', { class: 'notice' }, archived && c.where === 'web'
         ? h('span', {}, 'An old web chat, kept for reference. ', h('a', { href: `#/chat/${agent.name}` }, 'Continue in the main conversation'), '.')
-        : (READ_ONLY_NOTE[c.where] || 'This conversation can only be read here.')));
+        : c.where === 'matrix' ? h('span', {}, `This conversation carries on in your chat with ${agent.display_name}. `,
+          h('a', { href: `#/chat/${agent.name}`, class: 'btn small' }, 'Open the chat'))
+          : (READ_ONLY_NOTE[c.where] || 'This conversation can only be read here.')));
       scroll();
     } catch (e) {
       log.replaceChildren(h('div', { class: 'msg error' }, 'Could not load this conversation.'));
