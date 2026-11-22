@@ -1439,8 +1439,10 @@ section:has(> .appearance-modes.single) { display: none; }
 
 /* Phone: the agents sit where the person put them too (Greg, 21 Nov), not in a fixed row. */
 @media (max-width: 599px) {
-  .chat.void { height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-bottom) - 8px); min-height: 0; overflow: hidden; }
-  .void-field { position: relative; display: block; flex: 1; min-height: 0; padding: 0; margin: 0 0 12px; }
+  .chat.void { height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-bottom) - 8px); min-height: 0;
+    overflow-x: hidden; overflow-y: auto; }
+  /* The agents keep room however many conversations there are; the screen scrolls for the rest (Greg, 22 Nov). */
+  .void-field { position: relative; display: block; flex: 1 0 240px; min-height: 240px; padding: 0; margin: 0 0 12px; }
   .void-field .agent-mark { position: absolute; left: var(--x); top: var(--y); transform: translate(-50%, -50%); --glyph: 56px; }
 }
 
@@ -1647,8 +1649,20 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .void-new { font-size: var(--t-sm); }
 .void-group.invite { border-style: dashed; }
 .void-group.invite .row { display: flex; gap: 8px; margin-top: 6px; }
-.void-newgroup { position: relative; z-index: 2; max-width: 520px; margin: 0 auto; padding: 0 16px 16px; width: 100%; }
-.void-newgroup form { padding: 14px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+/* New group opens as a sheet over the screen: up from the bottom on a phone, a centred panel on a wide one. */
+.void-sheet { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; }
+.void-sheet[hidden] { display: none; }
+.void-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); animation: scrim-in .2s ease both; }
+.void-newgroup { position: relative; width: 100%; max-width: 560px; max-height: 88dvh; overflow-y: auto; overscroll-behavior: contain;
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--surface);
+  border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -12px 40px rgba(0, 0, 0, .4); animation: sheet-up .32s cubic-bezier(.16, 1, .3, 1) both; }
+.void-newgroup form { padding: 0; border: 0; background: transparent; }
+@media (min-width: 600px) { .void-sheet { align-items: center; } .void-newgroup { border-radius: 22px; border-bottom: 1px solid var(--line); } }
+@keyframes sheet-up { from { transform: translateY(40%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes scrim-in { from { opacity: 0; } to { opacity: 1; } }
+[data-anim="off"] .void-newgroup, [data-anim="off"] .void-scrim { animation: none; }
+@media (prefers-reduced-motion: reduce) { .void-newgroup, .void-scrim { animation: none; } }
+html.sheet-open, html.sheet-open body { overflow: hidden; }
 .ng-picks { display: flex; flex-direction: column; gap: 6px; }
 .ng-pick { display: flex; align-items: center; gap: 10px; min-height: 40px; }
 .ng-pick input { width: 20px; height: 20px; }
