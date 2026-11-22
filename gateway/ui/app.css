@@ -1588,3 +1588,13 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .void-groups { gap: 6px; }
 .void-group { padding: 10px 14px; }
 @media (min-width: 600px) { .void-groups { max-height: 40%; overflow-y: auto; } }
+/* The calendar as one list, one line an event (Greg, 22 Nov). */
+.home-days:has(> .home-agenda) { display: block; }
+.home-agenda > .sub-label { margin: 10px 0 2px; }
+.home-agenda > .sub-label:first-child { margin-top: 0; }
+.home-row.home-line { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 0; flex-wrap: nowrap; }
+.home-line .home-time { width: 52px; flex: none; font-size: 14px; color: var(--accent-text); }
+.home-line .dot { width: 8px; height: 8px; }
+.home-line .home-title { flex: 1 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-line .home-meta { flex: none; max-width: 40%; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); }
+.home-line.over { opacity: .5; }

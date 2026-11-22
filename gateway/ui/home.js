@@ -118,17 +118,20 @@ export async function homeView(root) {
       const rest = String(loc).replace(url[0], '').replace(/[\s,·-]+$/, '').trim();
       return h('span', {}, ` · ${rest ? `${rest} · ` : ''}`, h('a', { href: url[0], target: '_blank', rel: 'noopener' }, label));
     };
-    // Two lines an event (Greg, 22 Nov: three lines each filled the screen): the time and title, then
-    // whose (its colour dot) and where.
-    const row = (e) => h('div', { class: 'home-row' },
+    // One line an event (Greg, 22 Nov): the time, its colour dot, the title, then whose and where at the
+    // end. Today's that are over are dimmed.
+    const now = new Date();
+    const over = (e) => !e.all_day && String(e.start).startsWith(day) && new Date(String(e.end || e.start).replace(' ', 'T')) < now;
+    const row = (e) => h('div', { class: `home-row home-line${over(e) ? ' over' : ''}` },
       h('span', { class: 'home-time' }, timeOf(e)),
-      h('span', { class: 'home-title' }, h('span', {}, e.title),
-        h('span', { class: 'home-meta' }, h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
-          whose(e), place(e.location))));
-    // Today and Tomorrow side by side, on a phone too (Greg, 21 Nov): each its own column.
-    const col = (label, list, empty) => h('div', { class: 'home-list home-day' },
-      h('h3', { class: 'sub-label' }, label), ...(list.length ? list.map(row) : [none(empty)]));
-    todayBox.replaceChildren(col('Today', todays, 'Nothing today.'), col('Tomorrow', later.slice(0, 4), 'Nothing yet.'));
+      h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
+      h('span', { class: 'home-title' }, e.title),
+      h('span', { class: 'home-meta' }, whose(e), place(e.location)));
+    // One list, Today then Tomorrow (Greg, 22 Nov: no longer side by side, which left half the width
+    // empty whenever one day had more on than the other).
+    const part = (label, list, empty) => [h('h3', { class: 'sub-label' }, label), ...(list.length ? list.map(row) : [none(empty)])];
+    todayBox.replaceChildren(h('div', { class: 'home-list home-agenda' },
+      ...part('Today', todays, 'Nothing today.'), ...part('Tomorrow', later.slice(0, 6), 'Nothing yet.')));
   }
 
 
