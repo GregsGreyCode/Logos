@@ -27,13 +27,18 @@ fallback: agents wait, and nothing is lost. People see this as "the AI computer 
     "Context size has been exceeded".
   - After one full minute in vain, it answers "off" at once for the next 2 minutes, so hermes'
     own retries do not each wait another minute.
-  - `GET /guard/health` tests the connection to LM Studio and says since when it is off.
+  - `GET /guard/health` tests the connection to LM Studio (for at most a second, so it answers
+    inside the dashboard's 3 s limit) and says since when it is off.
 - **`logos-waitlist`** (`infra/agent-plugins/logos-waitlist/`): a hermes plugin that `logos-agent
   up` copies into every agent's home and enables.
   - It tells hermes the guard's "off" is final for that turn.
   - It remembers the conversation in `/opt/data/waitlist.json` (session and time, never text).
   - It asks `/guard/health` every 30 seconds while anything waits, then re-sends each waiting
     conversation's last message with hermes' own `/retry`.
+  - It checks that the re-sent turn was answered (the transcript's last row is not hermes's
+    `failed_turn` mark). A model just loaded can loop in its thinking until hermes cuts it, so a
+    re-sent turn that failed for any reason but the model being off again is sent once more.
+    The log says `retried`, `retried twice`, `off again` or `failed: <why>`.
   - Its log is `/opt/data/logs/waitlist.log`.
 - **`rerun-after-outage`** (`infra/agent-jobs/rerun_after_outage.py`): every 5 minutes, no
   model, in every agent.

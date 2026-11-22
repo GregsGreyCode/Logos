@@ -2,6 +2,7 @@
 import http.client
 import json
 import socket
+import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -378,3 +379,39 @@ def test_chats_through_one_slot_take_turns_and_are_logged():
         assert q["served"] == 2 and q["queued"] == 1 and q["slots"] == 1
     finally:
         g.shutdown(); up.shutdown()
+
+
+def test_health_answers_inside_its_callers_limit_while_the_server_drops_connections(monkeypatch):
+    # An off LM Studio (its PC on, the app closed) drops connections instead of refusing them, so
+    # the probe runs its whole timeout. The dashboard asks with a 3 s limit (dashboard_api._alive).
+    real, seen = socket.create_connection, []
+
+    def dropping(addr, timeout=None, *a, **k):
+        if addr[0] != "192.0.2.1":
+            return real(addr, timeout, *a, **k)
+        seen.append(timeout)
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(model_guard.socket, "create_connection", dropping)
+    g = serve(model_guard.make_handler("http://192.0.2.1:1234", connect_timeout=3.0))
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", g.server_address[1], timeout=3)
+        conn.request("GET", "/guard/health")
+        assert json.loads(conn.getresponse().read())["model_server_off"] is True
+        assert seen and max(seen) <= model_guard.HEALTH_PROBE < 3
+    finally:
+        g.shutdown()
+
+
+def test_a_caller_that_hangs_up_leaves_no_traceback(capsys):
+    g = serve(model_guard.make_handler(f"http://127.0.0.1:{free_port()}", connect_timeout=0.3))
+    try:
+        for _ in range(3):
+            s = socket.create_connection(("127.0.0.1", g.server_address[1]))
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+            s.sendall(b"GET /guard/health HTTP/1.1\r\nHost: x\r\n\r\n")
+            s.close()                                   # reset: gone before the probe ends
+        time.sleep(0.8)
+    finally:
+        g.shutdown()
+    assert "Traceback" not in capsys.readouterr().err
