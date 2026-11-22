@@ -473,15 +473,18 @@ def test_the_loop_score_tells_thinking_from_circles():
     assert model_guard.compress_ratio((LOOP * 200)[-model_guard.LOOP_WINDOW:]) > 20
 
 
+def chat(port, req):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request("POST", "/v1/chat/completions", body=json.dumps(req), headers={"Content-Type": "application/json"})
+    return conn.getresponse().read()
+
+
 def test_thinking_that_loops_is_cut_without_a_closing_chunk():
-    import httpx
     Thinker.pieces, Thinker.bodies, logs = [LOOP] * 400, [], []
     up = serve(Thinker); g = guard_on(up, logs)
     try:
-        with pytest.raises(httpx.RemoteProtocolError):   # what hermes sees: a dropped stream, which it retries
-            with httpx.stream("POST", f"http://127.0.0.1:{g.server_address[1]}/v1/chat/completions",
-                              json={"model": "qwen/q", "stream": True}, timeout=10) as r:
-                got = b"".join(r.iter_bytes())
+        with pytest.raises(http.client.IncompleteRead):  # a dropped stream (hermes, through Bifrost, retries it)
+            chat(g.server_address[1], {"model": "qwen/q", "stream": True})
         time.sleep(0.2)
         line = json.loads(logs[-1])
         assert line["status"] == "loop_cut" and line["loop_ratio"] >= model_guard.LOOP_RATIO
@@ -491,19 +494,16 @@ def test_thinking_that_loops_is_cut_without_a_closing_chunk():
 
 
 def test_the_same_request_after_a_cut_goes_a_little_warmer():
-    import httpx
     Thinker.pieces, Thinker.bodies, logs = [LOOP] * 400, [], []
     up = serve(Thinker); g = guard_on(up, logs)
-    url = f"http://127.0.0.1:{g.server_address[1]}/v1/chat/completions"
+    port = g.server_address[1]
     req = {"model": "qwen/q", "stream": True, "messages": [{"role": "user", "content": "voice notes?"}]}
     try:
         for _ in range(2):
-            with pytest.raises(httpx.RemoteProtocolError):
-                with httpx.stream("POST", url, json=req, timeout=10) as r:
-                    b"".join(r.iter_bytes())
+            with pytest.raises(http.client.IncompleteRead):
+                chat(port, req)
         Thinker.pieces = THINK[:50]                     # a fresh question is not warmed
-        with httpx.stream("POST", url, json={**req, "messages": [{"role": "user", "content": "other"}]}, timeout=10) as r:
-            b"".join(r.iter_bytes())
+        chat(port, {**req, "messages": [{"role": "user", "content": "other"}]})
         temps = [b.get("temperature") for b in Thinker.bodies]
         assert temps == [None, 0.9, None]
     finally:
