@@ -233,6 +233,41 @@ class SubprocessRunner:
         time.sleep(seconds)
 
 
+# Routines (Greg, 22 Nov): the built-in jobs people may change in the dashboard (Agents › Routines): the
+# morning briefing, the weekly digest and the daily changes. Their choices are kept beside Logos's other
+# state, outside git, and laid over each agent's definition whenever it is loaded, so a deploy keeps them.
+ROUTINE_KEYS = ("briefing", "digest", "changes")
+ROUTINE_JOBS = ("morning-briefing", "morning-briefing-check", "morning-briefing-weekend",
+                "morning-briefing-weekend-check", "weekly-digest", "changes-daily", "changes-week", "changes-check")
+
+
+def routines_file(env: Mapping[str, str]) -> Path:
+    return Path(env.get("LOGOS_HOME") or Path(env.get("HOME") or Path.home()) / ".logos") / "routines.json"
+
+
+def load_routines(env: Mapping[str, str]) -> dict:
+    try:
+        data = json.loads(routines_file(env).read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_routines(env: Mapping[str, str], name: str, choice: Mapping[str, Any]) -> dict:
+    """Keep one agent's routine choices ({briefing: {...}, digest: {...}, changes: {...}})."""
+    data = load_routines(env)
+    mine = data.setdefault(name, {})
+    for key, value in choice.items():
+        if key in ROUTINE_KEYS and isinstance(value, dict):
+            mine.setdefault(key, {}).update(value)
+    path = routines_file(env)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    os.replace(tmp, path)
+    return mine
+
+
 def merge(base: dict, extra: Mapping[str, Any]) -> None:
     """Deep-merge ``extra`` into ``base``: nested mappings merge, anything else replaces."""
     for k, v in extra.items():
@@ -310,6 +345,8 @@ class AgentRuntime:
         for local in (path.with_name(ALL_LOCAL), path.with_suffix(".local.yaml")):
             if local.exists():
                 merge(agent, yaml.safe_load(local.read_text()) or {})
+        # Last, what people chose for the routines in the dashboard (Agents › Routines).
+        merge(agent, {k: v for k, v in (load_routines(self.env).get(name) or {}).items() if k in ROUTINE_KEYS})
         return agent
 
     # ── volumes ──────────────────────────────────────────────────────────
@@ -688,6 +725,65 @@ class AgentRuntime:
                 ids[m.group(1)] = last
         return ids
 
+    def install_digest(self, name: str, agent: Mapping[str, Any], tz: str) -> None:
+        """Sunday evening: what the brain learned this week, sent to the person (a routine)."""
+        digest = agent.get("digest") or {}
+        if digest.get("enabled", True) and delivery(agent) != "local":
+            # Sunday evening: what the brain learned this week, sent to the person.
+            self.sbx(name, f'{HERMES} cron create --name weekly-digest --workdir /opt/data/brain '
+                           f'--timezone {tz} --deliver {delivery(agent)} --failure-deliver local '
+                           f'"{digest.get("schedule", "0 18 * * 0")}" "$(cat)"',
+                     input=digest_prompt(self.jobs_dir, agent))
+
+    def install_briefing(self, name: str, agent: Mapping[str, Any], tz: str) -> None:
+        """The morning briefing and its fallback check (a routine)."""
+        brief = briefing(agent)
+        if brief:
+            # Story C4: the day ahead, sent in the morning. The script puts today's weather and events
+            # into the prompt; a morning missed while the machine was off is skipped, never sent late.
+            prompt = logos_job(self.jobs_dir / "morning_briefing.md")
+            for job, when in (("morning-briefing", brief["weekdays"]), ("morning-briefing-weekend", brief["weekends"])):
+                self.sbx(name, f'{HERMES} cron create --name {job} --script briefing_today.py '
+                               f'--workdir /opt/data/brain --timezone {tz} --catch-up off '
+                               f'--deliver {delivery(agent)} --failure-deliver local "{when}" "$(cat)"',
+                         input=prompt)
+                # A quarter of an hour later, no model: if the briefing did not go out (the model
+                # server busy or off), send the plain facts so a morning is never missed.
+                check = minutes_later(when)
+                if check:
+                    self.sbx(name, f'{HERMES} cron create --name {job}-check --no-agent --script briefing_check.py '
+                                   f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
+                                   f'--failure-deliver local "{check}"')
+
+    def install_changes(self, name: str, agent: Mapping[str, Any], tz: str) -> None:
+        """What changed today and this week, in the group chat (a routine)."""
+        for job, script, when in changes_jobs(agent):
+            # Story DC2: what changed in the homelab and in Logos, in the group chat. The script puts
+            # the list into the prompt, or skips the model when nothing changed; changes-check sends
+            # the plain list for any that did not go out. Missed while the machine was off: skipped.
+            if job == "changes-check":
+                self.sbx(name, f'{HERMES} cron create --name {job} --no-agent --script {script} '
+                               f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
+                               f'--failure-deliver local "{when}"')
+            else:
+                self.sbx(name, f'{HERMES} cron create --name {job} --script {script} --workdir /opt/data/brain '
+                               f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
+                               f'--failure-deliver local "{when}" "$(cat)"',
+                         input=logos_job(self.jobs_dir / "changes_summary.md"))
+
+    def refresh_routines(self, name: str) -> list:
+        """Put the routine jobs back as the agent's definition and people's choices now say, without
+        touching anything else (the dashboard calls this after a change). Returns the job names."""
+        agent = self.load(name)
+        tz = agent.get("timezone", "UTC")
+        for job, jid in self.job_ids(name).items():
+            if job in ROUTINE_JOBS:
+                self.sbx(name, f"{HERMES} cron remove {jid}")
+        self.install_briefing(name, agent, tz)
+        self.install_digest(name, agent, tz)
+        self.install_changes(name, agent, tz)
+        return sorted(j for j in self.job_ids(name) if j in ROUTINE_JOBS)
+
     def ensure_jobs(self, name: str, agent: Mapping[str, Any], home: str) -> None:
         """Install the brain jobs: an hourly git commit (no model) and the nightly consolidation."""
         for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
@@ -722,13 +818,7 @@ class AgentRuntime:
                            f'--workdir /opt/data/brain --timezone {tz} --continuity --deliver local {model}'
                            f'"{con.get("schedule", "0 3 * * *")}" "$(cat)"',
                      input=logos_job(self.jobs_dir / "consolidate.md"))
-        digest = agent.get("digest") or {}
-        if digest.get("enabled", True) and delivery(agent) != "local":
-            # Sunday evening: what the brain learned this week, sent to the person.
-            self.sbx(name, f'{HERMES} cron create --name weekly-digest --workdir /opt/data/brain '
-                           f'--timezone {tz} --deliver {delivery(agent)} --failure-deliver local '
-                           f'"{digest.get("schedule", "0 18 * * 0")}" "$(cat)"',
-                     input=digest_prompt(self.jobs_dir, agent))
+        self.install_digest(name, agent, tz)
         if _sibling("noticeboard_host").uses_noticeboard(agent):
             # Every ten minutes a script asks the noticeboard whether anything new is waiting. The
             # model runs only when it is, and what it reports goes to the person (or stays silent).
@@ -741,23 +831,7 @@ class AgentRuntime:
             self.sbx(name, f'{HERMES} cron create --name noticeboard-urgent --no-agent '
                            f'--script noticeboard_urgent.py --timezone {tz} --deliver {deliver} '
                            f'--failure-deliver local "* * * * *"')
-        brief = briefing(agent)
-        if brief:
-            # Story C4: the day ahead, sent in the morning. The script puts today's weather and events
-            # into the prompt; a morning missed while the machine was off is skipped, never sent late.
-            prompt = logos_job(self.jobs_dir / "morning_briefing.md")
-            for job, when in (("morning-briefing", brief["weekdays"]), ("morning-briefing-weekend", brief["weekends"])):
-                self.sbx(name, f'{HERMES} cron create --name {job} --script briefing_today.py '
-                               f'--workdir /opt/data/brain --timezone {tz} --catch-up off '
-                               f'--deliver {delivery(agent)} --failure-deliver local "{when}" "$(cat)"',
-                         input=prompt)
-                # A quarter of an hour later, no model: if the briefing did not go out (the model
-                # server busy or off), send the plain facts so a morning is never missed.
-                check = minutes_later(when)
-                if check:
-                    self.sbx(name, f'{HERMES} cron create --name {job}-check --no-agent --script briefing_check.py '
-                                   f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
-                                   f'--failure-deliver local "{check}"')
+        self.install_briefing(name, agent, tz)
         if _sibling("model_gateway").uses_gateway(agent):
             # Story D2: a digest or brain tidy that failed while LM Studio was off runs again when it is back.
             self.sbx(name, f'{HERMES} cron create --name rerun-after-outage --no-agent '
@@ -770,19 +844,7 @@ class AgentRuntime:
             # The shared lists live in Home Assistant; a copy goes in the household brain for Obsidian.
             self.sbx(name, f'{HERMES} cron create --name lists-mirror --no-agent --script lists_mirror.py '
                            f'--timezone {tz} --deliver local "*/15 * * * *"')
-        for job, script, when in changes_jobs(agent):
-            # Story DC2: what changed in the homelab and in Logos, in the group chat. The script puts
-            # the list into the prompt, or skips the model when nothing changed; changes-check sends
-            # the plain list for any that did not go out. Missed while the machine was off: skipped.
-            if job == "changes-check":
-                self.sbx(name, f'{HERMES} cron create --name {job} --no-agent --script {script} '
-                               f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
-                               f'--failure-deliver local "{when}"')
-            else:
-                self.sbx(name, f'{HERMES} cron create --name {job} --script {script} --workdir /opt/data/brain '
-                               f'--timezone {tz} --catch-up off --deliver {delivery(agent)} '
-                               f'--failure-deliver local "{when}" "$(cat)"',
-                         input=logos_job(self.jobs_dir / "changes_summary.md"))
+        self.install_changes(name, agent, tz)
         self.sbx(name, f"{HERMES_PY} restore")
         have = self.job_ids(name)
         print("jobs: " + ", ".join(sorted(have)) if have else "warning: no cron jobs registered")

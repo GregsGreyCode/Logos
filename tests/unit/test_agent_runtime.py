@@ -1305,3 +1305,33 @@ def test_only_the_household_digest_speaks_of_the_household(tmp_path):
     assert "Leave out anything about one person alone" in house
     from gateway.agent_runtime import LOGOS_JOB_MARK
     assert private.startswith(LOGOS_JOB_MARK) and house.startswith(LOGOS_JOB_MARK)
+
+
+def test_a_routine_change_puts_back_only_the_routine_jobs(repo, monkeypatch):
+    """Routines page (Greg, 22 Nov): a new briefing time removes and re-creates the routine jobs only;
+    brain saving, the noticeboard and the jobs people asked for are left alone."""
+    listing = ("Scheduled jobs:\n"
+               "  aaaaaaaaaaaa [active]\n    Name:      morning-briefing\n"
+               "  bbbbbbbbbbbb [active]\n    Name:      weekly-digest\n"
+               "  cccccccccccc [active]\n    Name:      brain-commit\n"
+               "  dddddddddddd [active]\n    Name:      daily-question\n")
+
+    class Runner(FakeRunner):
+        def run(self, argv, *, input=None, text=True):
+            if list(argv)[:3] == ["openshell", "sandbox", "exec"] and "cron list" in argv[-1]:
+                self.calls.append(list(argv)); self.inputs.append(input)
+                return Completed(0, listing, "")
+            return super().run(argv, input=input, text=text)
+    runner = Runner(listing=LISTING)
+    r = rt(repo, runner)
+    monkeypatch.setattr(r, "load", lambda name: {"timezone": "Europe/London", "matrix": {"enabled": True},
+                                                 "calendar": {"person": "greg"}, "model": {"provider": "lmstudio"},
+                                                 "briefing": {"weekdays": "45 6 * * 1-5"}, "digest": {"schedule": "0 19 * * 5"}})
+    r.refresh_routines("greg")
+    scripts = [c[-1] for c in runner.calls if c[:3] == ["openshell", "sandbox", "exec"]]
+    removed = [s.split()[-1] for s in scripts if "cron remove" in s]
+    assert removed == ["aaaaaaaaaaaa", "bbbbbbbbbbbb"]                 # not brain-commit, not daily-question
+    created = [s for s in scripts if "cron create" in s]
+    assert any("--name morning-briefing " in s and '"45 6 * * 1-5"' in s for s in created)
+    assert any("--name weekly-digest " in s and '"0 19 * * 5"' in s for s in created)
+    assert not any("brain-commit" in s or "noticeboard" in s for s in created)
