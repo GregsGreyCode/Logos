@@ -1878,11 +1878,14 @@ async def handle_home_lights(request: web.Request) -> web.Response:
             body = await request.json()
             targets = [str(t)[:60] for t in body["targets"]][:20]
             on = body["on"]
+            level = body.get("brightness")
             if not targets or not isinstance(on, bool):
+                raise ValueError
+            if level is not None and (isinstance(level, bool) or not isinstance(level, int) or not 1 <= level <= 100):
                 raise ValueError
         except (ValueError, KeyError, TypeError):
             return web.json_response({"error": "bad_request"}, status=400)
-        out = await asyncio.to_thread(home.set_lights, runtime, name, targets, on)
+        out = await asyncio.to_thread(home.set_lights, runtime, name, targets, on, None, level)
         if out.get("error"):
             return web.json_response(out, status=502)
     return web.json_response(await asyncio.to_thread(home.lights, runtime, name))

@@ -127,18 +127,24 @@ def lights(runtime: Any, agent: str, post=None) -> Dict[str, Any]:
         if r.get("kind") != "room":
             continue
         on, _, of = str(r.get("on") or "0 of 0").partition(" of ")
-        rooms.append({"room": r.get("room"), "on": int(on or 0), "of": int(of or 0)})
+        # How bright the room is: the average of its lit lights (Greg, 22 Nov: brightness from Home).
+        lit = [int(l["brightness"]) for l in r.get("lights") or [] if l.get("state") == "on" and l.get("brightness") is not None]
+        rooms.append({"room": r.get("room"), "on": int(on or 0), "of": int(of or 0),
+                      "brightness": round(sum(lit) / len(lit)) if lit else None})
     return {"rooms": rooms}
 
 
-def set_lights(runtime: Any, agent: str, targets: List[str], on: bool, post=None) -> Dict[str, Any]:
+def set_lights(runtime: Any, agent: str, targets: List[str], on: bool, post=None, brightness: Optional[int] = None) -> Dict[str, Any]:
     from gateway import house_host
     host = house_host.HouseHost(runtime)
     token = host.token_for(agent)
     if not token:
         return {"error": "no_house"}
     try:
-        return rpc_result((post or _post)(host.url(), _call("set_lights", {"targets": targets, "on": bool(on)}), token))
+        args: Dict[str, Any] = {"targets": targets, "on": bool(on)}
+        if on and brightness is not None:
+            args["brightness"] = int(brightness)
+        return rpc_result((post or _post)(host.url(), _call("set_lights", args), token))
     except Exception as e:
         return {"error": "house_unavailable", "message": str(e)[:200]}
 
