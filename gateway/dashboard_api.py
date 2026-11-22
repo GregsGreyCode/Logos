@@ -1298,6 +1298,28 @@ async def handle_local_model(request: web.Request) -> web.Response:
     return web.json_response(view)
 
 
+def model_progress(runtime: Any) -> dict:
+    """Replies the model is writing now, from the model guard (F33): numbers only, never text."""
+    from gateway import model_gateway
+    gw = model_gateway.ModelGateway(runtime)
+    try:
+        h = json.loads(runtime.runner.http(f"http://{gw.bind_address()}:{model_gateway.GUARD_PORT}/guard/health", timeout=3))
+    except Exception:
+        return {"live": None}
+    keys = ("seconds", "who", "thinking_chars", "answer_chars")
+    return {"live": [{k: r.get(k) for k in keys} for r in (h.get("live") or []) if isinstance(r, dict)],
+            "model_server_off": bool(h.get("model_server_off"))}
+
+
+async def handle_model_progress(request: web.Request) -> web.Response:
+    """GET /api/v2/models/progress — for the chat's "still thinking" line. Any signed-in person."""
+    _user(request)
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if runtime is None:
+        return web.json_response({"live": None})
+    return web.json_response(await asyncio.to_thread(model_progress, runtime))
+
+
 async def handle_local_model_action(request: web.Request) -> web.Response:
     """POST /api/v2/models/local/{action} with {"server": "host:port", ...}. Admin only.
     ``reload``: the agents' model on that server, with Logos's window. ``unload``: {"instance"} of a
@@ -1639,6 +1661,7 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/model", handle_model)
     app.router.add_get("/api/v2/models", handle_models)
     app.router.add_get("/api/v2/models/local", handle_local_model)
+    app.router.add_get("/api/v2/models/progress", handle_model_progress)
     app.router.add_get("/api/v2/advisor", handle_advisor)
     app.router.add_post("/api/v2/advisor/{rid}/{action}", require_csrf(handle_advisor_decide))
     app.router.add_post("/api/v2/advisor-budget/{action}", require_csrf(handle_advisor_budget))

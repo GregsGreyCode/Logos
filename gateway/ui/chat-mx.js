@@ -94,8 +94,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const send = h('button', { type: 'submit', class: 'btn send-btn idle', 'aria-label': 'Send, or hold to record a voice message' },
     h('span', { class: 'btn-words' }, 'Send'), h('span', { class: 'send-ico' }, icon(ICONS.send)), h('span', { class: 'mic-ico' }, icon(ICONS.mic)));
   const note = h('p', { class: 'when mx-note', role: 'status' });
+  const thinkingMore = h('span', { class: 'mx-thinking-more' });
   const thinkingRow = h('div', { class: 'mx-thinking', hidden: true },
-    h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }), `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'));
+    h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }), `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'),
+    thinkingMore);
   const modelLine = h('div', { class: 'model-line down', role: 'status', hidden: agent.model_up !== false },
     'AI computer off · your message will queue');
   const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); sendText(input.value); } },
@@ -467,8 +469,42 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const waitingOnAgent = !!(last && last.getSender() === me && !last.isDecryptionFailure()
       && last.getContent().msgtype !== 'm.notice' && !replyMap.has(last.getId()) && Date.now() - last.getTs() < 15 * 60000);
     thinkingRow.hidden = !waitingOnAgent && !typing;
+    askedAt = waitingOnAgent ? last.getTs() : (typing ? askedAt || Date.now() : 0);
+    progress();
     if (stick || atBottom) log.scrollTop = log.scrollHeight;
   }
+
+  // ── still thinking (F33, Greg 21 Nov: "something to show it's working and not stuck") ──────────
+  // After a minute: how long since your message, and from the model guard how far the reply has got
+  // ("about 900 words of thinking so far", "writing the answer"). The guard also cuts thinking that
+  // goes round in circles, and hermes then asks again by itself.
+  let askedAt = 0, progressTimer = null, lastProgress = 0;
+  function progress() {
+    clearTimeout(progressTimer);
+    if (thinkingRow.hidden || !askedAt) { thinkingMore.textContent = ''; return; }
+    const secs = (Date.now() - askedAt) / 1000;
+    if (secs < 60) { progressTimer = setTimeout(progress, (60 - secs) * 1000 + 50); return; }
+    const mins = Math.floor(secs / 60);
+    const base = ` · ${mins} min`;
+    if (!thinkingMore.textContent.startsWith(base)) thinkingMore.textContent = base;
+    if (Date.now() - lastProgress > 4000) {
+      lastProgress = Date.now();
+      getJSON('/api/v2/models/progress').then((p) => {
+        if (thinkingRow.hidden) return;
+        const people = (p.live || []).filter((r) => r.who === 'person');
+        let more = '';
+        if (p.model_server_off) more = ' · the AI computer is off; the answer comes when it is back';
+        else if (people.length === 1 && people[0].answer_chars > 0) more = ' · writing the answer';
+        else if (people.length === 1 && people[0].thinking_chars > 0) {
+          const words = Math.round(people[0].thinking_chars / 6 / 50) * 50;
+          more = words ? ` · about ${words.toLocaleString()} words of thinking so far` : '';
+        } else if (people.length > 1) more = ` · ${people.length} replies being written`;
+        thinkingMore.textContent = base + more;
+      }).catch(() => {});
+    }
+    progressTimer = setTimeout(progress, 5000);
+  }
+  off.push(() => clearTimeout(progressTimer));
 
   // ── live ───────────────────────────────────────────────────────────────────────────────────
   let typing = false, timer = null;

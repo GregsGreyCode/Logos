@@ -37,8 +37,10 @@ import json
 import os
 import socket
 import sys
+import hashlib
 import threading
 import time
+import zlib
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -215,6 +217,86 @@ def add_presence_penalty(path: str, body: bytes) -> bytes:
     return json.dumps(req).encode()
 
 
+# ── the loop watch (F33) ─────────────────────────────────────────────────────
+# A local model can loop in its thinking: on 21 Nov qwen3.6 thought in circles for 715 s before
+# hermes's own check cut it, and Greg read "Your request was not processed". Text that goes round in
+# circles compresses far better than real thinking (prod replies, 22 Nov: at most 5x over a 4,000
+# character window; loops written to test this, 27x to 52x), so the guard scores the newest
+# LOOP_WINDOW characters of the reply's THINKING every LOOP_EVERY characters. At LOOP_RATIO or more it
+# drops the connection without the closing chunk: hermes then sees a dropped stream and asks again
+# by itself, because no answer text has reached the person yet (thinking never counts as
+# delivered). The answer itself is not watched: a long table can be repetitive and still right, and
+# hermes's own check covers answers that loop. The request that
+# looped is remembered for LOOP_MEMORY seconds; if it comes again it goes with a little more
+# temperature, so the second try does not walk into the same circle.
+LOOP_WINDOW = 12000          # characters, about 3,000 tokens
+LOOP_EVERY = 2000
+LOOP_RATIO = 8.0
+LOOP_MEMORY = 600.0
+LOOP_TEMPERATURE = 0.3       # added on a retry after a cut (from 0.6 when the request sets none), at most 1.0
+
+
+def compress_ratio(text: str) -> float:
+    raw = text.encode("utf-8", "replace")
+    return len(raw) / max(1, len(zlib.compress(raw, 6)))
+
+
+class LoopWatch:
+    """Reads a streamed chat reply (server-sent events) and says when its text has become a loop."""
+
+    def __init__(self, window: int = LOOP_WINDOW, every: int = LOOP_EVERY, ratio: float = LOOP_RATIO):
+        self.window, self.every, self.ratio = window, every, ratio
+        self.pending, self.text, self.chars, self.next, self.worst = b"", "", 0, window, 0.0
+        self.answer = 0                  # answer characters so far (counted, never scored)
+
+    def feed(self, chunk: bytes) -> bool:
+        self.pending += chunk
+        *lines, self.pending = self.pending.split(b"\n")
+        for line in lines:
+            line = line.strip()
+            if not line.startswith(b"data:") or line[5:].strip() == b"[DONE]":
+                continue
+            try:
+                event = json.loads(line[5:])
+            except ValueError:
+                continue
+            for choice in (event.get("choices") or []) if isinstance(event, dict) else []:
+                delta = (choice or {}).get("delta") or {}
+                for key in ("reasoning_content", "reasoning"):     # thinking only (see above)
+                    piece = delta.get(key)
+                    if isinstance(piece, str) and piece:
+                        self.text = (self.text + piece)[-self.window:]
+                        self.chars += len(piece)
+                if isinstance(delta.get("content"), str):
+                    self.answer += len(delta["content"])
+        if self.chars < self.next:
+            return False
+        self.next = self.chars + self.every
+        score = compress_ratio(self.text)
+        self.worst = max(self.worst, score)
+        return score >= self.ratio
+
+
+def body_key(body: bytes) -> str:
+    return hashlib.sha256(body).hexdigest()
+
+
+def warm_after_loop(body: bytes) -> bytes:
+    """The same request again after a loop cut: a little more temperature."""
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(req, dict):
+        return body
+    try:
+        base = float(req.get("temperature")) if req.get("temperature") is not None else 0.6
+    except (TypeError, ValueError):
+        base = 0.6
+    req["temperature"] = round(min(1.0, base + LOOP_TEMPERATURE), 2)
+    return json.dumps(req).encode()
+
+
 def off_body() -> bytes:
     return json.dumps({"error": {"message": OFF_MESSAGE, "type": "model_server_off",
                                  "code": "model_server_off"}}).encode()
@@ -223,7 +305,7 @@ def off_body() -> bytes:
 def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: float = 900.0,
                  wait: float = WAIT, retry_every: float = RETRY_EVERY, sleep=time.sleep,
                  known_off: float = KNOWN_OFF, slots: int = SLOTS, max_queue_wait: float = MAX_QUEUE_WAIT,
-                 log=print):
+                 log=print, loop_ratio: float = LOOP_RATIO, loop_window: int = LOOP_WINDOW, loop_every: int = LOOP_EVERY):
     target = urllib.parse.urlsplit(upstream)
     host, port = target.hostname, target.port or 80
     # For /guard/health: whether the last attempt found the model server off, and since when.
@@ -231,6 +313,11 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
     # call several times (and probes it once more without streaming); without this each of those
     # would wait a minute too, and the person would hear nothing for five.
     state = {"off": False, "off_since": None, "known_off_at": -known_off}
+    looped: dict = {}                       # body key -> when its reply was cut for looping
+    # Replies streaming now, for the dashboard's "still thinking" line (F33): how long, how much
+    # thinking and answer so far, and the loop score. Numbers only, never text.
+    live: dict = {}
+    live_ids = itertools.count(1)
     options = {"at": -OPTIONS_TTL, "by_model": {}, "window": 0, "parallel": 0}
     gate = Gate(slots, lambda: options["window"], max_wait=max_queue_wait)
 
@@ -301,8 +388,12 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             except OSError:
                 if not state["off"]:
                     state["off"], state["off_since"] = True, time.time()
+            now = time.monotonic()
+            running = [{"seconds": round(now - r["since"]), "who": r["who"], "thinking_chars": r["watch"].chars,
+                        "answer_chars": r["watch"].answer, "loop_ratio": round(r["watch"].worst, 1)}
+                       for r in list(live.values())]
             out = json.dumps({"ok": True, "model_server_off": state["off"],
-                              "off_since": state["off_since"], "queue": gate.view()}).encode()
+                              "off_since": state["off_since"], "queue": gate.view(), "live": running}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out)))
@@ -345,10 +436,17 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             body = self._body()
             if self.command == "POST":
                 body = add_presence_penalty(self.path, fix_reasoning(self.path, body, options_for))
+                now = time.monotonic()
+                for k in [k for k, at in looped.items() if now - at > LOOP_MEMORY]:
+                    looped.pop(k, None)
+                self._key = body_key(body)
+                if is_chat(self.command, self.path) and self._key in looped:
+                    body = warm_after_loop(body)       # hermes asking again after a loop cut
             if not is_chat(self.command, self.path) or time.monotonic() - state["known_off_at"] < known_off:
                 return self._forward(body)          # lookups, and "the model is off" answers, never queue
             options_for("")                          # keeps the window and slots fresh (every ten minutes)
             tokens, prio = estimate(body), priority(body)
+            self._who = "scheduled" if prio == SCHEDULED else "person"
             ticket, waited, forced = gate.enter(tokens, prio)
             began, alongside = time.monotonic(), len(gate.running) - 1
             record = {}
@@ -401,21 +499,42 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                         self.send_header("Transfer-Encoding", "chunked")
                     self.send_header("Connection", "close")
                     self.end_headers()
-                    chunk, tail = first, b""
-                    while chunk:
-                        self.wfile.write(chunk if length is not None else b"%x\r\n%s\r\n" % (len(chunk), chunk))
-                        self.wfile.flush()         # streamed replies must not sit in a buffer
-                        tail = (tail + chunk)[-4096:]
-                        if length is not None:
-                            break
-                        chunk = resp.read1(65536)
-                    if length is None:
-                        self.wfile.write(b"0\r\n\r\n")
-                    return {"status": resp.status, **usage(tail)}
+                    tail = b""
+                    watch = (LoopWatch(loop_window, loop_every, loop_ratio)
+                             if length is None and resp.status == 200 and is_chat(self.command, self.path) and loop_ratio > 0
+                             else None)
+                    live_id = next(live_ids)
+                    if watch is not None:
+                        live[live_id] = {"since": time.monotonic(), "who": getattr(self, "_who", "person"), "watch": watch}
+                    try:
+                        return self._stream(resp, first, length, watch, tail)
+                    finally:
+                        live.pop(live_id, None)
                 except (OSError, http.client.HTTPException):
                     return {"status": "dropped"}   # either side went away; closing both is all there is to do
                 finally:
                     conn.close()
+
+        def _stream(self, resp, chunk, length, watch, tail):
+            """Copy the reply to the caller as it comes; cut it if its thinking loops (F33)."""
+            while chunk:
+                self.wfile.write(chunk if length is not None else b"%x\r\n%s\r\n" % (len(chunk), chunk))
+                self.wfile.flush()         # streamed replies must not sit in a buffer
+                tail = (tail + chunk)[-4096:]
+                if length is not None:
+                    break
+                if watch is not None and watch.feed(chunk):
+                    # No closing chunk: the caller sees a dropped stream and asks again.
+                    looped[getattr(self, "_key", "")] = time.monotonic()
+                    self.close_connection = True
+                    print(f"reply cut: its thinking went round in circles (x{watch.worst:.1f} over the last "
+                          f"{loop_window} characters, {watch.chars} streamed)", flush=True)
+                    return {"status": "loop_cut", "loop_ratio": round(watch.worst, 1), "chars": watch.chars}
+                chunk = resp.read1(65536)
+            if length is None:
+                self.wfile.write(b"0\r\n\r\n")
+            extra = {"loop_ratio": round(watch.worst, 1)} if watch is not None and watch.worst else {}
+            return {"status": resp.status, **usage(tail), **extra}
 
         do_GET = do_POST = do_PUT = do_DELETE = _pass
 
@@ -429,7 +548,8 @@ def main() -> int:
         upstream, connect_timeout=float(os.environ.get("GUARD_CONNECT_TIMEOUT", "3")),
         wait=float(os.environ.get("GUARD_WAIT", str(WAIT))),
         slots=int(os.environ.get("GUARD_SLOTS", str(SLOTS))),
-        max_queue_wait=float(os.environ.get("GUARD_MAX_QUEUE_WAIT", str(MAX_QUEUE_WAIT)))))
+        max_queue_wait=float(os.environ.get("GUARD_MAX_QUEUE_WAIT", str(MAX_QUEUE_WAIT))),
+        loop_ratio=float(os.environ.get("GUARD_LOOP_RATIO", str(LOOP_RATIO)))))
     server.daemon_threads = True
     print(f"model guard: {port} -> {upstream}", flush=True)
     server.serve_forever()

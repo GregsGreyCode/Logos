@@ -123,3 +123,18 @@ def test_changes_are_for_admins_and_known_servers_only(api):
     assert loads[-1] == (PC + "/api/v1/models/load", {"model": QWEN, "context_length": 96512, "flash_attention": True,
                                                       "offload_kv_cache_to_gpu": True, "echo_load_config": True})
     assert not any(c[0].startswith("http://evil") for c in rt.runner.calls)
+
+
+def test_model_progress_passes_on_numbers_only(monkeypatch):
+    # F33: the chat's "still thinking" line reads what the model guard says is streaming now.
+    rt = Runtime({})
+    live = [{"seconds": 95, "who": "person", "thinking_chars": 5400, "answer_chars": 0, "loop_ratio": 2.4, "text": "x"}]
+    rt.runner.http = lambda url, timeout=10, **k: json.dumps({"model_server_off": False, "live": live}).encode()
+    got = dashboard_api.model_progress(rt)
+    assert got == {"live": [{"seconds": 95, "who": "person", "thinking_chars": 5400, "answer_chars": 0}],
+                   "model_server_off": False}
+
+    def down(url, timeout=10, **k):
+        raise OSError("refused")
+    rt.runner.http = down
+    assert dashboard_api.model_progress(rt) == {"live": None}
