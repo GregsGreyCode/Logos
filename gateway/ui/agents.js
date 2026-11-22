@@ -2,7 +2,8 @@
 // words. The built-in ones (morning briefing, weekly digest, what changed) are switched and timed here,
 // kept by Logos through every deploy; the ones you asked your agent for can be paused or deleted (to
 // add or change one, ask the agent); the rest work behind the scenes. Its model and reach fold away.
-import { modelName, h, api, getJSON, none, loading, icon, ICONS, shortName, when, ask, reveal } from './util.js';
+import { modelName, h, api, getJSON, none, loading, icon, ICONS, shortName, when, ask, reveal, focusIfKeyboard } from './util.js';
+import * as mx from './mx.js';
 import { agentBar } from './agents-void.js';
 
 // Logos's routine jobs (gateway/agent_runtime.py ROUTINE_JOBS): shown as the Built in cards, not as rows.
@@ -86,6 +87,62 @@ export async function agentsView(root, [agentArg]) {
     h('select', {}, DAYS.map((d, i) => h('option', { value: String(i), selected: i === value ? '' : null }, d))));
   const val = (f) => f.querySelector('input, select').value;
 
+  // + New routine (Greg, 22 Nov): say or type what and when; the agent sets it up (it understands "every
+  // other Friday at 6" better than a form would), in its chat, and the new one appears below.
+  function newRoutine(had) {
+    const text = h('textarea', { id: 'nr-text', rows: '3', placeholder: 'e.g. Every Friday at 18:00, remind me to put the bins out' });
+    const msg = h('p', { class: 'when', role: 'status' });
+    const go = h('button', { type: 'submit', class: 'btn' }, 'Set it up');
+    let rec = null;
+    const mic = h('button', { type: 'button', class: 'btn quiet nr-mic', 'aria-label': 'Say it instead', title: 'Say it instead', onclick: async () => {
+      if (rec) { rec.stop(); return; }
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { msg.textContent = 'This browser cannot record audio.'; return; }
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { msg.textContent = 'The microphone is blocked for this site.'; return; }
+      const chunks = []; rec = new MediaRecorder(stream);
+      rec.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
+      rec.addEventListener('stop', async () => {
+        stream.getTracks().forEach((t) => t.stop()); rec = null; mic.classList.remove('recording'); mic.textContent = '🎤';
+        msg.textContent = 'Turning it into words…';
+        const blob = new Blob(chunks, { type: chunks[0]?.type || 'audio/webm' });
+        const r = await api(`/api/v2/agents/${agent.name}/voice`, { method: 'POST', raw: blob, headers: { 'Content-Type': blob.type } }).catch(() => null);
+        const d = r ? await r.json().catch(() => ({})) : {};
+        if (d.text) { text.value = (text.value.trim() ? `${text.value.trim()} ` : '') + d.text; msg.textContent = 'Check it, then set it up.'; }
+        else msg.textContent = 'No words were heard. Try again, or type it.';
+      });
+      rec.start(); mic.classList.add('recording'); mic.textContent = '■'; msg.textContent = 'Listening… tap ■ to stop.';
+    } }, '🎤');
+    const layer = h('div', { class: 'ask-layer' });
+    const close = () => { if (rec) rec.stop(); layer.remove(); };
+    layer.append(h('div', { class: 'ask-scrim', onclick: close }),
+      h('form', { class: 'ask-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New routine', onsubmit: async (e) => {
+        e.preventDefault();
+        const what = text.value.trim();
+        if (!what) { msg.textContent = 'Say or type what it should do, and when.'; return; }
+        go.disabled = true; msg.textContent = 'Sending…';
+        try {
+          const c = await mx.get();
+          const { pickRoom } = await import('./chat-mx.js');
+          const room = pickRoom(c, agent.matrix_id);
+          if (!room) throw new Error('no chat with the agent yet');
+          await c.sendMessage(room.roomId, { msgtype: 'm.text', body: `Please set up a routine for me (a scheduled job): ${what}` });
+        } catch (err) { msg.textContent = `Not sent: ${err.message}. Connect this device to your chats in Settings › Devices.`; go.disabled = false; return; }
+        msg.textContent = `${agent.display_name} is setting it up… This can take a minute or two; its answer is in your chat too.`;
+        // Watch for it: the list grows when the job exists (up to five minutes).
+        for (let i = 0; i < 60 && layer.isConnected; i++) {
+          await new Promise((ok) => setTimeout(ok, 5000));
+          const st = await getJSON(`/api/v2/agents/${agent.name}/status`).catch(() => null);
+          if (st && (st.jobs || []).filter((j) => !j.managed).length > had) { msg.textContent = 'Set up.'; await load(); setTimeout(close, 900); return; }
+        }
+        if (layer.isConnected) { msg.textContent = `Nothing new yet: see what ${agent.display_name} said in your chat.`; go.disabled = false; }
+      } },
+      h('h2', {}, 'New routine'), h('p', {}, `What should ${agent.display_name} do, and when?`),
+      h('label', { for: 'nr-text', class: 'sr' }, 'What and when'), h('div', { class: 'nr-row' }, text, mic), msg,
+      h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: close }, 'Cancel'))));
+    document.body.append(layer);
+    focusIfKeyboard(text);
+  }
+
   async function load() {
     if (!agent) return;
     let st, rt;
@@ -140,8 +197,8 @@ export async function agentsView(root, [agentArg]) {
         h('em', {}, '"remind me every Friday at 6 to put the bins out"'), '.'),
       h('h2', { class: 'label' }, 'Built in'),
       built.length ? h('div', { class: 'routine-cards' }, ...built) : none('None for this agent.'),
-      h('p', { class: 'when' }, 'Built-in routines only ever write to you; they never message other agents.'),
-      h('h2', { class: 'label' }, 'You asked for'),
+      h('div', { class: 'routines-head' }, h('h2', { class: 'label' }, 'You asked for'),
+        h('button', { type: 'button', class: 'btn small', onclick: () => newRoutine(yours.length) }, '+ New routine')),
       st.jobs == null ? h('div', { class: 'notice' }, `${agent.display_name} did not answer, so these could not be listed.`)
         : yours.length ? h('div', { class: 'rows' }, ...yours.map(yourRow))
           : none(`Nothing yet. Ask ${agent.display_name} to remind you of something, or to check in every morning.`),
