@@ -52,29 +52,53 @@ export async function unreadFromAgents(agents) {
   return out;
 }
 
-// Brain changes, one line per agent per day (Greg, 21 Nov: one row per page was a wall, every one at
-// "12:00", since the brain is saved on the hour). A daily note's title is its date: say so in words.
+// Brain changes, one row per day for all the agents (Greg, 22 Nov: they were most of the feed, one row
+// per agent). The time is when the brain was saved (on the hour), so only the day is shown. A daily
+// note's title is its date: say so in words. A page's summary loses its "Last changed 2026-…" tail.
 const dayKey = (ts) => new Date(ts * 1000).toDateString();
 const pageTitle = (t) => (/^\d{4}-\d{2}-\d{2}$/.test(t)
   ? `Notes of ${new Date(`${t}T12:00:00`).toLocaleDateString([], { day: 'numeric', month: 'short' })}` : t);
-function brainByDay(items) {
+export const cleanSummary = (t) => String(t || '').replace(/\s*·?\s*Last (changed|updated)\s+\d{4}-\d{2}-\d{2}[^.·]*\.?/gi, '').trim();
+export function brainByDay(items) {
   const groups = new Map(), rest = [];
   for (const i of items) {
     if (i.kind !== 'brain') { rest.push(i); continue; }
-    const k = `${i.agent}|${dayKey(i.ts)}`;
+    const k = dayKey(i.ts);
     const g = groups.get(k) || { ...i, id: `brain:${k}`, pages: [], ts: 0 };
     g.pages.push(i); g.ts = Math.max(g.ts, i.ts);
     groups.set(k, g);
   }
   for (const g of groups.values()) {
     const n = g.pages.length;
-    g.title = n === 1 ? pageTitle(g.pages[0].title) : `${n} pages updated`;
-    g.text = n === 1 ? g.pages[0].text : g.pages.map((p) => pageTitle(p.title)).join(' · ');
-    g.link = n === 1 ? g.pages[0].link : `#/brain/${g.agent}`;
-    g.dayOnly = true;                      // the time is when it was saved, not when it was learnt
+    const agents = [...new Set(g.pages.map((p) => p.agent))];
+    const one = agents.length === 1;
+    g.who = one ? g.pages[0].who : '';
+    g.source = one ? `${g.pages[0].who}'s brain` : 'Brains';
+    g.title = n === 1 ? pageTitle(g.pages[0].title) : `${n} pages changed`;
+    g.text = n === 1 ? cleanSummary(g.pages[0].text) : g.pages.map((p) => pageTitle(p.title)).join(', ');
+    g.link = n === 1 ? g.pages[0].link : one ? `#/brain/${agents[0]}` : '#/brain';
+    g.dayOnly = true;
     rest.push(g);
   }
   return rest;
+}
+
+// The AI computer going off and coming back is one row: "AI computer was off · 16:06–18:05 (2 h)"
+// (Greg, 22 Nov: two rows for one outage). While it is still off, that stays its own row (a problem).
+const hm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const span = (s) => (s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : `${Math.round(s / 360) / 10} h`.replace('.0 h', ' h'));
+export function outages(items) {
+  const ai = items.filter((i) => i.kind === 'ai').sort((a, b) => a.ts - b.ts);
+  const out = items.filter((i) => i.kind !== 'ai');
+  for (let k = 0; k < ai.length; k++) {
+    const e = ai[k], next = ai[k + 1];
+    if (!e.up && next && next.up) {
+      out.push({ ...next, id: `ai:${e.ts}`, type: 'update', up: true, dayOnly: true, title: 'AI computer was off',
+        text: `${dayKey(e.ts) === dayKey(next.ts) ? '' : `${new Date(e.ts * 1000).toLocaleDateString([], { weekday: 'short' })} `}${hm(e.ts)}–${hm(next.ts)} (${span(next.ts - e.ts)})` });
+      k += 1;
+    } else if (!e.up) out.push(e);                  // still off (or its return is older than the week)
+  }
+  return out;
 }
 
 // Everything for the feed, newest first, each marked new or not.
@@ -103,7 +127,7 @@ export async function feed() {
       outcome: label.split(':')[0], tone, link: '#/noticeboard' };
   });
   const chats = await unreadFromAgents(agents).catch(() => []);
-  const items = [...advisor, ...chats, ...brainByDay(server.items || []), ...between].sort((a, b) => b.ts - a.ts)
+  const items = [...advisor, ...chats, ...brainByDay(outages(server.items || [])), ...between].sort((a, b) => b.ts - a.ts)
     .map((i) => ({ ...i, fresh: i.unread || i.ts > seen }));
   return { items, waiting: nb.waiting || [], seen };
 }
