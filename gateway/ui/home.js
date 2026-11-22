@@ -1,6 +1,6 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
-import { h, api, getJSON, when, none, loading, aiState } from './util.js';
+import { h, api, getJSON, when, none, loading, aiState, reveal } from './util.js';
 import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
@@ -14,13 +14,14 @@ const SEEN_KEY = 'logos-home-last';    // the last Home seen on this device, dra
 const timeOf = (e) => (e.all_day ? 'All day' : String(e.start || '').slice(11, 16));
 
 export async function homeView(root) {
-  let alive = true, timer = null;
+  let alive = true, timer = null, painted = false;
   const doing = {};
   const waitingBox = h('div', { class: 'stack home-waiting' }, loading());
-  const todayBox = h('div', { class: 'home-days' });
+  const todayBox = h('div', { class: 'home-days' }, loading('rows', 4));
   const statusWords = h('p', { class: 'when home-status', hidden: true, id: 'home-status-words' });
   const waitingLabel = h('h2', { class: 'label' }, 'Waiting on you');
-  const waitingSec = h('section', { 'aria-label': 'Waiting on you' }, waitingLabel, waitingBox);
+  // Hidden until it is known that something waits: usually nothing does, so no placeholder that then vanishes.
+  const waitingSec = h('section', { 'aria-label': 'Waiting on you', hidden: true }, waitingLabel, waitingBox);
   // Greg, 22 Nov: the figures (agents working, AI speed, queue) left Home; they are for whoever runs
   // Logos (Models), not for the day. In their place, what helps Béré as much as Greg: what is next,
   // and the messages from your agents and groups you have not read.
@@ -67,8 +68,8 @@ export async function homeView(root) {
   const haTodo = (id) => `intent://navigate/todo${id ? `?entity_id=${encodeURIComponent(id)}` : ''}#Intent;scheme=homeassistant;`
     + 'package=io.homeassistant.companion.android;'
     + `S.browser_fallback_url=${encodeURIComponent(`${location.origin}/#/brain/household/lists.md`)};end`;
-  const listsBox = h('div', { class: 'home-lists-row' });
-  const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists', hidden: true },
+  const listsBox = h('div', { class: 'home-lists-row' }, loading('tiles', 2));
+  const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists' },
     h('h2', { class: 'label' }, 'Lists'), listsBox);
   async function showLists() {
     let page;
@@ -152,7 +153,7 @@ export async function homeView(root) {
     : c <= 57 ? ['🌦️', 'Drizzle'] : c <= 67 ? ['🌧️', 'Rain'] : c <= 77 ? ['🌨️', 'Snow'] : c <= 82 ? ['🌦️', 'Showers']
       : c <= 86 ? ['🌨️', 'Snow showers'] : ['⛈️', 'Thunder']);
   const deg = (t) => (t === null || t === undefined ? '–' : `${Math.round(t)}°`);
-  const weatherBox = h('div', { class: 'home-weather' });
+  const weatherBox = h('div', { class: 'home-weather' }, loading('rows', 1));
   const weatherSec = h('section', { class: 'home-weather-sec', 'aria-label': 'Weather' }, weatherBox);
   async function showWeather() {
     const w = await getJSON('/api/v2/weather').catch(() => ({ error: 'weather_unavailable' }));
@@ -169,7 +170,7 @@ export async function homeView(root) {
   }
 
   // Lights: each room, lit or not; a tap switches it (on if all off, else off), and All off.
-  const lightsBox = h('div', { class: 'home-lights' });
+  const lightsBox = h('div', { class: 'home-lights' }, loading('tiles', 4));
   const lightsNote = h('p', { class: 'when', role: 'status' });
   const lightsSec = h('section', { class: 'home-lights-sec', 'aria-label': 'Lights' },
     h('div', { class: 'home-sec-head' }, h('h2', { class: 'label' }, 'Lights'),
@@ -191,7 +192,7 @@ export async function homeView(root) {
   async function showLights() { const d = await getJSON('/api/v2/home/lights').catch(() => ({ error: 'x' })); if (alive) drawLights(d); }
 
   // Coming up: the next two weeks after tomorrow, one line each (all-day ones, like birthdays, too).
-  const comingBox = h('div', { class: 'home-list home-agenda' });
+  const comingBox = h('div', { class: 'home-list home-agenda' }, loading('rows', 3));
   const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up' }, h('h2', { class: 'label' }, 'Coming up'), comingBox);
   async function showComing() {
     const d = await getJSON('/api/v2/home/coming').catch(() => ({ error: 'x' }));
@@ -347,7 +348,12 @@ export async function homeView(root) {
     }
     if (!alive) return;
     try { localStorage.setItem(SEEN_KEY, JSON.stringify({ day: new Date().toDateString(), data, nb })); } catch (e) { /* full or private */ }
+    const first = !painted;
     paint(nb);
+    painted = true;
+    // From the cache: it brightens as the fresh data replaces it. From nothing: the content fades in.
+    if (board.classList.contains('stale')) board.classList.remove('stale');
+    else if (first) reveal(board);
   }
 
   // The last Home seen today on this device, drawn at once; load() replaces it a moment later.
@@ -357,6 +363,8 @@ export async function homeView(root) {
       if (!last || last.day !== new Date().toDateString() || !last.data || !last.data.agent) return;
       data = last.data;
       paint(last.nb || { waiting: [], log: [] });
+      painted = true;
+      board.classList.add('stale');            // the last Home seen, quietly, until the fresh one is in
     } catch (e) { /* nothing kept */ }
   }
 

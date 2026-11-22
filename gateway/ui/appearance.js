@@ -85,6 +85,8 @@ export function setMotion(motion, names) {
   if (motion) root.dataset.motion = motion;
   if (names) root.dataset.names = names;
 }
+// Animations of the screens themselves (slides, swipes, fades, loading): on or off, apart from the agents' movement.
+export function setAnimations(value) { root.dataset.anim = value === 'off' ? 'off' : 'on'; }
 
 export function current() {
   return { look: root.dataset.look || 'glass', mode: root.dataset.mode || 'dark' };
@@ -152,6 +154,7 @@ export function adopt(me) {
   mine = { primary: p.primary || '', attention: p.attention || '' };
   agentColours = { ...((me && me.agent_colours) || {}) };
   setMotion(p.motion || 'calm', p.names || 'hover');
+  setAnimations(p.animations || 'on');
   if (me && me.look) apply(me.look);
   else { paintColours(); paintBars(); }
   if (me && ['greg', 'bere'].includes(me.username)) root.dataset.person = me.username;

@@ -132,7 +132,9 @@ PREFS = {"panel": ("slide", "open"), "thinking": (True, False), "jobs": (True, F
          # ST3: how much the agents move, and when their names show on their marks
          "motion": ("full", "calm", "still"), "names": ("hover", "always"),
          # Home's widgets were rearranged once the calendar became one (22 Nov): an older choice gets it added
-         "widgets_v2": (True, False)}
+         "widgets_v2": (True, False),
+         # Animations of the screens (slides, swipes, fades, loading), apart from the agents' movement (motion)
+         "animations": ("on", "off")}
 # ST2: your own colours, any "#rrggbb" (the page keeps text readable whatever is picked); "" = the look's own
 COLOUR_PREFS = ("primary", "attention")
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")

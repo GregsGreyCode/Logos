@@ -1,5 +1,5 @@
 // Noticeboard screen: what the agents asked each other, and the requests waiting on you.
-import { h, api, getJSON, when, none, loading } from './util.js';
+import { h, api, getJSON, when, none, loading, reveal } from './util.js';
 
 const KIND = { fyi: 'FYI', question: 'Question', shared_change: 'Shared change', reminder: 'Reminder' };
 const ASKS = { question: 'asks a question', shared_change: 'proposes a shared change', reminder: 'asks for a reminder' };
@@ -127,7 +127,8 @@ export async function noticeboardView(root) {
   const allRead = h('button', { type: 'button', class: 'linkish feed-allread', hidden: true, onclick: async () => {
     allRead.disabled = true; await markAllRead(); allRead.disabled = false; load();
   } }, 'Mark all read');
-  const days = h('div', { class: 'feed-days' }, loading());
+  const days = h('div', { class: 'feed-days' }, loading('rows', 6));
+  let shown = false;
   const error = h('div', { class: 'notice', hidden: true });
   const card = (m) => requestCard(m, doing, () => load());
 
@@ -154,6 +155,7 @@ export async function noticeboardView(root) {
         if (!groups.length || groups[groups.length - 1][0] !== d) groups.push([d, []]);
         groups[groups.length - 1][1].push(i);
       }
+      if (!shown) { shown = true; reveal(days); }
       days.replaceChildren(...(groups.length ? groups.map(([d, list]) => h('section', { 'aria-label': d },
         h('h2', { class: 'label' }, d), h('div', { class: 'feed' }, ...list.map(row)))) : [none('Nothing this week.')]));
       setBadge(toDo + items.filter((i) => urgent(i) ? false : i.type === 'message' && i.fresh).length);

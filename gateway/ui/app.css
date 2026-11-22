@@ -733,10 +733,11 @@ dialog.appearance .label { margin: 16px 0 8px; }
 /* ST3: how much things move. Calm is the default; Full is livelier; Still stops it all, leaving
    colour and glow to show each state (also what a device set to reduce motion gets). */
 [data-motion="full"] .sleep-mark { animation-duration: 4s; }
-[data-motion="still"] .sleep-mark, [data-motion="still"] .reply-mark, [data-motion="still"] .logo.busy,
-[data-motion="still"] .mic[aria-pressed="true"] .mic-dot { animation: none !important; }
+[data-motion="still"] .sleep-mark, [data-motion="still"] .reply-mark, [data-motion="still"] .logo.busy { animation: none !important; }
+[data-anim="off"] .mic[aria-pressed="true"] .mic-dot { animation: none !important; }
 [data-motion="still"] .sleep-mark { opacity: 0.35; }
-[data-motion="still"] .side, [data-motion="still"] .reply-mark { transition: none !important; }
+[data-motion="still"] .reply-mark { transition: none !important; }
+[data-anim="off"] .side { transition: none !important; }
 
 /* Settings: colour rows */
 .colour-row { display: grid; grid-template-columns: minmax(130px, 180px) minmax(0, 1fr); gap: 8px 16px; align-items: center; }
@@ -766,13 +767,31 @@ dialog.appearance .label { margin: 16px 0 8px; }
   [data-look="glass"] .page > header > h1, [data-look="glass"] .page > h1 { background: var(--glass);
     -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
 }
-/* P2: loading looks the same everywhere */
-.loading { display: flex; flex-direction: column; gap: 12px; max-width: 560px; color: var(--muted); font-size: var(--t-md); }
-.loading .bar { display: block; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--chip) 0, var(--line) 40%, var(--chip) 80%);
-  background-size: 600px 100%; animation: shimmer 1.4s linear infinite; }
-@keyframes shimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
-@media (prefers-reduced-motion: reduce) { .loading .bar { animation: none; } }
-[data-motion="still"] .loading .bar { animation: none; }
+/* Loading (Greg, 22 Nov): placeholders in the shape of what is coming, with a soft light passing over them.
+   They appear only after a short wait, so a quick answer never flashes them. */
+.loading { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 760px; animation: sk-appear .25s ease .18s both; }
+.loading.sk-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+@keyframes sk-appear { from { opacity: 0; } to { opacity: 1; } }
+.sk { position: relative; overflow: hidden; display: block; background: var(--chip); border-radius: 8px; }
+.sk::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink) 9%, transparent), transparent);
+  animation: sk-sweep 1.4s cubic-bezier(.4, 0, .2, 1) infinite; }
+@keyframes sk-sweep { to { transform: translateX(100%); } }
+.sk-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.sk-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.sk-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sk-line { height: 12px; border-radius: 6px; }
+.sk-line.thin, .sk-in.thin { height: 9px; opacity: .7; }
+.sk-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; min-height: 64px; border-radius: var(--r-card); }
+.sk-card.tall { min-height: 92px; }
+.sk-in { display: block; height: 12px; border-radius: 6px; background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.sk-bubble { height: 44px; border-radius: 18px; align-self: flex-start; }
+.sk-bubble.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 30%, var(--chip)); }
+.sk-tile { height: 56px; border-radius: var(--r-card); }
+.reveal { animation: reveal .42s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+[data-anim="off"] .sk::after, [data-anim="off"] .loading, [data-anim="off"] .reveal { animation: none; }
+@media (prefers-reduced-motion: reduce) { .sk::after, .loading, .reveal { animation: none; } }
 /* The Claude Advisor notice is a card shape, not a pill */
 .notice { border-radius: var(--r-small); }
 .home-quiet { padding: 0; }
@@ -1214,7 +1233,7 @@ section:has(> .appearance-modes.single) { display: none; }
 /* Switching between chat screens: a short fade instead of a hard redraw. */
 .view-fade { animation: view-in .22s ease-out; }
 @keyframes view-in { from { opacity: 0; transform: scale(.985); } }
-[data-motion="still"] .view-fade { animation: none; }
+[data-anim="off"] .view-fade { animation: none; }
 @media (prefers-reduced-motion: reduce) { .view-fade { animation: none; } }
 
 /* Send / hold to record. With the box empty the arrow and the microphone slowly take turns. */
@@ -1229,7 +1248,7 @@ section:has(> .appearance-modes.single) { display: none; }
 .send-btn.recording .send-ico { opacity: 0; animation: none; }
 .send-btn.recording .mic-ico { opacity: 1; animation: rec-pulse 1.2s ease-in-out infinite; }
 @keyframes rec-pulse { 50% { transform: scale(1.15); } }
-[data-motion="still"] .send-btn.idle .send-ico, [data-motion="still"] .send-btn.idle .mic-ico { animation: none; }
+[data-anim="off"] .send-btn.idle .send-ico, [data-anim="off"] .send-btn.idle .mic-ico { animation: none; }
 @media (prefers-reduced-motion: reduce) { .send-btn.idle .send-ico, .send-btn.idle .mic-ico { animation: none; } }
 /* The queue line sits just above the message box. */
 .chat .model-line { margin: 0 16px 8px; border-radius: 12px; }
@@ -1380,11 +1399,15 @@ section:has(> .appearance-modes.single) { display: none; }
 .agent-menu-list .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
 
 /* Swiping between Home and Agents (app.js swipeTabs): the next screen slides in from the side. */
-@keyframes slide-in-right { from { transform: translateX(28%); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes slide-in-left { from { transform: translateX(-28%); opacity: 0; } to { transform: none; opacity: 1; } }
-#view.slide-in-right { animation: slide-in-right .24s cubic-bezier(.2, .8, .2, 1) both; }
-#view.slide-in-left { animation: slide-in-left .24s cubic-bezier(.2, .8, .2, 1) both; }
-[data-motion="still"] #view.slide-in-right, [data-motion="still"] #view.slide-in-left { animation: none; }
+/* The next screen glides in from the side the finger went (Greg, 22 Nov: smoother): it starts a third of
+   the way across and settles without a bump. Settings › Animations › Off (or the phone's reduced motion)
+   turns it off; Agent movement is only about the agents' marks. */
+@keyframes slide-in-right { from { transform: translateX(34%); opacity: .15; } to { transform: none; opacity: 1; } }
+@keyframes slide-in-left { from { transform: translateX(-34%); opacity: .15; } to { transform: none; opacity: 1; } }
+#view.slide-in-right { animation: slide-in-right .34s cubic-bezier(.16, 1, .3, 1) both; }
+#view.slide-in-left { animation: slide-in-left .34s cubic-bezier(.16, 1, .3, 1) both; }
+
+[data-anim="off"] #view.slide-in-right, [data-anim="off"] #view.slide-in-left { animation: none; }
 @media (prefers-reduced-motion: reduce) { #view.slide-in-right, #view.slide-in-left { animation: none; } }
 @media (max-width: 599px) { html.screen-tabbed:not(.in-agent) { overscroll-behavior-x: none; } }
 
@@ -1501,7 +1524,7 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 @keyframes mark-send { to { translate: 0 -160px; opacity: 0; scale: .85; } }
 .void-field .agent-mark.cancelling .mark-glow { animation: mark-shake .42s ease; }
 @keyframes mark-shake { 20% { translate: -6px 0; } 40% { translate: 6px 0; } 60% { translate: -4px 0; } 80% { translate: 3px 0; } }
-[data-motion="still"] .rec-guide > span { animation: none; }
+[data-anim="off"] .rec-guide > span { animation: none; }
 @media (prefers-reduced-motion: reduce) { .rec-guide > span, .void-field .agent-mark.sending, .void-field .agent-mark.cancelling .mark-glow { animation: none; } }
 @media (min-width: 600px) { .void-field { inset: 116px 0 0; } }
 
@@ -1687,3 +1710,22 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .notifications .feed-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
 .notifications .feed-head:has(> [hidden] + [hidden]) { display: none; }
 .feed-allread { font-size: var(--t-sm); margin-left: auto; }
+/* Home drawn from the last visit: a little dim, with a light passing along its top, until fresh data is in. */
+.home-widgets { transition: opacity .45s ease; }
+.home-widgets.stale { opacity: .72; }
+
+/* A thin line along the top while a screen loads (only after a moment), then it fills and fades. */
+.top-progress { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 100; pointer-events: none; opacity: 0;
+  transform-origin: 0 50%; transform: scaleX(0); background: linear-gradient(90deg, var(--accent), var(--accent-text)); }
+.top-progress.on { opacity: 1; animation: progress-run 2.4s cubic-bezier(.1, .7, .2, 1) forwards; }
+.top-progress.on.done { animation: none; transform: scaleX(1); opacity: 0; transition: transform .2s ease, opacity .35s ease .15s; }
+@keyframes progress-run { from { transform: scaleX(0); } to { transform: scaleX(.85); } }
+[data-anim="off"] .top-progress.on { animation: none; transform: scaleX(.6); }
+@media (prefers-reduced-motion: reduce) { .top-progress.on { animation: none; transform: scaleX(.6); } }
+/* The tab bar's highlight: a short line that glides to your tab, and follows a swipe. */
+.tab-glow { position: absolute; top: 0; left: 0; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent); pointer-events: none;
+  transition: transform .34s cubic-bezier(.16, 1, .3, 1), width .34s cubic-bezier(.16, 1, .3, 1); }
+.tab-glow[hidden] { display: none; }
+@media (min-width: 600px) { .tab-glow { display: none; } }
+[data-anim="off"] .tab-glow { transition: none; }
