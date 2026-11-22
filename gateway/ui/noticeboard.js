@@ -80,7 +80,7 @@ const dayWord = (ts) => {
 const KIND_LABEL = { chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents', advisor: 'Claude Advisor',
   budget: 'Claude Advisor', conflict: 'Brain', agent_down: 'Agent', sync: 'Sync' };
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-function feedRow(i, TYPES) {
+function feedRow(i, TYPES, onOpen) {
   // A message's title already says who wrote it, so its second line is just the words.
   const source = i.source || (i.kind === 'brain' ? `${i.who}'s brain` : i.kind === 'chat' ? '' : KIND_LABEL[i.kind] || '');
   const type = i.type || 'update';
@@ -90,35 +90,53 @@ function feedRow(i, TYPES) {
   const detail = i.kind === 'sync' ? `Last synced ${i.last_seen ? when(i.last_seen).toLowerCase() : 'never'} · `
     + `${i.missing} change${i.missing === 1 ? '' : 's'} waiting. ${i.text}` : (i.text || '');
   const second = [i.outcome, source && source !== i.title ? source : '', detail].filter(Boolean).join(' · ');
-  return h(i.link ? 'a' : 'div', { class: `feed-item type-${type} kind-${i.kind}${i.fresh ? ' fresh' : ''}${i.kind === 'ai' ? (i.up ? ' up' : ' down') : ''}`, href: i.link || null },
+  // A tap opens it in place (the whole text, and a way to go to it) and marks it read (Greg, 22 Nov).
+  const go = i.link ? h('a', { href: i.link, class: 'btn small feed-go' }, i.kind === 'chat' ? 'Open the chat' : i.kind === 'brain' ? 'Open the page'
+    : i.kind === 'agents' ? 'Open the noticeboard' : 'Open') : null;
+  const row = h('div', { class: `feed-item type-${type} kind-${i.kind}${i.fresh ? ' fresh' : ''}${i.kind === 'ai' ? (i.up ? ' up' : ' down') : ''}`,
+    role: 'button', tabindex: '0', 'aria-expanded': 'false' },
     h('span', { class: 'feed-dot', 'aria-hidden': 'true' }),
     h('span', { class: 'feed-body' },
       h('span', { class: 'feed-top' }, chip, h('strong', { class: 'feed-title' }, i.title), h('span', { class: 'when' }, time)),
-      second ? h('span', { class: 'feed-text' }, second) : null),
-    i.fresh ? h('span', { class: 'visually-hidden' }, ' (new)') : null);
+      second ? h('span', { class: 'feed-text' }, second) : null,
+      h('span', { class: 'feed-more' }, i.dayOnly || !i.ts ? null : h('span', { class: 'when' }, when(i.ts)), go)),
+    i.fresh ? h('span', { class: 'visually-hidden feed-new' }, ' (new)') : null);
+  const toggle = (e) => {
+    if (e.target.closest('a')) return;                    // the Open button goes on its own
+    const open = row.classList.toggle('open');
+    row.setAttribute('aria-expanded', String(open));
+    if (row.classList.contains('fresh')) { row.classList.remove('fresh'); row.querySelector('.feed-new')?.remove(); onOpen(i); }
+  };
+  row.addEventListener('click', toggle);
+  row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(e); } });
+  return row;
 }
 
 export async function noticeboardView(root) {
-  const { feed, markSeen, TYPES, urgent } = await import('./notify.js');
-  const row = (i) => feedRow(i, TYPES);
-  let alive = true, timer = null, marked = false, seenAtOpen = null;
+  const { feed, markRead, markAllRead, countNew, TYPES, urgent } = await import('./notify.js');
+  const opened = new Set();                 // read during this visit (kept new-looking until the server agrees)
+  const readOne = async (i) => { opened.add(i.id); await markRead(i); countNew().then(setBadge).catch(() => {}); };
+  const row = (i) => feedRow(opened.has(i.id) ? { ...i, fresh: false } : i, TYPES, readOne);
+  let alive = true, timer = null;
   const doing = {};             // request id -> message shown while the agent acts on an acceptance
   const waitingBox = h('div', { class: 'cards' });
   const needsBox = h('div', { class: 'feed needs' });
   const needsLabel = h('h2', { class: 'label' }, 'Needs you');
   const waitSec = h('section', { 'aria-label': 'Needs you', hidden: true }, needsLabel, waitingBox, needsBox);
   const caught = h('p', { class: 'feed-caught', hidden: true }, '✓ All caught up');
+  const allRead = h('button', { type: 'button', class: 'linkish feed-allread', hidden: true, onclick: async () => {
+    allRead.disabled = true; await markAllRead(); allRead.disabled = false; load();
+  } }, 'Mark all read');
   const days = h('div', { class: 'feed-days' }, loading());
   const error = h('div', { class: 'notice', hidden: true });
   const card = (m) => requestCard(m, doing, () => load());
 
   async function load() {
     try {
-      const { items: raw, waiting, seen } = await feed();
+      const { items: raw, waiting } = await feed();
       if (!alive) return;
-      // New means new since you opened this page: it stays so while you are here, even once marked seen.
-      if (seenAtOpen === null) seenAtOpen = seen;
-      const items = raw.map((i) => ({ ...i, fresh: i.unread || i.ts > seenAtOpen }));
+      // New stays new until you tap it, or Mark all read (Greg, 22 Nov: opening the tab no longer clears all).
+      const items = raw.map((i) => (opened.has(i.id) ? { ...i, fresh: false } : i));
       error.hidden = true;
       for (const id of Object.keys(doing)) if (!waiting.some((w) => String(w.id) === id)) delete doing[id];
       const needs = items.filter(urgent), rest = items.filter((i) => !urgent(i)).slice(0, 40);
@@ -128,6 +146,7 @@ export async function noticeboardView(root) {
       waitingBox.replaceChildren(...waiting.map(card));
       needsBox.replaceChildren(...needs.map(row));
       caught.hidden = !!toDo || rest.some((i) => i.fresh);
+      allRead.hidden = !items.some((i) => i.fresh);
       // By day, newest first.
       const groups = [];
       for (const i of rest) {
@@ -137,9 +156,7 @@ export async function noticeboardView(root) {
       }
       days.replaceChildren(...(groups.length ? groups.map(([d, list]) => h('section', { 'aria-label': d },
         h('h2', { class: 'label' }, d), h('div', { class: 'feed' }, ...list.map(row)))) : [none('Nothing this week.')]));
-      // Seen once you have opened it: the dots stay for this visit, the count on the bell goes.
-      if (!marked) { marked = true; await markSeen(); }
-      setBadge(toDo + items.filter((i) => i.unread).length);
+      setBadge(toDo + items.filter((i) => urgent(i) ? false : i.type === 'message' && i.fresh).length);
     } catch (e) {
       error.hidden = false;
       error.textContent = 'Could not load the notifications just now.';
@@ -148,7 +165,7 @@ export async function noticeboardView(root) {
 
   root.replaceChildren(h('div', { class: 'page notifications' },
     h('header', { class: 'visually-hidden' }, h('h1', {}, 'Notifications')),
-    error, caught, waitSec, days));
+    error, h('div', { class: 'feed-head' }, caught, allRead), waitSec, days));
   await load();
   timer = setInterval(load, 15000);
   return () => { alive = false; clearInterval(timer); };

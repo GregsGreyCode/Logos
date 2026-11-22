@@ -1678,3 +1678,12 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
   .home-widgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; row-gap: 22px; align-items: start; }
 }
 .home-coming .home-line .home-time { width: 62px; white-space: nowrap; }
+/* A notification opens in place when tapped (the whole text, and a button to go to it) and is then read. */
+.notifications .feed-item { cursor: pointer; }
+.notifications .feed-more { display: none; }
+.notifications .feed-item.open .feed-text { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.notifications .feed-item.open .feed-top .feed-title { white-space: normal; }
+.notifications .feed-item.open .feed-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.notifications .feed-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+.notifications .feed-head:has(> [hidden] + [hidden]) { display: none; }
+.feed-allread { font-size: var(--t-sm); margin-left: auto; }

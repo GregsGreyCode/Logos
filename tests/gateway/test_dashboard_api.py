@@ -598,7 +598,7 @@ def test_a_matrix_reply_brings_its_thinking_and_only_your_own(run):
 def test_notifications_feed_answers_with_items_and_seen(run, monkeypatch):
     monkeypatch.setattr(FakeDb, "get_user_settings", lambda self, uid: {"ui_prefs": '{"seen_until": 42}'}, raising=False)
     status, body = run("u-greg", "/api/v2/notifications")
-    assert status == 200 and set(body) == {"items", "seen_until"}
+    assert status == 200 and set(body) == {"items", "seen_until", "read_ids"}
     assert body["seen_until"] == 42 and isinstance(body["items"], list)
 
 
