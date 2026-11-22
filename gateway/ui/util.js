@@ -75,9 +75,29 @@ export function aiState(up, offSince = null) {
 }
 // "Nothing here" is always the same quiet line: no box, no table, no logo.
 export const none = (text) => h('p', { class: 'none' }, text);
-// Loading (P2): the same in every screen and the same place, "Loading…" over three shimmering lines.
-export const loading = () => h('div', { class: 'loading', role: 'status' }, h('span', {}, 'Loading…'),
-  h('span', { class: 'bar', style: 'width:70%' }), h('span', { class: 'bar', style: 'width:90%' }), h('span', { class: 'bar', style: 'width:55%' }));
+// Loading (Greg, 22 Nov): the shape of what is coming, softly shimmering, instead of "Loading…": rows (a
+// list), cards, bubbles (a chat), tiles or a card. It fades in only if the wait is noticeable, so a quick
+// answer never flashes it. Screen readers hear "Loading".
+const W = [72, 54, 86, 64, 78, 48];
+const SHAPES = {
+  rows: (i) => h('div', { class: 'sk-row' }, h('span', { class: 'sk sk-dot' }),
+    h('span', { class: 'sk-lines' }, h('span', { class: 'sk sk-line', style: `width:${W[i % 6]}%` }), h('span', { class: 'sk sk-line thin', style: `width:${W[(i + 3) % 6] - 18}%` }))),
+  cards: (i) => h('div', { class: 'sk sk-card' }, h('span', { class: 'sk-in', style: `width:${W[i % 6] - 20}%` }), h('span', { class: 'sk-in thin', style: `width:${W[(i + 2) % 6]}%` })),
+  bubbles: (i) => h('div', { class: `sk sk-bubble${i % 2 ? ' me' : ''}`, style: `width:${W[i % 6]}%;height:${i % 3 ? 44 : 68}px` }),
+  tiles: () => h('div', { class: 'sk sk-tile' }),
+  card: () => h('div', { class: 'sk sk-card tall' }),
+};
+export const loading = (shape = 'rows', n = 3) => h('div', { class: `loading sk-${shape}`, role: 'status', 'aria-label': 'Loading' },
+  ...Array.from({ length: n }, (_, i) => (SHAPES[shape] || SHAPES.rows)(i)));
+
+// The first real content after a wait fades in, rather than appearing all at once.
+export function reveal(el) {
+  if (!el) return;
+  el.classList.remove('reveal');
+  void el.offsetWidth;                         // restart the animation
+  el.classList.add('reveal');
+  setTimeout(() => el.classList.remove('reveal'), 600);
+}
 
 // Put the cursor in a text box only where there is a real keyboard: on a phone, focusing it pops the
 // on-screen keyboard up before the person has chosen to type.

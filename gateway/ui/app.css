@@ -766,13 +766,32 @@ dialog.appearance .label { margin: 16px 0 8px; }
   [data-look="glass"] .page > header > h1, [data-look="glass"] .page > h1 { background: var(--glass);
     -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
 }
-/* P2: loading looks the same everywhere */
-.loading { display: flex; flex-direction: column; gap: 12px; max-width: 560px; color: var(--muted); font-size: var(--t-md); }
-.loading .bar { display: block; height: 12px; border-radius: 6px; background: linear-gradient(90deg, var(--chip) 0, var(--line) 40%, var(--chip) 80%);
-  background-size: 600px 100%; animation: shimmer 1.4s linear infinite; }
-@keyframes shimmer { 0% { background-position: -300px 0; } 100% { background-position: 300px 0; } }
-@media (prefers-reduced-motion: reduce) { .loading .bar { animation: none; } }
-[data-motion="still"] .loading .bar { animation: none; }
+/* Loading (Greg, 22 Nov): placeholders in the shape of what is coming, with a soft light passing over them.
+   They appear only after a short wait, so a quick answer never flashes them. */
+.loading { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 760px; animation: sk-appear .25s ease .18s both; }
+.loading.sk-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+@keyframes sk-appear { from { opacity: 0; } to { opacity: 1; } }
+.sk { position: relative; overflow: hidden; display: block; background: var(--chip); border-radius: 8px; }
+.sk::after { content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink) 9%, transparent), transparent);
+  animation: sk-sweep 1.4s cubic-bezier(.4, 0, .2, 1) infinite; }
+@keyframes sk-sweep { to { transform: translateX(100%); } }
+.sk-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+.sk-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.sk-lines { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.sk-line { height: 12px; border-radius: 6px; }
+.sk-line.thin, .sk-in.thin { height: 9px; opacity: .7; }
+.sk-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; min-height: 64px; border-radius: var(--r-card); }
+.sk-card.tall { min-height: 92px; }
+.sk-in { display: block; height: 12px; border-radius: 6px; background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.sk-bubble { height: 44px; border-radius: 18px; align-self: flex-start; }
+.sk-bubble.me { align-self: flex-end; background: color-mix(in srgb, var(--accent) 30%, var(--chip)); }
+.sk-tile { height: 56px; border-radius: var(--r-card); }
+.reveal { animation: reveal .42s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+[data-motion="calm"] .reveal { animation-duration: .25s; }
+[data-motion="still"] .sk::after, [data-motion="still"] .loading, [data-motion="still"] .reveal { animation: none; }
+@media (prefers-reduced-motion: reduce) { .sk::after, .loading, .reveal { animation: none; } }
 /* The Claude Advisor notice is a card shape, not a pill */
 .notice { border-radius: var(--r-small); }
 .home-quiet { padding: 0; }
@@ -1380,10 +1399,13 @@ section:has(> .appearance-modes.single) { display: none; }
 .agent-menu-list .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
 
 /* Swiping between Home and Agents (app.js swipeTabs): the next screen slides in from the side. */
-@keyframes slide-in-right { from { transform: translateX(28%); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes slide-in-left { from { transform: translateX(-28%); opacity: 0; } to { transform: none; opacity: 1; } }
-#view.slide-in-right { animation: slide-in-right .24s cubic-bezier(.2, .8, .2, 1) both; }
-#view.slide-in-left { animation: slide-in-left .24s cubic-bezier(.2, .8, .2, 1) both; }
+/* The next screen glides in from the side the finger went (Greg, 22 Nov: smoother): it starts a third of
+   the way across and settles without a bump. Calm: a shorter, quicker move. */
+@keyframes slide-in-right { from { transform: translateX(34%); opacity: .15; } to { transform: none; opacity: 1; } }
+@keyframes slide-in-left { from { transform: translateX(-34%); opacity: .15; } to { transform: none; opacity: 1; } }
+#view.slide-in-right { animation: slide-in-right .34s cubic-bezier(.16, 1, .3, 1) both; }
+#view.slide-in-left { animation: slide-in-left .34s cubic-bezier(.16, 1, .3, 1) both; }
+[data-motion="calm"] #view.slide-in-right, [data-motion="calm"] #view.slide-in-left { animation-duration: .2s; }
 [data-motion="still"] #view.slide-in-right, [data-motion="still"] #view.slide-in-left { animation: none; }
 @media (prefers-reduced-motion: reduce) { #view.slide-in-right, #view.slide-in-left { animation: none; } }
 @media (max-width: 599px) { html.screen-tabbed:not(.in-agent) { overscroll-behavior-x: none; } }
@@ -1687,3 +1709,22 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .notifications .feed-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
 .notifications .feed-head:has(> [hidden] + [hidden]) { display: none; }
 .feed-allread { font-size: var(--t-sm); margin-left: auto; }
+/* Home drawn from the last visit: a little dim, with a light passing along its top, until fresh data is in. */
+.home-widgets { transition: opacity .45s ease; }
+.home-widgets.stale { opacity: .72; }
+
+/* A thin line along the top while a screen loads (only after a moment), then it fills and fades. */
+.top-progress { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 100; pointer-events: none; opacity: 0;
+  transform-origin: 0 50%; transform: scaleX(0); background: linear-gradient(90deg, var(--accent), var(--accent-text)); }
+.top-progress.on { opacity: 1; animation: progress-run 2.4s cubic-bezier(.1, .7, .2, 1) forwards; }
+.top-progress.on.done { animation: none; transform: scaleX(1); opacity: 0; transition: transform .2s ease, opacity .35s ease .15s; }
+@keyframes progress-run { from { transform: scaleX(0); } to { transform: scaleX(.85); } }
+[data-motion="still"] .top-progress.on { animation: none; transform: scaleX(.6); }
+@media (prefers-reduced-motion: reduce) { .top-progress.on { animation: none; transform: scaleX(.6); } }
+/* The tab bar's highlight: a short line that glides to your tab, and follows a swipe. */
+.tab-glow { position: absolute; top: 0; left: 0; height: 2px; border-radius: 0 0 2px 2px; background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent); pointer-events: none;
+  transition: transform .34s cubic-bezier(.16, 1, .3, 1), width .34s cubic-bezier(.16, 1, .3, 1); }
+.tab-glow[hidden] { display: none; }
+@media (min-width: 600px) { .tab-glow { display: none; } }
+[data-motion="still"] .tab-glow { transition: none; }

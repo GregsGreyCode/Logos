@@ -83,6 +83,39 @@ for (const row of document.querySelectorAll('.sheet-row[data-icon]')) row.prepen
 for (const link of document.querySelectorAll('.nav-links a[data-icon]')) link.prepend(icon(ICONS[link.dataset.icon]));
 
 let visit = 0;
+// A thin line along the top while a screen loads (Greg, 22 Nov): only if it takes a moment, so a quick
+// screen shows nothing; it runs ahead, then fills and fades when the screen is in.
+const bar = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'top-progress', ariaHidden: 'true' }));
+let barTimer = null;
+function progress(on) {
+  clearTimeout(barTimer);
+  if (on) { bar.className = 'top-progress'; barTimer = setTimeout(() => { bar.className = 'top-progress on'; }, 180); return; }
+  if (bar.classList.contains('on')) { bar.className = 'top-progress on done'; barTimer = setTimeout(() => { bar.className = 'top-progress'; }, 450); }
+}
+
+// The tab bar's highlight glides to the tab you are on (and follows a swipe).
+const glow = (() => {
+  const tabbar = document.querySelector('.tabbar');
+  if (!tabbar) return { place() {}, follow() {} };
+  const el = tabbar.appendChild(Object.assign(document.createElement('span'), { className: 'tab-glow', ariaHidden: 'true' }));
+  const tabs = () => [...tabbar.querySelectorAll('a')];
+  const at = (i) => { const t = tabs()[i]; return t ? { x: t.offsetLeft, w: t.offsetWidth } : null; };
+  const set = (x, w, instant) => { el.style.transition = instant ? 'none' : ''; el.style.width = `${w}px`; el.style.transform = `translateX(${x}px)`; };
+  return {
+    place() {
+      const i = tabs().findIndex((a) => a.getAttribute('aria-current') === 'page');
+      el.hidden = i < 0;
+      const p = at(i); if (p) set(p.x, p.w);
+    },
+    follow(i, frac) {                     // frac: -1..1 of the way to the next tab, as the finger moves
+      const p = at(i), q = at(i + Math.sign(frac));
+      if (!p || !q || !frac) return;
+      set(p.x + (q.x - p.x) * Math.abs(frac), p.w, true);
+    },
+  };
+})();
+window.addEventListener('resize', () => glow.place());
+
 async function route() {
   // Updates now lives in Settings (ST1); old links still work.
   if (location.hash.startsWith('#/updates')) { history.replaceState(null, '', '#/settings/updates'); }
@@ -95,6 +128,7 @@ async function route() {
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   }
   if (IN_ACCOUNT.includes(name)) acctBtn.setAttribute('aria-current', 'page'); else acctBtn.removeAttribute('aria-current');
+  glow.place();
   // The top bar names the screen only when the tab bar does not: Home, Chat, Brain and Notices are
   // already lit up at the bottom; the screens under More are not (Greg, 21 Nov).
   const tabbed = ['home', 'chat', 'brain', 'agents', 'noticeboard'].includes(name);
@@ -130,7 +164,9 @@ async function route() {
   }
   root.replaceChildren(box);
   window.scrollTo(0, 0);                 // every screen starts at its top
+  progress(true);
   const done = await views[name](box, rest, state);
+  if (mine === visit) progress(false);
   if (mine === visit) cleanup = done; else if (done) done();
 }
 
@@ -181,12 +217,14 @@ setInterval(activity, 10000);
 document.addEventListener('visibilitychange', activity);
 window.addEventListener('hashchange', route);
 
-// Phone (Greg, 21 Nov): swipe between Home, Agents and Notifications, the first three tabs. On Home, swipe left to the
-// agents; on the agents, swipe right back Home. The page follows the finger, then the next slides in.
-// Inside an agent the swipe right goes back to all agents (chat-mx), so it is not caught here.
+// Phone (Greg, 21 Nov; 22 Nov: smoother): swipe between Home, Agents and Notifications, the first three tabs.
+// The screen follows the finger one to one (and only stretches a little past the first and last tab);
+// let go past about a third of the width, or with a flick, and it carries on off the screen while the
+// next slides in from the side you swiped towards; otherwise it springs back. The tab bar's highlight
+// follows the finger. Inside an agent the swipe right goes back to all agents (chat-mx), not caught here.
 const SWIPE_TABS = ['#/home', '#/chat', '#/noticeboard'];
 function swipeTabs(el) {
-  let start = null, leaving = false;
+  let s = null, leaving = false;
   const here = () => {
     const [, name = 'home', ...rest] = location.hash.split('/');
     if (name === 'home') return 0;
@@ -195,39 +233,63 @@ function swipeTabs(el) {
     return -1;
   };
   const phone = () => window.matchMedia('(max-width: 599px)').matches;
+  const motion = () => (window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'still' : document.documentElement.dataset.motion || 'full');
+  const reset = (animate) => {
+    el.style.transition = animate ? 'transform .38s cubic-bezier(.2, 1.3, .4, 1), opacity .3s ease' : 'none';
+    el.style.transform = ''; el.style.opacity = '';
+    glow.place();
+  };
   el.addEventListener('touchstart', (e) => {
-    start = null;
-    if (!phone() || e.touches.length !== 1 || here() < 0 || document.querySelector('.sheet:not([hidden])')) return;
-    if (e.target.closest('textarea, input, select, [contenteditable], .mx-chips, .table-box, .md-table, pre, .tabs')) return;
-    start = { x: e.touches[0].clientX, y: e.touches[0].clientY, at: here() };
+    s = null;
+    if (leaving || !phone() || e.touches.length !== 1 || here() < 0 || document.querySelector('.sheet:not([hidden])')) return;
+    if (e.target.closest('textarea, input, select, [contenteditable], .mx-chips, .table-box, .md-table, pre, .tabs, .home-widgets.editing, .widget-handle')) return;
+    const t = e.touches[0];
+    s = { x: t.clientX, y: t.clientY, at: here(), dx: 0, lock: null, v: 0, t: e.timeStamp, lx: t.clientX };
   }, { passive: true });
   el.addEventListener('touchmove', (e) => {
-    if (!start || e.touches.length !== 1) return;
+    if (!s || e.touches.length !== 1) return;
     // Holding a floating agent (moving it, or recording for it) is not a swipe.
-    if (document.documentElement.classList.contains('holding-mark')) { start = null; el.style.transform = ''; el.style.opacity = ''; return; }
-    const dx = e.touches[0].clientX - start.x, dy = Math.abs(e.touches[0].clientY - start.y);
-    if (dy > 40 && dy > Math.abs(dx)) { start = null; el.style.transform = ''; el.style.opacity = ''; return; }
-    const next = start.at + (dx < 0 ? 1 : -1);
-    if (next < 0 || next >= SWIPE_TABS.length || dy > Math.abs(dx) / 2) return;
-    el.style.transition = 'none'; el.style.willChange = 'transform, opacity';
-    el.style.transform = `translateX(${dx * 0.6}px)`;
-    el.style.opacity = String(1 - Math.min(Math.abs(dx) / 500, 0.4));
-    if (Math.abs(dx) > 90) {
-      // Carry on the way the finger went: the screen slides off, and only then does the next one
-      // draw and slide in, so nothing snaps back first (Greg, 21 Nov: it stuttered).
-      start = null; leaving = true;
-      slideNext = dx < 0 ? 'right' : 'left';
-      const still = document.documentElement.dataset.motion === 'still' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      el.style.transition = 'transform .14s ease-in, opacity .14s ease-in';
-      el.style.transform = `translateX(${dx < 0 ? '-' : ''}45%)`; el.style.opacity = '0';
-      setTimeout(() => { leaving = false; location.hash = SWIPE_TABS[next]; }, still ? 0 : 130);
+    if (document.documentElement.classList.contains('holding-mark')) { s = null; reset(false); return; }
+    const t = e.touches[0];
+    const dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (!s.lock) {                                   // decide once: across (a swipe) or down (a scroll)
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      s.lock = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'x' : 'y';
     }
+    if (s.lock !== 'x') return;
+    const dt = Math.max(1, e.timeStamp - s.t);
+    s.v = 0.8 * ((t.clientX - s.lx) / dt) + 0.2 * s.v;  // px per ms, smoothed
+    s.t = e.timeStamp; s.lx = t.clientX; s.dx = dx;
+    if (motion() === 'still') return;
+    const next = s.at + (dx < 0 ? 1 : -1);
+    const edge = next < 0 || next >= SWIPE_TABS.length;
+    const w = el.clientWidth || window.innerWidth;
+    const x = edge ? dx * 0.25 : dx;                 // a little stretch where there is nothing further
+    el.style.transition = 'none'; el.style.willChange = 'transform, opacity';
+    el.style.transform = `translateX(${x}px)`;
+    el.style.opacity = String(1 - Math.min(Math.abs(x) / (w * 1.6), 0.35));
+    if (!edge) glow.follow(s.at, -Math.max(-1, Math.min(1, dx / w)));
   }, { passive: true });
-  el.addEventListener('touchend', () => {
-    start = null;
-    if (leaving) return;
-    el.style.transition = 'transform .2s ease, opacity .2s ease'; el.style.transform = ''; el.style.opacity = '';
-  }, { passive: true });
+  const end = () => {
+    if (!s) return;
+    const { dx, v, at, lock } = s; s = null;
+    if (lock !== 'x') return;
+    const w = el.clientWidth || window.innerWidth;
+    const next = at + (dx < 0 ? 1 : -1);
+    const far = Math.abs(dx) > w * 0.3, flick = Math.abs(v) > 0.45 && Math.abs(dx) > 30 && Math.sign(v) === Math.sign(dx);
+    if (next < 0 || next >= SWIPE_TABS.length || !(far || flick)) { reset(motion() !== 'still'); return; }
+    leaving = true;
+    slideNext = dx < 0 ? 'right' : 'left';
+    const go = () => { leaving = false; location.hash = SWIPE_TABS[next]; };
+    if (motion() === 'still') { go(); return; }
+    // Carry on the way the finger went, as fast as it was going (a flick is quicker), then the next slides in.
+    const ms = Math.max(110, Math.min(220, (w - Math.abs(dx)) / Math.max(Math.abs(v), 1.2)));
+    el.style.transition = `transform ${ms}ms cubic-bezier(.3, .7, .4, 1), opacity ${ms}ms ease-out`;
+    el.style.transform = `translateX(${dx < 0 ? -w : w}px)`; el.style.opacity = '0';
+    setTimeout(go, ms - 10);
+  };
+  el.addEventListener('touchend', end, { passive: true });
+  el.addEventListener('touchcancel', () => { if (s) { s = null; reset(true); } }, { passive: true });
 }
 swipeTabs(root);
 route();
