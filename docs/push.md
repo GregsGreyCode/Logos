@@ -12,7 +12,7 @@ in Logos removes it.
 
 ## Turning it on
 
-Settings › Alerts › **Turn on**, on each phone. The phone asks for permission once. **Send a test**
+Settings › Phone alerts › **Turn on**, on each phone. The phone asks for permission once. **Send a test**
 checks that it works. **Turn off** removes the phone. The browser must be connected to Matrix first
 (Settings › Matrix device).
 

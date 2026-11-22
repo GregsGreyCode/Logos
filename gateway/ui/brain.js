@@ -1,5 +1,5 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
-import { h, api, getJSON, when, markdown, none, loading, icon, ICONS } from './util.js';
+import { h, api, getJSON, when, markdown, none, loading, icon, ICONS, noteTitle, focusIfKeyboard } from './util.js';
 import { agentBar } from './agents-void.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
@@ -80,12 +80,12 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     note);
     const opener = h('button', { type: 'button', class: 'btn quiet wide-only', hidden: true });
     // P5: each folder has a small + that opens this form with that folder chosen.
-    form.openFor = (f) => { folder.value = f; form.hidden = false; title.focus(); };
+    form.openFor = (f) => { folder.value = f; form.hidden = false; focusIfKeyboard(title); };   // a phone keeps its keyboard down
     return [opener, form];
   }
 
   function showTree() {
-    const item = (p) => h('a', { href: link(p.path), 'aria-current': p.path === current ? 'page' : null }, p.title);
+    const item = (p) => h('a', { href: link(p.path), 'aria-current': p.path === current ? 'page' : null }, noteTitle(p.title));
     const [opener, form] = newPageForm();
     const canAdd = new Set(NEW_IN.map(([f]) => f));
     const heading = (folder, label) => h('div', { class: 'tree-head' }, h('h2', { class: 'label' }, label),
@@ -179,7 +179,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     if (!alive) return;
     const body = d.text.replace(/^# .*\n?/, '');
     article.replaceChildren(
-      h('div', { class: 'doc-head' }, h('h1', {}, d.title),
+      h('div', { class: 'doc-head' }, h('h1', {}, noteTitle(d.title)),
         h('button', { type: 'button', class: 'btn quiet small wide-only', onclick: () => edit(page, d) }, 'Edit'),
         h('a', { class: 'icon-btn phone-only obsidian-link', href: obsidian(d.path), 'aria-label': 'Open in Obsidian', title: 'Open in Obsidian' }, icon(ICONS.external))),
       ask || askBox(page),

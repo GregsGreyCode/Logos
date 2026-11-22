@@ -1,6 +1,6 @@
 // Models screen: is everything that answers up, who answers each agent right now, and what
 // the paid fallbacks have cost this month. All figures come from the model gateway's records.
-import { h, getJSON, api, none, loading, modelName } from './util.js';
+import { h, getJSON, api, none, loading, modelName, ask } from './util.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -168,7 +168,7 @@ function serverBlock(srv, canChange, repaint) {
         ['File', `${m.size_gb} GB · ${m.quantization}`, m.params],
       ];
       const unload = canChange && !ours ? h('button', { type: 'button', class: 'btn ghost', onclick: async (ev) => {
-        if (!confirm(`Unload ${m.key}? No agent uses it.`)) return;
+        if (!await ask({ title: `Unload ${m.key}?`, text: 'No agent uses it.', yes: 'Unload' })) return;
         ev.target.disabled = true;
         const r = await post('unload', { server: srv.server, instance: i.id });
         ev.target.textContent = r.ok ? 'Unloaded' : 'Could not unload';
@@ -194,7 +194,7 @@ function serverBlock(srv, canChange, repaint) {
     const status = h('p', { class: 'when', role: 'status' });
     foot.append(h('div', { class: 'actions' },
       h('button', { type: 'button', class: 'btn', onclick: async (ev) => {
-        if (!confirm('Reload the agents\' model with Logos\'s settings? The agents cannot answer for about a minute.')) return;
+        if (!await ask({ title: 'Reload the agents\' model?', text: 'With Logos\'s settings. The agents cannot answer for about a minute.', yes: 'Reload' })) return;
         ev.target.disabled = true; status.textContent = 'Reloading… this takes about a minute.';
         const r = await post('reload', { server: srv.server });
         status.textContent = r.ok ? `Reloaded with a ${count(r.body.config?.context_length)}-token window.` : (r.body.error || 'Could not reload.');
