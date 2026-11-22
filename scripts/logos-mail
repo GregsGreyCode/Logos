@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Connect a person's mailbox to Logos (story E1), so their agent can read it.
 
+Most people do this themselves now, in the dashboard's Settings › Email (F40); this script is the
+same thing from the server.
+
   scripts/logos-mail connect greg --outlook --address greg@hotmail.example --client-id <Application ID>
       Signs in on Microsoft's own page (a short code to type there); nothing is typed into this
       terminal but the code shown. Needs the person's own "Logos mail" app registration.
@@ -36,22 +39,9 @@ def post(url, fields):
 
 
 def save(person, box):
-    folder = mail_host.config_dir(os.environ)
-    folder.mkdir(parents=True, exist_ok=True)
-    os.chmod(folder, 0o700)
-    path = folder / f"{person}.json"
-    old = {}
-    try:
-        old = json.loads(path.read_text())
-    except (OSError, ValueError):
-        pass
-    if old.get("exclude") and "exclude" not in box:
-        box["exclude"] = old["exclude"]
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(box, indent=1))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
-    return path
+    """The same file Settings › Email writes (gateway/mail_connect.py)."""
+    from gateway import mail_connect
+    return mail_connect.save_box(os.environ, person, box)
 
 
 def connect_outlook(person, address, client_id):
@@ -118,7 +108,10 @@ def main():
     if args.cmd == "connect":
         if args.outlook:
             if not args.client_id:
-                sys.exit("--client-id: the Application (client) ID of your 'Logos mail' app registration")
+                from gateway import mail_connect
+                args.client_id = mail_connect.outlook_app(os.environ)      # the Logos app set in Settings › Email
+            if not args.client_id:
+                sys.exit("--client-id: the Application (client) ID of the 'Logos mail' app registration")
             connect_outlook(args.person, args.address, args.client_id)
             rt = load_runtime()
             mail_host.MailHost(rt).forget_token(args.person)

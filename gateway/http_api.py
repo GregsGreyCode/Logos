@@ -753,6 +753,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _matrix_proxy.register(app)
     from gateway import updates as _updates
     _updates.register(app)
+    from gateway import mail_connect as _mail_connect   # F40: connect your own mailbox from Settings › Email
+    _mail_connect.register(app)
     app.router.add_static("/ui", str(Path(__file__).parent / "ui"), show_index=False)
 
     async def _handle_sw(request):
