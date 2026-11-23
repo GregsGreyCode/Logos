@@ -56,7 +56,7 @@ MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
 ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time",
-                 "logos-reactions", "logos-job-limits", "logos-media-batch")
+                 "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text")
 MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
@@ -624,6 +624,12 @@ class AgentRuntime:
         except (mh.MatrixError, OSError) as e:          # a name is cosmetic: report, carry on
             print(f"matrix: could not set the display name: {e}")
 
+    def alert_url(self) -> str:
+        """Where an agent hands Logos its reply's words for the phone alert: the dashboard, on the
+        Docker bridge (as the Matrix server reaches it for pushes)."""
+        host = _sibling("matrix_host").MatrixHost(self).bind_address()
+        return f"http://{host}:{os.environ.get('LOGOS_PORT') or '8091'}{_sibling('alert_text').PATH}"
+
     def env_file(self, agent: Mapping[str, Any], home: str) -> str:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
         cur = dict(l.split("=", 1) for l in self.get(home, ".env").splitlines()
@@ -632,6 +638,16 @@ class AgentRuntime:
         for key in [k for k in cur if k.startswith("TELEGRAM_")]:
             del cur[key]
         self._matrix_env(agent, cur, home)
+        at = _sibling("alert_text")
+        if (agent.get("matrix") or {}).get("enabled"):
+            # Phone alerts for its replies say what it wrote (gateway/alert_text.py). The token is
+            # worked out from its name, so it is the same on every `up`.
+            cur[at.TOKEN_ENV] = at.token_for(agent["name"], self.env)
+            cur[at.URL_ENV] = self.alert_url()
+            cur["LOGOS_AGENT_NAME"] = agent["name"]
+        else:
+            for k in (at.TOKEN_ENV, at.URL_ENV, "LOGOS_AGENT_NAME"):
+                cur.pop(k, None)
         cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
         cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
         mg = _sibling("model_gateway")
@@ -914,8 +930,11 @@ class AgentRuntime:
         mh = _sibling("matrix_host")
         if mh.uses_matrix(agent):
             point("matrix", mh.MatrixHost(self).url())
+            if "alerts" in rules:          # the reply's words for the phone alert: that one path only
+                point("alerts", self.alert_url(), rest_rules=[("POST", _sibling("alert_text").PATH)])
         else:
             rules.pop("matrix", None)
+            rules.pop("alerts", None)
         vh = _sibling("voice_host")
         if vh.uses_voice(agent):
             point("voice", vh.VoiceHost(self).base_url(), rest_rules=[("POST", "/v1/audio/transcriptions")])
