@@ -33,8 +33,14 @@ Off, or without the right token, `/metrics` answers 404 as if it were not there.
 | `logos_agent_messages_today{agent}` | messages the agent sent today |
 | `logos_agent_messages_total{agent}` | the same, ever (a counter; survives restarts) |
 | `logos_agent_last_message_timestamp_seconds{agent}` | when it last sent one (0: never) |
+| `logos_vault_files{agent}` | photos and documents kept in the agent's vault (F47) |
+| `logos_vault_bytes{agent}` | disk the vault uses |
+| `logos_vault_files_by_state{agent,state}` | files by what has been done: `new` (waiting for a note), `retry`, `done`, `failed` |
+| `logos_vault_oldest_file_timestamp_seconds{agent}`, `..._newest_...` | when the oldest and newest file was kept (0: none) |
 | `logos_model_up` | 1 when the AI computer answers (absent with no local model) |
 | `logos_widget_needs{widget}` | 1 when a Home widget's last check needs someone |
+
+The vault numbers are counted by a short helper container with no network that mounts the agent's volume read-only; the count is kept five minutes (`gateway/vault_stats.py`), so a frequent scrape costs nothing. Only counts and sizes: never a file name or what is in it.
 
 **Never:** a message, a person's name, a room, a key. Agent names only as labels (`greg`, not "Greg's
 agent"). The widget numbers come from each widget's last copy: `/metrics` never calls a service itself.

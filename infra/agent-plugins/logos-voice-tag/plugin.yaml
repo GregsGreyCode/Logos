@@ -1,0 +1,10 @@
+name: logos-voice-tag
+label: Logos voice messages reach the agent as a voice note does
+kind: standalone
+version: 1.0.0
+description: >
+  A message recorded in the Logos app (a voice message turned into words before it was sent) reaches the agent
+  as a plain quoted line, exactly as hermes presents a transcribed voice note, so the agent knows it was spoken
+  and that names or words may be misheard (its rules for voice notes apply). Element X shows the plain text.
+author: Logos
+provides_hooks: []

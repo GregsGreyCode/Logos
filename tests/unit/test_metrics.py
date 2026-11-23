@@ -203,3 +203,28 @@ def test_the_agents_widget_is_per_person_and_needs_no_setup(monkeypatch, tmp_pat
     assert entry["set_up"] and entry["who"] == "home"
     assert [i["agent"] for i in mine["items"]] == ["greg"] and [i["agent"] for i in hers["items"]] == ["household"]
     assert mine["state"] == "ok" and mine["summary"] == "AI computer off" and mine["model_up"] is False
+
+
+def test_vault_numbers_are_counts_only_and_agents_without_a_vault_are_left_out():
+    text = metrics.render(ROWS, None, {}, {}, {ROWS[0]["agent"]: {"files": 4, "bytes": 2048, "oldest": 100, "newest": 200, "state_new": 1, "state_done": 3},
+                                               "other": None})
+    assert f'logos_vault_files{{agent="{ROWS[0]["agent"]}"}} 4' in text and f'logos_vault_bytes{{agent="{ROWS[0]["agent"]}"}} 2048' in text
+    assert f'logos_vault_files_by_state{{agent="{ROWS[0]["agent"]}",state="new"}} 1' in text and 'state="failed"} 0' in text
+    assert 'agent="other"' not in text and "logos_vault" not in metrics.render(ROWS, None, {}, {})
+
+
+def test_the_vault_helper_output_is_read_and_cached(monkeypatch):
+    from gateway import vault_stats
+    assert vault_stats.parse("files 3\nbytes 900\noldest 5\nnewest 9\nstate_new 1\nstate_done 2\n") == {"files": 3, "bytes": 900, "oldest": 5, "newest": 9, "state_new": 1, "state_done": 2}
+    assert vault_stats.parse("") is None and vault_stats.parse("garbage") is None
+    calls = []
+
+    class R:
+        def run(self, argv):
+            calls.append(argv[1])
+            return types.SimpleNamespace(returncode=0, stdout="files 2\nbytes 10\n")
+    rt = types.SimpleNamespace(runner=R())
+    vault_stats._cache.clear()
+    assert vault_stats.read(rt, "greg", now=1000)["files"] == 2 and vault_stats.read(rt, "greg", now=1100)["files"] == 2
+    assert calls == ["volume", "run"]                                  # the second read came from the cache
+    assert vault_stats.read(rt, "greg", now=1400) is not None and calls.count("run") == 2

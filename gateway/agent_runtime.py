@@ -56,8 +56,8 @@ MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
 ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time",
-                 "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text")
-MANAGED_JOBS = ("brain-commit", "brain-index", "consolidate", "noticeboard-check", "noticeboard-urgent",
+                 "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag")
+MANAGED_JOBS = ("brain-commit", "brain-index", "vault-digest", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
                 "changes-week", "changes-check", "lists-mirror",
@@ -562,6 +562,8 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + judgement.read_text()
         if _sibling("noticeboard_host").uses_noticeboard(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/noticeboard.md").read_text()
+        if agent.get("vault", True) and (self.repo / "souls/_shared/vault.md").exists():
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/vault.md").read_text()       # files people send are kept (F47)
         if _sibling("voice_host").uses_voice(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/voice.md").read_text()
         if _sibling("calendar_host").uses_calendar(agent):
@@ -823,7 +825,7 @@ class AgentRuntime:
         for script in ("brain_commit.sh", "brain_inbox_state.sh", "brain_index.py", "noticeboard_state.py",
                        "noticeboard_urgent.py", "briefing_today.py", "briefing_check.py",
                        "carry_monitor_state.py", "rerun_after_outage.py", "model_watch.py",
-                       "changes_facts.py", "changes_check.py", "lists_mirror.py"):
+                       "changes_facts.py", "changes_check.py", "lists_mirror.py", "vault_digest.py"):
             self.put(home, f"scripts/{script}", (self.jobs_dir / script).read_text(), mode="0750")
         for script in CHANGES_SCRIPTS:
             self.put(home, f"scripts/{script}", (self.jobs_dir / "changes_facts.py").read_text(), mode="0750")
@@ -844,6 +846,10 @@ class AgentRuntime:
                            f'--timezone {tz} --deliver local "50 * * * *"')
             self.sbx(name, f"export HERMES_HOME=/opt/data LOGOS_MEMORY_CHAR_LIMIT={MEMORY_CHAR_LIMIT}; "
                            "python /opt/data/scripts/brain_index.py")
+        if agent.get("vault", True):
+            # Script only: a note in the brain for each file kept in the vault (F47 phase 1). Behind people's chats.
+            self.sbx(name, f'{HERMES} cron create --name vault-digest --no-agent --script vault_digest.py '
+                           f'--timezone {tz} --deliver local "*/10 * * * *"')
         if con.get("enabled", True):
             model = ""
             if con.get("model"):  # omitted: the job follows the agent's main model
