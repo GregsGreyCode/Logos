@@ -44,6 +44,14 @@ LESSON_WORDS = {"👎": "didn't like", "❤️": "loved"}
 LESSONS_HEAD = "# Lessons\n\nHow I work better: rules from what went wrong, and reactions to work out.\n\n"
 
 RESEND = {"🔁", "🔄"}
+# A message sent again needs an id of its own: hermes admits each message id once, and refused the
+# same one with another payload ("admission_conflict", Greg 23 Nov). Its 👀/✅ and any reply still go
+# on the person's real message: the adapter maps this suffix back (patch below).
+AGAIN = "#again-"
+
+
+def real_id(event_id):
+    return event_id.split(AGAIN, 1)[0] if isinstance(event_id, str) else event_id
 
 HELP = ("React to any of my messages and I'll see it the next time we talk. I don't reply to a reaction, "
         "except these:\n"
@@ -195,7 +203,8 @@ async def resend(adapter, room_id: str, event_id: str, sender: str) -> bool:
     if ctx is None or not _authorized(adapter, ctx[5]):
         _log("refused", room=room_id[:12])
         return True
-    event = await adapter._build_inbound_event(room_id, sender, event_id, body, content, {}, ctx=ctx)
+    fresh = f"{event_id}{AGAIN}{int(time.time() * 1000)}"
+    event = await adapter._build_inbound_event(room_id, sender, fresh, body, content, {}, ctx=ctx)
     if event is not None:
         _log("resend", room=room_id[:12])
         await adapter.handle_message(event)
@@ -268,6 +277,19 @@ def patch(cls) -> None:
             logger.warning("reactions: %s", e)
             return False
 
+    send_reaction = getattr(cls, "_send_reaction", None)
+    relation = getattr(cls, "_apply_relation_metadata", None)
+
+    async def _send_reaction(self, room_id, event_id, emoji):
+        return await send_reaction(self, room_id, real_id(event_id), emoji)
+
+    def _apply_relation_metadata(self, msg_content, *args, reply_to=None, **kwargs):
+        return relation(self, msg_content, *args, reply_to=real_id(reply_to), **kwargs)
+
+    if send_reaction is not None:
+        cls._send_reaction = _send_reaction
+    if relation is not None:
+        cls._apply_relation_metadata = _apply_relation_metadata
     cls._send_room_message = _send_room_message
     cls.edit_message = _edit_message
     cls._handle_choice_picker_reaction = _handle_choice_picker_reaction

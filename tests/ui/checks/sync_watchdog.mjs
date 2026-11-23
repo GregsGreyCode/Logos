@@ -14,10 +14,12 @@ async function setup(typed = '') {
     // '?real': past the import map, which hands the screens the fake Matrix client.
     const mx = await import('/ui/mx.js?real');
     window.__w = { retries: 0, reloads: 0, handlers: [] };
-    const c = { on: (ev, f) => window.__w.handlers.push(f), retryImmediately: () => { window.__w.retries += 1; } };
-    window.__sync = (state) => window.__w.handlers.forEach((f) => f(state));
+    const c = { on: (ev, f) => window.__w.handlers.push([ev, f]), retryImmediately: () => { window.__w.retries += 1; } };
+    window.__sync = (state) => window.__w.handlers.filter(([ev]) => ev === 'sync').forEach(([, f]) => f(state));
+    window.__timeline = () => window.__w.handlers.filter(([ev]) => ev === 'timeline').forEach(([, f]) => f());
+    window.__pushed = () => mx.pushed();
     if (typed) document.body.append(Object.assign(document.createElement('textarea'), { value: typed }));
-    mx.watch(c, { ClientEvent: { Sync: 'sync' } });
+    mx.watch(c, { ClientEvent: { Sync: 'sync' }, RoomEvent: { Timeline: 'timeline' } });
   }, typed);
   // a reload, stood in for: the page must not actually go away mid-check
   await page.evaluate(() => { window.addEventListener('beforeunload', () => { window.__w.reloads += 1; }); });
@@ -45,5 +47,31 @@ await page.close();
 page = await setup('half a message');
 await page.clock.runFor(75000 * 2 + 45000);
 ok((await w(page)).retries === 1 && page.url().includes('#/home'), 'still stuck while typing: no reload that would lose it');
+await page.close();
+// An alert arrives for a message the chat does not show (Béré, 23 Nov): ask again after 20 s, start over 20 s later.
+page = await setup();
+loads = 0; page.on('load', () => { loads += 1; });
+await page.evaluate(() => window.__pushed());
+await page.clock.runFor(19000);
+ok((await w(page)).retries === 0, 'an alert, and the chat has 20 s to show it');
+await page.clock.runFor(2000);
+ok((await w(page)).retries === 1, 'nothing came: the library is asked to try again');
+await page.clock.runFor(21000); await page.waitForTimeout(1500);
+ok(loads >= 1, 'still nothing: the page starts over');
+await page.close();
+
+page = await setup();
+loads = 0; page.on('load', () => { loads += 1; });
+await page.evaluate(() => window.__pushed());
+await page.clock.runFor(8000);
+await page.evaluate(() => window.__timeline());                    // the message arrived in time
+await page.clock.runFor(60000); await page.waitForTimeout(500);
+ok((await w(page)).retries === 0 && loads === 0, 'the message arrives in time: nothing is done');
+await page.close();
+
+page = await setup('half a message');
+await page.evaluate(() => window.__pushed());
+await page.clock.runFor(60000);
+ok((await w(page)).retries === 1 && page.url().includes('#/home'), 'stuck while typing: asked again, but no reload that would lose it');
 await page.close();
 await browser.close();

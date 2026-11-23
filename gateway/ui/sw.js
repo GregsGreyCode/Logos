@@ -45,6 +45,10 @@ self.addEventListener('push', (e) => {
   let m = {};
   try { m = e.data ? e.data.json() : {}; } catch (err) { m = {}; }
   const title = m.title || 'Logos';
+  // An open page is told too (push.js): the chat should be getting that message, and if it is not, it starts over.
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+    for (const w of wins) if (w.visibilityState === 'visible') w.postMessage({ type: 'logos-push', room: m.room || '' });
+  }).catch(() => {}));
   // One notification per chat: a new message replaces the last one from the same chat (and buzzes).
   e.waitUntil(self.registration.showNotification(title, {
     body: m.body || 'New message',

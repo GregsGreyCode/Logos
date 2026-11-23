@@ -6,6 +6,7 @@
 // The session is kept per dashboard account: a browser only ever uses the Matrix session of whoever
 // is signed in to the dashboard (owner, from /api/v2/me), never one a previous person left behind.
 import * as reach from './reach.js';
+import { wouldLose } from './util.js';
 
 const LEGACY = 'logos-mx-session';
 let owner = null;
@@ -26,9 +27,36 @@ const sdk = () => (sdkP ||= import('/ui/vendor/matrix/matrix.js'));
 const base = () => location.origin;
 // The Matrix library sends its requests without cookies; the pass-through needs the dashboard's
 // session cookie (same origin only), alongside the Matrix token in the Authorization header.
-const fetchFn = (url, opts = {}) => fetch(url, { ...opts, credentials: 'same-origin' }).then(
-  (r) => { reach.ok(); return r; },
-  (e) => { if (!(opts.signal && opts.signal.aborted)) reach.lost(); throw e; });   // reach.js
+// The chat's long poll (/sync, which the server holds open ~30 s until something happens) has its own time
+// limit here (Béré, 23 Nov: a phone moving between Wi-Fi and mobile data leaves that connection dead without
+// an error, and the Matrix library waits up to ~110 s on it, while her message sat on "sending…"). A poll
+// that has not answered 20 s after it should have is cut, and the library reconnects at once. Any network
+// change, and an alert for a message the chat does not show, cut it too (dropSyncs).
+const inflight = new Set();
+const SYNC_URL = /\/_matrix\/client\/v3\/sync\?/;
+export const SYNC_GRACE_MS = 20000;
+export const fetchFn = (url, opts = {}) => {
+  let o = opts, timer = null, ctl = null;
+  if (SYNC_URL.test(String(url))) {
+    ctl = new AbortController();
+    if (opts.signal) { if (opts.signal.aborted) ctl.abort(); else opts.signal.addEventListener('abort', () => ctl.abort(), { once: true }); }
+    o = { ...opts, signal: ctl.signal };
+    inflight.add(ctl);
+    // Only a poll that goes on from an earlier sync (has `since`): the very first one on a new device
+    // can be large and slow, and must not be cut.
+    if (/[?&]since=/.test(String(url))) {
+      const wait = Number((String(url).match(/[?&]timeout=(\d+)/) || [])[1] || 0);
+      timer = setTimeout(() => ctl.abort(), wait + SYNC_GRACE_MS);
+    }
+  }
+  return fetch(url, { ...o, credentials: 'same-origin' }).then(
+    (r) => { reach.ok(); return r; },
+    (e) => { if (!(o.signal && o.signal.aborted)) reach.lost(); throw e; })     // reach.js
+    .finally(() => { if (ctl) { clearTimeout(timer); inflight.delete(ctl); } });
+};
+export function dropSyncs() { for (const c of [...inflight]) c.abort(); }
+for (const ev of ['online', 'offline']) window.addEventListener(ev, dropSyncs);
+if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener('change', dropSyncs);
 
 export function saved() {
   if (!owner) return null;
@@ -74,19 +102,37 @@ export async function get() {
 // retry now. Still stalled 75 s later: reload the page (a restart of the client itself would stop its
 // encryption), unless something is being typed, or the server is out of reach (reach.js says so).
 export const SYNC_STALL_MS = 75000;
+export const PUSH_WAIT_MS = 20000;
+let news = Date.now();                      // when the chat last received anything at all
+let watched = null;                         // the client being watched, for pushed()
 export function watch(c, m) {
   let lastSync = Date.now(), visibleSince = Date.now(), nudged = 0;
+  watched = c;
   const OK = new Set(['PREPARED', 'SYNCING', 'CATCHUP']);
   c.on(m.ClientEvent.Sync, (state) => { if (OK.has(String(state))) { lastSync = Date.now(); nudged = 0; } });
+  if (m.RoomEvent && m.RoomEvent.Timeline) c.on(m.RoomEvent.Timeline, () => { news = Date.now(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') visibleSince = Date.now(); });
-  const typing = () => [...document.querySelectorAll('textarea, input[type="text"]')].some((el) => el.value && el.value.trim());
   setInterval(() => {
     if (document.visibilityState !== 'visible' || reach.isDown() || (client && client !== c)) return;
     const stalled = Date.now() - Math.max(lastSync, visibleSince);
     if (stalled < SYNC_STALL_MS) return;
-    if (!nudged) { nudged = Date.now(); try { c.retryImmediately(); } catch (e) { /* reloaded below if it stays stuck */ } return; }
-    if (Date.now() - nudged >= SYNC_STALL_MS && !typing()) location.reload();
+    if (!nudged) { nudged = Date.now(); dropSyncs(); try { c.retryImmediately(); } catch (e) { /* reloaded below if it stays stuck */ } return; }
+    if (Date.now() - nudged >= SYNC_STALL_MS && !wouldLose()) location.reload();
   }, 15000);
+}
+
+// A phone alert just arrived while this page is open (sw.js tells it). The chat should be getting that very
+// message: if nothing at all has come through within 20 s, its connection has stopped even though it looks
+// fine (Béré, 23 Nov: the alert came, the chat stayed on "sending…"). Ask the library to try again; if still
+// nothing 20 s later, start over (unless something would be lost).
+export function pushed(wait = PUSH_WAIT_MS) {
+  const at = Date.now();
+  setTimeout(() => {
+    if (news >= at || !watched || document.visibilityState !== 'visible') return;
+    dropSyncs();                                // a poll still waiting is probably on a dead connection
+    try { watched.retryImmediately(); } catch (e) { /* the reload below covers it */ }
+    setTimeout(() => { if (news < at && !wouldLose() && document.visibilityState === 'visible') location.reload(); }, wait);
+  }, wait);
 }
 
 // Step 1: sign in with the Matrix password (used once) and become a new device.

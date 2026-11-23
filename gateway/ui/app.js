@@ -13,7 +13,7 @@ import { adoptPrefs } from './prefs.js';
 import * as tips from './tips.js';
 import { clearAll as clearCache, owner as cacheOwner } from './cache.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
-import { h, api, getJSON, working, aiState, labelTables, icon, ICONS } from './util.js';
+import { h, api, getJSON, working, aiState, labelTables, icon, ICONS, wouldLose } from './util.js';
 import { adopt } from './appearance.js';
 import * as mx from './mx.js';
 import * as push from './push.js';
@@ -211,6 +211,20 @@ state.me = await getJSON('/api/v2/me').catch((e) => {
 reach.onBack(() => { badge(); if (!location.hash.startsWith('#/chat')) route(); });
 cacheOwner(state.me.username);
 mx.bind(state.me.matrix_id);
+// An installed web app reopened from the recents list keeps running the code it loaded days ago (23 Nov:
+// a phone still had the old chat, without the fixes made since). So when the app comes back to the screen,
+// and every ten minutes, it asks which Logos the server runs; if that is not the one it loaded, it starts
+// over, unless something would be lost (typing, a photo waiting, a message not sent): then it waits.
+const loadedCommit = (state.me.version || {}).commit || '';
+let updating = false;
+const upToDate = async () => {
+  if (updating || !loadedCommit || document.visibilityState !== 'visible') return;
+  let now = '';
+  try { now = ((await getJSON('/api/v2/me')).version || {}).commit || ''; } catch (e) { return; }
+  if (now && now !== loadedCommit && !wouldLose()) { updating = true; location.reload(); }
+};
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') upToDate(); });
+setInterval(upToDate, 10 * 60000);
 // Phone alerts that Chrome quietly swapped out are signed up again (push.js heal).
 const healPush = () => push.heal().catch(() => {});
 setTimeout(healPush, 3000);
