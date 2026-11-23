@@ -115,7 +115,8 @@ def esc(v: Any) -> str:
     return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
 
 
-def render(rows: List[dict], model: Optional[bool], needs: Mapping[str, bool], version: Mapping[str, Any]) -> str:
+def render(rows: List[dict], model: Optional[bool], needs: Mapping[str, bool], version: Mapping[str, Any],
+           vaults: Optional[Mapping[str, Optional[Mapping[str, int]]]] = None) -> str:
     out: List[str] = []
 
     def metric(name: str, kind: str, help_: str, samples: List[tuple]) -> None:
@@ -134,6 +135,13 @@ def render(rows: List[dict], model: Optional[bool], needs: Mapping[str, bool], v
     metric("logos_agent_last_message_timestamp_seconds", "gauge", "When the agent last sent a message (0: never).", [({"agent": r["agent"]}, r["last"] or 0) for r in rows])
     if model is not None:
         metric("logos_model_up", "gauge", "1 when the AI computer (the local model server) answers.", [({}, int(model))])
+    v = {a: st for a, st in (vaults or {}).items() if st}
+    metric("logos_vault_files", "gauge", "Files kept in the agent's vault (photos and documents it was sent).", [({"agent": a}, st["files"]) for a, st in v.items()])
+    metric("logos_vault_bytes", "gauge", "Disk the agent's vault uses.", [({"agent": a}, st.get("bytes", 0)) for a, st in v.items()])
+    metric("logos_vault_files_by_state", "gauge", "Vault files by what has been done: new (waiting for a note), retry, done, failed.",
+           [({"agent": a, "state": k}, st.get("state_" + k, 0)) for a, st in v.items() for k in ("new", "retry", "done", "failed")])
+    metric("logos_vault_oldest_file_timestamp_seconds", "gauge", "When the oldest vault file was kept (0: none).", [({"agent": a}, st.get("oldest", 0)) for a, st in v.items()])
+    metric("logos_vault_newest_file_timestamp_seconds", "gauge", "When the newest vault file was kept (0: none).", [({"agent": a}, st.get("newest", 0)) for a, st in v.items()])
     metric("logos_widget_needs", "gauge", "1 when the Home widget's last check needs someone.", [({"widget": k}, int(v)) for k, v in sorted(needs.items())])
     return "\n".join(out) + "\n"
 
@@ -147,7 +155,10 @@ async def handle_metrics(request: web.Request) -> web.Response:
     model = await model_up(request.app)
     w = request.app.get("widgets")
     needs = {k: ((c.get("data") or {}).get("state") == "needs") for k, c in (w.cache.items() if w else [])}
-    body = render(rows, model, needs, dashboard_api.version())
+    from gateway import agent_chat, vault_stats
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    vaults = {r["agent"]: await asyncio.to_thread(vault_stats.read, runtime, r["agent"]) for r in rows} if runtime is not None else {}
+    body = render(rows, model, needs, dashboard_api.version(), vaults)
     return web.Response(text=body, content_type="text/plain", charset="utf-8", headers={"Cache-Control": "no-store"})
 
 

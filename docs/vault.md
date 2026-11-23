@@ -43,6 +43,19 @@ photo or document ──► Matrix ──► agent (hermes) ──► logos-vaul
 - Nothing leaves the household: the vision model is the local one, through the model gateway.
 - To switch it off for an agent: `vault: false` in `agents/<name>.yaml`.
 
+## Kind to a computer that is sometimes off
+
+The job asks the model server one cheap question (`/models`, 5 seconds) before any real request, so a
+switched-off GPU costs one quick call and nothing is counted against the file. Per run: at most one file that
+needs the model (a photo; a text or PDF file needs none), a ten-minute limit (no photo is started with under two
+minutes left) so it never holds the agent's job tick for long, and its requests are marked as scheduled work so the
+model guard queues them behind people's chats. Files that need no model are still done while the model is off.
+
+## Numbers on the Prometheus endpoint
+
+`logos_vault_files`, `logos_vault_bytes`, `logos_vault_files_by_state` (new / retry / done / failed) and the
+oldest and newest file's time, per agent: see docs/metrics.md. Counts and sizes only.
+
 ## What it does not do yet
 
 - **Nothing is deleted.** "At least 90 days" is met by keeping everything; retention (90 days, then a 30-day
