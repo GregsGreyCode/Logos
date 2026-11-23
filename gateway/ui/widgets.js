@@ -38,13 +38,13 @@ function servers(d) {
     h('span', { class: 'w-num' }, ...(words ? [words[0], h('small', {}, words[1])] : [pct === null || pct === undefined ? '–' : `${pct}%`])),
     h('div', { class: 'w-bar', role: 'img', 'aria-label': `${label} ${pct ?? '–'}%` }, h('span', { style: `width:${Math.min(100, pct || 0)}%` })));
   return (d.items || []).map((n) => (n.online
-    ? h('div', { class: 'w-card' },
+    ? h('div', { class: `w-card${(n.disk || 0) >= 95 || (n.mem || 0) >= 97 ? ' alert' : ''}` },
       h('div', { class: 'w-head' }, h('strong', {}, n.name), h('span', { class: 'when' }, uptime(n.uptime))),
       h('div', { class: 'w-meters' },
         bar('CPU', n.cpu),
         bar('Memory', n.mem, n.mem_total_gb ? [`${Math.round(n.mem_gb)}`, ` of ${n.mem_total_gb} GB`] : null),
         bar('Disk', n.disk)))
-    : h('div', { class: 'w-card off' }, h('div', { class: 'w-head' }, h('strong', {}, n.name), h('span', { class: 'when bad' }, 'offline')))));
+    : h('div', { class: 'w-card off alert' }, h('div', { class: 'w-head' }, h('strong', {}, n.name), h('span', { class: 'when bad' }, 'offline')))));
 }
 
 function proxmox(d) {
@@ -98,7 +98,7 @@ function left(t) {
 
 function downloads(d) {
   const items = d.items || [];
-  return [h('div', { class: 'w-card' }, ...(items.length ? items.slice(0, 6).map((i) => h('div', { class: `w-dl${i.stalled ? ' stalled' : ''}` },
+  return [h('div', { class: `w-card${items.some((i) => i.stalled) ? ' alert' : ''}` }, ...(items.length ? items.slice(0, 6).map((i) => h('div', { class: `w-dl${i.stalled ? ' stalled' : ''}` },
     h('div', { class: 'w-head' }, h('span', { class: 'w-name' }, i.title),
       h('span', { class: 'w-meta' }, i.stalled ? 'stalled' : i.waiting ? 'waiting' : `${i.percent}%${left(i.left) ? ` · ${left(i.left)} left` : ''}`)),
     i.stalled ? '' : h('div', { class: 'w-bar' }, h('span', { style: `width:${i.percent}%` }))))
@@ -112,7 +112,41 @@ function bookmarks(d) {
     h('span', { class: 'w-mark-tile', 'aria-hidden': 'true' }, initials(b.name)), h('span', { class: 'w-mark-name' }, b.name))))];
 }
 
-const DRAW = { services, servers, proxmox, backups, adblock, playing, downloads, bookmarks };
+const figure = (label, value, unit, sub) => h('div', { class: 'w-card w-fig' }, h('span', { class: 'when' }, label),
+  h('span', { class: 'w-num' }, value ?? '–', unit && value !== null && value !== undefined ? h('small', {}, ` ${unit}`) : ''),
+  sub ? h('span', { class: 'when' }, sub) : '');
+
+function energy(d) {
+  const out = [h('div', { class: 'w-grid2' },
+    figure('Using now', d.power_w, 'W'),
+    figure('Today', d.energy_kwh, 'kWh', d.cost !== null && d.cost !== undefined ? `about £${d.cost.toFixed(2)}` : ''))];
+  if (d.ups) {
+    const b = d.ups.battery;
+    out.push(h('div', { class: `w-card w-ups${d.ups.on_battery ? ' alert' : ''}` },
+      h('div', { class: 'w-head' }, h('strong', {}, 'UPS'), h('span', { class: `w-pill${d.ups.on_battery ? ' bad' : ''}` }, d.ups.on_battery ? 'On battery' : 'On mains')),
+      b !== null && b !== undefined ? h('div', { class: `w-bar ${level(100 - b)}` }, h('span', { style: `width:${b}%` })) : '',
+      h('span', { class: 'when' }, [b !== null && b !== undefined ? `Battery ${Math.round(b)}%` : '', d.ups.minutes !== null && d.ups.minutes !== undefined ? `about ${d.ups.minutes} min on battery` : '']
+        .filter(Boolean).join(' · '))));
+  }
+  return out;
+}
+
+function network(d) {
+  return [h('div', { class: 'w-grid3' }, figure('Down', d.down, 'Mbit/s'), figure('Up', d.up, 'Mbit/s'), figure('Ping', d.ping, 'ms')),
+    d.tested ? h('p', { class: 'when' }, `Tested ${String(d.tested).slice(11, 16) || d.tested}`) : ''];
+}
+
+function cameras(d) {
+  const t = Math.floor(Date.now() / 60000);           // a new picture each minute, not on every redraw
+  return [h('div', { class: 'w-grid2' }, ...(d.items || []).map((c) => {
+    const words = `${c.name.replace(/_/g, ' ')} · ${c.label && c.at ? `${c.label} ${when(c.at)}` : 'quiet'}`;
+    return h('a', { class: 'w-cam', href: '#/home', 'aria-label': words, onclick: (e) => e.preventDefault() },
+      h('img', { src: `/api/v2/widgets/cameras/snapshot/${encodeURIComponent(c.name)}?t=${t}`, alt: '', loading: 'lazy' }),
+      h('span', { class: 'w-cam-label' }, words));
+  })), h('p', { class: 'when' }, 'Snapshots, not live video, through Logos.')];
+}
+
+const DRAW = { services, servers, proxmox, backups, adblock, playing, downloads, bookmarks, energy, network, cameras };
 
 // ── one widget on Home ───────────────────────────────────────────────────────────────────────
 
