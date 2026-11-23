@@ -152,7 +152,11 @@ def _sibling(module: str):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{module}.py"))
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
-    spec.loader.exec_module(mod)
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:
+        sys.modules.pop(name, None)      # not half-loaded: the next use shows the real error again
+        raise
     return mod
 
 
