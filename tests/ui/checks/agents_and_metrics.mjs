@@ -63,4 +63,17 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   ok(errs.length === 0, `${n}: no page errors ${errs.join('|')}`);
   await ctx.close();
 }
+// A member (not whoever manages Logos) neither sees the Metrics row nor gets the page from a typed-in link.
+for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'desktop']]) {
+  const page = await browser.newPage({ viewport: { width: w, height: hgt }, isMobile: mob, hasTouch: mob });
+  let asked = false;
+  await page.route('**/api/v2/me', async (r) => { const res = await r.fetch(); const me = await res.json(); me.role = 'user'; await r.fulfill({ json: me }); });
+  await page.route('**/api/v2/metrics', (r) => { asked = true; return r.fulfill({ status: 403, json: { error: 'forbidden' } }); });
+  await page.goto('http://127.0.0.1:8779/#/settings'); await page.waitForTimeout(2000);
+  ok(await page.locator('.set-row', { hasText: 'Metrics' }).count() === 0, `${n}: a member does not see Settings › Metrics`);
+  await page.goto('http://127.0.0.1:8779/#/settings/metrics'); await page.waitForTimeout(1500);
+  ok(await page.getByText('Prometheus metrics').count() === 0 && await page.getByRole('button', { name: 'Turn on' }).count() === 0 && !asked,
+    `${n}: and a typed-in link shows nothing of it, nor asks the server`);
+  await page.close();
+}
 await browser.close();
