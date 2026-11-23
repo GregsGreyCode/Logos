@@ -113,7 +113,7 @@ function feedRow(i, TYPES, onOpen) {
   return row;
 }
 
-export async function noticeboardView(root) {
+export async function noticeboardView(root, rest, state) {
   const { feed, markRead, markAllRead, countNew, TYPES, urgent } = await import('./notify.js');
   const opened = new Set();                 // read during this visit (kept new-looking until the server agrees)
   const readOne = async (i) => { opened.add(i.id); await markRead(i); countNew().then(setBadge).catch(() => {}); };
@@ -128,14 +128,6 @@ export async function noticeboardView(root) {
   const allRead = h('button', { type: 'button', class: 'linkish feed-allread', hidden: true, onclick: async () => {
     allRead.disabled = true; await markAllRead(); allRead.disabled = false; load();
   } }, 'Mark all read');
-  // Ask again now, by hand (Greg, 23 Nov); it is also asked every 15 seconds while this is open.
-  const refresh = h('button', { type: 'button', class: 'feed-refresh', 'aria-label': 'Refresh', title: 'Refresh', onclick: async () => {
-    if (refresh.classList.contains('spinning')) return;
-    refresh.classList.add('spinning');
-    await Promise.all([load(), new Promise((r) => setTimeout(r, 600))]);       // long enough to be seen
-    refresh.classList.remove('spinning');
-  } }, icon(ICONS.refresh));
-  const actions = h('div', { class: 'band-actions' }, refresh, allRead);
   const days = h('div', { class: 'feed-days' }, loading('rows', 6));
   let shown = false;
   const error = h('div', { class: 'notice', hidden: true });
@@ -184,8 +176,9 @@ export async function noticeboardView(root) {
 
   root.replaceChildren(h('div', { class: 'page notifications' },
     // A title like every screen's on a desktop (Greg, 23 Nov), with Mark all read in it; the phone's top bar names it.
-    h('header', { class: 'page-band' }, h('h1', {}, 'Notifications'), actions),
+    h('header', { class: 'page-band' }, h('h1', {}, 'Notifications'), allRead),
     error, h('div', { class: 'feed-head' }, caught), waitSec, days));
+  if (state) state.refresh = load;                    // pulling down (app.js)
   const kept = peek('feed');
   if (kept && kept.v && Array.isArray(kept.v.items)) draw(kept.v);
   await load();

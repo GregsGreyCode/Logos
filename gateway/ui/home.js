@@ -1,6 +1,6 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
-import { swr, forget, peek } from './cache.js';
+import { swr, forget, peek, clearAll } from './cache.js';
 import { widget as homelabWidget } from './widgets.js';
 import { h, api, getJSON, when, none, loading, aiState, reveal, icon, ICONS } from './util.js';
 import { getPref, setPref } from './prefs.js';
@@ -15,7 +15,7 @@ const SEEN_KEY = 'logos-home-last';    // the last Home seen on this device, dra
 // "2026-11-19 10:30" -> "10:30"; an all-day event shows "All day".
 const timeOf = (e) => (e.all_day ? 'All day' : String(e.start || '').slice(11, 16));
 
-export async function homeView(root) {
+export async function homeView(root, rest, state) {
   let alive = true, timer = null, painted = false;
   const doing = {};
   const waitingBox = h('div', { class: 'stack home-waiting' }, loading());
@@ -501,6 +501,8 @@ export async function homeView(root) {
     if (fresh.length) { applyWidgets(); if (editing) decorate(); for (const k of fresh) if (on(k.id)) SHOW[k.id](); }
   }, null);
 
+  // Pulling down (app.js): everything kept is let go, and Home asks again (widgets included).
+  if (state) state.refresh = async () => { clearAll(); await load(); };
   fromLast();
   await load();
   setTimeout(() => { if (alive) warmAgents(); }, 300);   // the Agents tab, ready before the swipe
