@@ -658,3 +658,12 @@ def test_the_windows_come_from_the_agents():
               "bere": {"model": {"provider": "lmstudio", "default": QWEN, "context_length": 32768}},
               "paid": {"model": {"provider": "anthropic", "default": "claude-x"}}}
     assert model_gateway.load_windows(agents) == {QWEN: WIN}
+
+
+def test_the_gateways_name_for_the_model_is_understood_too():
+    srv = studio()
+    try:
+        assert loader_for(srv).ensure("lm-studio/" + QWEN, alone=True) == "loaded"
+        assert srv.state["loaded"][QWEN] == [(QWEN, WIN)]
+    finally:
+        srv.shutdown()
