@@ -2009,3 +2009,12 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 }
 /* While arranging on a wide screen, the title band (with Done) stays at the top as you scroll. */
 @media (min-width: 600px) { .home > .home-head:has(.home-edit-link.done) { position: sticky; top: 0; z-index: 6; background: var(--ground); } }
+/* On a touch screen (Greg, 23 Nov): no text getting selected or copied by a press: the app is tapped, held
+   and dragged, not read like a page. What you type, and a brain page you read, can still be selected; a
+   chat message has its own Copy (press and hold). */
+@media (pointer: coarse) {
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  input, textarea, [contenteditable], .doc-body, .doc-body * { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+}
+/* The weather says all of it: its lines wrap instead of being cut off with "…". */
+.home-weather-text > span { white-space: normal; overflow: visible; text-overflow: clip; }

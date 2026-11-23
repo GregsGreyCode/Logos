@@ -557,6 +557,18 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   }
 
   let drawnOnce = false;
+  // Pinned to the newest message (Greg, 23 Nov: on a desktop a chat opened short of the bottom, as images,
+  // folds and the fade-in grew it after the first scroll): while pinned, anything that makes the log taller
+  // keeps it at the bottom; scrolling up unpins it, coming back down pins it again.
+  let pinned = true;
+  const toBottom = () => { if (pinned) log.scrollTop = log.scrollHeight; };
+  log.addEventListener('scroll', () => { pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 80; }, { passive: true });
+  log.addEventListener('load', toBottom, true);                       // an image or a video arriving
+  const logGrows = new MutationObserver(() => requestAnimationFrame(toBottom));
+  logGrows.observe(log, { childList: true, subtree: true });
+  const logResize = new ResizeObserver(toBottom);
+  logResize.observe(log);
+  off.push(() => { logGrows.disconnect(); logResize.disconnect(); });
   function draw(stick) {
     if (!room || !alive) return;
     if (!drawnOnce) { drawnOnce = true; reveal(log); }
@@ -613,7 +625,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     thinkingRow.hidden = !waitingOnAgent && !typing;
     askedAt = waitingOnAgent ? last.getTs() : (typing ? askedAt || Date.now() : 0);
     progress();
-    if (stick || atBottom) log.scrollTop = log.scrollHeight;
+    if (stick || atBottom) { pinned = true; log.scrollTop = log.scrollHeight; requestAnimationFrame(toBottom); }
   }
 
   // ── still thinking (F33, Greg 21 Nov: "something to show it's working and not stuck") ──────────
