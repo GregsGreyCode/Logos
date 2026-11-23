@@ -116,7 +116,7 @@ def esc(v: Any) -> str:
 
 
 def render(rows: List[dict], model: Optional[bool], needs: Mapping[str, bool], version: Mapping[str, Any],
-           vaults: Optional[Mapping[str, Optional[Mapping[str, int]]]] = None) -> str:
+           vaults: Optional[Mapping[str, Optional[Mapping[str, int]]]] = None, guard: Optional[Mapping[str, Any]] = None) -> str:
     out: List[str] = []
 
     def metric(name: str, kind: str, help_: str, samples: List[tuple]) -> None:
@@ -135,7 +135,23 @@ def render(rows: List[dict], model: Optional[bool], needs: Mapping[str, bool], v
     metric("logos_agent_last_message_timestamp_seconds", "gauge", "When the agent last sent a message (0: never).", [({"agent": r["agent"]}, r["last"] or 0) for r in rows])
     if model is not None:
         metric("logos_model_up", "gauge", "1 when the AI computer (the local model server) answers.", [({}, int(model))])
+    g = guard or {}
+    q = g.get("queue") or {}
+    if g:
+        metric("logos_model_server_off", "gauge", "1 when the model guard found the model server off (the GPU computer is not answering).", [({}, int(bool(g.get("off"))))])
+        metric("logos_model_server_off_since_timestamp_seconds", "gauge", "When the model server was first seen off (0: it is on).", [({}, int(g.get("off_since") or 0))])
+    if q:
+        metric("logos_model_requests_running", "gauge", "Model requests being worked on now.", [({}, q.get("running", 0))])
+        metric("logos_model_requests_waiting", "gauge", "Model requests waiting their turn in the guard's queue.", [({}, q.get("waiting", 0))])
+        metric("logos_model_slots", "gauge", "How many model requests the guard lets run at once.", [({}, q.get("slots", 0))])
+        metric("logos_model_context_tokens_running", "gauge", "Context tokens of the requests running now.", [({}, q.get("tokens_running", 0))])
+        metric("logos_model_context_window_tokens", "gauge", "The loaded model's context window (0: unknown).", [({}, q.get("window", 0))])
+        metric("logos_model_requests_served_total", "counter", "Model requests served since the guard started.", [({}, q.get("served", 0))])
+        metric("logos_model_requests_queued_total", "counter", "Of those, requests that had to wait.", [({}, q.get("queued", 0))])
+        metric("logos_model_wait_seconds_avg", "gauge", "Average time a request waited since the guard started.", [({}, q.get("wait_avg_s", 0))])
+        metric("logos_model_wait_seconds_max", "gauge", "Longest a request waited since the guard started.", [({}, q.get("wait_max_s", 0))])
     v = {a: st for a, st in (vaults or {}).items() if st}
+    metric("logos_agent_home_bytes", "gauge", "Disk the agent's home volume uses (its settings, sessions, vault and cache).", [({"agent": a}, st["home_kb"] * 1024) for a, st in v.items() if "home_kb" in st])
     metric("logos_vault_files", "gauge", "Files kept in the agent's vault (photos and documents it was sent).", [({"agent": a}, st["files"]) for a, st in v.items()])
     metric("logos_vault_bytes", "gauge", "Disk the agent's vault uses.", [({"agent": a}, st.get("bytes", 0)) for a, st in v.items()])
     metric("logos_vault_files_by_state", "gauge", "Vault files by what has been done: new (waiting for a note), retry, done, failed.",
@@ -158,7 +174,16 @@ async def handle_metrics(request: web.Request) -> web.Response:
     from gateway import agent_chat, vault_stats
     runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
     vaults = {r["agent"]: await asyncio.to_thread(vault_stats.read, runtime, r["agent"]) for r in rows} if runtime is not None else {}
-    body = render(rows, model, needs, dashboard_api.version(), vaults)
+    guard = None
+    if runtime is not None:
+        try:
+            from gateway import model_gateway
+            url = f"http://{model_gateway.ModelGateway(runtime).bind_address()}:{model_gateway.GUARD_PORT}/guard/health"
+            h = json.loads(await asyncio.to_thread(runtime.runner.http, url, timeout=3))
+            guard = {"off": bool(h.get("model_server_off")), "off_since": h.get("off_since"), "queue": h.get("queue")}
+        except Exception:
+            guard = None                                      # no guard (or it is down): no model queue numbers
+    body = render(rows, model, needs, dashboard_api.version(), vaults, guard)
     return web.Response(text=body, content_type="text/plain", charset="utf-8", headers={"Cache-Control": "no-store"})
 
 

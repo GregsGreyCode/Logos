@@ -238,3 +238,17 @@ def test_the_vault_helper_output_is_read_and_cached(monkeypatch):
     run = seen[1]
     assert run[run.index("--entrypoint") + 1] == "sh" and "--network" in run and run[run.index("-v") + 1].endswith(":ro")   # alpine/git's entrypoint is git: sh must be asked for
     assert vault_stats.read(rt, "greg", now=1400) is not None and calls.count("run") == 2
+
+
+def test_the_model_queue_and_disk_numbers():
+    text = metrics.render(ROWS, True, {}, {}, {ROWS[0]["agent"]: {"files": 0, "home_kb": 2048}},
+                          {"off": False, "off_since": None, "queue": {"running": 1, "waiting": 2, "slots": 2, "tokens_running": 9000, "window": 96512,
+                                                                         "served": 40, "queued": 7, "wait_avg_s": 3.2, "wait_max_s": 61.5}})
+    for line in ("logos_model_server_off 0", "logos_model_requests_waiting 2", "logos_model_requests_running 1", "logos_model_slots 2",
+                 "logos_model_context_window_tokens 96512", "logos_model_requests_served_total 40", "logos_model_wait_seconds_max 61.5",
+                 "logos_model_server_off_since_timestamp_seconds 0", f'logos_agent_home_bytes{{agent="{ROWS[0]["agent"]}"}} 2097152'):
+        assert line in text, line
+    assert "# TYPE logos_model_requests_served_total counter" in text
+    off = metrics.render(ROWS, False, {}, {}, None, {"off": True, "off_since": 1795470000, "queue": None})
+    assert "logos_model_server_off 1" in off and "logos_model_server_off_since_timestamp_seconds 1795470000" in off and "logos_model_requests_waiting" not in off
+    assert "logos_model_server_off" not in metrics.render(ROWS, None, {}, {})              # no guard: nothing invented

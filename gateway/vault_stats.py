@@ -1,4 +1,4 @@
-"""How full each agent's vault is (F47), for the Prometheus endpoint: counts and sizes only, never a name or a word.
+"""How full each agent's vault is (F47) and how much disk its home uses, for the Prometheus endpoint: counts and sizes only, never a name or a word.
 
 The vault is in the agent's home volume (``logos-home-<agent>``, under ``vault/``). It is counted by a short-lived
 helper container with no network that mounts the volume read-only, and the answer is kept for five minutes so a
@@ -21,6 +21,7 @@ for f in $(find files -type f 2>/dev/null); do
   [ "$old" = 0 ] || [ "$t" -lt "$old" ] && old=$t
   [ "$t" -gt "$new" ] && new=$t
 done
+echo "home_kb $(du -sk /v 2>/dev/null | cut -f1)"
 echo "files $n"; echo "bytes $b"; echo "oldest $old"; echo "newest $new"
 for s in new retry done failed; do echo "state_$s $(grep -l "\"state\": \"$s\"" meta/*.json 2>/dev/null | wc -l)"; done
 '''

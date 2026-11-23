@@ -37,6 +37,12 @@ Off, or without the right token, `/metrics` answers 404 as if it were not there.
 | `logos_vault_bytes{agent}` | disk the vault uses |
 | `logos_vault_files_by_state{agent,state}` | files by what has been done: `new` (waiting for a note), `retry`, `done`, `failed` |
 | `logos_vault_oldest_file_timestamp_seconds{agent}`, `..._newest_...` | when the oldest and newest file was kept (0: none) |
+| `logos_model_server_off`, `logos_model_server_off_since_timestamp_seconds` | the model guard's own view: 1 while the GPU computer does not answer, and since when |
+| `logos_model_requests_running`, `..._waiting`, `logos_model_slots` | the guard's queue: in progress, waiting their turn, and how many may run at once |
+| `logos_model_context_tokens_running`, `logos_model_context_window_tokens` | context in use now, and the loaded window |
+| `logos_model_requests_served_total`, `..._queued_total` | requests served since the guard started, and how many had to wait (counters) |
+| `logos_model_wait_seconds_avg`, `..._max` | how long requests waited in the queue since the guard started |
+| `logos_agent_home_bytes{agent}` | disk the agent's home volume uses |
 | `logos_model_up` | 1 when the AI computer answers (absent with no local model) |
 | `logos_widget_needs{widget}` | 1 when a Home widget's last check needs someone |
 
