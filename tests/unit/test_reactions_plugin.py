@@ -181,3 +181,41 @@ def test_registers_the_hook_and_waits_for_the_adapter(rx, monkeypatch):
     listed = commands["emojis"]("")
     for emoji in [*rx.COMMANDS, *rx.LESSON_WORDS]:
         assert emoji in listed or emoji in ("❔", "🔄")      # the look-alikes work but are not listed
+
+
+def test_repeat_on_your_own_message_sends_it_again(rx, monkeypatch):
+    """Greg, 23 Nov: 🔁 on his question after its answer failed (the model was unloaded)."""
+    cls = adapter_class()
+    a, _ = sent_reply(rx, cls)
+    mine = {"$q": (GREG, "When is it our turn for the bins?"), "$b": ("@bere:logos", "Béré's message")}
+
+    async def own_text(adapter, room_id, event_id, sender):
+        who, body = mine[event_id]
+        return body if who == sender else None
+    monkeypatch.setattr(rx, "_own_text", own_text)
+    assert run(a._handle_choice_picker_reaction(ROOM, "$q", "🔁", GREG)) is True
+    assert [(e.text, e.message_id) for e in a.handled] == [("When is it our turn for the bins?", "$q")]
+    # someone else's message, or another emoji on your own: left alone
+    assert run(a._handle_choice_picker_reaction(ROOM, "$b", "🔁", GREG)) is False
+    assert run(a._handle_choice_picker_reaction(ROOM, "$q", "👍", GREG)) is False
+    assert len(a.handled) == 1
+
+
+def test_repeat_on_a_message_that_cannot_be_read_does_nothing(rx, monkeypatch):
+    cls = adapter_class()
+    a, _ = sent_reply(rx, cls)
+
+    async def broken(*_a):
+        raise RuntimeError("no session key")
+    monkeypatch.setattr(rx, "_own_text", broken)
+    assert run(a._handle_choice_picker_reaction(ROOM, "$q", "🔁", GREG)) is False and a.handled == []
+
+
+def test_repeat_on_your_own_message_needs_you_to_be_allowed(rx, monkeypatch):
+    cls = adapter_class()
+    a, _ = sent_reply(rx, cls, runner=Runner(allowed=False))
+
+    async def own_text(*_a):
+        return "hello"
+    monkeypatch.setattr(rx, "_own_text", own_text)
+    assert run(a._handle_choice_picker_reaction(ROOM, "$q", "🔁", "@stranger:x")) is True and a.handled == []

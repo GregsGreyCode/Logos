@@ -11,6 +11,9 @@ answer told the agent nothing. With this plugin a reaction on one of the agent's
   nightly consolidation and the weekly digest learn from it (judgement.md);
 - for ❓ and 🔁, starts a turn, as if the person had replied to that message "Explain that
   more." or "Try that again a different way." (docs/messages.md lists them);
+- 🔁 on the person's **own** message sends it again (Greg, 23 Nov: a question whose answer failed
+  when the model was unloaded). The message is fetched from Matrix and decrypted with the agent's
+  keys, and answered as if just sent. Only its sender can do this, and only for text;
 - answers ``/emojis`` (or ``/reactions``) with that list, without the model.
 
 Only messages the agent sent since this plugin was installed are known: Matrix sends are now
@@ -40,10 +43,12 @@ COMMANDS = {"❓": "Explain that more.", "❔": "Explain that more.",
 LESSON_WORDS = {"👎": "didn't like", "❤️": "loved"}
 LESSONS_HEAD = "# Lessons\n\nHow I work better: rules from what went wrong, and reactions to work out.\n\n"
 
+RESEND = {"🔁", "🔄"}
+
 HELP = ("React to any of my messages and I'll see it the next time we talk. I don't reply to a reaction, "
         "except these:\n"
         "- ❓ explain that more\n"
-        "- 🔁 try that again a different way\n"
+        "- 🔁 try that again a different way (on your own message: I answer it again)\n"
         "- 👎 that wasn't right: I note it and learn from it\n"
         "- ❤️ that was just right: I note that too\n"
         "Any other emoji, like 👍, just tells me how it landed.")
@@ -155,11 +160,54 @@ def _authorized(adapter, source) -> bool:
         return False
 
 
+async def _own_text(adapter, room_id: str, event_id: str, sender: str):
+    """The text of ``sender``'s own message ``event_id``, fetched and decrypted; None otherwise."""
+    from mautrix.types import EventID, EventType, RoomID
+    client = getattr(adapter, "_client", None)
+    if client is None:
+        return None
+    evt = await client.get_event(RoomID(room_id), EventID(event_id))
+    if str(getattr(evt, "sender", "")) != sender:
+        return None                                   # only its sender may send it again
+    if getattr(evt, "type", None) == EventType.ROOM_ENCRYPTED:
+        crypto = getattr(client, "crypto", None)
+        if crypto is None:
+            return None
+        evt = await crypto.decrypt_megolm_event(evt)
+    content = evt.content
+    content = content if isinstance(content, dict) else (content.serialize() if hasattr(content, "serialize") else {})
+    if content.get("msgtype") not in ("m.text",) or (content.get("m.relates_to") or {}).get("rel_type") == "m.replace":
+        return None
+    return str(content.get("body") or "") or None
+
+
+async def resend(adapter, room_id: str, event_id: str, sender: str) -> bool:
+    """🔁 on the person's own message: answer it again, as if just sent."""
+    try:
+        body = await _own_text(adapter, room_id, event_id, sender)
+    except Exception as e:                                       # not found, not decryptable: nothing to do
+        logger.info("reactions: could not read the message to send again (%s)", type(e).__name__)
+        return False
+    if not body:
+        return False
+    content = {"msgtype": "m.text", "body": body}
+    ctx = await adapter._resolve_message_context(room_id, sender, event_id, body, content, {}, mention_claimed=True)
+    if ctx is None or not _authorized(adapter, ctx[5]):
+        _log("refused", room=room_id[:12])
+        return True
+    event = await adapter._build_inbound_event(room_id, sender, event_id, body, content, {}, ctx=ctx)
+    if event is not None:
+        _log("resend", room=room_id[:12])
+        await adapter.handle_message(event)
+    return True
+
+
 async def on_reaction(adapter, room_id: str, reacts_to: str, key: str, sender: str) -> bool:
-    """A reaction no hermes prompt claimed. True when it was on one of the agent's messages."""
+    """A reaction no hermes prompt claimed. True when it was on one of the agent's messages, or a
+    🔁 on the person's own message."""
     text = _lookup(room_id, reacts_to)
     if not text:
-        return False
+        return await resend(adapter, room_id, reacts_to, sender) if plain(key) in RESEND else False
     emoji = plain(key)
     command = COMMANDS.get(emoji)
     body = command or ""
