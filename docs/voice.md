@@ -73,13 +73,20 @@ that file to go back to the yaml setting.
 The chat box and Home's **Ask** have a microphone button for agents with voice on (23 Nov: tap to
 start, tap again to finish; it was a hold, and letting go by mistake lost the recording).
 
-1. **Tap the microphone.** A strip replaces the box: a pulsing dot that swells with your voice (so you
-   can see it is hearing you), the time, ✕ to throw it away (it asks first if it is 15 seconds or
-   more) and ■ to finish. It records up to **30 minutes** and keeps the screen awake where the
-   browser allows.
-2. **Tap ■.** The words appear in the message box, where they can be corrected before Send. Nothing
-   reaches the agent until then.
-3. **If it fails,** the line under the box says why and **Try again** sends the same recording again.
+1. **Tap the microphone.** A strip replaces the box: a live waveform of your voice (so you can see it
+   is hearing you), the time, ✕ to throw it away (it asks first if it is 15 seconds or more) and ■ to
+   finish. It records up to **30 minutes** and keeps the screen awake where the browser allows.
+2. **Tap ■.** It is sent at once, as a **voice message**: a bubble with the recording's real shape
+   (48 bars) and its length, and its transcript underneath, to glance over and correct names in a
+   later message. While the words are being worked out the bubble shows "Turning it into words…".
+   The agent receives the words as an ordinary message; the shape and length travel beside them
+   (`org.logos.voice` in the message), which agents and Element X ignore (Element X shows plain text).
+   The audio itself is not kept.
+3. **If it fails,** nothing is sent; the line under the box says why and **Try again** sends the same
+   recording again.
+
+On Home, **Ask** works the same way: finish a recording and it opens your agent's chat with the voice
+message already sent.
 
 The recording goes from the browser to the dashboard, which passes it to the voice service with the
 agent's own token. It is a **job**: `POST /api/v2/agents/<name>/voice?job=1` answers at once with a
