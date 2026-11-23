@@ -419,7 +419,7 @@ export async function voidView(root, agents, others = []) {
             h('button', { type: 'button', class: 'btn small', onclick: async (e) => { e.target.disabled = true; try { await c.joinRoom(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Join'),
             h('button', { type: 'button', class: 'btn quiet small', onclick: async (e) => { e.target.disabled = true; try { await c.leave(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Decline')))),
         ...visible.map((r) => h('a', { href: r.link, class: `void-group with-pic${r.unread ? ' unread' : ''}`, 'data-kind': r.kind },
-          picture(r),
+          h('span', { class: 'void-pic' }, picture(r), r.unread ? h('span', { class: 'void-dot', 'aria-hidden': 'true' }) : null),
           h('span', { class: 'void-group-body' },
             h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name),
               h('span', { class: 'when' }, r.ts ? short(r.ts) : ''),

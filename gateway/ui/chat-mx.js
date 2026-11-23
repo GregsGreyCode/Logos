@@ -87,7 +87,9 @@ export function conversationsOf(c, agents) {
     if (room && room.getJoinedMemberCount() <= 2) rows.push({ kind: 'agent', agent: a, name: a.display_name, link: `#/chat/${a.name}`, ...summary(room) });
   }
   for (const g of groupsOf(c, agents)) rows.push({ kind: 'group', agent: g.agent, name: g.name, link: g.link, ...summary(g.room) });
-  return rows.sort((x, y) => y.ts - x.ts);
+  // A chat with a reply you have not seen comes first, the newest reply on top; then the rest by their last message
+  // (Greg, 23 Nov: "most recently responded to and not checked").
+  return rows.sort((x, y) => (!!y.unread - !!x.unread) || y.ts - x.ts);
 }
 export const groupLink = (agent, roomId) => `#/chat/${agent.name}/group/${encodeURIComponent(roomId)}`;
 const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
@@ -324,6 +326,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   await Promise.race([readNames(), new Promise((ok) => setTimeout(ok, 300))]);
   let looking = false;
   const fromWhere = (ev) => {
+    // 'sent' is the library's word for "the server has it, its echo has not come back yet" (Greg, 23 Nov: photos said
+    // "sending…" while the agent was already working on them). Working on it: "received". Otherwise the tick.
+    if (ev.status === 'sent') return !thinkingRow.hidden ? 'received' : 'sent';
     if (ev.status) return ev.status === 'not_sent' ? 'not sent · tap or hold to retry' : 'sending…';
     const key = ev.getSenderKey && ev.getSenderKey();
     if (!key || key === ownKey) return 'sent';
@@ -481,7 +486,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         if (unfolded.has(ev.getId())) unfolded.delete(ev.getId()); else unfolded.add(ev.getId());
         draw(false);
       } }, unfolded.has(ev.getId()) ? 'Show less' : 'Show all') : null,
-      asks.length ? h('div', { class: 'mx-asks', role: 'note' }, h('span', { class: 'mx-asks-label' }, asks.length > 1 ? 'It asks you' : 'It asks you'),
+      asks.length ? h('div', { class: 'mx-asks', role: 'note' }, h('span', { class: 'mx-asks-label' }, asks.length > 1 ? 'Questions' : 'Question'),
         ...asks.map((q) => h('p', {}, q))) : null,
       chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, r]) => h('button', {
         type: 'button', class: `chip mx-react${r.mine ? ' mine' : ''}`, 'aria-pressed': String(!!r.mine),
@@ -679,7 +684,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const waitingOnAgent = !!(last && last.getSender() === me && last.status !== 'not_sent' && !last.isDecryptionFailure()
       && last.getContent().msgtype !== 'm.notice' && !replyMap.has(last.getId()) && Date.now() - last.getTs() < 15 * 60000
       && (!group || (last.getContent()['m.mentions']?.user_ids || []).some((id) => agentIds.has(id))));
+    const wasWorking = !thinkingRow.hidden;
     thinkingRow.hidden = !waitingOnAgent && !typing;
+    if (wasWorking !== !thinkingRow.hidden && shown.some((e) => e.getSender() === me && e.status === 'sent')) setTimeout(() => redraw(), 0);
     askedAt = waitingOnAgent ? last.getTs() : (typing ? askedAt || Date.now() : 0);
     progress();
     if (stick || atBottom) { pinned = true; log.scrollTop = log.scrollHeight; requestAnimationFrame(toBottom); }

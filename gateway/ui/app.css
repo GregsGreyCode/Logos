@@ -2003,10 +2003,10 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-edit-link.done { width: auto; padding: 0 18px; border-radius: 999px; color: #fff; background: var(--accent); border-color: var(--accent); font: 600 15px/1 var(--font-body, inherit); }
 .home-edit-link.done .icon { stroke-width: 2.4; }
 @media (max-width: 599px) {
-  /* On a phone: the pencil at the end of Home, centred; Done floats above the Ask box while arranging. */
+  /* On a phone: the pencil at the end of Home, centred; while arranging, Done is a block of its own under the Add chips
+     (Greg, 23 Nov: floating over them, it looked out of place). */
   .home > .home-edit-link { align-self: center; margin: 4px 0 8px; }
-  .home > .home-edit-link.done { position: fixed; z-index: 30; left: 50%; transform: translateX(-50%); height: 44px; padding: 0 28px;
-    bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 84px); box-shadow: 0 8px 24px rgb(0 0 0 / .4); }
+  .home > .home-edit-link.done { align-self: stretch; width: auto; height: 50px; margin: 20px 0 12px; border-radius: var(--r-card); font-size: 16px; }
 }
 /* While arranging on a wide screen, the title band (with Done) stays at the top as you scroll. */
 @media (min-width: 600px) { .home > .home-head:has(.home-edit-link.done) { position: sticky; top: 0; z-index: 6; background: var(--ground); } }
@@ -2354,3 +2354,10 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 @keyframes feed-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ptr.spinning .ptr-dot svg { animation: none; opacity: .6; } }
 @media (min-width: 600px) { .ptr { display: none; } }
+
+/* A chat with a reply you have not seen (Greg, 23 Nov): first in the list, a dot on its picture, its name in bold. */
+.void-pic { position: relative; flex: none; display: grid; place-items: center; width: 40px; height: 40px; }   /* an agent's mark and a group's circle line up (Greg, 23 Nov) */
+.void-dot { position: absolute; top: -3px; right: -3px; width: 13px; height: 13px; border-radius: 50%; background: var(--accent);
+  border: 2px solid var(--ground); box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent); }
+.void-group.unread { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.void-group.unread .void-group-name { font-weight: 700; }

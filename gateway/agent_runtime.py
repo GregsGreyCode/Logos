@@ -281,6 +281,17 @@ def merge(base: dict, extra: Mapping[str, Any]) -> None:
             base[k] = v
 
 
+BUSY_INPUT_MODES = ("queue", "steer")        # not hermes's "interrupt": it loses the running request
+
+
+def busy_input_mode(agent: Mapping[str, Any]) -> str:
+    """What a message sent while the agent is still answering does: wait its turn, or steer the run."""
+    mode = str(agent.get("busy_input_mode") or "queue")
+    if mode not in BUSY_INPUT_MODES:
+        raise AgentRuntimeError(f"{agent.get('name')}: busy_input_mode must be one of {', '.join(BUSY_INPUT_MODES)}, not {mode!r}")
+    return mode
+
+
 def volumes(name: str) -> tuple[str, str]:
     """(home volume, brain volume) for agent ``name``."""
     return f"logos-home-{name}", f"logos-brain-{name}"
@@ -465,10 +476,13 @@ class AgentRuntime:
             # its "let me check..." text before a tool call is not sent as a message of its own.
             cfg["display"] = {"platforms": {"matrix": {
                 "tool_progress": "log", "interim_assistant_messages": False}},
-                # A message sent while the agent is still answering waits its turn. hermes otherwise
+                # A message sent while the agent is still answering waits its turn ("queue"). hermes otherwise
                 # interrupts the running answer for it, and that request is lost ("Add creme de
                 # marron to the to-do list" on 20 Nov 13:25, cut off by the next item 30 s later).
-                "busy_input_mode": "queue"}
+                # An agent may choose "steer" (agents/<name>.yaml: busy_input_mode): the follow-up joins the run
+                # in progress after its next step, without cancelling it (a correction reaches it; with no step
+                # left, or a photo attached, it waits its turn as before). 23 Nov, Greg: "Quote*" waited 5 minutes.
+                "busy_input_mode": busy_input_mode(agent)}
         if agent.get("brain_index", True):
             cfg["memory"] = {"memory_char_limit": MEMORY_CHAR_LIMIT}
         cfg.setdefault("plugins", {"enabled": []})["enabled"].extend(LOGOS_PLUGINS)

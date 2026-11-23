@@ -9,9 +9,10 @@ await page.addInitScript(() => { try { localStorage.setItem('fake.groups', '10')
 await page.goto('http://127.0.0.1:8779/#/chat'); await page.waitForTimeout(2500);
 const rows = () => page.locator('.void-groups a.void-group');
 ok(await rows().count() === 8 && await page.locator('.void-more').count() === 1, `12 chats: the first 8, then "${await page.locator('.void-more').innerText().catch(() => '')}"`);
-ok(await page.locator('.void-group.with-pic .agent-mark').count() >= 1 && await page.locator('.void-avatar.group').count() >= 1, 'each chat has its picture (agent mark or group icon)');
 await page.locator('.void-more').tap(); await page.waitForTimeout(300);
 ok(await rows().count() === 12, 'Show more shows all 12');
+// (unread chats come first now, so the agents' chats are past the first 8 until Show more)
+ok(await page.locator('.void-group.with-pic .agent-mark').count() >= 1 && await page.locator('.void-avatar.group').count() >= 1, 'each chat has its picture (agent mark or group icon)');
 await page.locator('.void-filters .chip', { hasText: 'Agents' }).tap(); await page.waitForTimeout(300);
 ok(await rows().count() === 1 && (await rows().first().innerText()).includes("Greg's agent"), 'Agents: only agent chats');
 await page.locator('.void-filters .chip', { hasText: 'Groups' }).tap(); await page.waitForTimeout(300);

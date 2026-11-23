@@ -17,6 +17,7 @@ await page.evaluate(() => window.__mx.addEvent('!dm:test', { msgtype: 'm.text', 
 await page.waitForTimeout(800);
 const folded = page.locator('.mx-turn.agent', { hasText: 'Here is the rota' });
 ok(await folded.locator('.msg.folded').count() === 1, 'once you have answered, it folds');
+ok((await folded.locator('.mx-asks-label').innerText()).toLowerCase() === 'question', 'labelled "Question" (not "It asks you")');
 ok((await folded.locator('.mx-asks').innerText()).includes('Shall I add these to the Household calendar, or to yours only?'), 'and its question stays visible under the fold');
 await folded.screenshot({ path: process.argv[2] + '/asks.png' });
 ok(errs.length === 0, `no page errors ${errs.join('|')}`);

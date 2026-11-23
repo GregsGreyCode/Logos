@@ -31,6 +31,8 @@ window.__mx = { sent: [] };
 // Tests may add more group chats before the page draws: localStorage 'fake.groups' = N.
 try { const k = Number(localStorage.getItem('fake.groups') || 0); for (let i = 0; i < k; i++) { const id = `!g${i}:test`; rooms.push(mkRoom(id, `Group ${i + 1}${i % 3 === 0 ? ' trip' : ''}`, [ME, BERE, HH], [new Ev(id, 'm.room.message', { msgtype: 'm.text', body: `Plan number ${i + 1}` }, BERE, 60 + i)])); } } catch (e) {}
 window.__mx.addEvent = (roomId, content, sender) => { const r = client.getRoom(roomId); const ev = new Ev(roomId, 'm.room.message', content, sender || GA); r.events.push(ev); emit('Room.timeline', ev, r); return ev.id; };
+// A message of yours in a given send state (the library's local echo): 'sending', or 'sent' (the server has it, no echo yet).
+window.__mx.addMine = (roomId, body, status) => { const r = client.getRoom(roomId); const ev = new Ev(roomId, 'm.room.message', { msgtype: 'm.text', body }, ME); ev.status = status || null; r.events.push(ev); emit('Room.timeline', ev, r); return ev.id; };
 const client = {
   getUserId: () => ME, getRooms: () => rooms, getRoom: (id) => rooms.find((r) => r.roomId === id) || null,
   getCrypto: () => ({ getOwnDeviceKeys: async () => ({ curve25519: 'own' }), getUserDeviceInfo: async () => new Map() }),

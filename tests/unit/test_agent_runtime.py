@@ -537,6 +537,15 @@ network_policies:
             "busy_input_mode": "queue"}                       # a second message waits, never cuts the first off
         assert "platforms" not in yaml.safe_load(r.config_text("alpha", r.load("alpha")))
 
+    def test_an_agent_may_steer_a_follow_up_into_the_run_but_never_interrupt(self, repo):
+        r = rt(repo)
+        base = {**r.load("alpha"), "matrix": {"enabled": True}}
+        mode = lambda a: yaml.safe_load(r.config_text("alpha", a))["display"]["busy_input_mode"]
+        assert mode(base) == "queue" and mode({**base, "busy_input_mode": "steer"}) == "steer"
+        for bad in ("interrupt", "nonsense"):          # interrupt cancelled the running request (20 Nov)
+            with pytest.raises(AgentRuntimeError, match="busy_input_mode"):
+                mode({**base, "busy_input_mode": bad})
+
     def test_telegram_is_refused(self, repo):
         (repo / "agents" / "alpha.local.yaml").write_text("telegram:\n  enabled: true\n")
         with pytest.raises(AgentRuntimeError, match="Telegram is no longer supported"):
