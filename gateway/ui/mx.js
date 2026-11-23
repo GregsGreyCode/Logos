@@ -27,9 +27,36 @@ const sdk = () => (sdkP ||= import('/ui/vendor/matrix/matrix.js'));
 const base = () => location.origin;
 // The Matrix library sends its requests without cookies; the pass-through needs the dashboard's
 // session cookie (same origin only), alongside the Matrix token in the Authorization header.
-const fetchFn = (url, opts = {}) => fetch(url, { ...opts, credentials: 'same-origin' }).then(
-  (r) => { reach.ok(); return r; },
-  (e) => { if (!(opts.signal && opts.signal.aborted)) reach.lost(); throw e; });   // reach.js
+// The chat's long poll (/sync, which the server holds open ~30 s until something happens) has its own time
+// limit here (Béré, 23 Nov: a phone moving between Wi-Fi and mobile data leaves that connection dead without
+// an error, and the Matrix library waits up to ~110 s on it, while her message sat on "sending…"). A poll
+// that has not answered 20 s after it should have is cut, and the library reconnects at once. Any network
+// change, and an alert for a message the chat does not show, cut it too (dropSyncs).
+const inflight = new Set();
+const SYNC_URL = /\/_matrix\/client\/v3\/sync\?/;
+export const SYNC_GRACE_MS = 20000;
+export const fetchFn = (url, opts = {}) => {
+  let o = opts, timer = null, ctl = null;
+  if (SYNC_URL.test(String(url))) {
+    ctl = new AbortController();
+    if (opts.signal) { if (opts.signal.aborted) ctl.abort(); else opts.signal.addEventListener('abort', () => ctl.abort(), { once: true }); }
+    o = { ...opts, signal: ctl.signal };
+    inflight.add(ctl);
+    // Only a poll that goes on from an earlier sync (has `since`): the very first one on a new device
+    // can be large and slow, and must not be cut.
+    if (/[?&]since=/.test(String(url))) {
+      const wait = Number((String(url).match(/[?&]timeout=(\d+)/) || [])[1] || 0);
+      timer = setTimeout(() => ctl.abort(), wait + SYNC_GRACE_MS);
+    }
+  }
+  return fetch(url, { ...o, credentials: 'same-origin' }).then(
+    (r) => { reach.ok(); return r; },
+    (e) => { if (!(o.signal && o.signal.aborted)) reach.lost(); throw e; })     // reach.js
+    .finally(() => { if (ctl) { clearTimeout(timer); inflight.delete(ctl); } });
+};
+export function dropSyncs() { for (const c of [...inflight]) c.abort(); }
+for (const ev of ['online', 'offline']) window.addEventListener(ev, dropSyncs);
+if (navigator.connection && navigator.connection.addEventListener) navigator.connection.addEventListener('change', dropSyncs);
 
 export function saved() {
   if (!owner) return null;
@@ -89,7 +116,7 @@ export function watch(c, m) {
     if (document.visibilityState !== 'visible' || reach.isDown() || (client && client !== c)) return;
     const stalled = Date.now() - Math.max(lastSync, visibleSince);
     if (stalled < SYNC_STALL_MS) return;
-    if (!nudged) { nudged = Date.now(); try { c.retryImmediately(); } catch (e) { /* reloaded below if it stays stuck */ } return; }
+    if (!nudged) { nudged = Date.now(); dropSyncs(); try { c.retryImmediately(); } catch (e) { /* reloaded below if it stays stuck */ } return; }
     if (Date.now() - nudged >= SYNC_STALL_MS && !wouldLose()) location.reload();
   }, 15000);
 }
@@ -102,6 +129,7 @@ export function pushed(wait = PUSH_WAIT_MS) {
   const at = Date.now();
   setTimeout(() => {
     if (news >= at || !watched || document.visibilityState !== 'visible') return;
+    dropSyncs();                                // a poll still waiting is probably on a dead connection
     try { watched.retryImmediately(); } catch (e) { /* the reload below covers it */ }
     setTimeout(() => { if (news < at && !wouldLose() && document.visibilityState === 'visible') location.reload(); }, wait);
   }, wait);
