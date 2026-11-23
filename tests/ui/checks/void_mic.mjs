@@ -25,6 +25,11 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   ok(Math.abs((mic.x + mic.width / 2) - (glyph.x + glyph.width)) <= 14 && mic.y + mic.height / 2 <= glyph.y + glyph.height / 2, `${n}: the microphone is fixed to the logo's corner (${Math.round(mic.x + mic.width / 2 - glyph.x - glyph.width)}px off)`);
   if (!mob) { const hb = await page.locator('.void-band > h1').boundingBox(), pb = await page.locator('.chat.void').boundingBox(); ok(Math.abs(hb.x + hb.width / 2 - (pb.x + pb.width / 2)) <= 3, `${n}: "Agents" is centred at the top (${Math.round(hb.x + hb.width / 2 - pb.x - pb.width / 2)}px off)`); await page.screenshot({ path: `${OUT}/agents-top-desktop.png` }); }
 
+  const m0 = await first.locator('.mark-mic').boundingBox(), g0 = await first.locator('.mark-glyph').boundingBox();
+  await page.waitForTimeout(3500);                                     // the marks drift: the microphone must go with the logo
+  const m1 = await first.locator('.mark-mic').boundingBox(), g1 = await first.locator('.mark-glyph').boundingBox();
+  const drift = Math.hypot(g1.x - g0.x, g1.y - g0.y), apart = Math.hypot((m1.x - g1.x) - (m0.x - g0.x), (m1.y - g1.y) - (m0.y - g0.y));
+  ok(apart <= 1.5, `${n}: the microphone moves with the logo (logo moved ${drift.toFixed(1)}px, microphone slipped ${apart.toFixed(1)}px)`);
   // holding a mark lifts it, and does not record
   const cx = box.x + box.width / 2 - 20, cy = box.y + box.height / 3;
   await page.mouse.move(cx, cy); await page.mouse.down(); await page.waitForTimeout(1700);
@@ -32,7 +37,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   await page.mouse.up(); await page.waitForTimeout(400);
 
   // tap the microphone
-  await first.locator('.mark-mic').click(); await page.waitForTimeout(1600);
+  await first.locator('.mark-mic').click({ force: true }); await page.waitForTimeout(1600);
   ok(page.url().endsWith('#/chat'), `${n}: tapping the microphone does not open the chat`);
   ok(await page.locator('.void-rec-dock .rec-bar').isVisible() && await first.evaluate((e) => e.classList.contains('recording')), `${n}: it records: the strip over the screen, the mark marked`);
   await page.screenshot({ path: `${OUT}/void-recording-${n}.png` });

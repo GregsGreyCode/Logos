@@ -2467,7 +2467,8 @@ button.home-list-box.tick:hover:not(:disabled) { border-color: var(--accent); }
 .home-band-widget .w-card.setup p { display: none; }
 
 /* A microphone on each agent's mark, and the recording bar over the Agents screen (Greg, 23 Nov). */
-.agent-mark .mark-mic { position: absolute; left: calc(50% + var(--glyph) / 2 - 16px); top: -6px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+.mark-top { position: relative; display: block; }
+.agent-mark .mark-mic { position: absolute; left: calc(100% - 16px); top: -6px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
   border: 1px solid var(--line); background: var(--surface); color: var(--muted); box-shadow: 0 4px 12px rgb(0 0 0 / .35); padding: 0; }
 .agent-mark .mark-mic:hover { color: var(--ink); border-color: var(--accent); }
 .agent-mark .mark-mic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

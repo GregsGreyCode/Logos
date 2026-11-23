@@ -37,9 +37,10 @@ export function mark(agent, { size = 'big', mood = 'asleep', href = null, curren
     style: `--mark: var(--agent-${agent.name}, var(--${agent.name}, var(--accent)))`, 'data-agent': agent.name,
     'aria-label': `${agent.display_name}: ${MOODS[mood]}${href ? '. Talk to it' : ''}`, title: `${agent.display_name} · ${MOODS[mood]}` },
   // The name rides inside the drifting part, so it moves with its mark (Greg, 21 Nov).
-  h('span', { class: 'mark-fx', 'aria-hidden': 'true' }, h('span', { class: 'mark-fy' },
-    h('span', { class: 'mark-glow' }, h('span', { class: 'mark-glyph' })),
-    h('span', { class: 'mark-label' }, h('strong', {}, agent.display_name), h('span', {}, moodWords(mood))))));
+  // The microphone is added into .mark-top, inside the drifting part, so it stays on the logo as it moves (Greg, 23 Nov).
+  h('span', { class: 'mark-fx' }, h('span', { class: 'mark-fy' },
+    h('span', { class: 'mark-top' }, h('span', { class: 'mark-glow', 'aria-hidden': 'true' }, h('span', { class: 'mark-glyph' }))),
+    h('span', { class: 'mark-label', 'aria-hidden': 'true' }, h('strong', {}, agent.display_name), h('span', {}, moodWords(mood))))));
 }
 
 // Each agent's state, from its Matrix room (this browser), the Noticeboard and the agent list.
@@ -159,7 +160,7 @@ export async function voidView(root, agents, others = []) {
       const el = mark(a, { size: 'big', mood: moodOf(a, mine, m) });
       if (mine) { el.dataset.href = `#/chat/${a.name}`; el.setAttribute('role', 'link'); el.tabIndex = 0; }
       if (mine && a.voice) {
-        el.append(h('button', { type: 'button', class: 'mark-mic', 'aria-label': `Record a voice message for ${a.display_name}`, title: 'Record a voice message',
+        el.querySelector('.mark-top').append(h('button', { type: 'button', class: 'mark-mic', 'aria-label': `Record a voice message for ${a.display_name}`, title: 'Record a voice message',
           onclick: (e) => { e.preventDefault(); e.stopPropagation(); if (!recording()) recorderFor(a).start(); } }, icon(ICONS.mic)));
       }
       if (!mine) {
