@@ -141,8 +141,8 @@ async function route() {
   // between the logo and your initial. Inside an agent its own bar takes over.
   // Every other screen too (Greg, 23 Nov: "Settings" sat further in, behind a divider, than the others).
   const inAgent = (name === 'chat' && !!rest[0]) || name === 'brain' || (name === 'agents' && !!rest[0]);
-  // (Home's weekday short on the phone, Greg 23 Nov: the full date ran into the pencil beside it.)
-  const centred = name === 'home' ? new Date().toLocaleDateString([], { weekday: 'short', day: 'numeric', month: innerWidth < 390 ? 'short' : 'long' })
+  // (the full weekday again: the pencil left the top bar, Greg 23 Nov; the month short on a narrow phone)
+  const centred = name === 'home' ? new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: innerWidth < 390 ? 'short' : 'long' })
     : name === 'chat' && !rest[0] ? 'Agents' : name === 'noticeboard' ? 'Notifications' : !inAgent && NAMES[name] ? NAMES[name] : null;
   document.getElementById('screen-name').textContent = centred !== null ? centred : tabbed ? '' : (NAMES[name] || '');
   document.documentElement.classList.toggle('on-home', name === 'home');
