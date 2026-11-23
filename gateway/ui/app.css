@@ -659,8 +659,8 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .side-reopen { display: none; }
 @media (min-width: 600px) {
   .side.tucked { display: none; }
-  .side-reopen.shown { display: inline-flex; width: auto; height: auto; margin-left: auto; }
-  .side-reopen.shown + .view-menu { margin-left: 0; }
+  .side-reopen { display: inline-flex; width: auto; height: auto; margin-left: auto; }
+  .side-reopen[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 }
 @media (max-width: 599px) { .side-top { display: none; } }
 
@@ -2057,3 +2057,37 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 @media (min-width: 1600px) {
   .chat .log, .chat .composer { padding-left: max(24px, calc((100% - 920px) / 2)); padding-right: max(24px, calc((100% - 920px) / 2)); }
 }
+
+/* The agent switcher in a chat's header (Greg, 23 Nov). */
+.mark-bar.switch { position: relative; gap: 6px; }
+.switch-btn { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 12px 4px 6px; border: 1px solid transparent;
+  border-radius: 999px; background: transparent; color: var(--ink); cursor: pointer; font: inherit; transition: background .15s, border-color .15s; }
+.switch-btn:hover, .mark-bar.switch.open .switch-btn { background: var(--chip); border-color: var(--line); }
+.switch-btn .mark-name { font: 600 20px/24px var(--font-display); }
+.switch-caret { color: var(--muted); font-size: 12px; transition: transform .2s ease; }
+.mark-bar.switch.open .switch-caret { transform: rotate(180deg); }
+.switch-pop { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: 320px; max-height: min(70vh, 520px); overflow-y: auto;
+  padding: 6px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 16px 40px rgb(0 0 0 / .4);
+  transform-origin: top left; animation: switch-in .16s cubic-bezier(.2, .8, .2, 1) both; }
+.switch-pop[hidden] { display: none; }
+@keyframes switch-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+[data-anim="off"] .switch-pop { animation: none; }
+.switch-search { width: 100%; box-sizing: border-box; min-height: 38px; margin: 2px 0 6px; padding: 0 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--ground); color: var(--ink); font: inherit; }
+.switch-list { display: flex; flex-direction: column; gap: 2px; }
+.switch-item { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 6px 10px; border-radius: 12px; color: var(--ink); text-decoration: none; outline: none; }
+.switch-item:hover, .switch-item:focus-visible { background: var(--chip); }
+.switch-item.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.switch-item[hidden] { display: none; }
+.switch-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.switch-text strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.switch-mood { font-size: var(--t-xs); color: var(--muted); }
+.switch-tick { color: var(--accent-text); font-weight: 700; }
+.switch-all { display: block; margin-top: 4px; padding: 10px; border-top: 1px solid var(--line); color: var(--accent-text); font-size: var(--t-sm); text-decoration: none; }
+.switch-item .agent-mark .mark-label { display: none; }
+@media (max-width: 599px) {
+  .switch-pop { position: fixed; left: 12px; right: 12px; top: calc(var(--topbar-h, 56px) + 8px); width: auto; }
+  .in-conv .switch-btn .agent-mark { display: none; }
+  .switch-btn .mark-name { font-size: 17px; }
+}
+.side-top:empty { display: none; }

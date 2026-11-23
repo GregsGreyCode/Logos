@@ -528,8 +528,10 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   // Desktop: the conversations panel starts open; a small button tucks it away and a tab on the right
   // edge brings it back. Remembered on this device. (On a phone it is the Conversations panel instead.)
   // A labelled button in the header (Greg, 23 Nov: the thin tab at the screen's edge went unnoticed).
-  const reopen = h('button', { type: 'button', class: 'btn quiet small side-reopen', title: 'Show your chats',
-    'aria-controls': 'chat-side', onclick: () => tuck(false) }, 'Chats');   // "Chats", not Conversations (Greg, 23 Nov)
+  // Chats toggles the panel and stays where it is, lit while the panel is open (Greg, 23 Nov: it vanished
+  // when the panel opened).
+  const reopen = h('button', { type: 'button', class: 'btn quiet small side-reopen', title: 'Show or hide your chats',
+    'aria-controls': 'chat-side', 'aria-pressed': 'true', onclick: () => tuck(!side.classList.contains('tucked')) }, 'Chats');   // "Chats", not Conversations (Greg, 23 Nov)
   // It shows for a moment when Chat opens, then slides away to its tab, so you know where it is.
   // Reopen it and it stays (remembered) until you hide it again.
   const wide = () => window.matchMedia('(min-width: 600px)').matches;
@@ -537,7 +539,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   function slideAway(focusTab) {
     if (side.classList.contains('tucked')) return;
     const done = () => { side.classList.remove('sliding'); side.style.marginRight = ''; side.classList.add('tucked');
-      reopen.classList.add('shown'); if (focusTab) reopen.focus(); };
+      reopen.classList.add('shown'); reopen.setAttribute('aria-pressed', 'false'); if (focusTab) reopen.focus(); };
     if (!wide() || still()) return done();
     side.style.marginRight = `-${side.offsetWidth}px`;
     side.classList.add('sliding');
@@ -546,8 +548,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   const tuck = (hide) => {
     setPref('panel', hide ? 'slide' : 'open');
     if (hide) return slideAway(true);
-    side.classList.remove('tucked'); reopen.classList.remove('shown');
-    side.querySelector('.side-hide').focus();
+    side.classList.remove('tucked'); reopen.classList.remove('shown'); reopen.setAttribute('aria-pressed', 'true');
   };
   if (getPref('panel', 'slide') !== 'open') setTimeout(() => { if (alive && side.isConnected && !side.contains(document.activeElement)) slideAway(false); }, 1200);
   const sideScrim = h('div', { class: 'chat-scrim', hidden: true });
@@ -599,14 +600,10 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
 
   // M2: with this browser connected as your Matrix device, chat is your Element room itself.
   if (matrixMode) {
-    const mxView = h('details', { class: 'view-menu wide-only' },
-      h('summary', { class: 'btn quiet small' }, 'View'),
-      h('div', { class: 'view-pop', role: 'group', 'aria-label': 'View options' },
-        h('p', { class: 'label' }, 'Chats panel'), panelPick('slide', 'Slides away'), panelPick('open', 'Stays open')));
-    document.addEventListener('click', (e) => { if (mxView.open && !mxView.contains(e.target)) mxView.open = false; });
-    const sideTop = h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
-      title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6'])));
-    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: mxView, others: othersKept || [] }, threadId, groupId);
+    // No View menu (Greg, 23 Nov: it made no sense here): whether the panel stays open is in Settings › Look,
+    // and Chats in the header shows or hides it.
+    const sideTop = h('div', { class: 'side-top' });
+    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: null, others: othersKept || [] }, threadId, groupId);
     return () => { alive = false; done(); document.removeEventListener('keydown', onKey); };
   }
 
