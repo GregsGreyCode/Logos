@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "description": "Screen checks for the dashboard (tests/ui/run.sh)",
+  "devDependencies": { "playwright-core": "1.58.0" }
+}

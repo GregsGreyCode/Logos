@@ -1,0 +1,21 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+await page.route('**/api/v2/notifications', async (route) => { const r = await route.fetch(); const d = await r.json();
+  d.items.unshift({ id: 'logos-update:abc1234', kind: 'logos-update', type: 'needs', ts: Date.now() / 1000 - 60, title: 'An update for Logos is ready',
+    text: '3 changes to install, the newest: Home › Lights: brightness', link: '#/settings/updates' }); await route.fulfill({ json: d }); });
+await page.goto('http://127.0.0.1:8779/#/noticeboard'); await page.waitForTimeout(2200);
+const row = page.locator('.feed-item', { hasText: 'An update for Logos is ready' });
+ok(await row.count() === 1, 'the reminder is in Notifications');
+await row.tap(); await page.waitForTimeout(400);
+await page.screenshot({ path: process.argv[2] + '/upd.png' });
+const btn = row.locator('a.feed-go');
+ok((await btn.innerText()) === 'Update' && (await btn.getAttribute('href')) === '#/settings/updates', 'with an Update button to Settings › Updates');
+await btn.tap(); await page.waitForTimeout(800);
+ok(await page.evaluate(() => location.hash) === '#/settings/updates', 'which goes there');
+ok(errs.length === 0, `no page errors ${errs.join('|')}`);
+await browser.close();
