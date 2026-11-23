@@ -1,5 +1,6 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
+import { swr, forget } from './cache.js';
 import { h, api, getJSON, when, none, loading, aiState, reveal } from './util.js';
 import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
@@ -70,9 +71,8 @@ export async function homeView(root) {
   const listsBox = h('div', { class: 'home-lists-row' }, loading('tiles', 2));
   const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists' },
     h('h2', { class: 'label' }, 'Lists'), listsBox);
-  async function showLists() {
-    let page;
-    try { page = await getJSON('/api/v2/agents/household/brain/page?path=lists.md'); } catch (e) { return; }
+  const showLists = () => swr('/api/v2/agents/household/brain/page?path=lists.md', 5 * 60000, drawLists, null);   // kept 5 minutes
+  function drawLists(page) {
     if (!alive || !page || !page.text) return;
     const lists = [];
     for (const line of String(page.text).split('\n')) {
@@ -155,8 +155,9 @@ export async function homeView(root) {
   const deg = (t) => (t === null || t === undefined ? '–' : `${Math.round(t)}°`);
   const weatherBox = h('div', { class: 'home-weather' }, loading('rows', 1));
   const weatherSec = h('section', { class: 'home-weather-sec', 'aria-label': 'Weather' }, weatherBox);
-  async function showWeather() {
-    const w = await getJSON('/api/v2/weather').catch(() => ({ error: 'weather_unavailable' }));
+  const MIN = 60000;
+  const showWeather = () => swr('/api/v2/weather', 30 * MIN, drawWeather, { error: 'weather_unavailable' });   // kept 30 minutes
+  function drawWeather(w) {
     if (!alive) return;
     if (w.error === 'no_place') { weatherBox.replaceChildren(h('div', {}, h('p', { class: 'when' }, 'Weather: which town?'), placePicker())); return; }
     if (w.error) { weatherBox.replaceChildren(h('p', { class: 'when' }, `The weather could not be read just now${w.place ? ` for ${w.place}` : ''}.`)); return; }
@@ -238,13 +239,13 @@ export async function homeView(root) {
       return tile;
     }));
   }
-  async function showLights() { const d = await getJSON('/api/v2/home/lights').catch(() => ({ error: 'x' })); if (alive) drawLights(d); }
+  const showLights = () => swr('/api/v2/home/lights', 0, (d) => { if (alive) drawLights(d); }, { error: 'x' });   // kept, but always asked again
 
   // Coming up: the next two weeks after tomorrow, one line each (all-day ones, like birthdays, too).
   const comingBox = h('div', { class: 'home-list home-agenda' }, loading('rows', 3));
   const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up' }, h('h2', { class: 'label' }, 'Coming up'), comingBox);
-  async function showComing() {
-    const d = await getJSON('/api/v2/home/coming').catch(() => ({ error: 'x' }));
+  const showComing = () => swr('/api/v2/home/coming', 5 * MIN, drawComing, { error: 'x' });   // kept 5 minutes
+  function drawComing(d) {
     if (!alive) return;
     if (d.error) { comingBox.replaceChildren(h('p', { class: 'when' }, d.error === 'no_calendar' ? 'No calendar yet.' : 'The calendar could not be read just now.')); return; }
     const events = (d.events || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start))).slice(0, 8);
@@ -267,7 +268,7 @@ export async function homeView(root) {
       found.replaceChildren(h('p', { class: 'when' }, 'Looking…'));
       const r = await getJSON(`/api/v2/weather/places?q=${encodeURIComponent(q.value.trim())}`).catch(() => ({ places: [] }));
       found.replaceChildren(...((r.places || []).length ? r.places.map((pl) => h('button', { type: 'button', class: 'btn quiet small', onclick: async () => {
-        await setPref('weather_place', pl); showWeather();
+        await setPref('weather_place', pl); forget('/api/v2/weather'); showWeather();
       } }, pl.name)) : [h('p', { class: 'when' }, 'No place by that name.')]));
     };
     return h('div', { class: 'home-place' },

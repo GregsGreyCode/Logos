@@ -13,7 +13,10 @@
 //   update   what happened: brain changes, what the agents asked each other, an outage that is over.
 // Only the first three count on the bell; updates are there when you look.
 export const TYPES = { needs: 'Needs you', problem: 'Problem', message: 'Message', update: 'Update' };
-export const urgent = (i) => i.type === 'needs' || i.type === 'problem';
+// The AI computer being off is not something to do (Greg, 23 Nov: his PC is often off on purpose): it shows
+// in the day's list, red while still off, but not under Needs you or on the bell. An agent that should be
+// running and is not still is.
+export const urgent = (i) => i.type === 'needs' || (i.type === 'problem' && i.kind !== 'ai');
 import { getJSON, api, noteTitle } from './util.js';
 import * as mx from './mx.js';
 import { outcome } from './noticeboard.js';

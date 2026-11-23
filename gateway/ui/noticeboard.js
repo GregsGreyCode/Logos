@@ -1,5 +1,6 @@
 // Noticeboard screen: what the agents asked each other, and the requests waiting on you.
 import { h, api, getJSON, when, none, loading, reveal } from './util.js';
+import { peek, keep } from './cache.js';
 
 const KIND = { fyi: 'FYI', question: 'Question', shared_change: 'Shared change', reminder: 'Reminder' };
 const ASKS = { question: 'asks a question', shared_change: 'proposes a shared change', reminder: 'asks for a reminder' };
@@ -132,10 +133,21 @@ export async function noticeboardView(root) {
   const error = h('div', { class: 'notice', hidden: true });
   const card = (m) => requestCard(m, doing, () => load());
 
+  // The last list seen is drawn at once, then the fresh one (Greg, 23 Nov); every 15 s after that.
   async function load() {
     try {
-      const { items: raw, waiting } = await feed();
+      const f = await feed();
       if (!alive) return;
+      keep('feed', { items: f.items, waiting: f.waiting });
+      draw(f);
+    } catch (e) {
+      error.hidden = false;
+      error.textContent = 'Could not load the notifications just now.';
+    }
+  }
+
+  function draw({ items: raw, waiting }) {
+    {
       // New stays new until you tap it, or Mark all read (Greg, 22 Nov: opening the tab no longer clears all).
       const items = raw.map((i) => (opened.has(i.id) ? { ...i, fresh: false } : i));
       error.hidden = true;
@@ -159,9 +171,6 @@ export async function noticeboardView(root) {
       days.replaceChildren(...(groups.length ? groups.map(([d, list]) => h('section', { 'aria-label': d },
         h('h2', { class: 'label' }, d), h('div', { class: 'feed' }, ...list.map(row)))) : [none('Nothing this week.')]));
       setBadge(toDo + items.filter((i) => urgent(i) ? false : i.type === 'message' && i.fresh).length);
-    } catch (e) {
-      error.hidden = false;
-      error.textContent = 'Could not load the notifications just now.';
     }
   }
 
@@ -169,6 +178,8 @@ export async function noticeboardView(root) {
     // A title like every screen's on a desktop (Greg, 23 Nov), with Mark all read in it; the phone's top bar names it.
     h('header', { class: 'page-band' }, h('h1', {}, 'Notifications'), allRead),
     error, h('div', { class: 'feed-head' }, caught), waitSec, days));
+  const kept = peek('feed');
+  if (kept && kept.v && Array.isArray(kept.v.items)) draw(kept.v);
   await load();
   timer = setInterval(load, 15000);
   return () => { alive = false; clearInterval(timer); };

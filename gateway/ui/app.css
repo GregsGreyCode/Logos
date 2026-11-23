@@ -1986,3 +1986,10 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   .tree-head .tree-add { margin-top: 0; }
   .agent-cards { max-width: 760px; }
 }
+/* Needs you (Greg, 23 Nov): room between the coloured line, the new dot and the label. Only rows under
+   Needs you carry the line; the AI computer's row in the day list does not. */
+.feed-item.type-needs, .feed-item.type-problem { padding-left: 0; border-left: 0; }
+.feed.needs > .feed-item { padding-left: 14px; border-left: 3px solid var(--attn, #f59e0b); }
+.feed.needs > .feed-item.type-problem { border-left-color: var(--bad); }
+.feed.needs > .feed-item .feed-dot { margin-left: 2px; }
+.notifications .feed-top { gap: 10px; }
