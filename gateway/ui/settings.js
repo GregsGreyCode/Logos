@@ -19,6 +19,7 @@ const SECTIONS = [
   { id: 'tips', name: 'Tips', full: 'Tips', icon: 'bulb', group: 'You' },
   { id: 'matrix', name: 'Chats & devices', full: 'Chats & devices', icon: 'shield', group: 'This device' },
   { id: 'updates', name: 'Updates', full: 'Updates', icon: 'update', group: 'Logos', admin: true },
+  { id: 'metrics', name: 'Metrics', full: 'Prometheus metrics', icon: 'chart', group: 'Logos', admin: true },
   { id: 'account', name: 'Your account', full: 'Your account', icon: 'user', group: null },
 ];
 // Screens of their own, listed here too so a phone reaches them from Settings (admin only).
@@ -122,6 +123,63 @@ function tips() {
   return [h('section', { 'aria-label': 'Tips' }, heading('Tips'),
     h('p', { class: 'when' }, 'Each screen shows a few tips the first time you open it.'),
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => say(note, resetTips()) }, 'Show the tips again')), note)];
+}
+
+// Prometheus (F42, Greg 23 Nov): off until switched on here. The token is shown once; only its hash is kept.
+function metricsPage() {
+  const box = h('div', { class: 'settings-body-inner' }, loading());
+  const msg = h('p', { class: 'when', role: 'status' });
+  const put = async (body) => {
+    const r = await api('/api/v2/metrics', { method: 'PUT', body }).catch(() => null);
+    return r && r.ok ? r.json() : null;
+  };
+  const config = (token) => `scrape_configs:
+  - job_name: logos
+    metrics_path: /metrics
+    scheme: ${location.protocol.replace(':', '')}
+    authorization:
+      credentials: ${token}
+    static_configs:
+      - targets: ['${location.host}']`;
+  const copy = (text, what) => navigator.clipboard ? h('button', { type: 'button', class: 'btn quiet small', onclick: async () => {
+    try { await navigator.clipboard.writeText(text); msg.textContent = `${what} copied.`; } catch (e) { msg.textContent = 'Could not copy: select it instead.'; }
+  } }, `Copy ${what}`) : '';
+  function showOff() {
+    box.replaceChildren(h('p', {}, 'Off. Turn it on to let Prometheus or Grafana at home read how your agents are doing: which are running, how many messages each sent today, and whether the AI computer answers.'),
+      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: async () => {
+        msg.textContent = 'Turning it on…';
+        const d = await put({ enabled: true });
+        if (!d) { msg.textContent = 'Could not turn it on just now.'; return; }
+        msg.textContent = ''; showOn(d.token);
+      } }, 'Turn on')), msg, about());
+  }
+  function about() {
+    return h('details', { class: 'colours-more' }, h('summary', {}, h('span', {}, 'What it shares'), h('span', { class: 'when' }, 'Numbers only')),
+      h('p', { class: 'when' }, 'Agent names, counts, times, and 0 or 1 for "is it running". Never a message, a person, a room or a key. Prometheus must send the token below; without it the address does not exist.'),
+      h('p', { class: 'when mono' }, 'logos_agent_up · logos_agent_messages_today · logos_agent_messages_total · logos_agent_last_message_timestamp_seconds · logos_model_up · logos_widget_needs · logos_info'));
+  }
+  function showOn(token) {
+    const parts = [h('p', {}, token ? 'On. Copy this now: it is shown once, and Logos keeps only a scrambled copy.' : 'On. The token was shown when you turned it on; Logos keeps only a scrambled copy of it.')];
+    if (token) {
+      parts.push(h('p', { class: 'mono w-token' }, token), copy(token, 'token'),
+        h('p', { class: 'when' }, 'For Prometheus (prometheus.yml):'), h('pre', { class: 'w-config' }, config(token)), copy(config(token), 'config'));
+    }
+    parts.push(h('p', { class: 'when' }, 'Lost it? Make a new token: the old one stops working.'),
+      h('div', { class: 'row' },
+        h('button', { type: 'button', class: 'btn quiet', onclick: async () => {
+          if (!await ask({ title: 'Make a new token?', text: 'Whatever uses the old token stops getting numbers until you give it the new one.', yes: 'New token' })) return;
+          const d = await put({ enabled: true, rotate: true });
+          if (d) showOn(d.token); else msg.textContent = 'Could not make a new token just now.';
+        } }, 'New token'),
+        h('button', { type: 'button', class: 'btn quiet danger', onclick: async () => {
+          if (!await ask({ title: 'Turn metrics off?', text: 'The address stops existing and the token is forgotten.', yes: 'Turn off', danger: true })) return;
+          if (await put({ enabled: false })) showOff(); else msg.textContent = 'Could not turn it off just now.';
+        } }, 'Turn off')), msg, about());
+    box.replaceChildren(...parts);
+  }
+  getJSON('/api/v2/metrics').then((d) => (d.enabled ? showOn(null) : showOff()))
+    .catch(() => box.replaceChildren(h('p', { class: 'none' }, 'Only whoever manages Logos can set this.')));
+  return [heading('Prometheus metrics'), box];
 }
 
 function account(state) {
@@ -487,6 +545,7 @@ function valueOf(id, state) {
     ? (getPref('alerts', 'who') === 'private' ? 'On · private' : 'On') : { blocked: 'Blocked', unsupported: '' }[st] ?? 'Off'));
   if (id === 'email') return getJSON('/api/v2/mail').then((d) => (d.mailbox
     ? ({ gmail: 'Gmail', outlook: 'Outlook' }[d.mailbox.kind] || 'Connected') : 'Not connected'));
+  if (id === 'metrics') return getJSON('/api/v2/metrics').then((d) => (d.enabled ? 'On' : 'Off'));
   if (id === 'updates') return getJSON('/api/v2/updates?check=1').then((d) => {
     const n = ((d.plan || {}).commits || []).length;
     return n ? `${n} to install` : 'Up to date';
@@ -562,6 +621,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'matrix') body.replaceChildren(...matrix(state));
   else if (id === 'notifications') body.replaceChildren(...notifications(state));
   else if (id === 'tips') body.replaceChildren(...tips());
+  else if (id === 'metrics') body.replaceChildren(...metricsPage());
   else if (id === 'email') done = email(body);
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   // Turning a foldable or resizing across the line: the other layout.

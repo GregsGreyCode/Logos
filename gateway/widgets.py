@@ -293,6 +293,9 @@ async def fetch_adblock(conf: Mapping[str, Any], session: aiohttp.ClientSession,
 # ── now playing: Jellyfin ────────────────────────────────────────────────────────────────────
 
 async def fetch_playing(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
+    if conf.get("product") == "plex":
+        items = await fetch_plex(conf, session)
+        return {"state": "ok", "items": items, "summary": f"{len(items)} playing" if items else "nothing playing"}
     u = urllib.parse.urlsplit(str(conf.get("url") or "").strip().rstrip("/"))
     if u.scheme not in ("http", "https") or not u.hostname:
         raise Problem("Jellyfin's address starts with http:// or https://")
@@ -360,6 +363,180 @@ async def fetch_downloads(conf: Mapping[str, Any], session: aiohttp.ClientSessio
             "summary": f"{stalled} stalled" if stalled else (f"{len(items)} in the queue" if items else "queue empty")}
 
 
+# ── energy and UPS: from Home Assistant, with the address and token Logos already has ─────────
+
+def _ha() -> Dict[str, str]:
+    from gateway import house_host
+    try:
+        return house_host.ha_settings(os.environ)
+    except Exception as e:                          # HouseError: not connected to Home Assistant
+        raise Problem(f"Logos is not connected to Home Assistant yet ({e}).")
+
+
+SENSOR_HINT = {"power": "power", "energy": "energy", "ups_battery": "battery", "ups_status": None, "ups_runtime": "duration"}
+
+
+async def _ha_states(session: aiohttp.ClientSession, ha: Mapping[str, str]) -> Dict[str, dict]:
+    try:
+        async with session.get(f"{ha['url']}/api/states", headers={"Authorization": f"Bearer {ha['token']}"}) as r:
+            if r.status in (401, 403):
+                raise Problem("Home Assistant refused Logos's token.")
+            return {s["entity_id"]: s for s in await r.json(content_type=None) if isinstance(s, dict) and "entity_id" in s}
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        raise Problem("Home Assistant did not answer.")
+
+
+def _num(state: Optional[dict]) -> Optional[float]:
+    try:
+        return float((state or {}).get("state"))
+    except (TypeError, ValueError):
+        return None
+
+
+async def fetch_energy(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
+    states = await _ha_states(session, _ha())
+    for key, hint in SENSOR_HINT.items():
+        ent = str(conf.get(key) or "").strip()
+        if ent and ent not in states:
+            near = [e for e, st in states.items() if e.startswith("sensor.")
+                    and (not hint or (st.get("attributes") or {}).get("device_class") == hint)][:6]
+            raise Problem(f"Home Assistant has no {ent}." + (f" Some it has: {', '.join(near)}." if near else ""))
+    g = lambda k: states.get(str(conf.get(k) or "").strip())
+    power, energy = _num(g("power")), _num(g("energy"))
+    unit = ((g("power") or {}).get("attributes") or {}).get("unit_of_measurement", "W")
+    if power is not None and unit == "kW":
+        power *= 1000
+    price = _num({"state": conf.get("price")}) if conf.get("price") else None
+    out = {"power_w": round(power) if power is not None else None, "energy_kwh": round(energy, 1) if energy is not None else None,
+           "cost": round(energy * price / 100, 2) if energy is not None and price else None}
+    ups = None
+    if conf.get("ups_battery") or conf.get("ups_status"):
+        status = str((g("ups_status") or {}).get("state") or "")
+        on_battery = any(w in status.lower() for w in ("battery", "onbatt", "ob ", "discharg")) or status.upper().startswith("OB")
+        runtime = _num(g("ups_runtime"))
+        r_unit = ((g("ups_runtime") or {}).get("attributes") or {}).get("unit_of_measurement", "min")
+        minutes = None if runtime is None else round(runtime / 60 if r_unit in ("s", "sec") else runtime * 60 if r_unit == "h" else runtime)
+        ups = {"battery": _num(g("ups_battery")), "status": status, "on_battery": on_battery, "minutes": minutes}
+    out["ups"] = ups
+    needs = bool(ups and ups["on_battery"])
+    return {"state": "needs" if needs else "ok", **out,
+            "summary": (f"UPS on battery" + (f" · {ups['minutes']} min left" if ups and ups["minutes"] is not None else "")) if needs
+            else ("UPS on mains" if ups else "from Home Assistant")}
+
+
+# ── network: Speedtest Tracker ───────────────────────────────────────────────────────────────
+
+async def fetch_network(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
+    u = urllib.parse.urlsplit(str(conf.get("url") or "").strip().rstrip("/"))
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise Problem("Speedtest Tracker's address starts with http:// or https://")
+    try:
+        async with session.get(f"{u.scheme}://{u.netloc}/api/v1/results/latest", ssl=False,
+                               headers={"Authorization": f"Bearer {conf.get('token') or ''}", "Accept": "application/json"}) as r:
+            if r.status in (401, 403):
+                raise Problem("Speedtest Tracker refused the API token (Settings › API Tokens, with read access).")
+            if r.status == 404:
+                raise Problem("No speed test has run yet, or this is not Speedtest Tracker 1.x.")
+            d = (await r.json(content_type=None)).get("data") or {}
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        raise Problem("Nothing answered at that address.")
+    down, up = d.get("download_bits"), d.get("upload_bits")
+    mbit = lambda b: round(float(b) / 1e6) if b is not None else None
+    down_m, up_m = mbit(down), mbit(up)
+    usual = memo.setdefault("usual", [])
+    if down_m is not None:
+        usual.append(down_m)
+        del usual[:-20]
+    typical = sorted(usual)[len(usual) // 2] if usual else None
+    slow = bool(down_m is not None and typical and len(usual) >= 5 and down_m < 0.5 * typical)
+    when = str(d.get("created_at") or d.get("updated_at") or "")
+    return {"state": "needs" if slow else "ok", "down": down_m, "up": up_m,
+            "ping": round(float(d["ping"])) if d.get("ping") is not None else None, "tested": when,
+            "summary": f"slow: {down_m} Mbit/s (usually {typical})" if slow else "Speedtest Tracker"}
+
+
+# ── cameras: Frigate, snapshots through Logos ────────────────────────────────────────────────
+
+def _frigate_base(conf: Mapping[str, Any]) -> str:
+    u = urllib.parse.urlsplit(str(conf.get("url") or "").strip().rstrip("/"))
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise Problem("Frigate's address starts with http:// or https://")
+    return f"{u.scheme}://{u.netloc}"
+
+
+async def _frigate(conf: Mapping[str, Any], session: aiohttp.ClientSession, path: str, raw: bool = False):
+    base = _frigate_base(conf)
+    try:
+        if conf.get("username"):                       # Frigate's own login (its authenticated port)
+            async with session.post(f"{base}/api/login", ssl=False,
+                                    json={"user": conf.get("username"), "password": conf.get("password") or ""}) as r:
+                if r.status != 200:
+                    raise Problem("Frigate refused the username or password.")
+        async with session.get(f"{base}{path}", ssl=False) as r:
+            if r.status in (401, 403):
+                raise Problem("Frigate asks for a login: fill in its username and password.")
+            if r.status != 200:
+                raise Problem(f"Frigate answered with an error ({r.status}).")
+            return await r.read() if raw else await r.json(content_type=None)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        raise Problem("Nothing answered at that address.")
+
+
+async def fetch_cameras(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
+    cfg = await _frigate(conf, session, "/api/config")
+    names = [n for n, c in (cfg.get("cameras") or {}).items() if (c or {}).get("enabled", True)]
+    items = []
+    for name in sorted(names)[:8]:
+        ev = await _frigate(conf, session, f"/api/events?camera={urllib.parse.quote(name)}&limit=1&has_snapshot=1")
+        last = (ev or [None])[0] or {}
+        items.append({"name": name, "label": str(last.get("label") or ""), "at": int(last.get("start_time") or 0) or None})
+    return {"state": "ok", "items": items, "summary": f"{len(items)} camera{'s' if len(items) != 1 else ''}"}
+
+
+# ── now playing: Plex too ────────────────────────────────────────────────────────────────────
+
+async def fetch_plex(conf: Mapping[str, Any], session: aiohttp.ClientSession) -> List[dict]:
+    u = urllib.parse.urlsplit(str(conf.get("url") or "").strip().rstrip("/"))
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise Problem("Plex's address starts with http:// or https://")
+    try:
+        async with session.get(f"{u.scheme}://{u.netloc}/status/sessions", ssl=False,
+                               headers={"X-Plex-Token": str(conf.get("api_key") or ""), "Accept": "application/json"}) as r:
+            if r.status in (401, 403):
+                raise Problem("Plex refused the token (X-Plex-Token).")
+            meta = ((await r.json(content_type=None)).get("MediaContainer") or {}).get("Metadata") or []
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        raise Problem("Nothing answered at that address.")
+    items = []
+    for m in meta:
+        title = str(m.get("title") or "")
+        if m.get("grandparentTitle"):
+            title = f"{m['grandparentTitle']} · S{m.get('parentIndex') or 0} E{m.get('index') or 0}"
+        length, pos = int(m.get("duration") or 0) / 1000, int(m.get("viewOffset") or 0) / 1000
+        player = m.get("Player") or {}
+        items.append({"title": title, "where": str(player.get("title") or ""), "who": str((m.get("User") or {}).get("title") or ""),
+                      "paused": player.get("state") == "paused", "position": int(pos), "length": int(length),
+                      "percent": round(100 * pos / length) if length else None})
+    return items
+
+
+# ── agents today: what each of your agents did (counts only), from Logos itself ──────────────
+
+async def agents_today(request: web.Request) -> dict:
+    """Per person: the agents they may use. No fetching, so no cache: it is only Logos's own counters."""
+    from gateway import dashboard_api, metrics
+    user = _who(request)
+    visible = await dashboard_api._visible_agents(request, user["username"])
+    rows = await metrics.agent_rows(request.app, visible)
+    model = await metrics.model_up(request.app, visible)
+    return {"state": "ok", "items": rows, "model_up": model, "at": time.time(),
+            "summary": {True: "AI computer on", False: "AI computer off"}.get(model, "")}
+
+
+async def _logos_itself(conf, session, memo):               # never called: agents_today answers instead
+    raise Problem("This one is answered by Logos itself.")
+
+
 # ── bookmarks: the household's services, a tap away ──────────────────────────────────────────
 
 async def fetch_bookmarks(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
@@ -392,15 +569,37 @@ KINDS: Dict[str, Kind] = {k.id: k for k in [
               help="Pi-hole: an app password (Settings › Web interface / API). AdGuard: the admin login."),
     ], fetch_adblock, about="How much of the household's traffic was blocked today, and what most."),
     Kind("playing", "Now playing", "home", 30, [
-        Field("url", "Jellyfin address", "url", placeholder="http://192.168.1.30:8096"),
-        Field("api_key", "API key", "secret", help="Jellyfin › Dashboard › API Keys › +, named Logos."),
-    ], fetch_playing, about="What is playing on Jellyfin now, where and how far in."),
+        Field("product", "Which", "choice", options=[["jellyfin", "Jellyfin"], ["plex", "Plex"]]),
+        Field("url", "Address", "url", placeholder="http://192.168.1.30:8096"),
+        Field("api_key", "API key or token", "secret",
+              help="Jellyfin: Dashboard › API Keys › +. Plex: your X-Plex-Token (Plex's help: \"Finding an authentication token\")."),
+    ], fetch_playing, about="What is playing on Jellyfin or Plex now, where and how far in."),
+    Kind("energy", "Energy", "home", 60, [
+        Field("power", "Power now (sensor)", "text", placeholder="sensor.house_power", help="Watts the house uses now."),
+        Field("energy", "Energy today (sensor)", "text", required=False, placeholder="sensor.energy_today"),
+        Field("price", "Price per kWh, in pence", "text", required=False, placeholder="25"),
+        Field("ups_battery", "UPS battery (sensor)", "text", required=False, placeholder="sensor.ups_battery_charge"),
+        Field("ups_status", "UPS status (sensor)", "text", required=False, placeholder="sensor.ups_status"),
+        Field("ups_runtime", "UPS time left (sensor)", "text", required=False, placeholder="sensor.ups_battery_runtime",
+              help="Sensors from Home Assistant, read with the account Logos already uses for the lights. Test lists some if one is not found."),
+    ], fetch_energy, about="Power now, energy today and the UPS, from Home Assistant. On battery, Notifications says so at once."),
+    Kind("network", "Network", "admin", 300, [
+        Field("url", "Speedtest Tracker address", "url", placeholder="http://192.168.1.50:8765"),
+        Field("token", "API token", "secret", help="Speedtest Tracker › Settings › API Tokens, read access only."),
+    ], fetch_network, about="The latest speed test: down, up and ping. Much slower than usual goes to Notifications."),
+    Kind("cameras", "Cameras", "admin", 60, [
+        Field("url", "Frigate address", "url", placeholder="http://192.168.1.60:5000"),
+        Field("username", "Username (if Frigate asks for one)", "text", required=False),
+        Field("password", "Password", "secret", required=False),
+    ], fetch_cameras, about="A recent snapshot from each camera and its latest event. Snapshots, not live video; they come through Logos."),
     Kind("downloads", "Downloads", "home", 60, [
         Field("sonarr_url", "Sonarr address", "url", required=False, placeholder="http://192.168.1.40:8989"),
         Field("sonarr_key", "Sonarr API key", "secret", required=False),
         Field("radarr_url", "Radarr address", "url", required=False, placeholder="http://192.168.1.40:7878"),
         Field("radarr_key", "Radarr API key", "secret", required=False, help="Each one's Settings › General › API Key."),
     ], fetch_downloads, about="The download queue from Sonarr and Radarr, and what is coming this week. A stalled one needs you."),
+    Kind("agents", "Agents today", "home", 60, [], _logos_itself, extra={"per_user": True},
+         about="What each of your agents did today: messages sent and when the last one went. Counts only, never what was said."),
     Kind("bookmarks", "Bookmarks", "home", 3600, [
         Field("links", "Links", "lines", placeholder="Proxmox, https://192.168.1.10:8006\nHome Assistant, http://192.168.1.20:8123",
               help="One per line: a name, a comma, then its address."),
@@ -586,6 +785,8 @@ async def handle_list(request: web.Request) -> web.Response:
 async def handle_get(request: web.Request) -> web.Response:
     """GET /api/v2/widgets/{kind} — its numbers (fetched at most once per refresh)."""
     kind = _kind_for(request)
+    if kind.extra.get("per_user"):
+        return web.json_response(await agents_today(request))
     return web.json_response(await request.app["widgets"].get(kind, force=bool(request.query.get("fresh"))))
 
 
@@ -636,6 +837,24 @@ async def handle_delete(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def handle_snapshot(request: web.Request) -> web.Response:
+    """GET /api/v2/widgets/cameras/snapshot/{camera} — a small recent picture, through Logos (admin)."""
+    kind = KINDS["cameras"]
+    if _who(request)["role"] != "admin":
+        raise web.HTTPNotFound()
+    w = request.app["widgets"]
+    conf = w.conf(kind.id)
+    camera = request.match_info["camera"]
+    known = [i["name"] for i in ((w.cache.get(kind.id) or {}).get("data") or {}).get("items", [])]
+    if not conf or camera not in known:
+        raise web.HTTPNotFound()
+    try:
+        jpeg = await _frigate(conf, await w._session(), f"/api/{urllib.parse.quote(camera)}/latest.jpg?h=360", raw=True)
+    except Problem:
+        raise web.HTTPServiceUnavailable()
+    return web.Response(body=jpeg, content_type="image/jpeg", headers={"Cache-Control": "private, max-age=30"})
+
+
 async def _close(app: web.Application):
     yield
     s = app["widgets"].session
@@ -649,6 +868,7 @@ def register(app: web.Application, path: Optional[Path] = None) -> None:
     app.cleanup_ctx.append(_close)
     app.router.add_get("/api/v2/widgets", handle_list)
     app.router.add_get("/api/v2/widgets/{kind}", handle_get)
+    app.router.add_get("/api/v2/widgets/cameras/snapshot/{camera}", handle_snapshot)
     app.router.add_post("/api/v2/widgets/{kind}/test", require_csrf(handle_test))
     app.router.add_put("/api/v2/widgets/{kind}", require_csrf(handle_put))
     app.router.add_delete("/api/v2/widgets/{kind}", require_csrf(handle_delete))

@@ -343,3 +343,124 @@ def test_proxmox_shares_the_servers_setup_and_backups_needs_none(app, tmp_path):
     assert [f["key"] for f in before["proxmox"]["fields"]] == ["url", "token_id", "secret", "own_certificate"]
     assert after["proxmox"]["set_up"] and after["servers"]["set_up"]
     assert set(json.loads((tmp_path / "widgets.json").read_text())) == {"servers"}
+
+
+# ── the third batch: energy and UPS, network, cameras, Plex ──────────────────────────────────
+
+def ha_routes(states):
+    async def all_states(r):
+        if r.headers.get("Authorization") != "Bearer t":
+            return web.Response(status=401)
+        return web.json_response(states)
+    return [("GET", "/api/states", all_states)]
+
+
+STATES = [
+    {"entity_id": "sensor.house_power", "state": "0.412", "attributes": {"unit_of_measurement": "kW", "device_class": "power"}},
+    {"entity_id": "sensor.energy_today", "state": "6.84", "attributes": {"device_class": "energy"}},
+    {"entity_id": "sensor.ups_battery", "state": "100", "attributes": {"device_class": "battery"}},
+    {"entity_id": "sensor.ups_status", "state": "Online", "attributes": {}},
+    {"entity_id": "sensor.ups_runtime", "state": "2280", "attributes": {"unit_of_measurement": "s"}},
+]
+
+
+def test_energy_from_home_assistant_with_the_ups(monkeypatch):
+    conf = {"power": "sensor.house_power", "energy": "sensor.energy_today", "price": "25",
+            "ups_battery": "sensor.ups_battery", "ups_status": "sensor.ups_status", "ups_runtime": "sensor.ups_runtime"}
+
+    def go(states, conf):
+        def fn(base, s):
+            monkeypatch.setattr(w, "_ha", lambda: {"url": base, "token": "t"})
+            return w.fetch_energy(conf, s, {})
+        return run_with(ha_routes(states), fn)
+    d = go(STATES, conf)
+    assert (d["power_w"], d["energy_kwh"], d["cost"]) == (412, 6.8, 1.71)
+    assert d["ups"]["minutes"] == 38 and d["state"] == "ok" and d["summary"] == "UPS on mains"
+    on_batt = [dict(s, state="On Battery") if s["entity_id"] == "sensor.ups_status" else s for s in STATES]
+    d = go(on_batt, conf)
+    assert d["state"] == "needs" and d["summary"] == "UPS on battery · 38 min left"
+    with pytest.raises(w.Problem, match="no sensor.nope. Some it has: sensor.house_power"):
+        go(STATES, {"power": "sensor.nope"})
+
+
+def test_energy_without_home_assistant_says_so(monkeypatch):
+    from gateway import house_host
+
+    def no_ha(env):
+        raise house_host.HouseError("no ~/.config/logos/home-assistant")
+    monkeypatch.setattr(house_host, "ha_settings", no_ha)
+    with pytest.raises(w.Problem, match="not connected to Home Assistant"):
+        asyncio.run(w.fetch_energy({"power": "sensor.x"}, None, {}))
+
+
+def test_network_from_speedtest_tracker_and_much_slower_than_usual():
+    speed = {"down": 512e6}
+
+    async def latest(r):
+        if r.headers.get("Authorization") != "Bearer k":
+            return web.Response(status=401)
+        return web.json_response({"data": {"download_bits": speed["down"], "upload_bits": 96e6, "ping": 9.2, "created_at": "2026-11-23 07:00"}})
+    memo = {}
+
+    def once(base, s):
+        return w.fetch_network({"url": base, "token": "k"}, s, memo)
+    routes = [("GET", "/api/v1/results/latest", latest)]
+    for _ in range(5):
+        d = run_with(routes, once)
+    assert (d["down"], d["up"], d["ping"], d["state"]) == (512, 96, 9, "ok")
+    speed["down"] = 120e6
+    d = run_with(routes, once)
+    assert d["state"] == "needs" and d["summary"] == "slow: 120 Mbit/s (usually 512)"
+    with pytest.raises(w.Problem, match="refused the API token"):
+        run_with(routes, lambda base, s: w.fetch_network({"url": base, "token": "bad"}, s, {}))
+
+
+def frigate_routes():
+    async def config(r):
+        return web.json_response({"cameras": {"front_door": {}, "hallway": {}, "old": {"enabled": False}}})
+
+    async def events(r):
+        if r.query["camera"] == "front_door":
+            return web.json_response([{"label": "person", "start_time": 1795369320}])
+        return web.json_response([])
+
+    async def latest(r):
+        return web.Response(body=b"\xff\xd8jpeg", content_type="image/jpeg")
+    return [("GET", "/api/config", config), ("GET", "/api/events", events), ("GET", "/api/{cam}/latest.jpg", latest)]
+
+
+def test_cameras_from_frigate():
+    d = run_with(frigate_routes(), lambda base, s: w.fetch_cameras({"url": base}, s, {}))
+    assert d["items"] == [{"name": "front_door", "label": "person", "at": 1795369320}, {"name": "hallway", "label": "", "at": None}]
+    assert d["summary"] == "2 cameras"
+
+
+def test_a_snapshot_comes_through_logos_only_for_a_known_camera_and_an_admin(app, tmp_path):
+    async def run():
+        server = await serve_app(frigate_routes())()
+        try:
+            w.save_all({"cameras": {"url": f"http://127.0.0.1:{server.port}"}}, tmp_path / "widgets.json")
+            app["widgets"].cache["cameras"] = {"data": {"items": [{"name": "front_door"}]}}
+            out = []
+            async with TestClient(TestServer(app)) as c:
+                for role, cam in (("admin", "front_door"), ("admin", "not_a_camera"), ("user", "front_door")):
+                    app["role"]["role"] = role
+                    r = await c.get(f"/api/v2/widgets/cameras/snapshot/{cam}")
+                    out.append((r.status, r.content_type, await r.read() if r.status == 200 else b""))
+            return out
+        finally:
+            await server.close()
+    out = asyncio.run(run())
+    assert out[0] == (200, "image/jpeg", b"\xff\xd8jpeg")
+    assert [s for s, _, _ in out[1:]] == [404, 404]
+
+
+def test_plex_now_playing():
+    async def sessions(r):
+        assert r.headers.get("X-Plex-Token") == "tok"
+        return web.json_response({"MediaContainer": {"Metadata": [
+            {"title": "Ep", "grandparentTitle": "A series", "parentIndex": 2, "index": 4, "duration": 2800000, "viewOffset": 600000,
+             "Player": {"title": "Laptop", "state": "paused"}, "User": {"title": "Greg"}}]}})
+    d = run_with([("GET", "/status/sessions", sessions)],
+                 lambda base, s: w.fetch_playing({"product": "plex", "url": base, "api_key": "tok"}, s, {}))
+    assert d["items"][0]["title"] == "A series · S2 E4" and d["items"][0]["paused"] and d["items"][0]["percent"] == 21
