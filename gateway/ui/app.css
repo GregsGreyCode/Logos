@@ -2254,7 +2254,6 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .w-meta { flex: none; color: var(--muted); font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
 .w-card { border: var(--card-border); border-radius: var(--r-card); background: var(--card-bg); padding: 12px 14px;
   display: flex; flex-direction: column; gap: 10px; }
-.w-card + .w-card { margin-top: 8px; }
 .w-card.setup { border-style: dashed; align-items: flex-start; }
 .w-card.setup p { margin: 0; }
 .w-card.off { border-style: dashed; }
@@ -2269,7 +2268,11 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .w-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 .w-meter.warn .w-bar > span { background: var(--warn-ink); }
 .w-meter.bad .w-bar > span { background: var(--bad); }
-.home-widget-kind.needs .w-card:not(.setup) { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.w-body { display: flex; flex-direction: column; gap: 8px; }
+.w-body > p { margin: 0; }
+.w-card + .w-card { margin-top: 0; }
+/* the card with the problem, not every card of a widget that needs you */
+.home-widget-kind .w-card.alert { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 .home-widget-kind.stale .w-body > :not(.w-stale) { opacity: 0.6; }
 .w-stale { margin: 0; }
 .w-skeleton { display: flex; flex-direction: column; gap: 10px; padding: 6px 0; }
@@ -2311,3 +2314,16 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .w-mark:hover .w-mark-tile { border-color: var(--accent); }
 .w-mark-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (min-width: 820px) { .w-marks { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); } }
+.w-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.w-grid3 .w-card + .w-card { margin-top: 0; }
+.w-fig { gap: 2px; padding: 10px 12px; min-width: 0; }
+.w-ups { gap: 8px; }
+.w-pill { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: var(--r-pill);
+  font: 600 var(--t-xs) var(--font-body); background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+.w-pill.bad { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+.w-bar.fine > span { background: var(--ok); }
+.w-cam { position: relative; display: block; border-radius: 14px; overflow: hidden; aspect-ratio: 16 / 10;
+  background: linear-gradient(160deg, var(--chip), var(--surface)); }
+.w-cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.w-cam-label { position: absolute; left: 8px; bottom: 8px; right: 8px; padding: 3px 8px; border-radius: var(--r-pill);
+  background: rgba(15, 17, 21, .75); color: #e8eaf0; font-size: var(--t-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: fit-content; max-width: calc(100% - 16px); }
