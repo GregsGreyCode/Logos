@@ -18,7 +18,7 @@ const look = await page.locator('.set-row', { hasText: 'Look' }).locator('.set-v
 ok(/^(Glass|HUD|Warm) · (Dark|Light|Auto)$/.test(look), `each row says what it is set to (Look: ${look})`);
 ok(await page.locator('.set-row', { hasText: 'Updates' }).locator('.set-value').textContent() === 'Up to date', 'Updates: up to date');
 ok(await page.locator('.set-row.set-danger', { hasText: 'Sign out' }).count() === 1, 'Sign out at the end, in red');
-ok(/^Logos abc1234 · \d+ \w+ \d{4}$/.test(await page.locator('.set-version').textContent()), 'and under it, which Logos this is');
+ok(/^Logos abc1234 · .*\b2026\b/.test(await page.locator('.set-version').textContent()), 'and under it, which Logos this is (its date in the browser\'s own way)');
 ok(await page.locator('.set-row', { hasText: 'People' }).isVisible(), 'People, Models and the Advisor are reachable from here on a phone');
 const fits = await page.$$eval('.set-row, .set-profile', (els) => els.every((e) => e.getBoundingClientRect().right <= innerWidth));
 ok(fits, 'every row fits the screen');
