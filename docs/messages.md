@@ -49,6 +49,9 @@ An emoji reaction on an agent's message reaches the agent (`infra/agent-plugins/
   consolidation and the weekly digest learn from.
 - ❓ asks it to explain that message more, 🔁 to try it again a different way. Each starts a turn,
   as a reply to that message.
+- 🔁 on **your own** message sends it again (23 Nov): for a question whose answer failed. The agent
+  fetches that message from Matrix, decrypts it with its own keys, and answers it as if you had
+  just sent it. Only the person who wrote it can do this, and only for text.
 
 `/emojis` (or `/reactions`) in a chat lists these, answered without the model. It is the one
 message that has emoji in its text.
