@@ -31,7 +31,9 @@ HOME = Path(os.environ.get("HERMES_HOME", "/opt/data"))
 VAULT = HOME / "vault"
 META = VAULT / "meta"
 NOTES = HOME / "brain" / "files"
-MAX_PER_RUN = 2
+MAX_PER_RUN = 3             # files per run, but only ONE that needs the model (a table photo takes minutes)
+RUN_SECONDS = 600           # a run never holds the agent's job tick longer than this
+HEALTH_SECONDS = 5
 MAX_TRIES = 3
 TEXT_CAP = 24000            # characters of a document's text kept in its note
 SUMMARY_MIN = 1500          # a document longer than this also gets a short summary
@@ -68,10 +70,35 @@ def model_conf():
     return url.rstrip("/"), name, key or env_file().get("LOGOS_MODEL_KEY", "")
 
 
+STATE = {"alive": None, "used": False, "deadline": 0.0}
+
+
+def model_alive(conf):
+    """One cheap question to the model server before any real request: a switched-off GPU costs one quick call."""
+    if STATE["alive"] is None:
+        url, _, key = conf
+        req = urllib.request.Request(url + "/models", headers={"Authorization": "Bearer " + key})
+        try:
+            urllib.request.urlopen(req, timeout=HEALTH_SECONDS).read(1)
+            STATE["alive"] = True
+        except urllib.error.HTTPError as e:
+            STATE["alive"] = e.code not in (502, 503, 504)          # a 404 means "no such page", the server is there
+        except (urllib.error.URLError, ConnectionError, TimeoutError, OSError):
+            STATE["alive"] = False
+    if not STATE["alive"]:
+        raise ModelOff("the model server is not answering")
+
+
 def chat(conf, content, max_tokens, timeout=900):
     url, name, key = conf
     if not (url and name):
         raise ModelOff("no model configured")
+    model_alive(conf)
+    left = STATE["deadline"] - time.time() if STATE["deadline"] else timeout
+    if left < 120:
+        raise ModelOff("out of time for this run")
+    timeout = min(timeout, left)
+    STATE["used"] = True
     body = {"model": name, "max_tokens": max_tokens, "temperature": 0.2, "messages": [
         {"role": "system", "content": SCHEDULED + " You make accurate notes for a household assistant's memory."},
         {"role": "user", "content": content}]}
@@ -292,15 +319,18 @@ def pending():
 def run(conf=None, limit=MAX_PER_RUN):
     """Process up to ``limit`` files; returns the ids done."""
     conf = conf or model_conf()
+    STATE.update(alive=None, used=False, deadline=time.time() + RUN_SECONDS)
     done = []
     for meta in pending()[:limit]:
+        if STATE["used"]:
+            break                                    # one file that used the model is enough for this run
         try:
             title, body = read(meta, conf)
             note = write_note(meta, title, body)
             meta.update(state="done", note=os.path.relpath(note, HOME), title=title, digested_at=int(time.time()))
         except ModelOff as e:
-            print(f"vault: the model did not answer ({e}); will try again", file=sys.stderr)
-            return done
+            print(f"vault: {meta['name']}: the model did not answer ({e}); will try again", file=sys.stderr)
+            continue                                 # files that need no model are still done
         except Exception as e:
             meta["tries"] = meta.get("tries", 0) + 1
             meta["last_error"] = f"{type(e).__name__}: {str(e)[:160]}"

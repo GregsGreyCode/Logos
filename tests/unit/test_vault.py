@@ -234,13 +234,32 @@ def test_a_model_that_is_off_counts_nothing_and_a_file_that_keeps_failing_gets_a
     assert mod.run(conf) == []
 
 
-def test_two_files_a_run_at_most_and_the_oldest_first(digest, vault, home, model):
+def test_three_files_a_run_at_most_and_the_oldest_first(digest, vault, home, model):
     mod, conf = digest
     ids = []
-    for i in range(3):
+    for i in range(4):
         ids.append(vault.keep_file(cached(home, f"f{i}.txt", f"file {i} ".encode() * 10), mime="text/plain", who="Greg", room="!r", caption="",
                                    message_id=f"$m{i}", now=1_795_400_000 + i, home=str(home))["id"])
-    assert mod.run(conf) == ids[:2] and mod.run(conf) == ids[2:]
+    assert mod.run(conf) == ids[:3] and mod.run(conf) == ids[3:]
+
+
+def test_only_one_file_that_needs_the_model_per_run_and_a_run_has_a_time_limit(digest, vault, home, model, monkeypatch):
+    mod, conf = digest
+    a = kept(vault, home, "one.png", b"\x89PNG one", "image/png")
+    b = kept(vault, home, "two.png", b"\x89PNG two", "image/png")
+    assert len(mod.run(conf)) == 1 and len(model.requests) == 1             # the second waits for the next run
+    assert len(mod.run(conf)) == 1 and len(model.requests) == 2
+    c = kept(vault, home, "three.png", b"\x89PNG three", "image/png")
+    monkeypatch.setattr(mod, "RUN_SECONDS", 60)                              # under two minutes left: do not start a photo
+    assert mod.run(conf) == [] and len(model.requests) == 2
+
+
+def test_a_model_that_is_off_is_asked_once_cheaply_not_with_a_big_request(digest, vault, home, model):
+    mod, conf = digest
+    kept(vault, home, "one.png", b"\x89PNG one", "image/png")
+    kept(vault, home, "list.txt", b"milk eggs bread " * 10, "text/plain")
+    assert len(mod.run(("http://127.0.0.1:9/v1", conf[1], "k"))) == 1       # the text file needs no model: it is still done
+    assert model.requests == []
 
 
 def test_what_cannot_be_read_is_still_noted_with_its_details(digest, vault, home):
@@ -280,7 +299,8 @@ def test_pdfs_and_word_files_are_read_by_the_helper_and_images_are_resized_by_it
     pdf = kept(vault, home, "rota.pdf", b"%PDF-1.4 fake", "application/pdf")
     doc = kept(vault, home, "lease.docx", b"PK fake", "application/vnd.openxmlformats")
     img = kept(vault, home, "photo.jpg", b"\xff\xd8 big original", "image/jpeg")
-    assert sorted(mod.run(conf, limit=3)) == sorted([pdf["id"], doc["id"], img["id"]])
+    got = mod.run(conf, limit=3) + mod.run(conf, limit=3)                  # the photo uses the model: it ends its run
+    assert sorted(got) == sorted([pdf["id"], doc["id"], img["id"]])
     notes = {p.name.split("-", 3)[3][:4]: p.read_text() for p in (home / "brain" / "files").glob("*.md")}
     assert "Flat 5-23: week of 22 Nov" in next(t for t in notes.values() if '"rota.pdf"' in t)
     assert "A Word letter about the lease" in next(t for t in notes.values() if '"lease.docx"' in t)
