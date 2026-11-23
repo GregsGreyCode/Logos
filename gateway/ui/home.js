@@ -1,7 +1,7 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
 import { swr, forget } from './cache.js';
-import { h, api, getJSON, when, none, loading, aiState, reveal } from './util.js';
+import { h, api, getJSON, when, none, loading, aiState, reveal, icon, ICONS } from './util.js';
 import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
@@ -299,7 +299,10 @@ export async function homeView(root) {
   wide.addEventListener('change', pack);
   let editing = false;
   const tray = h('div', { class: 'home-tray', hidden: true });
-  const editBtn = h('button', { type: 'button', class: 'linkish home-edit-link', onclick: () => setEditing(!editing) }, 'Edit Home');
+  // A pencil at the top right of Home (Greg, 23 Nov: "Edit Home" as text at the bottom was lame); while
+  // arranging it is Done, and stays at the top as you scroll.
+  const editBtn = h('button', { type: 'button', class: 'home-edit-link', 'aria-label': 'Arrange Home', title: 'Arrange Home',
+    onclick: () => setEditing(!editing) }, icon(ICONS.pencil));
   const SHOW = { next: () => showNext(data && data.today), weather: () => showWeather(), messages: () => showMessages(), coming: () => showComing(),
     lights: () => showLights(), lists: () => showLists(), calendar: () => {} };
 
@@ -349,8 +352,10 @@ export async function homeView(root) {
     editing = v;
     board.classList.toggle('editing', v);
     tray.hidden = !v;
-    editBtn.textContent = v ? 'Done' : 'Edit Home';
-    editBtn.classList.toggle('btn', v); editBtn.classList.toggle('linkish', !v);
+    // On a phone (the top bar) Done is a round ✓ where the pencil was; on a wide screen the word.
+    editBtn.replaceChildren(v ? (matchMedia('(max-width: 599px)').matches ? icon(ICONS.check) : 'Done') : icon(ICONS.pencil));
+    editBtn.setAttribute('aria-label', v ? 'Done arranging' : 'Arrange Home'); editBtn.title = v ? 'Done' : 'Arrange Home';
+    editBtn.classList.toggle('done', v);
     if (!v) for (const el of board.querySelectorAll('.home-place')) el.remove();
     decorate(); drawTray();
   }
@@ -467,11 +472,10 @@ export async function homeView(root) {
 
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
-      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY))), statusWords),
+      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), editBtn), statusWords),
     waitingSec,
     board,
     tray,
-    editBtn,
     askForm));                                   // the Ask box stays at the bottom (Greg, 21 Nov)
   applyWidgets();
 
@@ -479,7 +483,17 @@ export async function homeView(root) {
   await load();
   setTimeout(() => { if (alive) warmAgents(); }, 300);   // the Agents tab, ready before the swipe
   timer = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
-  return () => { alive = false; clearInterval(timer); };
+  // On a phone the pencil sits in the top bar, beside your initial (no row of its own); on a wide screen
+  // in Home's title band. It moves when the window crosses that width.
+  const phone = matchMedia('(max-width: 599px)');
+  const dateRow = editBtn.parentElement;
+  const placeEdit = () => {
+    const acct = document.getElementById('acct-btn');
+    if (phone.matches && acct) acct.before(editBtn); else dateRow.append(editBtn);
+  };
+  placeEdit();
+  phone.addEventListener('change', placeEdit);
+  return () => { alive = false; clearInterval(timer); phone.removeEventListener('change', placeEdit); editBtn.remove(); };
 }
 
 // Chat calls this when it opens: a question asked on Home, still to be sent.

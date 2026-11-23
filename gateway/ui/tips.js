@@ -8,7 +8,7 @@ import { getPref, setPref } from './prefs.js';
 export const TIPS = {
   home: [
     { title: 'Your day at a glance', text: 'Weather, your calendar, messages and lists. Tap anything to open it. Swipe left or right to move between Home, Agents and Notifications.' },
-    { title: 'Make it yours', text: 'Edit Home lets you drag the widgets into your order, remove them, or add more, like Lights.', at: '.home-edit-link' },
+    { title: 'Make it yours', text: 'The pencil lets you drag the widgets into your order, remove them, or add more, like Lights. On a phone, a long press on any widget does too.', at: '.home-edit-link' },
     { title: 'Ask your agent', text: 'Type a question here and it opens in a new chat with your agent.', at: '.home-ask' },
   ],
   agents: [
