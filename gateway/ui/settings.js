@@ -393,7 +393,9 @@ function email(body) {
       msg.textContent = ''; load();
     } }, 'Get a sign-in code');
     box.replaceChildren(h('p', {}, 'You sign in on Microsoft\'s own page with a short code: Logos never sees your password.'),
-      h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => load() }, 'Back')));
+      h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => load() }, 'Back')),
+      // Whoever manages Logos can put in a different app (a wrong ID pasted, Greg 23 Nov).
+      d.is_admin ? h('p', { class: 'when' }, h('button', { type: 'button', class: 'linkish', onclick: () => { msg.textContent = ''; outlookApp(); } }, 'Change the Logos app')) : '');
   }
 
   function showCode(d) {

@@ -133,11 +133,31 @@ def _post(url: str, fields: dict) -> dict:
             return {"error": f"HTTP {e.code}"}
 
 
+# What Microsoft's codes mean for whoever set up the app (Greg, 23 Nov: a tenant ID pasted by mistake
+# only showed AADSTS700016).
+MS_ERRORS = {
+    "AADSTS700016": "Microsoft has no app with that ID that personal accounts can use. Check that you copied the "
+                    "Application (client) ID, not the Directory (tenant) ID just under it, and that the app's "
+                    "account type is \"Personal Microsoft accounts only\".",
+    "AADSTS7000218": "The app does not allow sign-in with a code yet: in Entra, Authentication, set \"Allow public "
+                     "client flows\" to Yes and Save.",
+    "AADSTS90002": "Microsoft could not find that account type. Make the app \"Personal Microsoft accounts only\".",
+    "AADSTS65001": "The app is missing a permission: add Microsoft Graph, Delegated, Mail.Read and offline_access.",
+}
+
+
+def ms_reason(answer: dict) -> str:
+    text = str(answer.get("error_description") or answer.get("error") or "no reason given")
+    for code, plain in MS_ERRORS.items():
+        if code in text:
+            return plain
+    return "Microsoft said: " + text.split("\r")[0].split(" Trace ID")[0]
+
+
 def outlook_start(client_id: str, post=_post) -> dict:
     start = post(LOGIN + "/devicecode", {"client_id": client_id, "scope": SCOPES})
     if "device_code" not in start:
-        raise Refused("Microsoft refused to start the sign-in: "
-                      + str(start.get("error_description") or start.get("error") or "no reason given").split("\r")[0])
+        raise Refused(ms_reason(start))
     return start
 
 
@@ -157,7 +177,7 @@ def outlook_wait(client_id: str, start: dict, post=_post, sleep=time.sleep, now=
             continue
         if tok.get("error") == "authorization_declined":
             raise Refused("The sign-in was cancelled on Microsoft's page.")
-        raise Refused("Not connected: " + str(tok.get("error_description") or tok.get("error")).split("\r")[0])
+        raise Refused("Not connected. " + ms_reason(tok))
     raise Refused("The code expired before the sign-in finished. Start again.")
 
 
@@ -345,8 +365,12 @@ async def handle_outlook_app(request: web.Request) -> web.Response:
     if _user(request).get("role") != "admin":
         return web.json_response({"error": "forbidden"}, status=403)
     b = await _body(request)
+    client_id = str(b.get("client_id") or "").strip()
     try:
-        await asyncio.to_thread(set_outlook_app, _env(request), str(b.get("client_id") or "").strip())
+        if not GUID.match(client_id):
+            raise Refused("That is not an Application (client) ID: it looks like 1a2b3c4d-… with 36 characters.")
+        await asyncio.to_thread(outlook_start, client_id)      # Microsoft must know it before it is kept
+        await asyncio.to_thread(set_outlook_app, _env(request), client_id)
     except Refused as e:
         return _refused(e)
     return web.json_response({"outlook_ready": True})

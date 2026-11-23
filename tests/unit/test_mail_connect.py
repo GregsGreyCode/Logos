@@ -78,6 +78,12 @@ def client(tmp_path, monkeypatch):
         return 42
     monkeypatch.setattr(mc, "gmail_check", check)
 
+    def start(client_id):
+        if client_id.startswith("9188"):
+            raise mc.Refused(mc.ms_reason({"error_description": "AADSTS700016: Application with identifier ..."}))
+        return {"device_code": "d"}
+    monkeypatch.setattr(mc, "outlook_start", start)
+
     def make():                       # a fresh app for each request (each runs in its own event loop)
         app = web.Application()
         app.router.add_get("/m", mc.handle_get)
@@ -135,3 +141,14 @@ def test_only_an_admin_sets_the_outlook_app(client):
     who["role"] = "admin"
     assert call(app, "PUT", "/m/app", {"client_id": "1a2b3c4d-1111-2222-3333-444455556666"})[1] == {"outlook_ready": True}
     assert call(app, "GET", "/m")[1]["outlook_ready"] is True
+
+
+def test_a_tenant_id_is_refused_in_plain_words(client):
+    app, env, who, _ = client
+    s, out = call(app, "PUT", "/m/app", {"client_id": "9188040d-6c67-4c5b-b112-36a304b66dad"})
+    assert s == 400 and "Directory (tenant) ID" in out["message"] and mc.outlook_app(env) == ""
+
+
+def test_microsoft_codes_in_plain_words():
+    assert "public client flows" in mc.ms_reason({"error_description": "AADSTS7000218: The request body must contain..."})
+    assert mc.ms_reason({"error": "weird", "error_description": "Odd thing.\r\nTrace ID: x"}) == "Microsoft said: Odd thing."
