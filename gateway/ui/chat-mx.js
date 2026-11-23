@@ -518,7 +518,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   async function react(ev, key, mineId) {
     pickerFor = null;
     try {
-      if (mineId) await c.redactEvent(room.roomId, mineId);
+      if (mineId) { await c.redactEvent(room.roomId, mineId); takenBack.add(mineId); }
       else await c.sendEvent(room.roomId, 'm.reaction', { 'm.relates_to': { rel_type: 'm.annotation', event_id: ev.getId(), key } });
       note.textContent = '';
     } catch (e) { note.textContent = `Reaction not sent: ${e.message}`; }
@@ -526,6 +526,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   }
   // Which message has its emoji row open; kept here because every new event redraws the chat.
   let pickerFor = null;
+  const takenBack = new Set();               // your reactions taken back here, gone from the screen at once
   function closePicker() { if (pickerFor) { pickerFor = null; draw(false); } }
   function pickerOf(ev, have, text) {
     const row = h('div', { class: 'mx-picker', role: 'menu', 'aria-label': 'React' },
@@ -624,10 +625,18 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     replyMap = threadReplies();
     drawLists();
     const edits = new Map(), reactions = new Map();
+    // Reactions taken back (Greg, 23 Nov: tapping his own 🔁 sent the take-back 13 times, each accepted,
+    // and the chip stayed: in an encrypted room the library does not always mark the reaction as
+    // redacted). So every redaction in the room counts, and your own counts at once (takenBack).
+    const gone = new Set(takenBack);
+    for (const ev of events) if (ev.getType() === 'm.room.redaction') {
+      const id = ev.event?.redacts || ev.getContent()?.redacts || ev.getAssociatedId?.();
+      if (id) gone.add(id);
+    }
     for (const ev of events) {
       const rel = ev.getContent()['m.relates_to'] || ev.getWireContent()?.['m.relates_to'];
       if (ev.getType() === 'm.room.message' && ev.getContent()['m.new_content'] && rel?.rel_type === 'm.replace') edits.set(rel.event_id, ev.getContent()['m.new_content']);
-      if (ev.getType() === 'm.reaction' && rel?.rel_type === 'm.annotation' && !ev.isRedacted()) {
+      if (ev.getType() === 'm.reaction' && rel?.rel_type === 'm.annotation' && !ev.isRedacted() && !gone.has(ev.getId())) {
         // Per message: each emoji, how many, and your own reaction's id (so tapping it again takes it back).
         const map = reactions.get(rel.event_id) || new Map();
         const r = map.get(rel.key) || { n: 0, mine: null };

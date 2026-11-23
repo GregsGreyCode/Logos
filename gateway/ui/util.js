@@ -48,6 +48,7 @@ export const ICONS = {
   gear: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z'],
   logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'M16 17l5-5-5-5', 'M21 12H9'],
   chart: ['M5 20V11', 'M12 20V4', 'M19 20v-6'],
+  refresh: ['M20 11a8 8 0 1 0-2.3 5.7', 'M20 4v7h-7'],
   // Settings rows (F45)
   palette: ['M12 3a9 9 0 0 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.8-1.7H17a4 4 0 0 0 4-4c0-4.6-4-8.2-9-8.2z',
     'M7.5 11.5h.01', 'M10 7.5h.01', 'M14.5 7.5h.01', 'M17 11h.01'],
@@ -138,6 +139,13 @@ export function h(tag, attrs = {}, ...children) {
 function csrf() {
   const m = document.cookie.match(/(?:^|; )csrf_token=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : '';
+}
+
+// Whether the page may reload itself now without losing anything: nothing typed, no photo waiting, no
+// message that has not gone (the Matrix library does not keep those across a reload).
+export function wouldLose() {
+  const typed = [...document.querySelectorAll('textarea, input[type="text"], input[type="search"]')].some((el) => el.value && el.value.trim());
+  return typed || !!document.querySelector('.mx-pending-item, .msg.failed, .ask-layer, .w-setup');
 }
 
 // One refresh at a time (F34). The dashboard asks for several things at once, so when the 15-minute

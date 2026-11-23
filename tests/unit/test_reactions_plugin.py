@@ -194,7 +194,9 @@ def test_repeat_on_your_own_message_sends_it_again(rx, monkeypatch):
         return body if who == sender else None
     monkeypatch.setattr(rx, "_own_text", own_text)
     assert run(a._handle_choice_picker_reaction(ROOM, "$q", "🔁", GREG)) is True
-    assert [(e.text, e.message_id) for e in a.handled] == [("When is it our turn for the bins?", "$q")]
+    assert [e.text for e in a.handled] == ["When is it our turn for the bins?"]
+    # an id of its own (hermes admits each id once), which maps back to the real message
+    assert a.handled[0].message_id.startswith("$q#again-") and rx.real_id(a.handled[0].message_id) == "$q"
     # someone else's message, or another emoji on your own: left alone
     assert run(a._handle_choice_picker_reaction(ROOM, "$b", "🔁", GREG)) is False
     assert run(a._handle_choice_picker_reaction(ROOM, "$q", "👍", GREG)) is False
@@ -219,3 +221,22 @@ def test_repeat_on_your_own_message_needs_you_to_be_allowed(rx, monkeypatch):
         return "hello"
     monkeypatch.setattr(rx, "_own_text", own_text)
     assert run(a._handle_choice_picker_reaction(ROOM, "$q", "🔁", "@stranger:x")) is True and a.handled == []
+
+
+def test_hermes_marks_and_replies_land_on_the_real_message(rx):
+    cls = adapter_class()
+    sent = {}
+
+    async def _send_reaction(self, room_id, event_id, emoji):
+        sent["reaction"] = event_id
+        return "$r"
+
+    def _apply_relation_metadata(self, msg_content, reply_to=None, metadata=None):
+        sent["reply_to"] = reply_to
+    cls._send_reaction = _send_reaction
+    cls._apply_relation_metadata = _apply_relation_metadata
+    rx.patch(cls)
+    a = cls()
+    run(a._send_reaction(ROOM, "$q#again-123", "👀"))
+    a._apply_relation_metadata({}, reply_to="$q#again-123", metadata=None)
+    assert sent == {"reaction": "$q", "reply_to": "$q"}
