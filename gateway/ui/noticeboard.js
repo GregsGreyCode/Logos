@@ -1,5 +1,5 @@
 // Noticeboard screen: what the agents asked each other, and the requests waiting on you.
-import { h, api, getJSON, when, none, loading, reveal } from './util.js';
+import { h, icon, ICONS, api, getJSON, when, none, loading, reveal } from './util.js';
 import { peek, keep } from './cache.js';
 
 const KIND = { fyi: 'FYI', question: 'Question', shared_change: 'Shared change', reminder: 'Reminder' };
@@ -128,6 +128,14 @@ export async function noticeboardView(root) {
   const allRead = h('button', { type: 'button', class: 'linkish feed-allread', hidden: true, onclick: async () => {
     allRead.disabled = true; await markAllRead(); allRead.disabled = false; load();
   } }, 'Mark all read');
+  // Ask again now, by hand (Greg, 23 Nov); it is also asked every 15 seconds while this is open.
+  const refresh = h('button', { type: 'button', class: 'feed-refresh', 'aria-label': 'Refresh', title: 'Refresh', onclick: async () => {
+    if (refresh.classList.contains('spinning')) return;
+    refresh.classList.add('spinning');
+    await Promise.all([load(), new Promise((r) => setTimeout(r, 600))]);       // long enough to be seen
+    refresh.classList.remove('spinning');
+  } }, icon(ICONS.refresh));
+  const actions = h('div', { class: 'band-actions' }, refresh, allRead);
   const days = h('div', { class: 'feed-days' }, loading('rows', 6));
   let shown = false;
   const error = h('div', { class: 'notice', hidden: true });
@@ -176,7 +184,7 @@ export async function noticeboardView(root) {
 
   root.replaceChildren(h('div', { class: 'page notifications' },
     // A title like every screen's on a desktop (Greg, 23 Nov), with Mark all read in it; the phone's top bar names it.
-    h('header', { class: 'page-band' }, h('h1', {}, 'Notifications'), allRead),
+    h('header', { class: 'page-band' }, h('h1', {}, 'Notifications'), actions),
     error, h('div', { class: 'feed-head' }, caught), waitSec, days));
   const kept = peek('feed');
   if (kept && kept.v && Array.isArray(kept.v.items)) draw(kept.v);

@@ -1938,7 +1938,7 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .page-band { display: none; }
 /* On a phone the top bar names the screen; Notifications' band keeps only Mark all read. */
 @media (max-width: 599px) {
-  .notifications > .page-band:has(> .feed-allread:not([hidden])) { display: flex; justify-content: flex-end; }
+  .notifications > .page-band:has(> .band-actions) { display: flex; justify-content: flex-end; }
   .notifications > .page-band > h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
 @media (min-width: 600px) {
@@ -2311,3 +2311,13 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .w-mark:hover .w-mark-tile { border-color: var(--accent); }
 .w-mark-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (min-width: 820px) { .w-marks { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); } }
+
+/* Notifications: Refresh and Mark all read together (Greg, 23 Nov). */
+.band-actions { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.feed-refresh { display: grid; place-items: center; width: var(--ctl-sm); height: var(--ctl-sm); border-radius: 50%;
+  border: 1px solid var(--line); background: var(--chip); color: var(--muted); cursor: pointer; }
+.feed-refresh:hover { color: var(--ink); border-color: var(--accent); }
+.feed-refresh svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.feed-refresh.spinning svg { animation: feed-spin .7s linear infinite; }
+@keyframes feed-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .feed-refresh.spinning svg { animation: none; opacity: .5; } }
