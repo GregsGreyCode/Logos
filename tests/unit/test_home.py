@@ -126,6 +126,41 @@ def test_lights_go_through_the_shared_agent_and_list_rooms_only(monkeypatch):
     assert home.lights(object(), "greg", post=post) == {"error": "no_house"}
 
 
+def test_the_shared_lists_are_read_live_and_ticked_off_or_put_back(monkeypatch):
+    from gateway import house_host
+
+    class Host:
+        def __init__(self, rt): pass
+        def token_for(self, name): return "tok" if name == "household" else ""
+        def url(self): return "http://house/mcp"
+    monkeypatch.setattr(house_host, "HouseHost", Host)
+    calls = []
+
+    def post(url, body, token):
+        req = json.loads(body)
+        calls.append((token, req["params"]["name"], req["params"]["arguments"]))
+        name = req["params"]["name"]
+        if name == "list_items":
+            return tool({"lists": [{"list": "Shopping", "id": "todo.shopping", "open": ["pasta", {"item": "oat milk", "due": "2026-11-25", "details": "the barista one"}]},
+                                   {"list": "To-do", "id": "todo.todo", "open": []}]})
+        if name == "tick_items" and req["params"]["arguments"]["items"] == ["two things"]:
+            return {"result": {"isError": True, "content": [{"type": "text", "text": "'two things' could be A, B. Say which."}]}}
+        return tool({"ok": True})
+    got = home.lists(object(), "household", post=post)
+    assert got == {"lists": [
+        {"name": "Shopping", "id": "todo.shopping", "items": [{"text": "pasta", "due": "", "details": ""},
+                                                               {"text": "oat milk", "due": "2026-11-25", "details": "the barista one"}]},
+        {"name": "To-do", "id": "todo.todo", "items": []}]}
+    assert home.tick_item(object(), "household", "Shopping", "pasta", post=post) == {"ok": True}
+    assert calls[-1] == ("tok", "tick_items", {"list": "Shopping", "items": ["pasta"]})
+    assert home.tick_item(object(), "household", "Shopping", "pasta", done=False, post=post) == {"ok": True}
+    assert calls[-1] == ("tok", "add_items", {"list": "Shopping", "items": ["pasta"]})        # added again: it goes back on
+    refused = home.tick_item(object(), "household", "Shopping", "two things", post=post)
+    assert refused["error"] == "refused" and "Say which" in refused["message"]
+    assert home.lists(object(), "greg", post=post) == {"error": "no_house"}
+    assert home.tick_item(object(), "greg", "Shopping", "pasta", post=post) == {"error": "no_house"}
+
+
 def test_weather_sends_only_rounded_coordinates():
     asked = []
 

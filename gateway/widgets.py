@@ -537,6 +537,94 @@ async def _logos_itself(conf, session, memo):               # never called: agen
     raise Problem("This one is answered by Logos itself.")
 
 
+# ── the Las Vegas sign: scrolling text across the top of Home (wide screens) ─────────────────
+# Your own lines of text, and the items of RSS or Atom feeds (Greg, 23 Nov: stock prices or crypto values as the first
+# use of a custom widget). Each feed item's title scrolls past: "BTC $64,210 (+1.2%)". Fetched here, never in a browser.
+
+FEED_MAX_BYTES = 1_000_000
+FEED_ITEMS = 12
+SIGN_ITEMS = 60
+SIGN_CHARS = 160
+MAX_FEEDS = 5
+
+
+def _local(tag: str) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def _plain(text: str) -> str:
+    import html
+    import re
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", text or "")).split())
+
+
+def parse_feed(text: str, limit: int = FEED_ITEMS) -> List[str]:
+    """The titles of an RSS or Atom feed's items, newest first as the feed lists them. Raises Problem when it is not a feed."""
+    import xml.etree.ElementTree as ET
+    head = text[:4000].lower()
+    if "<!entity" in head or "<!doctype" in head and "[" in head:           # entity expansion tricks: no feed needs them
+        raise Problem("That feed uses features Logos does not read.")
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        raise Problem("That address did not give an RSS or Atom feed.")
+    titles = []
+    for entry in root.iter():
+        if _local(entry.tag) not in ("item", "entry"):
+            continue
+        t = next((c for c in entry if _local(c.tag) == "title"), None)
+        words = _plain("".join(t.itertext())) if t is not None else ""
+        if words:
+            titles.append(words[:SIGN_CHARS])
+        if len(titles) >= limit:
+            break
+    if not titles:
+        raise Problem("That feed has no items.")
+    return titles
+
+
+async def _read_feed(session: aiohttp.ClientSession, url: str) -> List[str]:
+    u = urllib.parse.urlsplit(url.strip())
+    if u.scheme not in ("http", "https") or not u.hostname:
+        raise Problem(f'"{url}" is not an address: start it with http:// or https://')
+    try:
+        async with session.get(url.strip(), headers={"Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5",
+                                                    "User-Agent": "Logos"}) as r:
+            if r.status != 200:
+                raise Problem(f"{u.hostname} answered with an error ({r.status}).")
+            data = b""
+            async for chunk in r.content.iter_chunked(65536):
+                data += chunk
+                if len(data) > FEED_MAX_BYTES:
+                    raise Problem(f"{u.hostname}: that feed is too big.")
+            return parse_feed(data.decode(r.get_encoding() or "utf-8", "replace"))
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        raise Problem(f"Nothing answered at {u.hostname}.")
+
+
+async def fetch_marquee(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
+    own = [l.strip()[:SIGN_CHARS] for l in str(conf.get("text") or "").splitlines() if l.strip() and not l.strip().startswith("#")]
+    feeds = [l.strip() for l in str(conf.get("feeds") or "").splitlines() if l.strip() and not l.strip().startswith("#")]
+    if not own and not feeds:
+        raise Problem("Write some text, or add a feed address.")
+    if len(feeds) > MAX_FEEDS:
+        raise Problem(f"Up to {MAX_FEEDS} feeds.")
+    results = await asyncio.gather(*(_read_feed(session, f) for f in feeds), return_exceptions=True)
+    items = [{"text": t, "source": "text"} for t in own]
+    problems = []
+    for url, res in zip(feeds, results):
+        if isinstance(res, Problem):
+            problems.append(str(res))
+        elif isinstance(res, BaseException):
+            problems.append(f"Could not read {urllib.parse.urlsplit(url).hostname}.")
+        else:
+            items += [{"text": t, "source": urllib.parse.urlsplit(url).hostname or ""} for t in res]
+    if not items:
+        raise Problem(problems[0] if problems else "Nothing to show.")
+    return {"state": "ok", "items": items[:SIGN_ITEMS], "speed": conf.get("speed") or "medium", "problems": problems,
+            "summary": "" if not problems else f"{len(problems)} feed{'s' if len(problems) != 1 else ''} not answering"}
+
+
 # ── bookmarks: the household's services, a tap away ──────────────────────────────────────────
 
 async def fetch_bookmarks(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
@@ -600,6 +688,15 @@ KINDS: Dict[str, Kind] = {k.id: k for k in [
     ], fetch_downloads, about="The download queue from Sonarr and Radarr, and what is coming this week. A stalled one needs you."),
     Kind("agents", "Agents today", "home", 60, [], _logos_itself, extra={"per_user": True},
          about="What each of your agents did today: messages sent and when the last one went. Counts only, never what was said."),
+    Kind("marquee", "Las Vegas sign", "home", 120, [
+        Field("text", "Your own messages", "lines", required=False, placeholder="Welcome home\nBins out tonight",
+              help="One per line; they scroll past in turn."),
+        Field("feeds", "Feeds (RSS or Atom)", "lines", required=False, placeholder="https://example.com/stocks.rss",
+              help="One address per line, up to 5. A stock or crypto price feed works well: each item's title scrolls past, "
+                   "like \"BTC $64,210 (+1.2%)\"."),
+        Field("speed", "Speed", "choice", required=False, options=[["medium", "Medium"], ["slow", "Slow"], ["fast", "Fast"]]),
+    ], fetch_marquee, about="A sign that scrolls across the top of Home on a wide screen: text you write and the items of the feeds "
+                            "you add (stock prices or crypto values, for a start). Pauses when you point at it."),
     Kind("bookmarks", "Bookmarks", "home", 3600, [
         Field("links", "Links", "lines", placeholder="Proxmox, https://192.168.1.10:8006\nHome Assistant, http://192.168.1.20:8123",
               help="One per line: a name, a comma, then its address."),

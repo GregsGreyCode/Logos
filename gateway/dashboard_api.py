@@ -2007,6 +2007,40 @@ async def handle_home_lights(request: web.Request) -> web.Response:
     return web.json_response(await asyncio.to_thread(home.lights, runtime, name))
 
 
+async def handle_home_lists(request: web.Request) -> web.Response:
+    """GET /api/v2/home/lists — the shared lists as they are now, in Home Assistant."""
+    from gateway import home
+    user = _user(request)
+    agents = await _visible_agents(request, user["username"])
+    name = home.house_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_house"})
+    return web.json_response(await asyncio.to_thread(home.lists, runtime, name))
+
+
+async def handle_home_lists_tick(request: web.Request) -> web.Response:
+    """POST /api/v2/home/lists/tick {list, item, done?} — tick an item off a shared list in Home Assistant, or
+    (done: false) put it back. Through the house service as the household agent (or your own), with its limits."""
+    from gateway import home
+    user = _user(request)
+    try:
+        body = await request.json()
+        list_name, item = str(body["list"]).strip()[:80], str(body["item"]).strip()[:200]
+        done = body.get("done", True)
+        if not list_name or not item or not isinstance(done, bool):
+            raise ValueError
+    except (ValueError, KeyError, TypeError):
+        return web.json_response({"error": "bad_request"}, status=400)
+    agents = await _visible_agents(request, user["username"])
+    name = home.house_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_house"}, status=503)
+    out = await asyncio.to_thread(home.tick_item, runtime, name, list_name, item, done)
+    return web.json_response(out, status=200 if out.get("ok") else 409)
+
+
 async def handle_weather(request: web.Request) -> web.Response:
     """GET /api/v2/weather — today and tomorrow where you chose (Settings: weather_place)."""
     from gateway import home
@@ -2058,6 +2092,8 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/home/coming", handle_home_coming)
     app.router.add_get("/api/v2/home/lights", handle_home_lights)
     app.router.add_post("/api/v2/home/lights", require_csrf(handle_home_lights))
+    app.router.add_get("/api/v2/home/lists", handle_home_lists)
+    app.router.add_post("/api/v2/home/lists/tick", require_csrf(handle_home_lists_tick))
     app.router.add_get("/api/v2/weather", handle_weather)
     app.router.add_get("/api/v2/weather/places", handle_weather_places)
     app.router.add_get("/api/v2/model", handle_model)

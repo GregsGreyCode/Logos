@@ -149,6 +149,46 @@ def set_lights(runtime: Any, agent: str, targets: List[str], on: bool, post=None
         return {"error": "house_unavailable", "message": str(e)[:200]}
 
 
+# ── The shared lists, live (Greg, 23 Nov): Home's Lists widget reads them from Home Assistant through the house service
+# and can tick an item off (or put it back), instead of showing a copy refreshed every quarter of an hour.
+
+def _item_of(raw: Any) -> Dict[str, str]:
+    if isinstance(raw, dict):
+        return {"text": str(raw.get("item") or ""), "due": str(raw.get("due") or ""), "details": str(raw.get("details") or "")}
+    return {"text": str(raw), "due": "", "details": ""}
+
+
+def lists(runtime: Any, agent: str, post=None) -> Dict[str, Any]:
+    """``{"lists": [{"name", "id", "items": [{"text", "due", "details"}]}]}`` (what is still to do) or ``{"error"}``."""
+    from gateway import house_host
+    host = house_host.HouseHost(runtime)
+    token = host.token_for(agent)
+    if not token:
+        return {"error": "no_house"}
+    try:
+        out = rpc_result((post or _post)(host.url(), _call("list_items", {}), token))
+    except Exception as e:
+        return {"error": "house_unavailable", "message": str(e)[:200]}
+    return {"lists": [{"name": str(l.get("list") or ""), "id": str(l.get("id") or ""),
+                       "items": [_item_of(i) for i in l.get("open") or []]} for l in out.get("lists") or []]}
+
+
+def tick_item(runtime: Any, agent: str, list_name: str, item: str, done: bool = True, post=None) -> Dict[str, Any]:
+    """Tick ``item`` off a list, or (``done`` False) put it back: the house service puts a ticked item back on its list
+    when it is added again. A refusal (not on the list, or two items alike) comes back in plain words."""
+    from gateway import house_host
+    host = house_host.HouseHost(runtime)
+    token = host.token_for(agent)
+    if not token:
+        return {"error": "no_house"}
+    tool = "tick_items" if done else "add_items"
+    try:
+        rpc_result((post or _post)(host.url(), _call(tool, {"list": list_name, "items": [item]}), token))
+    except Exception as e:
+        return {"error": "refused", "message": str(e)[:200]}
+    return {"ok": True}
+
+
 # ── Weather (Greg, 22 Nov): Open-Meteo, no key. Only a place's rounded coordinates (about 1 km) or the
 # name typed to find it leave the machine: never who is asking.
 

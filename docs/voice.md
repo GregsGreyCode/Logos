@@ -99,4 +99,4 @@ words directly (the other screens use that).
 Browsers only allow the microphone on an `https://` address (or `localhost`), so the button
 explains itself and does nothing on a plain `http://` address.
 
-Holding an agent's mark on the Agents screen also records a voice note for it (it is still a hold there).
+On the Agents screen each of your agents' marks has a small microphone: tap it, speak, tap ■, and that agent's chat opens with the voice message sent. Holding a mark only lifts it, to move it (it used to also record, with a swipe up to send and down to cancel: too easy to get wrong).

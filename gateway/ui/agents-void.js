@@ -4,6 +4,8 @@
 // or the agent is not running). Click a mark to talk to that agent. In a conversation the marks sit in the
 // header: the current one with its name, the others small, one click to switch. Names show when you point
 // at a mark, or always (Settings; always on a phone). Motion follows Settings: Full, Calm or Still.
+import { createRecorder } from './voice.js';
+import { handOver } from './home.js';
 import { h, getJSON, icon, ICONS, when, loading, reveal, focusIfKeyboard } from './util.js';
 import * as mx from './mx.js';
 
@@ -75,13 +77,6 @@ export async function moods(agents) {
   return out;
 }
 
-// A voice note recorded on the void, handed to the chat it opens (taken once, like Home's Ask).
-let handed = null;
-export function takeVoice(agent) {
-  if (!handed || handed.agent !== agent) return null;
-  const blob = handed.blob; handed = null; return blob;
-}
-
 // Where the person put each agent (this device), by dragging it (Greg, 21 Nov): { phone|wide: { name: [x%, y%] } }.
 // A phone and a wide screen are different shapes, so each keeps its own places.
 const SPOTS_KEY = 'logos.void.spots';
@@ -89,14 +84,33 @@ const savedSpots = () => { try { const v = JSON.parse(localStorage.getItem(SPOTS
 const saveSpots = (v) => { try { localStorage.setItem(SPOTS_KEY, JSON.stringify(v)); } catch (e) { /* private window */ } };
 
 // The void: every agent floating, nothing else, until you pick one.
-// Press and hold a mark (half a second) to lift it, then put it anywhere (onto another: they swap). Keep holding
-// still for a second and it records: let go and the voice note goes to that agent, in its chat (Greg, 21 Nov).
+// Press and hold a mark (half a second) to lift it, then put it anywhere (onto another: they swap). To speak to an
+// agent, tap the small microphone on its mark, then ■ to send (Greg, 23 Nov: it was a long hold with a swipe, easy to get wrong).
 export async function voidView(root, agents, others = []) {
   let alive = true;
   const field = h('div', { class: 'void-field' });
   // No question or how-to above the agents (Greg, 22 Nov: that belongs in onboarding). The line is
   // there only while it says something: recording, sending, or what went wrong.
   const ask = h('p', { class: 'void-ask', role: 'status', hidden: true });
+  // Speaking to an agent (Greg, 23 Nov): a small microphone on its mark. Tap to start, tap ■ to send: its words go to its chat as
+  // a voice message. (It was a long hold with a swipe up to send and down to cancel: too easy to get wrong.)
+  const dock = h('div', { class: 'void-rec-dock' });
+  const recorders = {};
+  const sayAsk = (t) => { if (typeof t === 'string') tell(t); else { ask.replaceChildren(t); ask.hidden = false; } };
+  const markOf = (name) => field.querySelector(`.agent-mark[data-agent="${name}"]`);
+  const recording = () => Object.values(recorders).some((r) => r.recording || r.busy);
+  function recorderFor(a) {
+    if (recorders[a.name]) return recorders[a.name];
+    const r = createRecorder({ agent: a.name, say: sayAsk,
+      onWords: (text, meta) => { handOver(a.name, text, meta); location.hash = `#/chat/${a.name}`; },
+      onRecording: (on) => {
+        const el = markOf(a.name);
+        if (el) { el.classList.toggle('recording', on); if (on) label(el)?.replaceChildren('Listening…'); }
+        if (!on) draw(lastMoods);
+      } });
+    dock.append(r.bar);
+    return (recorders[a.name] = r);
+  }
   // Spots spread evenly for however many agents there are, centred (on a wide screen two agents sat
   // off to the left). Yours first, then the private ones, unless the person has moved them.
   const all = [...agents.map((a) => ({ a, mine: true })), ...others.map((a) => ({ a, mine: false }))];
@@ -123,7 +137,7 @@ export async function voidView(root, agents, others = []) {
     el.className = el.className.replace(/\bmood-[\w-]+/, `mood-${mood}`);
     if (mine) {
       el.title = `${a.display_name} · ${MOODS[mood]}`;
-      el.setAttribute('aria-label', `${a.display_name}: ${MOODS[mood]}. Talk to it. Hold to move it, or keep holding to send a voice note`);
+      el.setAttribute('aria-label', `${a.display_name}: ${MOODS[mood]}. Talk to it. Hold to move it`);
       const words = el.querySelector('.mark-label > span');
       if (words && words.textContent !== moodWords(mood)) words.textContent = moodWords(mood);
     }
@@ -144,6 +158,10 @@ export async function voidView(root, agents, others = []) {
       // still opens the chat (the click handler below), and Enter does too.
       const el = mark(a, { size: 'big', mood: moodOf(a, mine, m) });
       if (mine) { el.dataset.href = `#/chat/${a.name}`; el.setAttribute('role', 'link'); el.tabIndex = 0; }
+      if (mine && a.voice) {
+        el.append(h('button', { type: 'button', class: 'mark-mic', 'aria-label': `Record a voice message for ${a.display_name}`, title: 'Record a voice message',
+          onclick: (e) => { e.preventDefault(); e.stopPropagation(); if (!recording()) recorderFor(a).start(); } }, icon(ICONS.mic)));
+      }
       if (!mine) {
         el.classList.add('private');
         el.title = `${a.display_name} · private to its owner`;
@@ -178,7 +196,7 @@ export async function voidView(root, agents, others = []) {
 
   // ── press, hold, move, record ────────────────────────────────────────────────────────────────
   let g = null, swallowClick = false;
-  const LIFT_MS = 500, RECORD_MS = 1000, SLOP = 10;
+  const LIFT_MS = 500, SLOP = 10;
   const label = (el) => el.querySelector('.mark-label > span');
   const tell = (t) => { ask.textContent = t; ask.hidden = !t; };
   const resetAsk = () => { ask.textContent = ''; ask.hidden = true; };
@@ -187,56 +205,14 @@ export async function voidView(root, agents, others = []) {
   const flash = (t) => { tell(t); setTimeout(() => { if (ask.textContent === t) resetAsk(); }, 4000); };
   function finish() {
     if (!g) return;
-    clearTimeout(g.t1); clearTimeout(g.t2);
+    clearTimeout(g.t1);
     g.el.classList.remove('lifted', 'dragging', 'recording', 'will-send', 'will-cancel');
-    g.el.querySelector('.rec-guide')?.remove();
     if (!g.drag) g.el.style.translate = '';
     for (const el of field.querySelectorAll('.drop-target')) el.classList.remove('drop-target');
     window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp);
     document.documentElement.classList.remove('holding-mark');
     g = null; busy = false;
     if (redrawWanted) { redrawWanted = false; const before = rects(); draw(lastMoods); glide(before); }
-  }
-  async function record() {
-    if (!g || g.drag || !g.mine) return;
-    const mine = g;
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      flash(window.isSecureContext ? 'This browser cannot record audio.' : 'The microphone only works on the https address.'); return;
-    }
-    mine.el.classList.add('recording'); navigator.vibrate?.(20);
-    label(mine.el)?.replaceChildren('Listening…');
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {
-      flash('The microphone is blocked. Allow it for this site, then hold again.'); if (g === mine) finish(); return;
-    }
-    if (g !== mine) { stream.getTracks().forEach((t) => t.stop()); flash('Microphone ready: hold an agent again to record.'); return; }
-    const recorder = new MediaRecorder(stream); const chunks = []; const started = Date.now();
-    recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
-    recorder.addEventListener('stop', () => {
-      stream.getTracks().forEach((t) => t.stop()); clearInterval(mine.tick);
-      const still = document.documentElement.dataset.motion === 'still' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-      const play = (cls, ms) => { if (still) return; mine.el.classList.add(cls); setTimeout(() => mine.el.classList.remove(cls), ms); };
-      if (!mine.send) {
-        play('cancelling', 450);                                 // a small shake: nothing went
-        flash(mine.choice === 'cancel' ? 'Cancelled: nothing was sent.' : 'Not sent: swipe up to send it.'); return;
-      }
-      if (!chunks.length || Date.now() - started < 600) { flash('Hold a little longer to record.'); return; }
-      handed = { agent: mine.name, blob: new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }) };
-      tell('Sending…');
-      play('sending', 600);                                      // it flies up and away, then its chat opens
-      setTimeout(() => { location.hash = `#/chat/${mine.name}`; }, still ? 0 : 320);
-    });
-    recorder.start();
-    mine.rec = recorder;
-    // Swipe up to send, down to cancel (Greg, 21 Nov); the label says what letting go will do.
-    mine.el.append(h('span', { class: 'rec-guide', 'aria-hidden': 'true' },
-      h('span', { class: 'rec-up' }, '↑ Send'), h('span', { class: 'rec-down' }, '↓ Cancel')));
-    const tick = () => { const s = Math.floor((Date.now() - started) / 1000);
-      const time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-      label(mine.el)?.replaceChildren(mine.choice === 'send' ? `Let go to send · ${time}` : mine.choice === 'cancel' ? 'Let go to cancel' : `Recording ${time}`);
-      tell('Swipe up to send · down to cancel');
-      if (s >= 300) { mine.choice = 'send'; onUp({ type: 'pointerup' }); } };
-    tick(); mine.tick = setInterval(tick, 500);
   }
   function nearest(x, y) {
     let best = null, bestD = Infinity;
@@ -251,17 +227,7 @@ export async function voidView(root, agents, others = []) {
     if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x0, dy = e.clientY - g.y0;
     if (!g.lifted) { if (Math.hypot(dx, dy) > SLOP) finish(); return; }     // a swipe or a scroll, not a hold
-    if (g.rec || g.el.classList.contains('recording')) {
-      // Recording: up sends, down cancels; the mark follows the finger up and down.
-      const y = Math.max(-140, Math.min(140, dy));
-      g.el.style.translate = `0px ${Math.round(y * 0.6)}px`;
-      g.choice = dy < -70 ? 'send' : dy > 70 ? 'cancel' : null;
-      g.el.classList.toggle('will-send', g.choice === 'send');
-      g.el.classList.toggle('will-cancel', g.choice === 'cancel');
-      if (g.choice !== g.shown) { g.shown = g.choice; if (g.choice) navigator.vibrate?.(8); }
-      return;
-    }
-    if (!g.drag && Math.hypot(dx, dy) > SLOP) { g.drag = true; clearTimeout(g.t2); g.el.classList.add('dragging'); label(g.el)?.replaceChildren('Move me'); }
+    if (!g.drag && Math.hypot(dx, dy) > SLOP) { g.drag = true; g.el.classList.add('dragging'); label(g.el)?.replaceChildren('Move me'); }
     if (!g.drag) return;
     g.el.style.translate = `${dx}px ${dy}px`;
     const t = nearest(e.clientX, e.clientY);
@@ -271,8 +237,7 @@ export async function voidView(root, agents, others = []) {
   function onUp(e) {
     if (!g || (e.pointerId !== undefined && e.pointerId !== g.id)) return;
     const was = g;
-    if (was.lifted || was.drag || was.el.classList.contains('recording')) swallowClick = true;
-    if (was.rec) { was.send = e.type === 'pointerup' && was.choice === 'send'; was.rec.stop(); finish(); return; }
+    if (was.lifted || was.drag) swallowClick = true;
     if (was.drag) {
       const target = field.querySelector('.drop-target');
       const before = rects();
@@ -300,24 +265,24 @@ export async function voidView(root, agents, others = []) {
     finish(); resetAsk();
   }
   field.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.mark-mic')) return;                // the microphone is a button, not a handle
     const el = e.target.closest('.agent-mark');
     if (!el || g || (e.pointerType === 'mouse' && e.button !== 0)) return;
     swallowClick = false;
-    g = { el, name: el.dataset.agent, mine: !!el.dataset.href, id: e.pointerId, x0: e.clientX, y0: e.clientY, lifted: false, drag: false, rec: null };
+    g = { el, name: el.dataset.agent, mine: !!el.dataset.href, id: e.pointerId, x0: e.clientX, y0: e.clientY, lifted: false, drag: false };
     busy = true;
     g.t1 = setTimeout(() => {
       if (!g) return;
       g.lifted = true; g.el.classList.add('lifted'); navigator.vibrate?.(10);
       document.documentElement.classList.add('holding-mark');
-      tell(g.mine ? 'Move it, or keep holding to record a voice note' : 'Move it');
+      tell('Move it');
     }, LIFT_MS);
-    g.t2 = setTimeout(record, RECORD_MS);
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
   });
   // A hold is not a tap: no link opened, no long-press menu.
   field.addEventListener('click', (e) => { if (swallowClick) { e.preventDefault(); e.stopPropagation(); swallowClick = false; } }, true);
   field.addEventListener('click', (e) => { const el = e.target.closest('.agent-mark[data-href]'); if (el) location.hash = el.dataset.href; });
-  field.addEventListener('keydown', (e) => { const el = e.target.closest('.agent-mark[data-href]'); if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); location.hash = el.dataset.href; } });
+  field.addEventListener('keydown', (e) => { if (e.target.closest('.mark-mic')) return; const el = e.target.closest('.agent-mark[data-href]'); if (el && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); location.hash = el.dataset.href; } });
   field.addEventListener('contextmenu', (e) => { if (e.target.closest('.agent-mark')) e.preventDefault(); });
   field.addEventListener('dragstart', (e) => e.preventDefault());
 
@@ -329,7 +294,7 @@ export async function voidView(root, agents, others = []) {
   // there are many, and the first eight with "Show more". Kept across the 15-second refresh.
   const convView = { filter: 'all', query: '', all: false };
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('header', { class: 'page-band void-band' }, h('h1', {}, 'Agents')), ask, field, convBox));
+    h('header', { class: 'page-band void-band' }, h('h1', {}, 'Agents')), ask, field, convBox, dock));
   const short = (ms) => when(ms / 1000);
   // F36 part 2 (Greg, 22 Nov): start a group from here, and answer an invitation to one.
   // A sheet over the screen (Greg, 22 Nov: inside the page it squeezed the agents to a sliver on a phone).
@@ -437,8 +402,8 @@ export async function voidView(root, agents, others = []) {
   const tick = async () => { const m = await moods(agents); if (alive) draw(m); };
   await tick();
   const t = setInterval(tick, 8000);
-  return () => { alive = false; clearInterval(t); clearInterval(convTimer); sheet.remove(); document.removeEventListener('keydown', onKey);
-    document.documentElement.classList.remove('sheet-open'); if (g) { if (g.rec) { g.send = false; g.rec.stop(); } finish(); } };
+  return () => { alive = false; clearInterval(t); clearInterval(convTimer); sheet.remove(); document.removeEventListener('keydown', onKey); for (const r of Object.values(recorders)) r.destroy();
+    document.documentElement.classList.remove('sheet-open'); if (g) finish(); };
 }
 
 // In a conversation: the agent switcher (Greg, 23 Nov: "a smoother, cooler switching mechanism that can

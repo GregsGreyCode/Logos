@@ -472,3 +472,70 @@ def test_a_widget_may_be_chosen_compact_or_full_by_each_person():
     assert not d._pref_ok("widget_sizes", {"lists": "huge"})          # a size it does not have
     assert not d._pref_ok("widget_sizes", {"weather": "full"})        # a widget with no sizes
     assert not d._pref_ok("widget_sizes", "full")
+
+
+# ── the Las Vegas sign: your own text and RSS or Atom feeds ──────────────────────────────────
+
+RSS = """<?xml version="1.0"?><rss version="2.0"><channel><title>Prices</title>
+<item><title>BTC $64,210 (+1.2%)</title><link>http://x/1</link></item>
+<item><title><![CDATA[ETH <b>$3,120</b> &amp; rising]]></title></item>
+<item><title>   </title></item></channel></rss>"""
+ATOM = """<feed xmlns="http://www.w3.org/2005/Atom"><title>Stocks</title>
+<entry><title>ACME 123.4 ▲ 0.8%</title></entry><entry><title type="html">&lt;i&gt;GLOBEX&lt;/i&gt; 55.0</title></entry></feed>"""
+
+
+def test_feeds_give_their_item_titles_as_plain_text():
+    assert w.parse_feed(RSS) == ["BTC $64,210 (+1.2%)", "ETH $3,120 & rising"]
+    assert w.parse_feed(ATOM) == ["ACME 123.4 ▲ 0.8%", "GLOBEX 55.0"]
+    assert len(w.parse_feed("<rss><channel>" + "".join(f"<item><title>t{i}</title></item>" for i in range(40)) + "</channel></rss>")) == w.FEED_ITEMS
+
+
+def test_what_is_not_a_feed_or_is_unsafe_is_refused_in_plain_words():
+    for bad, why in (("<html><body>hello</body></html>", "no items"), ("not xml at all <<", "did not give an RSS"),
+                     ("<rss><channel></channel></rss>", "no items"),
+                     ('<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY a "aaaa">]><rss><channel><item><title>&a;</title></item></channel></rss>', "features Logos does not read")):
+        with pytest.raises(w.Problem, match=why):
+            w.parse_feed(bad)
+
+
+def feed_routes(state):
+    async def stocks(r):
+        return web.Response(text=RSS, content_type="application/rss+xml")
+
+    async def crypto(r):
+        return web.Response(text=ATOM, content_type="application/atom+xml")
+
+    async def gone(r):
+        return web.Response(status=503)
+
+    async def huge(r):
+        return web.Response(text="<rss>" + "x" * (w.FEED_MAX_BYTES + 10) + "</rss>")
+    return [("GET", "/stocks.rss", stocks), ("GET", "/crypto.atom", crypto), ("GET", "/gone", gone), ("GET", "/huge", huge)]
+
+
+def test_the_sign_shows_your_text_then_each_feed_and_survives_a_feed_that_fails():
+    def go(conf):
+        return run_with(feed_routes(None), lambda base, s: w.fetch_marquee({k: (v.replace("BASE", base) if isinstance(v, str) else v) for k, v in conf.items()}, s, {}))
+    d = go({"text": "Welcome home\n# a note\nBins out tonight", "feeds": "BASE/stocks.rss\nBASE/crypto.atom", "speed": "slow"})
+    assert [i["text"] for i in d["items"]] == ["Welcome home", "Bins out tonight", "BTC $64,210 (+1.2%)", "ETH $3,120 & rising", "ACME 123.4 ▲ 0.8%", "GLOBEX 55.0"]
+    assert d["speed"] == "slow" and d["state"] == "ok" and d["problems"] == []
+    d = go({"text": "Hi", "feeds": "BASE/gone\nBASE/stocks.rss"})
+    assert [i["text"] for i in d["items"]][-2:] == ["BTC $64,210 (+1.2%)", "ETH $3,120 & rising"]
+    assert len(d["problems"]) == 1 and "503" in d["problems"][0] and "1 feed not answering" == d["summary"]
+    assert go({"text": "Just this"})["items"] == [{"text": "Just this", "source": "text"}]
+    with pytest.raises(w.Problem, match="503"):
+        go({"feeds": "BASE/gone"})
+    with pytest.raises(w.Problem, match="too big"):
+        go({"feeds": "BASE/huge"})
+    with pytest.raises(w.Problem, match="Write some text"):
+        go({"text": "  \n", "feeds": ""})
+    with pytest.raises(w.Problem, match="Up to 5"):
+        go({"feeds": "\n".join(f"BASE/stocks.rss?{i}" for i in range(6))})
+    with pytest.raises(w.Problem, match="start it with http"):
+        go({"feeds": "ftp://example.com/x"})
+
+
+def test_the_sign_is_for_everyone_at_home_and_set_up_by_whoever_manages_logos(app):
+    out = call(app, [("user", "GET", "/api/v2/widgets", None), ("user", "PUT", "/api/v2/widgets/marquee", {"fields": {"text": "hi"}})])
+    assert "marquee" in [k["id"] for k in out[0][1]["widgets"]] and out[1][0] == 403
+    assert w.KINDS["marquee"].who == "home" and not any(f.required for f in w.KINDS["marquee"].fields)
