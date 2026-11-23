@@ -475,10 +475,11 @@ const LABELS = { chat: 'Chat', brain: 'Brain', about: 'Routines' };
 // The name is the phone's agent switcher (Greg, 23 Nov): a tap lists every agent with its mark and what it is
 // doing, and picking one keeps you where you are (its chat, brain or routines).
 const PLACE = { chat: (n) => `#/chat/${n}`, brain: (n) => `#/brain/${n}`, about: (n) => `#/agents/${n}` };
+const phone = () => window.matchMedia('(max-width: 599px)').matches;
 export function agentBar(agent, active, agents = []) {
   const item = (key, href, extra = {}) => h('a', { href, class: `agent-tab${key === active ? ' on' : ''}`, role: 'menuitem',
     'aria-current': key === active ? 'page' : null, ...extra }, LABELS[key],
-    key === 'brain' ? h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗') : null);
+    key === 'brain' && phone() ? h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗') : null);
   const menu = h('details', { class: 'agent-menu' },
     h('summary', { class: 'agent-tab on', 'aria-label': `${LABELS[active] || 'Chat'}: switch to Chat, Brain or About` },
       LABELS[active] || 'Chat', h('span', { class: 'agent-menu-caret', 'aria-hidden': 'true' }, '▾')),
@@ -486,8 +487,8 @@ export function agentBar(agent, active, agents = []) {
       item('chat', `#/chat/${agent.name}`),
       // On a phone Brain opens the agent's vault straight in Obsidian (Greg, 21 Nov); a desktop has no
       // Obsidian, so there it is the reader in Logos (the desktop never shows this bar).
-      item('brain', `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}&file=README.md`,
-        { title: 'Open this brain in Obsidian' }),
+      phone() ? item('brain', `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}&file=README.md`,
+        { title: 'Open this brain in Obsidian' }) : item('brain', `#/brain/${agent.name}`),
       item('about', `#/agents/${agent.name}`)));
   menu.addEventListener('click', (e) => { if (e.target.closest('a')) menu.open = false; });
   const shut = (e) => {

@@ -530,8 +530,8 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   // A labelled button in the header (Greg, 23 Nov: the thin tab at the screen's edge went unnoticed).
   // Chats toggles the panel and stays where it is, lit while the panel is open (Greg, 23 Nov: it vanished
   // when the panel opened).
-  const reopen = h('button', { type: 'button', class: 'btn quiet small side-reopen', title: 'Show or hide your chats',
-    'aria-controls': 'chat-side', 'aria-pressed': 'true', onclick: () => tuck(!side.classList.contains('tucked')) }, 'Chats');   // "Chats", not Conversations (Greg, 23 Nov)
+  const reopen = h('button', { type: 'button', class: 'btn quiet small side-reopen', title: 'Show or hide your chats', 'aria-label': 'Show or hide your chats',
+    'aria-controls': 'chat-side', 'aria-pressed': 'true', onclick: () => tuck(!side.classList.contains('tucked')) }, listIcon());   // "Chats", not Conversations (Greg, 23 Nov)
   // It shows for a moment when Chat opens, then slides away to its tab, so you know where it is.
   // Reopen it and it stays (remembered) until you hide it again.
   const wide = () => window.matchMedia('(min-width: 600px)').matches;

@@ -74,7 +74,7 @@ export async function peopleView(root, _args, state) {
   }
 
   root.replaceChildren(h('div', { class: 'page' },
-    h('header', {}, h('h1', {}, 'People'),
+    h('header', {}, h('h1', {}, 'People', h('span', { class: 'beta-tag' }, 'Beta')),
       h('p', { class: 'when lead' }, 'Who can use which agent.')),
     table, phoneList,
     h('div', { class: 'two-col' }, admin)));

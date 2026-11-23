@@ -15,7 +15,7 @@ for (const [w, hgt] of [[1440, 900], [1024, 768]]) {
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(3000);
 const btn = page.locator('.chat-head .side-reopen');
-ok(await btn.isVisible() && (await btn.innerText()) === 'Chats', 'a chat: a Chats button in its header once the panel slides away');
+ok(await btn.isVisible() && (await btn.getAttribute('aria-label')) === 'Show or hide your chats', 'a chat: a chats icon in its header once the panel slides away');
 await btn.click(); await page.waitForTimeout(500);
 ok(await page.locator('#chat-side').isVisible(), 'which opens the panel');
 await page.screenshot({ path: process.argv[2] + '/desk/b2-chat.png' });

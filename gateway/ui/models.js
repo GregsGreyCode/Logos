@@ -230,12 +230,12 @@ async function localModel(repaint) {
 export async function modelsView(root) {
   let alive = true;
   let timer = null;
-  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Models'), loading()));
+  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Models', h('span', { class: 'beta-tag' }, 'Beta')), loading()));
 
   async function paint() {
     let d;
     try { d = await getJSON('/api/v2/models'); } catch (e) {
-      root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Models'),
+      root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Models', h('span', { class: 'beta-tag' }, 'Beta')),
         h('div', { class: 'notice' }, 'Could not load the model status.')));
       return;
     }
@@ -281,7 +281,7 @@ export async function modelsView(root) {
     });
 
     const sections = [
-      h('h1', {}, 'Models'),
+      h('h1', {}, 'Models', h('span', { class: 'beta-tag' }, 'Beta')),
       d.error ? h('div', { class: 'notice' }, d.error) : null,
       h('section', { 'aria-label': 'Status' }, h('div', { class: 'cards tiles wide-only' }, tiles), statusLine(d)),
       await localModel(() => paint()),

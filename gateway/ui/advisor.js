@@ -77,11 +77,11 @@ export async function advisorView(root) {
   let alive = true;
   const names = getJSON('/api/v2/people').then((d) => { NAMES = Object.fromEntries((d.people || []).map((p) => [p.username, p.display_name])); }).catch(() => {});
   let timer = null;
-  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor'), loading()));
+  root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor', h('span', { class: 'beta-tag' }, 'Beta')), loading()));
   async function paint() {
     let d;
     try { d = await getJSON('/api/v2/advisor'); } catch (e) {
-      root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor'),
+      root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Claude Advisor', h('span', { class: 'beta-tag' }, 'Beta')),
         h('div', { class: 'empty' }, h('h1', {}, e.status === 503 ? 'Not running yet' : 'Could not load it'),
           h('p', {}, e.status === 503 ? 'The Claude Advisor starts with Logos once it is set up on the server.' : 'Try again in a moment.'))));
       return;
@@ -89,7 +89,7 @@ export async function advisorView(root) {
     if (!alive) return;
     const b = d.budget;
     const monthName = new Date(`${b.month}-01T12:00:00`).toLocaleDateString([], { month: 'long' });
-    const parts = [h('header', {}, h('h1', {}, 'Claude Advisor'),
+    const parts = [h('header', {}, h('h1', {}, 'Claude Advisor', h('span', { class: 'beta-tag' }, 'Beta')),
       h('p', { class: 'when lead' }, "Your agent's questions for Claude wait here for your yes."),
       h('p', { class: 'advisor-left' }, h('strong', {}, `${usd(b.left_usd)} left`), ` · ${usd(b.spent_usd)} of ${usd(b.limit_usd)} used in ${monthName}`))];
     if (!d.key) parts.push(h('div', { class: 'notice' }, 'No Anthropic key is set up yet, so nothing can be sent.'));

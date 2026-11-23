@@ -463,15 +463,20 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const long = !mine && !fresh && (text.length > 700 || text.split('\n').length > 12);
     const folded = long && !unfolded.has(ev.getId());
     if (folded) bubble.classList.add('folded');
+    // A long message folds; tap or click the bubble to open it, again to fold it (Greg, 23 Nov: no "Show all" words).
+    if (long) {
+      const flip = () => { if (unfolded.has(ev.getId())) unfolded.delete(ev.getId()); else unfolded.add(ev.getId()); draw(false); };
+      bubble.classList.add('foldable');
+      bubble.setAttribute('role', 'button'); bubble.tabIndex = 0; bubble.setAttribute('aria-expanded', String(!folded));
+      bubble.setAttribute('aria-label', folded ? 'Long message, tap to read it all' : 'Long message, tap to fold it');
+      bubble.addEventListener('click', (e) => { if (!e.target.closest('a, button') && !String(getSelection())) flip(); });
+      bubble.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === bubble) { e.preventDefault(); flip(); } });
+    }
     // A folded message that asks something shows its question under the fold, so it is never missed.
     const asks = folded ? questionsIn(text) : [];
     const turn = h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
       showName ? h('span', { class: `mx-sender${fromAgent ? ' bot' : ''}` }, nameOf(ev.getSender())) : null,
       bubble,
-      long ? h('button', { type: 'button', class: 'linkish mx-fold', onclick: () => {
-        if (unfolded.has(ev.getId())) unfolded.delete(ev.getId()); else unfolded.add(ev.getId());
-        draw(false);
-      } }, unfolded.has(ev.getId()) ? 'Show less' : 'Show all') : null,
       asks.length ? h('div', { class: 'mx-asks', role: 'note' }, h('span', { class: 'mx-asks-label' }, asks.length > 1 ? 'Questions' : 'Question'),
         ...asks.map((q) => h('p', {}, q))) : null,
       chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, r]) => h('button', {
