@@ -302,7 +302,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     h('select', { onchange: (e) => { location.hash = `#/brain/${e.target.value}`; } },
       agents.map((a) => h('option', { value: a.name, selected: a.name === agent.name }, a.display_name)))) : null;
 
-  root.replaceChildren(h('div', { class: 'brain' }, agentBar(agent, 'brain'),
+  root.replaceChildren(h('div', { class: 'brain' }, agentBar(agent, 'brain', agents),
     h('header', { class: 'chat-head' }, h('h1', {}, 'Brain'), tabs,
       h('label', { for: 'q', class: 'sr' }, 'Search the brain'), search),
     conflictsBox,

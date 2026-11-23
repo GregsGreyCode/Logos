@@ -325,6 +325,9 @@ export async function voidView(root, agents, others = []) {
   // with its last message and an unread count, so more groups and agents only add rows.
   const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Chats' }, loading('cards', 2));
   let convShown = false;
+  // The chats list for more rooms and agents (Greg, 23 Nov): each with its picture, filters, a search once
+  // there are many, and the first eight with "Show more". Kept across the 15-second refresh.
+  const convView = { filter: 'all', query: '', all: false };
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
     h('header', { class: 'page-band void-band' }, h('h1', {}, 'Agents')), ask, field, convBox));
   const short = (ms) => when(ms / 1000);
@@ -387,18 +390,44 @@ export async function voidView(root, agents, others = []) {
       if (!alive) return;
       const inviter = (r) => { const m = r.getMember(c.getUserId()); const by = m?.events?.member?.getSender?.(); return by ? (r.getMember(by)?.name || by) : ''; };
       if (!convShown) { convShown = true; reveal(convBox); }
+      const FILTERS = [['all', 'All'], ['agents', 'Agents'], ['groups', 'Groups'], ['unread', 'Unread']];
+      const counts = { all: list.length, agents: list.filter((r) => r.kind === 'agent').length,
+        groups: list.filter((r) => r.kind === 'group').length, unread: list.filter((r) => r.unread).length };
+      const q = convView.query.trim().toLowerCase();
+      const matching = list.filter((r) => (convView.filter === 'all' || (convView.filter === 'agents' && r.kind === 'agent')
+        || (convView.filter === 'groups' && r.kind === 'group') || (convView.filter === 'unread' && r.unread))
+        && (!q || `${r.name} ${r.text || ''}`.toLowerCase().includes(q)));
+      const SHOWN = 8;
+      const visible = convView.all || q ? matching : matching.slice(0, SHOWN);
+      const chips = list.length > 3 ? h('div', { class: 'void-filters', role: 'tablist', 'aria-label': 'Show' },
+        FILTERS.filter(([k]) => k === 'all' || counts[k]).map(([k, label]) => h('button', { type: 'button', role: 'tab', class: `chip${convView.filter === k ? ' on' : ''}`,
+          'aria-selected': String(convView.filter === k), onclick: () => { convView.filter = k; convView.all = false; showConvs(); } },
+        label, k !== 'all' ? h('span', { class: 'void-filter-n' }, String(counts[k])) : null))) : null;
+      let search = null;
+      if (list.length > 6) {
+        search = h('input', { type: 'search', class: 'void-search', placeholder: 'Find a chat…', 'aria-label': 'Find a chat', autocomplete: 'off', value: convView.query });
+        search.addEventListener('input', () => { convView.query = search.value; const at = search.selectionStart; showConvs().then(() => { const s2 = convBox.querySelector('.void-search'); if (s2) { s2.focus(); s2.setSelectionRange(at, at); } }); });
+      }
+      const picture = (r) => (r.kind === 'agent' ? mark(r.agent, { size: 'tiny' })
+        : h('span', { class: 'void-avatar group', 'aria-hidden': 'true', style: `--mark: var(--agent-${r.agent?.name}, var(--accent))` }, icon(ICONS.people)));
       convBox.replaceChildren(h('div', { class: 'void-convs-head' }, h('h2', { class: 'label' }, 'Chats'), newBtn),
+        ...(chips || search ? [h('div', { class: 'void-tools' }, chips, search)] : []),
         ...invites.map((r) => h('div', { class: 'void-group invite' },
           h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name || 'A group'), h('span', { class: 'void-unread' }, 'Invited')),
           h('span', { class: 'void-group-last' }, inviter(r) ? `${inviter(r)} invited you` : 'You are invited'),
           h('span', { class: 'row void-invite-actions' },
             h('button', { type: 'button', class: 'btn small', onclick: async (e) => { e.target.disabled = true; try { await c.joinRoom(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Join'),
             h('button', { type: 'button', class: 'btn quiet small', onclick: async (e) => { e.target.disabled = true; try { await c.leave(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Decline')))),
-        ...list.map((r) => h('a', { href: r.link, class: `void-group${r.unread ? ' unread' : ''}` },
-        h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name),
-          h('span', { class: 'when' }, r.ts ? short(r.ts) : ''),
-          r.unread ? h('span', { class: 'void-unread', 'aria-label': `${r.unread} unread` }, String(r.unread)) : null),
-        h('span', { class: 'void-group-last' }, r.text ? `${r.kind === 'group' && r.who ? `${r.who}: ` : r.who === 'You' ? 'You: ' : ''}${r.text}` : 'Nothing said yet'))));
+        ...visible.map((r) => h('a', { href: r.link, class: `void-group with-pic${r.unread ? ' unread' : ''}`, 'data-kind': r.kind },
+          picture(r),
+          h('span', { class: 'void-group-body' },
+            h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name),
+              h('span', { class: 'when' }, r.ts ? short(r.ts) : ''),
+              r.unread ? h('span', { class: 'void-unread', 'aria-label': `${r.unread} unread` }, String(r.unread)) : null),
+            h('span', { class: 'void-group-last' }, r.text ? `${r.kind === 'group' && r.who ? `${r.who}: ` : r.who === 'You' ? 'You: ' : ''}${r.text}` : 'Nothing said yet')))),
+        ...(!matching.length && list.length ? [h('p', { class: 'none' }, q ? 'No chat matches.' : 'Nothing here.')] : []),
+        ...(visible.length < matching.length ? [h('button', { type: 'button', class: 'linkish void-more', onclick: () => { convView.all = true; showConvs(); } },
+          `Show ${matching.length - visible.length} more`)] : []));
       convBox.hidden = false;
     } catch (e) { convBox.hidden = true; /* no Matrix in this browser: no list to show */ }
   };
@@ -477,7 +506,10 @@ export function markBar(agents, current) {
 // Phone (Greg, 21 Nov): inside an agent, one bar: ‹ back to all agents, its name, and one pill naming
 // where you are (Chat, About) that opens to Chat | Brain | About, so the name has the room (Greg, 21 Nov).
 const LABELS = { chat: 'Chat', brain: 'Brain', about: 'Routines' };
-export function agentBar(agent, active) {
+// The name is the phone's agent switcher (Greg, 23 Nov): a tap lists every agent with its mark and what it is
+// doing, and picking one keeps you where you are (its chat, brain or routines).
+const PLACE = { chat: (n) => `#/chat/${n}`, brain: (n) => `#/brain/${n}`, about: (n) => `#/agents/${n}` };
+export function agentBar(agent, active, agents = []) {
   const item = (key, href, extra = {}) => h('a', { href, class: `agent-tab${key === active ? ' on' : ''}`, role: 'menuitem',
     'aria-current': key === active ? 'page' : null, ...extra }, LABELS[key],
     key === 'brain' ? h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗') : null);
@@ -497,7 +529,34 @@ export function agentBar(agent, active) {
     if (menu.open && !menu.contains(e.target)) menu.open = false;
   };
   document.addEventListener('pointerdown', shut, true);
+  let name = h('strong', { class: 'agent-bar-name' }, agent.display_name);
+  if (agents.length > 1) {
+    const go = PLACE[active] || PLACE.chat;
+    const pop = h('div', { class: 'switch-pop agent-bar-pop', role: 'listbox', 'aria-label': 'Switch agent', hidden: true },
+      ...agents.map((a) => h('a', { href: go(a.name), role: 'option', class: `switch-item${a.name === agent.name ? ' on' : ''}`, 'data-agent': a.name,
+        'aria-selected': String(a.name === agent.name) },
+      mark(a, { size: 'tiny' }), h('span', { class: 'switch-text' }, h('strong', {}, a.display_name), h('span', { class: 'switch-mood' }, '')),
+      a.name === agent.name ? h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓') : null)),
+      h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
+    const btn = h('button', { type: 'button', class: 'agent-bar-name agent-bar-switch', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
+      agent.display_name, h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
+    const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+    btn.addEventListener('click', async () => {
+      if (!pop.hidden) return close();
+      pop.hidden = false; btn.setAttribute('aria-expanded', 'true');
+      const m = await moods(agents).catch(() => ({}));
+      for (const el of pop.querySelectorAll('.switch-item')) {
+        const md = m[el.dataset.agent] || 'asleep';
+        el.querySelector('.switch-mood').textContent = MOODS[md];
+        const mk = el.querySelector('.agent-mark'); if (mk) mk.className = mk.className.replace(/mood-\w+/, `mood-${md}`);
+      }
+    });
+    pop.addEventListener('click', (e) => { if (e.target.closest('a')) close(); });
+    const away = (e) => { if (!btn.isConnected) { document.removeEventListener('pointerdown', away, true); return; } if (!pop.hidden && !pop.contains(e.target) && !btn.contains(e.target)) close(); };
+    document.addEventListener('pointerdown', away, true);
+    name = h('span', { class: 'agent-bar-who' }, btn, pop);
+  }
   return h('nav', { class: 'agent-bar', 'aria-label': agent.display_name },
     h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
-    h('strong', { class: 'agent-bar-name' }, agent.display_name), menu);
+    name, menu);
 }

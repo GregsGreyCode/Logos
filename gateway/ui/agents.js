@@ -217,7 +217,8 @@ export async function agentsView(root, [agentArg]) {
       h('span', { class: 'row-meta' }, schedule(j.schedule), ' · ',
         j.last_run ? h('span', { class: j.last_ok ? 'ok' : 'bad' }, `${j.last_ok ? '✓' : '✕ failed'} ${runTime(j.last_run)}`) : 'not yet run'));
 
-    const m = st.model;
+    const m = st.model || {};                   // a status without its model (or reach) still draws the page
+    st.reach = st.reach || { allowed: [], blocked: [] };
     const kv = (k, v, cls) => h('div', { class: 'row-item' }, h('span', { class: `row-meta ${cls || ''}` }, k), h('span', { class: 'row-main' }, v));
     detail.replaceChildren(...[                  // (a null would print as the word "null")
       h('div', { class: 'routines-top' },
@@ -232,14 +233,14 @@ export async function agentsView(root, [agentArg]) {
         h('div', { class: 'rows' }, ...behind.map(behindRow))),
       h('details', { class: 'routines-fold' }, h('summary', {}, `About ${agent.display_name}`),
         h('div', { class: 'rows' },
-          kv('Model', `${m.local ? 'Local' : 'Hosted'} · ${modelName(m.name)}${m.up === false ? ' · not answering' : ''}`),
+          kv('Model', m.name ? `${m.local ? 'Local' : 'Hosted'} · ${modelName(m.name)}${m.up === false ? ' · not answering' : ''}` : 'Not known just now'),
           kv('Can reach', st.reach.allowed.join(', '), 'ok'),
           kv('Cannot reach', st.reach.blocked.join(', '), 'bad'))),
     ].filter(Boolean));
     reveal(detail);
   }
 
-  root.replaceChildren(h('div', { class: 'page agents-page' }, agent ? agentBar(agent, 'about') : null,
+  root.replaceChildren(h('div', { class: 'page agents-page' }, agent ? agentBar(agent, 'about', data.agents) : null,
     h('h1', { class: 'agents-title' }, agent ? `${agent.display_name}: routines` : 'Routines'),
     data.agents.length ? cards : none('No agents are set up yet.'), detail));
   detail.replaceChildren(loading('cards', 3));

@@ -252,7 +252,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       h('header', { class: 'chat-head' },
         // M4: the agents' marks replace the agent tabs; inside a thread, its title; in a group, its name.
         group ? groupHead : threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
-        threadId || group ? null : agentBar(agent, 'chat'),
+        threadId || group ? null : agentBar(agent, 'chat', agents.filter((a) => a.matrix_id)),
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
         sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null),
       group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, pending, form),
