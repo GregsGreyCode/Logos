@@ -524,12 +524,12 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
       ...agentLabel(a.display_name)))) : null;
 
   // Phone: earlier conversations and the view switches open as a panel from the bottom.
-  const side = h('aside', { class: 'side', id: 'chat-side', 'aria-label': 'Conversations' });
+  const side = h('aside', { class: 'side', id: 'chat-side', 'aria-label': 'Chats' });
   // Desktop: the conversations panel starts open; a small button tucks it away and a tab on the right
   // edge brings it back. Remembered on this device. (On a phone it is the Conversations panel instead.)
   // A labelled button in the header (Greg, 23 Nov: the thin tab at the screen's edge went unnoticed).
-  const reopen = h('button', { type: 'button', class: 'btn quiet small side-reopen', title: 'Show your earlier conversations',
-    'aria-controls': 'chat-side', onclick: () => tuck(false) }, 'Conversations');
+  const reopen = h('button', { type: 'button', class: 'btn quiet small side-reopen', title: 'Show your chats',
+    'aria-controls': 'chat-side', onclick: () => tuck(false) }, 'Chats');   // "Chats", not Conversations (Greg, 23 Nov)
   // It shows for a moment when Chat opens, then slides away to its tab, so you know where it is.
   // Reopen it and it stays (remembered) until you hide it again.
   const wide = () => window.matchMedia('(min-width: 600px)').matches;
@@ -551,7 +551,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   };
   if (getPref('panel', 'slide') !== 'open') setTimeout(() => { if (alive && side.isConnected && !side.contains(document.activeElement)) slideAway(false); }, 1200);
   const sideScrim = h('div', { class: 'chat-scrim', hidden: true });
-  const convBtn = h('button', { type: 'button', class: 'conv-btn', 'aria-label': 'Conversations and view settings',
+  const convBtn = h('button', { type: 'button', class: 'conv-btn', 'aria-label': 'Chats and view settings',
     'aria-controls': 'chat-side', 'aria-expanded': 'false' }, listIcon());
   const closeSide = (refocus = true) => {
     if (!side.classList.contains('open')) return;
@@ -593,7 +593,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     h('summary', { class: 'btn quiet small' }, 'View'),
     h('div', { class: 'view-pop', role: 'group', 'aria-label': 'View options' },
       mirror(thinkingBox, 'Show thinking'), mirror(jobsBox, 'Show scheduled jobs'),
-      h('p', { class: 'label' }, 'Conversations panel'),
+      h('p', { class: 'label' }, 'Chats panel'),
       panelPick('slide', 'Slides away'), panelPick('open', 'Stays open')));
   document.addEventListener('click', (e) => { if (viewMenu.open && !viewMenu.contains(e.target)) viewMenu.open = false; });
 
@@ -602,7 +602,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     const mxView = h('details', { class: 'view-menu wide-only' },
       h('summary', { class: 'btn quiet small' }, 'View'),
       h('div', { class: 'view-pop', role: 'group', 'aria-label': 'View options' },
-        h('p', { class: 'label' }, 'Conversations panel'), panelPick('slide', 'Slides away'), panelPick('open', 'Stays open')));
+        h('p', { class: 'label' }, 'Chats panel'), panelPick('slide', 'Slides away'), panelPick('open', 'Stays open')));
     document.addEventListener('click', (e) => { if (mxView.open && !mxView.contains(e.target)) mxView.open = false; });
     const sideTop = h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
       title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6'])));
@@ -626,7 +626,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     h('label', { class: 'toggle phone-toggle', for: 'show-thinking',
       title: "Show the agent's reasoning and each tool it used, with what went in and what came back" }, thinkingBox, ' Show thinking'),
     h('label', { class: 'toggle phone-toggle', for: 'show-jobs' }, jobsBox, ' Show scheduled jobs'),
-    h('h2', { class: 'label' }, 'Earlier conversations'), convs);
+    h('h2', { class: 'label' }, 'Earlier chats'), convs);
 
   emptyState();
   if (!agent.running) log.replaceChildren(h('div', { class: 'notice' }, `${agent.display_name} is not running right now, so it can't answer. Greg can start it again.`));

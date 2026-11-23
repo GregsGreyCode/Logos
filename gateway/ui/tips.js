@@ -12,7 +12,7 @@ export const TIPS = {
     { title: 'Ask your agent', text: 'Type a question here and it opens in a new chat with your agent.', at: '.home-ask' },
   ],
   agents: [
-    { title: 'Your agents', text: 'Each mark is an agent. Tap one to open its conversations.', at: '.agent-mark' },
+    { title: 'Your agents', text: 'Each mark is an agent. Tap one to open its chats.', at: '.agent-mark' },
     { title: 'Hold to talk', text: 'Press and hold an agent: it lifts, and you can move it. Keep holding still and it records. Let go and your voice note goes to that agent.' },
     { title: 'Groups', text: '+ New group starts a chat with other people and the household agent.', at: '.void-new' },
   ],

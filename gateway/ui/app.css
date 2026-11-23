@@ -2022,3 +2022,38 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 @media (max-width: 599px) {
   .title-centred .screen-name { min-width: 0; margin-inline: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+
+/* ── Large screens (Greg, 23 Nov: "we use so little space at 1080p or 1440p") ────────────────────
+   Pages fill the width and add columns as it grows: Home 2 → 3 → 4 widget columns (still packed, in
+   your order), Notifications' days in columns, Routines as a grid of cards, Agents side by side with
+   its conversations, Settings in two columns, and a wider reading column in a chat. */
+@media (min-width: 1100px) {
+  .home { max-width: none; }
+}
+@media (min-width: 1700px) {
+  .home-widgets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (min-width: 2300px) {
+  .home-widgets { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (min-width: 1500px) {
+  .notifications > :not(.page-band) { max-width: none; }
+  .notifications .feed-days { column-width: 520px; column-gap: 56px; }
+  .notifications .feed-days > section { break-inside: avoid; margin-bottom: 14px; }
+  .notifications .feed-days > section + section { margin-top: 0; }
+  .notifications > section[aria-label="Needs you"] { max-width: 1200px; }
+
+  .routines, .agent-cards { max-width: 1400px; }
+  .routine-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; align-items: start; }
+
+  .settings-body { max-width: 1240px; display: block; column-width: 520px; column-gap: 64px; }
+  .settings-body > * { break-inside: avoid; margin: 0 0 32px; }
+
+  .chat.void { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, 640px); grid-template-rows: auto 1fr; column-gap: 40px; }
+  .chat.void > .void-band { grid-column: 1 / -1; }
+  .chat.void > .void-field { grid-column: 1; height: clamp(320px, 62vh, 640px); max-width: none; margin: 24px 0 0 40px; }
+  .chat.void > .void-groups { grid-column: 2; width: auto; box-sizing: border-box; margin: 24px 40px 40px 0; padding: 0; max-width: none; }
+}
+@media (min-width: 1600px) {
+  .chat .log, .chat .composer { padding-left: max(24px, calc((100% - 920px) / 2)); padding-right: max(24px, calc((100% - 920px) / 2)); }
+}
