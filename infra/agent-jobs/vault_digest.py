@@ -242,6 +242,8 @@ def slug(name):
 
 
 def human(size):
+    if size < 1024:
+        return f"{size} bytes"
     return f"{size / 1024:.0f} KB" if size < 1024 * 1024 else f"{size / 1048576:.1f} MB"
 
 

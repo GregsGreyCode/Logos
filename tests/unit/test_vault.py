@@ -249,7 +249,7 @@ def test_what_cannot_be_read_is_still_noted_with_its_details(digest, vault, home
     assert mod.run(conf) == [m["id"]]
     note = next((home / "brain" / "files").glob("*thing*.md")).read_text()
     assert "kept but not read yet" in note and "Sent by Béré" in note
-    assert mod.slug("Revised Bin Rota - May.pdf") == "revised-bin-rota-may" and mod.human(69 * 1024) == "69 KB"
+    assert mod.slug("Revised Bin Rota - May.pdf") == "revised-bin-rota-may" and mod.human(69 * 1024) == "69 KB" and mod.human(500) == "500 bytes" and mod.human(3 * 1048576) == "3.0 MB"
 
 
 def test_the_brain_index_lists_the_notes_of_files():
