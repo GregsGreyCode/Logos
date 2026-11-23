@@ -326,7 +326,7 @@ export async function voidView(root, agents, others = []) {
   const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Conversations' }, loading('cards', 2));
   let convShown = false;
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
-    h('h1', { class: 'visually-hidden' }, 'Chat'), ask, field, convBox));
+    h('header', { class: 'page-band void-band' }, h('h1', {}, 'Agents')), ask, field, convBox));
   const short = (ms) => when(ms / 1000);
   // F36 part 2 (Greg, 22 Nov): start a group from here, and answer an invitation to one.
   // A sheet over the screen (Greg, 22 Nov: inside the page it squeezed the agents to a sliver on a phone).

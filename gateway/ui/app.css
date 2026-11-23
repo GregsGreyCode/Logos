@@ -1447,7 +1447,9 @@ section:has(> .appearance-modes.single) { display: none; }
 }
 
 /* Notifications feed (Greg, 21 Nov): one row per thing that happened, a dot on the new ones. */
-.notifications { max-width: 760px; }
+.notifications { max-width: none; }
+/* The list keeps its width; the title band spans the screen like every other. */
+.notifications > :not(.page-band) { max-width: 760px; width: 100%; }
 .feed { display: flex; flex-direction: column; }
 .feed-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--ink); text-decoration: none; min-width: 0; }
 .feed-item:last-child { border-bottom: 0; }
@@ -1731,7 +1733,7 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .notifications .feed-item.open .feed-top .feed-title { white-space: normal; }
 .notifications .feed-item.open .feed-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .notifications .feed-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
-.notifications .feed-head:has(> [hidden] + [hidden]) { display: none; }
+.notifications .feed-head:has(> [hidden]:only-child) { display: none; }
 .feed-allread { font-size: var(--t-sm); margin-left: auto; }
 /* Home drawn from the last visit: a little dim, with a light passing along its top, until fresh data is in. */
 .home-widgets { transition: opacity .45s ease; }
@@ -1917,3 +1919,38 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   place-items: center; font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap;
   background: var(--attn, var(--accent)); color: var(--attn-ink, #fff); }
 .nav-links .nb-badge[hidden] { display: none; }
+
+/* ── Desktop structure (Greg, 23 Nov) ─────────────────────────────────────────────────────────
+   One side-menu width on every screen (it grew with a bold "Notifications" and its count, so the
+   screen shifted); a "Manage" heading over what only whoever manages Logos uses; and one title band
+   on every screen: Home's date, Agents and Notifications included. */
+@media (min-width: 1100px) {
+  .nav { flex: 0 0 216px !important; width: 216px; min-width: 216px; max-width: 216px; box-sizing: border-box; }
+  .nav-links a .nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+}
+.nav-group { display: none; }
+@media (min-width: 600px) {
+  .nav-group:not([hidden]) { display: block; margin: 14px 12px 2px; font-size: var(--t-xs); font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+}
+@media (min-width: 600px) and (max-width: 1099px) {
+  .nav-group:not([hidden]) { margin: 10px 0 0; height: 1px; overflow: hidden; color: transparent; background: var(--line); }
+}
+.page-band { display: none; }
+/* On a phone the top bar names the screen; Notifications' band keeps only Mark all read. */
+@media (max-width: 599px) {
+  .notifications > .page-band:has(> .feed-allread:not([hidden])) { display: flex; justify-content: flex-end; }
+  .notifications > .page-band > h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
+@media (min-width: 600px) {
+  .page > header.page-band { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; min-height: 68px;
+    margin: -32px -40px 0; padding: 0 40px; border-bottom: 1px solid var(--line); }
+  .page > header.page-band > h1 { display: block; margin: 0; font-size: 22px; line-height: 28px; min-height: 0; border: 0; padding: 0; }
+  .chat.void > .void-band { display: flex; align-items: center; min-height: 68px; padding: 0 40px; border-bottom: 1px solid var(--line); }
+  .chat.void > .void-band > h1 { margin: 0; font-size: 22px; line-height: 28px; }
+  [data-look="glass"] .page-band { background: var(--glass); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
+  /* Home: the date is the band. */
+  .page.home > .home-head { margin: -32px -40px 0; padding: 0 40px; min-height: 68px; justify-content: center; border-bottom: 1px solid var(--line); }
+  .page.home > .home-head .home-date { font-size: 22px; line-height: 28px; }
+  [data-look="glass"] .page.home > .home-head { background: var(--glass); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
+}
