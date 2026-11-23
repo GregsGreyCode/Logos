@@ -109,6 +109,9 @@ class Loader:
 
     def ensure(self, model: str, alone: bool) -> str:
         """What was done: "", "loaded", "reloaded", or "failed"."""
+        # LM Studio's own key; also as the agents name it to the gateway ("lm-studio/qwen/…"),
+        # in case it arrives with that prefix.
+        model = next((k for k in self.windows if model == k or model.endswith("/" + k)), model)
         window = self.windows.get(model)
         if not window:
             return ""
