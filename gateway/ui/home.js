@@ -1,6 +1,7 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
-import { swr, forget } from './cache.js';
+import { swr, forget, peek } from './cache.js';
+import { widget as homelabWidget } from './widgets.js';
 import { h, api, getJSON, when, none, loading, aiState, reveal, icon, ICONS } from './util.js';
 import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
@@ -320,8 +321,22 @@ export async function homeView(root) {
     if (!getPref('widgets_v2', false)) await setPref('widgets_v2', true).catch(() => {});
   }
   const orderNow = () => [...board.children].filter((el) => !el.classList.contains('off')).map((el) => el.dataset.widget);
+  // F42: the homelab widgets the server offers (gateway/widgets.py), added to the ones above. One that
+  // is not set up is offered only to whoever can set it up.
+  const KINDS = {};
+  function addKinds(list) {
+    for (const k of list || []) {
+      KINDS[k.id] = k;
+      if (SECS[k.id]) continue;
+      const w = homelabWidget(k, { onChange: () => drawTray() });
+      WIDGETS[k.id] = k.name;
+      SECS[k.id] = w.el;
+      SHOW[k.id] = w.show;
+      w.el.dataset.widget = k.id; w.el.classList.add('home-widget');
+    }
+  }
   function drawTray() {
-    const hidden = Object.keys(WIDGETS).filter((id) => !on(id));
+    const hidden = Object.keys(WIDGETS).filter((id) => !on(id) && (!KINDS[id] || KINDS[id].set_up || KINDS[id].can_set_up));
     tray.replaceChildren(h('span', { class: 'label' }, hidden.length ? 'Add' : 'Every widget is on Home'),
       ...hidden.map((id) => h('button', { type: 'button', class: 'chip home-add', onclick: async () => {
         await save([...orderNow(), id]); applyWidgets(); decorate(); SHOW[id]();
@@ -452,9 +467,10 @@ export async function homeView(root) {
     showNext(data.today);
     nextSec.hidden = nextUp.hidden;
     applyWidgets();
+    if (editing) decorate();
     // "Since yesterday" lives in Notifications now (Greg, 21 Nov).
     waitingSec.hidden = !nb.waiting.length;
-    for (const id of chosen()) if (id !== 'next') SHOW[id]();
+    for (const id of chosen()) if (id !== 'next' && SHOW[id]) SHOW[id]();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
   }
 
@@ -476,7 +492,14 @@ export async function homeView(root) {
     board,
     tray,
     askForm));                                   // the Ask box stays at the bottom (Greg, 21 Nov)
+  addKinds((peek('/api/v2/widgets') || {}).v?.widgets);     // known from last time: in place at once
   applyWidgets();
+  swr('/api/v2/widgets', 5 * MIN, (d) => {
+    if (!alive || !d || d.error) return;
+    const fresh = (d.widgets || []).filter((k) => !SECS[k.id]);
+    addKinds(d.widgets);
+    if (fresh.length) { applyWidgets(); if (editing) decorate(); for (const k of fresh) if (on(k.id)) SHOW[k.id](); }
+  }, null);
 
   fromLast();
   await load();
