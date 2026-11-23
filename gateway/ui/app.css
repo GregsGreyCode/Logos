@@ -1711,15 +1711,14 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-tray { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .home-tray .label { margin: 0 4px 0 0; }
 .home-add { border: 1px dashed var(--line); background: transparent; color: var(--ink); cursor: pointer; font: inherit; padding: 6px 12px; border-radius: 999px; }
-.home-edit-link { align-self: center; font-size: var(--t-sm); }
-.home-edit-link.linkish { color: var(--muted); }
+
 .home-place { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
 .home-place .row { display: flex; gap: 8px; }
 .home-place input[type=search] { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--ground); color: var(--ink); }
 .home-places { display: flex; flex-wrap: wrap; gap: 6px; }
 /* A wide screen: the widgets in two columns, still in your order. */
 @media (min-width: 1100px) {
-  .home > .home-widgets, .home > .home-tray, .home > .home-edit-link { grid-column: 1 / -1; }
+  .home > .home-widgets, .home > .home-tray { grid-column: 1 / -1; }
   .home-widgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; row-gap: 22px; align-items: start; }
   /* Packed (home.js): 4 px rows, each widget spanning its height plus the 22 px gap. */
   .home-widgets { grid-auto-rows: 4px; row-gap: 0; }
@@ -1995,3 +1994,18 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-widgets.editing > .home-widget > h2.label, .home-widgets.editing > .home-widget > .home-sec-head > h2.label { display: none; }
 .home-widgets.editing > .home-widget.dragging { background: var(--surface) !important; opacity: 1; }
 .home-widgets.editing > .home-widget.dragging > :not(.widget-bar) { opacity: .8; }
+/* Arrange Home: a round pencil at the end of Home's title row; Done while arranging, kept in view. */
+.home-date-row { justify-content: space-between; }
+.home-edit-link { flex: none; display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line);
+  border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
+.home-edit-link:hover, .home-edit-link:focus-visible { color: var(--ink); background: var(--chip); }
+.home-edit-link .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.home-edit-link.done { width: auto; padding: 0 18px; border-radius: 999px; color: #fff; background: var(--accent); border-color: var(--accent); font: 600 15px/1 var(--font-body, inherit); }
+.home-edit-link.done .icon { stroke-width: 2.4; }
+@media (max-width: 599px) {
+  /* On a phone the pencil is in the top bar, just before your initial. */
+  .topbar .home-edit-link { position: absolute; right: 58px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; }
+  .topbar .home-edit-link.done { width: 34px; height: 34px; padding: 0; }
+}
+/* While arranging on a wide screen, the title band (with Done) stays at the top as you scroll. */
+@media (min-width: 600px) { .home > .home-head:has(.home-edit-link.done) { position: sticky; top: 0; z-index: 6; background: var(--ground); } }
