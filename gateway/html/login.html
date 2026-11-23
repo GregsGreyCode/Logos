@@ -357,6 +357,11 @@
 
   <script src="https://unpkg.com/alpinejs@3/dist/cdn.min.js" defer></script>
   <script>
+    // Where the person was headed (a tapped notification opens "/#/chat/room/…"): the page is sent here
+    // when its 15-minute session has run out, and must go back to it, not to Home (Béré, 23 Nov).
+    // Only an in-app address is carried over.
+    function keepHash() { return /^#\/[\w\-./%!:~@]*$/.test(location.hash) && !location.hash.includes('//') ? location.hash : ''; }
+
   function loginApp() {
     return {
       phase: 'splash',   // 'splash' | 'login' | 'setup' | 'loggedin'
@@ -389,7 +394,7 @@
               // the refresh token 7 days: try a refresh before asking for the password (F34).
               fetch('/auth/me', { credentials: 'same-origin' })
                 .then(r => r.ok || fetch('/auth/refresh', { method: 'POST', credentials: 'same-origin' }).then(x => x.ok))
-                .then(ok => { if (ok) window.location.href = '/'; })
+                .then(ok => { if (ok) window.location.href = '/' + keepHash(); })
                 .catch(() => {});
             }
           })
@@ -503,7 +508,7 @@
                 try { sessionStorage.setItem('logos_fl', '1'); } catch {}
                 this.navigating = true; this.navBarDur = 600;
                 await new Promise(r => setTimeout(r, 600));
-                window.location.href = '/';
+                window.location.href = '/' + keepHash();
               }
             } else {
               const d = await res.json().catch(() => ({}));
@@ -534,7 +539,7 @@
             try { sessionStorage.setItem('logos_fl', '1'); } catch {}
             this.navigating = true; this.navBarDur = 600;
             await new Promise(r => setTimeout(r, 600));
-            window.location.href = d.setup_required ? '/setup' : '/';
+            window.location.href = d.setup_required ? '/setup' : '/' + keepHash();
           } else {
             const d = await res.json().catch(() => ({}));
             this.error = ({
