@@ -43,8 +43,13 @@ jobs:
   # Screen checks (tests/ui): the dashboard in a real Chrome at phone, foldable and desktop sizes against
   # a fake server. Screenshots are kept for a week as the run's "ui-screenshots".
   ui:
+    # The screen checks, in three parts at once (about 6 minutes in one; Greg, 23 Nov: faster).
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0, 1, 2]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -57,13 +62,15 @@ jobs:
       - name: Install the browser library
         run: npm install --prefix tests/ui --no-audit --no-fund
 
-      - name: Screen checks
-        run: CHROME="$(command -v google-chrome)" tests/ui/run.sh
+      - name: Screen checks (every third file, from this part's place)
+        run: |
+          checks=$(cd tests/ui/checks && ls *.mjs | sed 's/\.mjs$//' | awk -v p=${{ matrix.part }} 'NR % 3 == p')
+          CHROME="$(command -v google-chrome)" tests/ui/run.sh $checks
 
       - name: Keep the screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-screenshots
+          name: ui-screenshots-${{ matrix.part }}
           path: tests/ui/out
           retention-days: 7
