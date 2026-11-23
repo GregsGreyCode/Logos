@@ -27,7 +27,7 @@ from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, Mapping, Optional, Tuple
 
-MAX_UPLOAD = 25 * 1024 * 1024           # the same ceiling OpenAI's endpoint has
+MAX_UPLOAD = 100 * 1024 * 1024          # long dictation (23 Nov: 30 minutes at 32 kbit/s is about 7 MB; room for the rest)
 PATH = "/v1/audio/transcriptions"
 
 
@@ -142,7 +142,7 @@ def make_handler(tokens: Mapping[str, str], transcribe: Callable[[str, Optional[
             if length <= 0:
                 return self._error(400, "empty request")
             if length > MAX_UPLOAD:
-                return self._error(413, "recording too large (25 MB at most)")
+                return self._error(413, "recording too large (100 MB at most)")
             try:
                 fields, upload = parse_form(self.headers.get("Content-Type", ""), self.rfile.read(length))
             except BadRequest as e:

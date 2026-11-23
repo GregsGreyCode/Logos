@@ -1237,20 +1237,38 @@ section:has(> .appearance-modes.single) { display: none; }
 [data-anim="off"] .view-fade { animation: none; }
 @media (prefers-reduced-motion: reduce) { .view-fade { animation: none; } }
 
-/* Send / hold to record. With the box empty the arrow and the microphone slowly take turns. */
-.send-btn { position: relative; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; touch-action: none; }
-.send-btn .send-ico, .send-btn .mic-ico { display: inline-flex; transition: opacity .3s ease; }
-.send-btn .mic-ico { position: absolute; inset: 0; align-items: center; justify-content: center; opacity: 0; }
-.send-btn.idle .send-ico { animation: ico-a 9s ease-in-out infinite; }
-.send-btn.idle .mic-ico { animation: ico-b 9s ease-in-out infinite; }
-@keyframes ico-a { 0%, 42%, 100% { opacity: 1; } 50%, 92% { opacity: 0; } }
-@keyframes ico-b { 0%, 42%, 100% { opacity: 0; } 50%, 92% { opacity: 1; } }
-.send-btn.recording { background: var(--bad); }
-.send-btn.recording .send-ico { opacity: 0; animation: none; }
-.send-btn.recording .mic-ico { opacity: 1; animation: rec-pulse 1.2s ease-in-out infinite; }
-@keyframes rec-pulse { 50% { transform: scale(1.15); } }
-[data-anim="off"] .send-btn.idle .send-ico, [data-anim="off"] .send-btn.idle .mic-ico { animation: none; }
-@media (prefers-reduced-motion: reduce) { .send-btn.idle .send-ico, .send-btn.idle .mic-ico { animation: none; } }
+/* Send, Stop and the microphone (Greg, 23 Nov). The arrow sends; with the box empty and the agent working it is Stop;
+   the microphone is a button of its own: tap to start, tap ■ to finish (voice.js). */
+.send-btn { position: relative; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; flex: none; }
+.send-btn .send-ico, .send-btn .stop-ico { display: inline-flex; transition: opacity .2s ease; }
+.send-btn .stop-ico { position: absolute; inset: 0; align-items: center; justify-content: center; opacity: 0; }
+.send-btn.idle { opacity: .45; }
+.send-btn.stop { background: var(--danger, #e5484d); border-color: var(--danger, #e5484d); color: #fff; opacity: 1; }
+.send-btn.stop .send-ico { opacity: 0; }
+.send-btn.stop .stop-ico { opacity: 1; }
+.send-btn .stop-ico svg { fill: currentColor; stroke: currentColor; stroke-width: 1; }
+.mic-btn { flex: none; width: 44px; min-width: 44px; height: 44px; padding: 0; border-radius: 50%; display: inline-grid; place-items: center; cursor: pointer;
+  border: 1px solid var(--line); background: var(--chip); color: var(--muted); }
+.mic-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--accent); }
+.mic-btn:disabled { opacity: .45; cursor: default; }
+.mic-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.composer.transcribing .mic-btn { opacity: .45; }
+/* Recording: the strip takes the place of the box until you finish. */
+form.recording > :not(.rec-bar) { display: none !important; }
+.rec-bar { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 6px; border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--danger, #e5484d) 55%, var(--line)); background: color-mix(in srgb, var(--danger, #e5484d) 10%, var(--surface)); }
+.rec-bar[hidden] { display: none; }
+.rec-dot { flex: none; width: 12px; height: 12px; margin-left: 8px; border-radius: 50%; background: var(--danger, #e5484d);
+  transform: scale(calc(1 + var(--level, 0) * 0.9)); transition: transform .09s linear; box-shadow: 0 0 0 calc(var(--level, 0) * 7px) color-mix(in srgb, var(--danger, #e5484d) 30%, transparent); }
+.rec-time { flex: none; font: 600 var(--t-md) var(--font-body); font-variant-numeric: tabular-nums; color: var(--ink); }
+.rec-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--t-sm); }
+.rec-discard, .rec-done { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; border: 0; }
+.rec-discard { background: transparent; color: var(--muted); }
+.rec-discard:hover { color: var(--danger, #e5484d); }
+.rec-done { background: var(--danger, #e5484d); color: #fff; }
+.rec-discard svg, .rec-done svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rec-done svg { fill: currentColor; }
+@media (prefers-reduced-motion: reduce) { .rec-dot { transition: none; } }
 /* The queue line sits just above the message box. */
 .chat .model-line { margin: 0 16px 8px; border-radius: 12px; }
 @media (max-width: 599px) {
@@ -2376,3 +2394,11 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-list-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .home-list-due { flex: none; color: var(--accent-text); font-size: var(--t-xs); }
 .home-list-more { font-size: var(--t-sm); color: var(--accent-text); text-decoration: none; padding-top: 4px; }
+
+/* Home's Ask, as the chat's box (Greg, 23 Nov). */
+.home-ask { flex-wrap: wrap; align-items: flex-end; }
+.home-ask textarea { flex: 1; min-width: 0; min-height: 44px; max-height: 132px; resize: none; padding: 11px 16px; line-height: 1.4; border: 1px solid var(--line);
+  border-radius: 22px; background: var(--surface); color: var(--ink); font: inherit; overflow-y: auto; }
+.home-ask textarea:focus-visible { outline: 0; border-color: var(--accent-text); }
+.home-ask .mx-note { flex: 1 0 100%; margin: 0; padding: 0 6px; order: 5; }
+.home-ask .mx-note:empty { display: none; }

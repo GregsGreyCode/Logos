@@ -65,15 +65,31 @@ that file to go back to the yaml setting.
 ## Limits
 
 - One recording at a time; a second waits its turn.
-- 25 MB per recording.
+- 100 MB per recording. The web chat records up to 30 minutes (about 7 MB at 32 kbit/s); 30 minutes takes about 6 to turn into words.
 - Runs on the processor. A long recording takes roughly a fifth of its length.
 
 ## In web chat
 
-The chat screen has a Speak button for agents with voice on. Press it, talk, press it again:
-the words appear in the message box, where they can be corrected before Send. Nothing reaches
-the agent until then. The recording goes from the browser to the dashboard server, which
-passes it to the voice service with the agent's own token (`POST /api/v2/agents/<name>/voice`).
+The chat box and Home's **Ask** have a microphone button for agents with voice on (23 Nov: tap to
+start, tap again to finish; it was a hold, and letting go by mistake lost the recording).
+
+1. **Tap the microphone.** A strip replaces the box: a pulsing dot that swells with your voice (so you
+   can see it is hearing you), the time, ✕ to throw it away (it asks first if it is 15 seconds or
+   more) and ■ to finish. It records up to **30 minutes** and keeps the screen awake where the
+   browser allows.
+2. **Tap ■.** The words appear in the message box, where they can be corrected before Send. Nothing
+   reaches the agent until then.
+3. **If it fails,** the line under the box says why and **Try again** sends the same recording again.
+
+The recording goes from the browser to the dashboard, which passes it to the voice service with the
+agent's own token. It is a **job**: `POST /api/v2/agents/<name>/voice?job=1` answers at once with a
+job id and the page asks `GET /api/v2/agents/<name>/voice/<job>` until the words are ready. A long
+recording therefore does not hold one connection open for minutes (a proxy may cut a quiet one),
+and if the page is reloaded meanwhile, the words are fetched again when it comes back. Jobs are kept
+30 minutes, only for the person who made them. Without `?job=1` the call waits and answers with the
+words directly (the other screens use that).
 
 Browsers only allow the microphone on an `https://` address (or `localhost`), so the button
 explains itself and does nothing on a plain `http://` address.
+
+Holding an agent's mark on the Agents screen also records a voice note for it (it is still a hold there).
