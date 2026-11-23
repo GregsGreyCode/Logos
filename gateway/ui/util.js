@@ -1,4 +1,5 @@
 // Small helpers shared by every screen.
+import * as reach from './reach.js';
 
 // "Greg's agent" -> "Greg's", "Household agent" -> "Household": for a phone's narrow switches.
 export const shortName = (name) => String(name || '').replace(/\s+agent$/i, '') || name;
@@ -149,8 +150,16 @@ export async function api(path, opts = {}, retried = false) {
   // opts.body is sent as JSON; opts.raw (a Blob, with its own Content-Type header) is sent as it is.
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.method && opts.method !== 'GET') headers['X-CSRF-Token'] = csrf();
-  const r = await fetch(path, { ...opts, headers, credentials: 'same-origin',
-    body: opts.raw !== undefined ? opts.raw : (opts.body !== undefined ? JSON.stringify(opts.body) : undefined) });
+  let r;
+  try {
+    r = await fetch(path, { ...opts, headers, credentials: 'same-origin',
+      body: opts.raw !== undefined ? opts.raw : (opts.body !== undefined ? JSON.stringify(opts.body) : undefined) });
+  } catch (e) {
+    // No answer at all (not even an error): the server is out of reach, e.g. Tailscale off (reach.js).
+    if (!(opts.signal && opts.signal.aborted)) reach.lost();
+    throw e;
+  }
+  reach.ok();
   if (r.status === 401) {
     // A refresh that finished just before this 401 arrived also counts: try once more either way.
     if (!retried) { await refreshSession(); return api(path, opts, true); }

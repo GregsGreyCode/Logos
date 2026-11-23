@@ -17,6 +17,7 @@ import { h, api, getJSON, working, aiState, labelTables, icon, ICONS } from './u
 import { adopt } from './appearance.js';
 import * as mx from './mx.js';
 import * as push from './push.js';
+import * as reach from './reach.js';
 
 const views = { home: homeView, chat: chatView, brain: brainView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView, settings: settingsView };
@@ -195,9 +196,19 @@ for (const b of document.querySelectorAll('.logout-btn')) b.addEventListener('cl
 
 // F37: a tapped notification opens its chat; with notifications on, keep the service worker current.
 push.listen();
-try { if (localStorage.getItem('logos.push.pushkey') && push.supported()) push.worker().catch(() => {}); } catch (e) { /* no storage */ }
+// The worker also keeps a copy of the app, so it opens and says why when the server is out of reach
+// (sw.js), so it runs for everyone, with or without notifications.
+if ('serviceWorker' in navigator && window.isSecureContext) push.worker().catch(() => {});
 
-state.me = await getJSON('/api/v2/me');
+// Out of reach on opening (reach.js shows why): wait, and start over once the server answers.
+state.me = await getJSON('/api/v2/me').catch((e) => {
+  if (e.status) throw e;
+  reach.onBack(() => location.reload());
+  return new Promise(() => {});
+});
+// Back after being out of reach: draw the screen again with fresh data (a chat keeps itself current,
+// and redrawing it would lose what is being typed).
+reach.onBack(() => { badge(); if (!location.hash.startsWith('#/chat')) route(); });
 cacheOwner(state.me.username);
 mx.bind(state.me.matrix_id);
 adopt(state.me);

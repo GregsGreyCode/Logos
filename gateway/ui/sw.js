@@ -1,7 +1,45 @@
 // Logos service worker (F37): shows phone notifications pushed by the dashboard (gateway/push.py)
-// and opens the chat when one is tapped. It caches nothing: the app always loads fresh.
+// and opens the chat when one is tapped.
+// It also keeps a copy of the app itself (the page, its code and pictures; never any data from /api or
+// Matrix), so that with the server out of reach (Tailscale off, Greg 23 Nov) the app still opens and
+// says so, instead of the browser's own error page. The network always comes first: the copy is used
+// only when the server does not answer, so the app never runs old code while the server is there.
+const SHELL = 'logos-shell-1';
 self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('activate', (e) => e.waitUntil((async () => {
+  for (const k of await caches.keys()) if (k.startsWith('logos-shell-') && k !== SHELL) await caches.delete(k);
+  await self.clients.claim();
+})()));
+
+const isShell = (url) => url.origin === self.location.origin
+  && (url.pathname === '/' || url.pathname.startsWith('/ui/') || url.pathname.startsWith('/static/'));
+
+self.addEventListener('fetch', (e) => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (!isShell(url)) return;
+  const key = url.pathname === '/' ? '/' : req;          // the page is one copy, whatever its #
+  e.respondWith((async () => {
+    const net = fetch(req).then(async (r) => {
+      if (r.ok && !r.redirected && r.type === 'basic') {
+        const c = await caches.open(SHELL);
+        await c.put(key, r.clone());
+      }
+      return r;
+    });
+    // The page itself: if the server is slow to answer at all (no route to it), use the copy after 4 s.
+    const wait = req.mode === 'navigate' ? 4000 : 0;
+    try {
+      if (!wait) return await net;
+      return await Promise.race([net, new Promise((_, no) => setTimeout(() => no(new Error('slow')), wait))]);
+    } catch (err) {
+      const kept = await caches.match(key);
+      if (kept) { e.waitUntil(net.catch(() => {})); return kept; }
+      return net;
+    }
+  })());
+});
 
 self.addEventListener('push', (e) => {
   let m = {};
