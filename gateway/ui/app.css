@@ -2284,3 +2284,30 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   background: var(--surface); color: var(--ink); font: 400 var(--t-md) var(--font-body); }
 .w-setup textarea { font-family: var(--font-mono); font-size: var(--t-sm); resize: vertical; }
 @media (max-width: 380px) { .w-meters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.w-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.w-grid2 .w-card + .w-card { margin-top: 0; }
+.w-guest { gap: 4px; padding: 10px 12px; }
+.w-guest strong { font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-dot.idle { background: var(--muted); opacity: .6; }
+.w-adblock-card { flex-direction: row; align-items: center; gap: 16px; }
+.w-ring { width: 64px; height: 64px; flex: none; }
+.w-ring circle { fill: none; stroke-width: 5; }
+.w-ring-bg { stroke: var(--chip); }
+.w-ring-fg { stroke: var(--accent); stroke-linecap: round; }
+.w-adblock-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.w-adblock-words .when { overflow: hidden; text-overflow: ellipsis; }
+.w-play { flex-direction: row; align-items: center; gap: 12px; }
+.w-poster { flex: none; width: 48px; height: 68px; border-radius: 8px; background: linear-gradient(160deg, var(--accent-soft), var(--chip)); }
+.w-play-words { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.w-play-words strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-play.paused .w-bar > span { background: var(--muted); }
+.w-dl { display: flex; flex-direction: column; gap: 6px; }
+.w-dl.stalled .w-name, .w-dl.stalled .w-meta { color: var(--bad); }
+.w-dl .w-bar > span { background: var(--ok); }
+.w-marks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 8px; }
+.w-mark { display: flex; flex-direction: column; align-items: center; gap: 6px; text-decoration: none; color: var(--ink); font-size: var(--t-xs); min-width: 0; }
+.w-mark-tile { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--chip);
+  border: 1px solid var(--line); color: var(--accent-text); font: 600 16px var(--font-display); }
+.w-mark:hover .w-mark-tile { border-color: var(--accent); }
+.w-mark-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 820px) { .w-marks { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); } }

@@ -47,7 +47,72 @@ function servers(d) {
     : h('div', { class: 'w-card off' }, h('div', { class: 'w-head' }, h('strong', {}, n.name), h('span', { class: 'when bad' }, 'offline')))));
 }
 
-const DRAW = { services, servers };
+function proxmox(d) {
+  return [h('div', { class: 'w-grid2' }, ...(d.items || []).map((g) => h('div', { class: `w-card w-guest${g.running ? '' : ' off'}` },
+    h('div', { class: 'w-head' }, h('strong', {}, `${g.id} ${g.name}`), h('span', { class: `w-dot${g.running ? '' : ' idle'}`, 'aria-label': g.running ? 'running' : 'stopped' })),
+    h('span', { class: 'when' }, g.running ? `CPU ${g.cpu}% · ${g.mem_gb} GB` : `stopped${g.kind === 'container' ? ' · container' : ''}`))))];
+}
+
+function backups(d) {
+  return [h('div', { class: 'w-rows' }, ...(d.items || []).map((b) => h('div', { class: `w-row${b.ok ? '' : ' down'}` },
+    h('span', { class: 'w-dot', 'aria-hidden': 'true' }), h('span', { class: 'w-name' }, b.name),
+    h('span', { class: 'w-meta' }, `${b.ran ? when(b.ran) : ''}${b.detail ? `${b.ran ? ' · ' : ''}${b.detail}` : ''}`))))];
+}
+
+function adblock(d) {
+  const r = 15, c = 2 * Math.PI * r, part = (c * (d.percent || 0)) / 100;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 36 36'); svg.setAttribute('class', 'w-ring'); svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `${d.percent}% blocked`);
+  for (const [cls, dash] of [['w-ring-bg', ''], ['w-ring-fg', `${part} ${c}`]]) {
+    const circle = document.createElementNS(ns, 'circle');
+    for (const [k, v] of Object.entries({ cx: 18, cy: 18, r, class: cls, transform: 'rotate(-90 18 18)' })) circle.setAttribute(k, v);
+    if (dash) circle.setAttribute('stroke-dasharray', dash);
+    svg.append(circle);
+  }
+  return [h('div', { class: 'w-card w-adblock-card' }, svg, h('div', { class: 'w-adblock-words' },
+    h('span', { class: 'w-num' }, `${d.percent}%`),
+    h('span', { class: 'when' }, `${(d.blocked || 0).toLocaleString()} of ${(d.total || 0).toLocaleString()} blocked today`),
+    (d.top || []).length ? h('span', { class: 'when' }, `Top: ${d.top.join(', ')}`) : ''))];
+}
+
+const hm = (s) => (s >= 3600 ? `${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}` : `${Math.floor(s / 60)} min`);
+function playing(d) {
+  if (!(d.items || []).length) return [h('p', { class: 'when' }, 'Nothing is playing.')];
+  return (d.items || []).map((p) => h('div', { class: `w-card w-play${p.paused ? ' paused' : ''}` },
+    h('span', { class: 'w-poster', 'aria-hidden': 'true' }),
+    h('div', { class: 'w-play-words' }, h('strong', {}, p.title),
+      h('span', { class: 'when' }, [p.where, p.who].filter(Boolean).join(' · ') + (p.paused ? ' · paused' : '')),
+      p.percent !== null && p.percent !== undefined ? h('div', { class: 'w-bar' }, h('span', { style: `width:${p.percent}%` })) : '',
+      p.length ? h('span', { class: 'when' }, `${hm(p.position)} of ${hm(p.length)}`) : '')));
+}
+
+// Sonarr's "01:04:30" (or "1.02:00:00" for a day and more) as "1 h 04", "4 min", "1 day".
+function left(t) {
+  const m = String(t || '').match(/^(?:(\d+)\.)?(\d+):(\d+):(\d+)$/);
+  if (!m) return '';
+  const [d, hh, mm] = [+(m[1] || 0), +m[2], +m[3]];
+  return d ? `${d} day${d === 1 ? '' : 's'}` : hh ? `${hh} h ${String(mm).padStart(2, '0')}` : `${Math.max(1, mm)} min`;
+}
+
+function downloads(d) {
+  const items = d.items || [];
+  return [h('div', { class: 'w-card' }, ...(items.length ? items.slice(0, 6).map((i) => h('div', { class: `w-dl${i.stalled ? ' stalled' : ''}` },
+    h('div', { class: 'w-head' }, h('span', { class: 'w-name' }, i.title),
+      h('span', { class: 'w-meta' }, i.stalled ? 'stalled' : i.waiting ? 'waiting' : `${i.percent}%${left(i.left) ? ` · ${left(i.left)} left` : ''}`)),
+    i.stalled ? '' : h('div', { class: 'w-bar' }, h('span', { style: `width:${i.percent}%` }))))
+    : [h('p', { class: 'when' }, 'Nothing downloading.')])),
+  d.upcoming ? h('p', { class: 'when' }, `Next up this week: ${d.upcoming} episode${d.upcoming === 1 ? '' : 's'}.`) : ''];
+}
+
+function bookmarks(d) {
+  const initials = (n) => n.split(/\s+/).filter(Boolean).map((x) => x[0]).join('').slice(0, 2) || '·';
+  return [h('div', { class: 'w-marks' }, ...(d.items || []).map((b) => h('a', { class: 'w-mark', href: b.url, target: '_blank', rel: 'noopener' },
+    h('span', { class: 'w-mark-tile', 'aria-hidden': 'true' }, initials(b.name)), h('span', { class: 'w-mark-name' }, b.name))))];
+}
+
+const DRAW = { services, servers, proxmox, backups, adblock, playing, downloads, bookmarks };
 
 // ── one widget on Home ───────────────────────────────────────────────────────────────────────
 
@@ -105,6 +170,14 @@ export function setupSheet(kind, done) {
       return h('label', { class: 'appearance-mode choice' }, input,
         h('span', {}, h('strong', {}, f.label), f.help ? h('span', { class: 'when block' }, f.help) : ''));
     }
+    if (f.kind === 'choice') {
+      const name = `w-${kind.id}-${f.key}`;
+      const group = h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': f.label },
+        ...(f.options || []).map(([v, label], i) => h('label', { class: 'appearance-mode' },
+          h('input', { type: 'radio', name, value: v, checked: f.value ? f.value === v : i === 0 }), label)));
+      inputs[f.key] = () => (group.querySelector('input:checked') || {}).value || '';
+      return h('div', { class: 'w-field' }, h('span', { class: 'field-label' }, f.label), group);
+    }
     input = f.kind === 'lines'
       ? h('textarea', { id, rows: 5, placeholder: f.placeholder || '', spellcheck: 'false' }, f.value || '')
       : h('input', { id, type: f.kind === 'secret' ? 'password' : f.kind === 'url' ? 'url' : 'text', autocomplete: 'off', spellcheck: 'false',
@@ -141,6 +214,7 @@ export function setupSheet(kind, done) {
     } },
     h('h2', {}, `Set up ${kind.name}`),
     kind.about ? h('p', { class: 'when' }, kind.about) : '',
+    kind.uses ? h('p', { class: 'when' }, `This is the ${kind.uses[0].toUpperCase()}${kind.uses.slice(1)} setup: changing it here changes it there too.`) : '',
     ...fields,
     h('p', { class: 'when' }, 'Kept on the Logos server only: never in a browser, never with an agent.'),
     msg,
