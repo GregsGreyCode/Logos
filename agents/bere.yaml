@@ -13,6 +13,7 @@ timezone: Europe/London
 noticeboard: true               # may exchange messages with the other agents (docs/noticeboard.md)
 voice: true                     # voice notes are turned into text by the voice service (docs/voice.md)
 voice_echo: true                # show Béré the text of each voice note before the answer (she asked, 19 Nov)
+busy_input_mode: steer           # a follow-up sent while this agent is answering joins the run after its next step (she asked to try it, 23 Nov; default: queue)
 calendar: {enabled: true, person: bere}   # Béré's own calendar + Household (docs/calendar.md)
 
 model:
