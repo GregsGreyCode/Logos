@@ -78,7 +78,7 @@ const dayWord = (ts) => {
   const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 86400000);
   return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'long' });
 };
-const KIND_LABEL = { chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents', advisor: 'Claude Advisor',
+const KIND_LABEL = { widget: 'Home widget', chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents', advisor: 'Claude Advisor',
   budget: 'Claude Advisor', conflict: 'Brain', agent_down: 'Agent', sync: 'Sync' };
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 function feedRow(i, TYPES, onOpen) {
