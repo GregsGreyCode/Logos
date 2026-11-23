@@ -101,7 +101,7 @@ def kind(calls, fail=lambda: False):
         if fail():
             raise w.Problem("Nothing answered at that address.")
         return {"state": "ok", "summary": f"call {len(calls)}"}
-    return w.Kind("demo", "Demo", "home", 60, [], fetch)
+    return w.Kind("demo", "Demo", "home", 60, [w.Field("x", "X")], fetch)
 
 
 def test_fetched_once_per_refresh_and_the_last_copy_kept_when_it_fails(tmp_path):
@@ -178,7 +178,9 @@ def test_members_see_only_home_widgets_and_cannot_set_them_up(app):
         ("user", "GET", "/api/v2/widgets/servers", None),
         ("user", "PUT", "/api/v2/widgets/services", {"fields": {"services": "A, http://a"}}),
     ])
-    assert [k["id"] for k in listing["widgets"]] == ["services"] and "fields" not in listing["widgets"][0]
+    ids = [k["id"] for k in listing["widgets"]]
+    assert "services" in ids and not {"servers", "proxmox", "backups"} & set(ids)
+    assert all("fields" not in k for k in listing["widgets"])
     assert s2 == 404 and s3 == 403
 
 
@@ -204,3 +206,140 @@ def test_the_arrangement_may_name_the_new_widgets():
     from gateway import dashboard_api
     assert dashboard_api._pref_ok("widgets", ["weather", "services", "servers"])
     assert not dashboard_api._pref_ok("widgets", ["weather", "nope"])
+
+
+# ── the second batch: Proxmox guests, backups, ad blocking, now playing, downloads, bookmarks ──
+
+def serve_app(routes):
+    """A local stand-in service; returns (base url, stop)."""
+    async def start():
+        app = web.Application()
+        for method, path, handler in routes:
+            app.router.add_route(method, path, handler)
+        server = TestServer(app)
+        await server.start_server()
+        return server
+    return start
+
+
+def run_with(routes, fn):
+    async def go():
+        server = await serve_app(routes)()
+        try:
+            async with aiohttp.ClientSession(timeout=w.TIMEOUT) as s:
+                return await fn(f"http://127.0.0.1:{server.port}", s)
+        finally:
+            await server.close()
+    return asyncio.run(go())
+
+
+def test_proxmox_guests_without_templates(monkeypatch):
+    async def fake_get(conf, session, path):
+        assert path.startswith("/cluster/resources")
+        return [{"vmid": 110, "name": "logos", "status": "running", "type": "qemu", "cpu": 0.09, "mem": 6.1 * 2**30, "node": "pve"},
+                {"vmid": 130, "name": "test", "status": "stopped", "type": "lxc", "node": "pve"},
+                {"vmid": 9000, "name": "tmpl", "status": "stopped", "template": 1}]
+    monkeypatch.setattr(w, "proxmox_get", fake_get)
+    d = asyncio.run(w.fetch_guests({}, None, {}))
+    assert [g["id"] for g in d["items"]] == [110, 130] and d["summary"] == "1 running · 1 stopped"
+    assert d["items"][1]["kind"] == "container" and d["items"][0]["cpu"] == 9
+
+
+def test_backups_late_or_failed_need_you(monkeypatch):
+    now = time_now = __import__("time").time()
+    monkeypatch.setattr(w, "logos_export_status", lambda: {"ran": int(now - 3600), "ok": True})
+
+    async def fake_get(conf, session, path):
+        if path == "/nodes":
+            return [{"node": "pve"}]
+        return [{"endtime": int(now - 9 * 86400), "status": "OK"}]                 # nine days ago: late
+    monkeypatch.setattr(w, "proxmox_get", fake_get)
+    d = asyncio.run(w.fetch_backups({}, None, {"with_conf": {"url": "https://pve:8006"}}))
+    assert d["state"] == "needs" and d["summary"] == "Proxmox · pve: late"
+    assert [i["name"] for i in d["items"]] == ["Proxmox · pve", "Logos export"]
+    # without Servers set up: only Logos's own
+    d = asyncio.run(w.fetch_backups({}, None, {}))
+    assert d["state"] == "ok" and d["summary"] == "all 1 OK"
+
+
+def test_pihole_signs_in_reads_and_always_signs_out():
+    seen = []
+
+    async def auth(r):
+        body = await r.json()
+        return web.json_response({"session": {"sid": "abc" if body["password"] == "right" else None}},
+                                 status=200 if body["password"] == "right" else 401)
+
+    async def summary(r):
+        seen.append(r.headers.get("X-FTL-SID"))
+        return web.json_response({"queries": {"total": 20940, "blocked": 4812}})
+
+    async def top(r):
+        return web.json_response({"domains": [{"domain": "ads.example"}, {"domain": "telemetry.example"}]})
+
+    async def logout(r):
+        seen.append("logout")
+        return web.Response(status=204)
+    routes = [("POST", "/api/auth", auth), ("GET", "/api/stats/summary", summary), ("GET", "/api/stats/top_domains", top),
+              ("DELETE", "/api/auth", logout)]
+    d = run_with(routes, lambda base, s: w.fetch_adblock({"product": "pihole", "url": base, "password": "right"}, s, {}))
+    assert (d["percent"], d["blocked"], d["top"]) == (23, 4812, ["ads.example", "telemetry.example"])
+    assert seen == ["abc", "logout"]
+    with pytest.raises(w.Problem, match="refused the password"):
+        run_with(routes, lambda base, s: w.fetch_adblock({"product": "pihole", "url": base, "password": "wrong"}, s, {}))
+
+
+def test_adguard_with_its_login():
+    async def stats(r):
+        if r.headers.get("Authorization") != aiohttp.BasicAuth("admin", "pw").encode():
+            return web.Response(status=401)
+        return web.json_response({"num_dns_queries": 1000, "num_blocked_filtering": 150, "top_blocked_domains": [{"ads.example": 40}]})
+    d = run_with([("GET", "/control/stats", stats)],
+                 lambda base, s: w.fetch_adblock({"product": "adguard", "url": base, "username": "admin", "password": "pw"}, s, {}))
+    assert (d["percent"], d["top"], d["summary"]) == (15, ["ads.example"], "AdGuard")
+
+
+def test_jellyfin_now_playing():
+    async def sessions(r):
+        assert r.headers.get("X-Emby-Token") == "k"
+        return web.json_response([
+            {"DeviceName": "Living room TV", "UserName": "Béré", "PlayState": {"PositionTicks": 3720 * 10**7, "IsPaused": False},
+             "NowPlayingItem": {"Name": "A film", "RunTimeTicks": 6420 * 10**7}},
+            {"DeviceName": "Laptop", "UserName": "Greg", "PlayState": {"IsPaused": True},
+             "NowPlayingItem": {"Name": "Ep", "SeriesName": "A series", "ParentIndexNumber": 2, "IndexNumber": 4}},
+            {"DeviceName": "Phone"}])
+    d = run_with([("GET", "/Sessions", sessions)], lambda base, s: w.fetch_playing({"url": base, "api_key": "k"}, s, {}))
+    assert [i["title"] for i in d["items"]] == ["A film", "A series · S2 E4"] and d["items"][0]["percent"] == 58
+    assert d["items"][1]["paused"] and d["summary"] == "2 playing"
+
+
+def test_downloads_from_sonarr_and_radarr_with_a_stalled_one():
+    async def queue(r):
+        assert r.headers.get("X-Api-Key") == "k"
+        return web.json_response({"records": [
+            {"title": "Show S01E05", "size": 100, "sizeleft": 28, "timeleft": "00:04:00", "status": "downloading"},
+            {"title": "Show S01E06", "size": 100, "sizeleft": 100, "status": "warning", "trackedDownloadState": "importBlocked"}]})
+
+    async def calendar(r):
+        return web.json_response([{}, {}, {}, {}])
+    routes = [("GET", "/api/v3/queue", queue), ("GET", "/api/v3/calendar", calendar)]
+    d = run_with(routes, lambda base, s: w.fetch_downloads({"sonarr_url": base, "sonarr_key": "k"}, s, {}))
+    assert [i["percent"] for i in d["items"]] == [72, 0] and d["items"][1]["stalled"]
+    assert d["state"] == "needs" and d["summary"] == "1 stalled" and d["upcoming"] == 4
+    with pytest.raises(w.Problem, match="Sonarr, Radarr"):
+        asyncio.run(w.fetch_downloads({}, None, {}))
+
+
+def test_proxmox_shares_the_servers_setup_and_backups_needs_none(app, tmp_path):
+    conf = {"url": "https://pve:8006", "token_id": "logos@pve!home", "secret": "s3cret", "own_certificate": True}
+    out = call(app, [
+        ("admin", "GET", "/api/v2/widgets", None),
+        ("admin", "PUT", "/api/v2/widgets/proxmox", {"fields": conf}),      # set up from the Proxmox widget
+        ("admin", "GET", "/api/v2/widgets", None),
+    ])
+    before = {k["id"]: k for k in out[0][1]["widgets"]}
+    after = {k["id"]: k for k in out[2][1]["widgets"]}
+    assert not before["proxmox"]["set_up"] and before["backups"]["set_up"] and before["proxmox"]["uses"] == "servers"
+    assert [f["key"] for f in before["proxmox"]["fields"]] == ["url", "token_id", "secret", "own_certificate"]
+    assert after["proxmox"]["set_up"] and after["servers"]["set_up"]
+    assert set(json.loads((tmp_path / "widgets.json").read_text())) == {"servers"}
