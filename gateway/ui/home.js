@@ -285,7 +285,7 @@ export async function homeView(root) {
   // A wide screen (Greg, 23 Nov): two columns that each pack up on their own, still in your order
   // (left, right, left…), instead of rows that leave a gap under the shorter widget. Each widget spans
   // as many 4 px grid rows as it is tall; repacked whenever one changes size or the order changes.
-  const wide = matchMedia('(min-width: 1100px)');
+  const wide = matchMedia('(min-width: 820px)');   // two columns from an unfolded foldable up
   const ROW = 4, GAP = 22;
   const pack = () => {
     for (const el of board.children) {
