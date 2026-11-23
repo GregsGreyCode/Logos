@@ -234,6 +234,20 @@ if os.path.exists("/v/config.db"):
 """
 
 
+def load_windows(agents: Mapping[str, Mapping[str, Any]]) -> Dict[str, int]:
+    """Each local model the agents use, and the window to load it with (the largest they ask for):
+    the guard loads it so, before LM Studio would load it by itself at its own default."""
+    out: Dict[str, int] = {}
+    for a in agents.values():
+        m = a.get("model") or {}
+        if m.get("provider") == "lmstudio" and m.get("default"):
+            # as local_models.load_window: load_context_length, never less than context_length
+            w = max(int(m.get("context_length") or 0), int(m.get("load_context_length") or 0))
+            if w:
+                out[str(m["default"])] = max(out.get(str(m["default"]), 0), w)
+    return out
+
+
 def local_server(agents: Mapping[str, Mapping[str, Any]]) -> str:
     """The one local model server the agents behind the gateway share (its ``/v1`` URL)."""
     bases = sorted({local_base_url(a) for a in agents.values()})
@@ -386,7 +400,7 @@ class ModelGateway:
             raise ValueError("no agent behind the gateway has a key yet (run scripts/logos-agent up <name> once)")
         keys_text = self._keys_text()
         image = next((str(a["image"]) for a in agents.values() if a.get("image")), "")
-        guard_url = self.guard_up(local_server(agents), image) if image else None
+        guard_url = self.guard_up(local_server(agents), image, load_windows(agents)) if image else None
         built = build_config(agents, keys, paid_providers(keys_text), guard_url)
         config = json.dumps(built, indent=1, sort_keys=True)
         if self.rt.runner.run(["docker", "volume", "inspect", VOLUME]).returncode != 0:
@@ -428,14 +442,15 @@ class ModelGateway:
         self.wait()
         return True
 
-    def guard_up(self, upstream: str, image: str) -> str:
+    def guard_up(self, upstream: str, image: str, windows: Mapping[str, int] = None) -> str:
         """Run the model guard in front of ``upstream`` and return the URL the gateway should use.
 
         The guard (:mod:`gateway.model_guard`) passes calls through, and answers at once
         with a clear error when the model server is not accepting connections. It runs in
         the agent image, which already has Python, with its one file mounted read-only.
         """
-        stamp = hashlib.sha256((upstream + GUARD_FILE.read_text() + image).encode()).hexdigest()[:16]
+        load = json.dumps(dict(windows or {}), sort_keys=True)
+        stamp = hashlib.sha256((upstream + GUARD_FILE.read_text() + image + load).encode()).hexdigest()[:16]
         names = self.rt.run(["docker", "ps", "--filter", f"name=^{GUARD_CONTAINER}$", "--format", "{{.Names}}"],
                             check=False).split()
         label = self.rt.run(["docker", "inspect", GUARD_CONTAINER, "-f",
@@ -449,6 +464,7 @@ class ModelGateway:
                      "-p", f"{self.bind_address()}:{GUARD_PORT}:{GUARD_PORT}",
                      "-v", f"{GUARD_FILE}:/app/model_guard.py:ro",
                      "-e", f"GUARD_UPSTREAM={upstream.rsplit('/v1', 1)[0]}", "-e", f"GUARD_PORT={GUARD_PORT}",
+                     "-e", f"GUARD_LOAD={load}",                # each model's window (model_guard.Loader)
                      "--entrypoint", "python3", image, "/app/model_guard.py"])
         return url
 

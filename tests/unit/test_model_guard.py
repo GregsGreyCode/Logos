@@ -549,3 +549,121 @@ def test_health_shows_each_streaming_reply_as_numbers_only():
     finally:
         Thinker.delay = 0.0
         g.shutdown(); up.shutdown()
+
+
+# ── the model loaded at its window, before LM Studio loads it by itself (23 Nov) ─────────────
+
+class FakeStudio(BaseHTTPRequestHandler):
+    """LM Studio's model list, load and unload; ``state`` is shared through the server."""
+    def log_message(self, *a):
+        pass
+
+    def _json(self, code, data):
+        body = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        st = self.server.state
+        self._json(200, {"models": [{"key": k, "loaded_instances": [{"id": i, "config": {"context_length": w}} for i, w in v]}
+                                    for k, v in st["loaded"].items()]})
+
+    def do_POST(self):
+        st = self.server.state
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        st["calls"].append((self.path, body))
+        if self.path == "/api/v1/models/load":
+            if st.get("refuse"):
+                return self._json(400, {"error": "insufficient system resources"})
+            time.sleep(0.2)
+            st["loaded"].setdefault(body["model"], []).append((body["model"], body["context_length"]))
+            return self._json(200, {"status": "loaded"})
+        if self.path == "/api/v1/models/unload":
+            for k in st["loaded"]:
+                st["loaded"][k] = [x for x in st["loaded"][k] if x[0] != body["instance_id"]]
+            st["loaded"] = {k: v for k, v in st["loaded"].items() if v}
+            return self._json(200, {"instance_id": body["instance_id"]})
+        self._json(404, {})
+
+
+def studio(loaded=None, refuse=False):
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeStudio)
+    srv.daemon_threads = True
+    srv.state = {"loaded": dict(loaded or {}), "calls": [], "refuse": refuse}
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+QWEN, WIN = "qwen/qwen3.6-35b-a3b", 96512
+
+
+def loader_for(srv, logs=None):
+    return model_guard.Loader("127.0.0.1", srv.server_address[1], {QWEN: WIN}, log=lambda *a, **k: (logs if logs is not None else []).append(a[0]))
+
+
+def test_a_model_that_is_not_loaded_is_loaded_once_at_its_window_however_many_ask():
+    srv = studio()
+    try:
+        ld, out = loader_for(srv), []
+        threads = [threading.Thread(target=lambda: out.append(ld.ensure(QWEN, alone=False))) for _ in range(4)]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        loads = [b for p, b in srv.state["calls"] if p.endswith("/load")]
+        assert loads == [{"model": QWEN, "context_length": WIN, "flash_attention": True, "offload_kv_cache_to_gpu": True}]
+        assert sorted(out) == ["", "", "", "loaded"] and srv.state["loaded"][QWEN] == [(QWEN, WIN)]
+    finally:
+        srv.shutdown()
+
+
+def test_a_copy_at_the_wrong_window_is_replaced_only_when_nothing_else_is_running():
+    srv = studio({QWEN: [(QWEN, 262144)]})
+    try:
+        ld = loader_for(srv)
+        assert ld.ensure(QWEN, alone=False) == "" and srv.state["calls"] == []     # a reply running: left alone
+        assert ld.ensure(QWEN, alone=True) == "reloaded"
+        assert srv.state["loaded"][QWEN] == [(QWEN, WIN)]
+        assert [p for p, _ in srv.state["calls"]] == ["/api/v1/models/unload", "/api/v1/models/load"]
+        assert ld.ensure(QWEN, alone=True) == ""                                     # right now: nothing more
+    finally:
+        srv.shutdown()
+
+
+def test_two_copies_become_one_at_its_window():
+    srv = studio({QWEN: [(QWEN, 262144), (QWEN + ":2", WIN)]})
+    try:
+        assert loader_for(srv).ensure(QWEN, alone=True) == "reloaded"
+        assert srv.state["loaded"][QWEN] == [(QWEN, WIN)]
+    finally:
+        srv.shutdown()
+
+
+def test_other_models_and_a_refused_load_leave_things_as_they_were():
+    srv = studio(refuse=True)
+    try:
+        logs = []
+        ld = loader_for(srv, logs)
+        assert ld.ensure("someone/else", alone=True) == "" and srv.state["calls"] == []
+        assert ld.ensure(QWEN, alone=True) == "failed"
+        assert "model_load_failed" in logs[-1]
+    finally:
+        srv.shutdown()
+
+
+def test_the_windows_come_from_the_agents():
+    from gateway import model_gateway
+    agents = {"greg": {"model": {"provider": "lmstudio", "default": QWEN, "context_length": 65536, "load_context_length": WIN}},
+              "bere": {"model": {"provider": "lmstudio", "default": QWEN, "context_length": 32768}},
+              "paid": {"model": {"provider": "anthropic", "default": "claude-x"}}}
+    assert model_gateway.load_windows(agents) == {QWEN: WIN}
+
+
+def test_the_gateways_name_for_the_model_is_understood_too():
+    srv = studio()
+    try:
+        assert loader_for(srv).ensure("lm-studio/" + QWEN, alone=True) == "loaded"
+        assert srv.state["loaded"][QWEN] == [(QWEN, WIN)]
+    finally:
+        srv.shutdown()
