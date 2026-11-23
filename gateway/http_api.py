@@ -749,10 +749,14 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _dashboard_api.register(app)
     from gateway import push as _push                   # F37: phone notifications; its /_matrix/push route goes first
     _push.register(app, _hermes_home)
+    from gateway import activity as _activity           # what each agent did today (counts only)
+    app["activity"] = _activity.Activity(_hermes_home)
     from gateway import alert_text as _alert_text       # what an agent said, for its phone alert
     _alert_text.register(app)
     from gateway import widgets as _widgets             # F42: homelab widgets on Home
     _widgets.register(app)
+    from gateway import metrics as _metrics             # F42: Prometheus /metrics, off until switched on
+    _metrics.register(app)
     from gateway import matrix_proxy as _matrix_proxy   # M1: the browser's Matrix device reaches the server here
     _matrix_proxy.register(app)
     from gateway import updates as _updates

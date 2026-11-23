@@ -16,9 +16,13 @@ it shows. Whoever manages Logos taps **Set it up**, fills in the sheet, taps **T
 | **Proxmox** (VMs and containers) | whoever manages Logos | Nothing more: it uses the Servers setup. |
 | **Backups** | whoever manages Logos | Nothing: Logos's own nightly export always; Proxmox's backup runs once Servers is set up. Failed, or late (Logos over 26 h, Proxmox over 8 days), needs you. |
 | **Ad blocking** | everyone at home | Pi-hole (6+, an app password) or AdGuard Home (its admin login), and the address. |
-| **Now playing** | everyone at home | Jellyfin's address and an API key (Dashboard › API Keys). |
+| **Now playing** | everyone at home | Jellyfin (an API key) or Plex (an X-Plex-Token), and the address. |
 | **Downloads** | everyone at home | Sonarr and/or Radarr: address and API key (Settings › General). A stalled download needs you. |
+| **Agents today** | everyone at home | Nothing: Logos counts itself. Messages each of your agents sent today and when the last went, and whether the AI computer is on. Never what was said. Also exposed to Prometheus: see [metrics.md](metrics.md). |
 | **Bookmarks** | everyone at home | One per line: `Name, address`. |
+| **Energy** | everyone at home | Which Home Assistant sensors: power now, energy today, and optionally a price and the UPS (battery, status, time left). Uses the Home Assistant account Logos already has for the lights; Test lists sensors when one is not found. On battery needs you. |
+| **Network** | whoever manages Logos | Speedtest Tracker's address and a read-only API token. Under half the usual download speed needs you. |
+| **Cameras** | whoever manages Logos | Frigate's address (and its login, if it asks). Snapshots come through Logos; the browser never talks to Frigate. |
 
 ### A read-only Proxmox token
 
@@ -47,8 +51,7 @@ it shows. Whoever manages Logos taps **Set it up**, fills in the sheet, taps **T
 2. In `gateway/ui/widgets.js`: a `DRAW[id](data)` that returns its elements.
 3. Tests: the fetch against a stand-in (tests/unit/test_widgets.py), and a screen check.
 
-Still to come, in the design's order: energy and UPS (via Home Assistant), network (speed, devices
-online), cameras (Frigate snapshots), Plex beside Jellyfin, and Agents today.
+All the widgets in the design are built.
 
 A kind may share another's setup (`uses="servers"`: Proxmox reads and edits the Servers token), read
 another's alongside its own (`extra={"with": "servers"}`: Backups), or need none (no fields).
