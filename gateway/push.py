@@ -9,10 +9,11 @@ How it fits together (docs/push.md):
    gateway is this dashboard on the Docker bridge (``/_matrix/push/v1/notify``).
 3. When a message should notify the person (Matrix's push rules: their DMs, group messages,
    mentions; never their own), the Matrix server posts here. Logos sends the phone an encrypted Web
-   Push (RFC 8291, aes128gcm; VAPID, RFC 8292) saying who wrote, never what: the content is end-to-end
-   encrypted anyway and is not read, kept or passed on. A push without an event (only the room's
-   unread count, after it was read) sends nothing: the page clears a room's notification when the
-   room is opened.
+   Push (RFC 8291, aes128gcm; VAPID, RFC 8292) saying who wrote. The content is end-to-end encrypted
+   and is not read here. For an agent's reply, the agent itself hands Logos its first words as it
+   sends it (gateway/alert_text.py), and the alert shows them; a person's message stays "New message".
+   A push without an event (only the room's unread count, after it was read) sends nothing: the page
+   clears a room's notification when the room is opened.
 
 The VAPID key is made once and kept, owner-only, beside auth.db. A subscription the push service
 says is gone (404/410) is forgotten and its pushkey returned to Matrix as rejected.
@@ -167,9 +168,11 @@ async def send(session: aiohttp.ClientSession, sub: Dict[str, str], message: Dic
 
 # ── what a Matrix notification becomes ───────────────────────────────────────────────────────
 
-def message_for(notification: Dict[str, Any], private: bool = False) -> Dict[str, Any]:
-    """Who wrote, where, and the chat to open; never the content (it is not read). ``private`` (the
-    person's choice in Settings › Phone alerts): not even who or where, only "Logos · New message"."""
+def message_for(notification: Dict[str, Any], private: bool = False, said: Optional[str] = None) -> Dict[str, Any]:
+    """Who wrote, where, and the chat to open. The content of a Matrix message is encrypted and not
+    read; ``said`` is what an agent told Logos it wrote (alert_text.py), shown instead of "New message".
+    ``private`` (the person's choice in Settings › Phone alerts): not even who or where, only
+    "Logos · New message"."""
     room = str(notification.get("room_id") or "")
     if not notification.get("event_id"):
         return {"clear": room, "unread": int((notification.get("counts") or {}).get("unread") or 0)}
@@ -179,6 +182,8 @@ def message_for(notification: Dict[str, Any], private: bool = False) -> Dict[str
     words = "New message" if unread <= 1 else f"{unread} new messages"
     if private:
         return {"title": "Logos", "body": words, "room": room, "link": f"#/chat/room/{room}", "unread": unread}
+    if said:
+        words = said
     return {"title": room_name or who, "body": f"{who}: {words}" if room_name else words,
             "room": room, "link": f"#/chat/room/{room}", "unread": unread}
 
@@ -297,6 +302,16 @@ async def handle_notify(request: web.Request) -> web.Response:
         return web.json_response({"rejected": []})
     key = store.vapid_key()
     hidden: Dict[str, bool] = {}
+    said: Optional[str] = None
+    ours = [d for d in devices if d.get("app_id") == APP_ID and store.get(str(d.get("pushkey") or ""))]
+    if any(not alerts_private(store.get(str(d["pushkey"]))["username"]) for d in ours):
+        # An agent's reply: its first words, if its plugin handed them over (alert_text.py).
+        from gateway import alert_text
+        kept = request.app.get("alert_text")
+        if kept is not None:
+            said = await alert_text.wait_words(kept, str(notification.get("event_id") or ""),
+                                               str(notification.get("sender") or ""))
+    message = message_for(notification, said=said)
     for d in devices:
         pushkey = str(d.get("pushkey") or "")
         if d.get("app_id") != APP_ID:
