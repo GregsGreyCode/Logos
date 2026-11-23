@@ -14,7 +14,7 @@ TTL = 300.0
 _cache: Dict[str, tuple] = {}
 
 _COUNT = r'''
-cd /v/vault 2>/dev/null || exit 0
+cd /v/vault 2>/dev/null || cd /tmp
 n=0; b=0; old=0; new=0
 for f in $(find files -type f 2>/dev/null); do
   n=$((n+1)); b=$((b+$(stat -c %s "$f"))); t=$(stat -c %Y "$f")
@@ -45,7 +45,7 @@ def read(runtime: Any, agent: str, now: float = 0.0) -> Optional[Dict[str, int]]
     stats = None
     try:
         if runtime.runner.run(["docker", "volume", "inspect", vol]).returncode == 0:
-            p = runtime.runner.run(["docker", "run", "--rm", "--network", "none", "-v", f"{vol}:/v:ro", HELPER, "sh", "-c", _COUNT])
+            p = runtime.runner.run(["docker", "run", "--rm", "--network", "none", "-v", f"{vol}:/v:ro", "--entrypoint", "sh", HELPER, "-c", _COUNT])
             if p.returncode == 0:
                 stats = parse(p.stdout if isinstance(p.stdout, str) else p.stdout.decode(errors="replace"))
     except Exception:

@@ -227,4 +227,14 @@ def test_the_vault_helper_output_is_read_and_cached(monkeypatch):
     vault_stats._cache.clear()
     assert vault_stats.read(rt, "greg", now=1000)["files"] == 2 and vault_stats.read(rt, "greg", now=1100)["files"] == 2
     assert calls == ["volume", "run"]                                  # the second read came from the cache
+    seen = []
+    vault_stats._cache.clear()
+
+    class R2:
+        def run(self, argv):
+            seen.append(argv)
+            return types.SimpleNamespace(returncode=0, stdout="files 0\n")
+    vault_stats.read(types.SimpleNamespace(runner=R2()), "x", now=1)
+    run = seen[1]
+    assert run[run.index("--entrypoint") + 1] == "sh" and "--network" in run and run[run.index("-v") + 1].endswith(":ro")   # alpine/git's entrypoint is git: sh must be asked for
     assert vault_stats.read(rt, "greg", now=1400) is not None and calls.count("run") == 2
