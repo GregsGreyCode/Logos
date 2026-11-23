@@ -11,6 +11,7 @@ import { advisorView } from './advisor.js';
 import { settingsView } from './settings.js';
 import { adoptPrefs } from './prefs.js';
 import * as tips from './tips.js';
+import { clearAll as clearCache, owner as cacheOwner } from './cache.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
 import { h, api, getJSON, working, aiState, labelTables, icon, ICONS } from './util.js';
 import { adopt } from './appearance.js';
@@ -184,6 +185,8 @@ new MutationObserver(() => labelTables(root)).observe(root, { childList: true, s
 
 
 for (const b of document.querySelectorAll('.logout-btn')) b.addEventListener('click', async () => {
+  clearCache();                                   // nothing of yours stays on a shared computer (Greg, 23 Nov)
+  try { localStorage.removeItem('logos-home-last'); } catch (e) { /* fine */ }
   await mx.forget().catch(() => {});
   await api('/auth/logout', { method: 'POST' }).catch(() => {});
   location.href = '/login';
@@ -194,6 +197,7 @@ push.listen();
 try { if (localStorage.getItem('logos.push.pushkey') && push.supported()) push.worker().catch(() => {}); } catch (e) { /* no storage */ }
 
 state.me = await getJSON('/api/v2/me');
+cacheOwner(state.me.username);
 mx.bind(state.me.matrix_id);
 adopt(state.me);
 adoptPrefs(state.me);
