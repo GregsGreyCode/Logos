@@ -195,6 +195,10 @@ def repo(tmp_path):
     mb_plugin.mkdir(parents=True)
     (mb_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (mb_plugin / "plugin.yaml").write_text("name: logos-media-batch\n")
+    at_plugin = tmp_path / "infra" / "agent-plugins" / "logos-alert-text"
+    at_plugin.mkdir(parents=True)
+    (at_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
+    (at_plugin / "plugin.yaml").write_text("name: logos-alert-text\n")
     (jl_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (tmp_path / "souls" / "_shared" / "noticeboard.md").write_text("## The household noticeboard\n")
     (tmp_path / "souls" / "_shared" / "voice.md").write_text("# Voice notes\n")
@@ -980,7 +984,7 @@ network_policies:
             "cron": {"wrap_response": False, "mirror_delivery": True},         # no header; agent sees its own jobs
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
-            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch"]},
+            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text"]},
             "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
@@ -988,10 +992,10 @@ network_policies:
         agent = r.load("alpha")
         agent["session_reset"] = {"mode": "daily", "at_hour": 3}
         cfg = art.yaml.safe_load(r.config_text("alpha", agent))
-        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "hermes-session-reset-policy"]}
+        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "hermes-session-reset-policy"]}
         assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
         agent["session_reset"] = {"mode": "none"}
-        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch"]}
+        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text"]}
 
     def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
         r = rt(repo)
@@ -1023,7 +1027,8 @@ network_policies:
             "plugins/logos-turn-time/__init__.py", "plugins/logos-turn-time/plugin.yaml",
             "plugins/logos-reactions/__init__.py", "plugins/logos-reactions/plugin.yaml",
             "plugins/logos-job-limits/__init__.py", "plugins/logos-job-limits/plugin.yaml",
-            "plugins/logos-media-batch/__init__.py", "plugins/logos-media-batch/plugin.yaml", "SOUL.md"]
+            "plugins/logos-media-batch/__init__.py", "plugins/logos-media-batch/plugin.yaml",
+            "plugins/logos-alert-text/__init__.py", "plugins/logos-alert-text/plugin.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out
