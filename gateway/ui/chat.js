@@ -151,7 +151,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
       h('div', { class: 'connect-card' },
         h('h2', {}, 'Connect this browser to chat here'),
         h('p', {}, 'Connect this device to your chats once, with your chat password and recovery key.'),
-        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Devices')),
+        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Chats & devices')),
       h('section', { 'aria-label': 'Old web chats' }, h('h2', { class: 'label' }, 'Old web chats (read only)'), old)));
     getJSON(`/api/v2/agents/${agent.name}/conversations`).then(({ conversations }) => {
       const since = Date.now() / 1000 - 30 * 86400;

@@ -33,7 +33,7 @@ ok(puts.at(-1).tips_seen.length === 5, 'Skip tips turns them all off');
 await page.reload(); await page.waitForTimeout(2000);
 await page.evaluate(() => { location.hash = '#/noticeboard'; }); await page.waitForTimeout(1500);
 ok(await card.count() === 0, 'after Skip, nowhere shows tips');
-await page.evaluate(() => { location.hash = '#/settings/appearance'; }); await page.waitForTimeout(1500);
+await page.evaluate(() => { location.hash = '#/settings/tips'; }); await page.waitForTimeout(1500);
 await page.getByRole('button', { name: 'Show the tips again' }).tap(); await page.waitForTimeout(300);
 ok(JSON.stringify(puts.at(-1)) === '{"tips_seen":[]}', 'Settings › Show the tips again');
 await page.evaluate(() => { location.hash = '#/home'; }); await page.waitForTimeout(1500);

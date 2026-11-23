@@ -139,7 +139,7 @@ export async function agentsView(root, [agentArg]) {
           const room = pickRoom(c, agent.matrix_id);
           if (!room) throw new Error('no chat with the agent yet');
           await c.sendMessage(room.roomId, { msgtype: 'm.text', body: `Please set up a routine for me (a scheduled job): ${what}` });
-        } catch (err) { msg.textContent = `Not sent: ${err.message}. Connect this device to your chats in Settings › Devices.`; go.disabled = false; return; }
+        } catch (err) { msg.textContent = `Not sent: ${err.message}. Connect this device to your chats in Settings › Chats & devices.`; go.disabled = false; return; }
         msg.textContent = `${agent.display_name} is setting it up… This can take a minute or two; its answer is in your chat too.`;
         // Watch for it: the list grows when the job exists (up to five minutes).
         for (let i = 0; i < 60 && layer.isConnected; i++) {

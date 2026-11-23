@@ -1,22 +1,33 @@
 // Settings (ST1): one screen for everything you set for yourself. Sections on the left (a row of
 // tabs on a phone): Appearance, Your account, Chat, Matrix device, and Updates for whoever
 // manages Logos. Each section is its own address (#/settings/devices…), so it can be linked to.
-import { h, api, getJSON, when, loading, revealable, ask } from './util.js';
+import { h, api, getJSON, when, loading, revealable, ask, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
-import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion, setAnimations } from './appearance.js';
+import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion, setAnimations, LOOKS, current as currentLook } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
 import { reset as resetTips } from './tips.js';
 import { updatesView } from './updates.js';
 import * as push from './push.js';
 
+// F45 (Greg, 23 Nov: "more inspired by Element X's settings"): a list, not a row of tabs. Grouped,
+// each row with its icon and what it is set to now; on a phone a row opens its page (with a back
+// arrow), on a wider screen the list stays on the left beside the page.
 const SECTIONS = [
-  { id: 'appearance', name: 'Look', full: 'Appearance' },
-  { id: 'account', name: 'Account', full: 'Your account' },
-  { id: 'matrix', name: 'Devices', full: 'This device and your chats' },
-  { id: 'notifications', name: 'Phone alerts', full: 'Notifications on this phone' },
-  { id: 'email', name: 'Email', full: 'Your email, for your agent to read' },
-  { id: 'updates', name: 'Updates', admin: true },
+  { id: 'appearance', name: 'Look', full: 'Look', icon: 'palette', group: 'You' },
+  { id: 'notifications', name: 'Phone alerts', full: 'Phone alerts', icon: 'bell', group: 'You' },
+  { id: 'email', name: 'Email', full: 'Email', icon: 'mail', group: 'You' },
+  { id: 'tips', name: 'Tips', full: 'Tips', icon: 'bulb', group: 'You' },
+  { id: 'matrix', name: 'Chats & devices', full: 'Chats & devices', icon: 'shield', group: 'This device' },
+  { id: 'updates', name: 'Updates', full: 'Updates', icon: 'update', group: 'Logos', admin: true },
+  { id: 'account', name: 'Your account', full: 'Your account', icon: 'user', group: null },
 ];
+// Screens of their own, listed here too so a phone reaches them from Settings (admin only).
+const ELSEWHERE = [
+  { href: '#/people', name: 'People', icon: 'people' },
+  { href: '#/models', name: 'Models', icon: 'chip' },
+  { href: '#/advisor', name: 'Claude Advisor', icon: 'advisor' },
+];
+const WIDE = '(min-width: 820px)';
 
 const heading = (text) => h('h2', { class: 'label' }, text);
 
@@ -102,11 +113,15 @@ function appearance() {
         [['hover', 'On hover', 'Shown when you point at a mark (always shown on a phone)'], ['always', 'Always', 'Each mark has its name and mood under it']]
           .map(([v, label, tip]) => h('label', { class: 'appearance-mode', title: tip },
             h('input', { type: 'radio', name: 'names', value: v, checked: names === v, onchange: () => pickNames(v) }), label))), mNote),
-    // F41: the first-visit tips, once more (each screen shows its tips again next time it opens).
-    h('section', { 'aria-label': 'Tips' }, heading('Tips'),
-      h('p', { class: 'when' }, 'Each screen shows a few tips the first time you open it.'),
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => say(tNote, resetTips()) }, 'Show the tips again')), tNote),
   ];
+}
+
+function tips() {
+  const note = savedNote();
+  // F41: the first-visit tips, once more (each screen shows its tips again next time it opens).
+  return [h('section', { 'aria-label': 'Tips' }, heading('Tips'),
+    h('p', { class: 'when' }, 'Each screen shows a few tips the first time you open it.'),
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => say(note, resetTips()) }, 'Show the tips again')), note)];
 }
 
 function account(state) {
@@ -270,8 +285,8 @@ function notifications(state) {
   async function show() {
     if (!state.me.matrix_id) { box.replaceChildren(h('p', { class: 'none' }, 'Chat is not set up on this Logos.')); return; }
     if (!mx.saved()) {
-      box.replaceChildren(h('p', {}, 'Connect this device to your chats first (Settings › Devices): notifications come from them.'),
-        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Devices'));
+      box.replaceChildren(h('p', {}, 'Connect this device to your chats first (Settings › Chats & devices): notifications come from them.'),
+        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Chats & devices'));
       return;
     }
     const st = await push.status().catch(() => 'off');
@@ -283,7 +298,7 @@ function notifications(state) {
       busy(false); show();
     } }, label);
     const words = {
-      on: 'On for this phone. Your agents\' messages, and the people in your groups, arrive as notifications: who wrote, not what (it stays encrypted).',
+      on: 'On for this phone. Your agents\' messages, and the people in your groups, arrive as notifications.',
       off: 'Off for this phone. Turn them on to hear about new messages without opening Logos.',
       blocked: 'Notifications are blocked for this site. Allow them in the browser\'s site settings, then come back.',
       unsupported: 'This browser cannot show notifications. On Android, open Logos from its icon on your home screen (in Chrome).',
@@ -301,7 +316,7 @@ function notifications(state) {
   // or which chat on the lock screen). Messages are end-to-end encrypted: an alert never has their words.
   const choice = getPref('alerts', 'who');
   const cNote = savedNote();
-  const SAYS = { who: 'Shows who wrote, or the group: "Greg\'s agent · New message". Never the words.',
+  const SAYS = { who: 'Shows who wrote, or the group, and for an agent\'s reply its first words: "Household agent · The green bin goes out tonight". A person\'s message says only "New message".',
     private: 'Shows only "Logos · New message", with no name or group on your lock screen.' };
   const says = h('p', { class: 'when' }, SAYS[choice]);
   const privacy = h('section', { 'aria-label': 'What an alert shows' }, heading('What an alert shows'),
@@ -460,23 +475,89 @@ function email(body) {
   return () => { alive = false; clearTimeout(timer); };
 }
 
+// What each row says it is set to now; a promise where it has to be asked for.
+function valueOf(id, state) {
+  if (id === 'appearance') {
+    const { look, mode } = currentLook();
+    const name = (LOOKS.find((l) => l.id === look) || {}).name || look;
+    return `${{ glass: 'Glass', hud: 'HUD', warm: 'Warm' }[look] || name} · ${{ dark: 'Dark', light: 'Light', auto: 'Auto' }[mode] || mode}`;
+  }
+  if (id === 'matrix') return state.me.matrix_id ? (mx.saved() ? 'Connected' : 'Not connected') : '';
+  if (id === 'notifications') return push.status().then((st) => (st === 'on'
+    ? (getPref('alerts', 'who') === 'private' ? 'On · private' : 'On') : { blocked: 'Blocked', unsupported: '' }[st] ?? 'Off'));
+  if (id === 'email') return getJSON('/api/v2/mail').then((d) => (d.mailbox
+    ? ({ gmail: 'Gmail', outlook: 'Outlook' }[d.mailbox.kind] || 'Connected') : 'Not connected'));
+  if (id === 'updates') return getJSON('/api/v2/updates?check=1').then((d) => {
+    const n = ((d.plan || {}).commits || []).length;
+    return n ? `${n} to install` : 'Up to date';
+  });
+  return '';
+}
+
+function row({ href, name, glyph, value, current, cls = '' }) {
+  const val = h('span', { class: 'set-value' });
+  Promise.resolve(value).then((v) => { val.textContent = v || ''; if (/to install|Not connected|Off|Blocked/.test(v || '')) val.classList.add('attention'); })
+    .catch(() => {});
+  return h('a', { href, class: `set-row${cls}`, 'aria-current': current ? 'page' : null },
+    h('span', { class: 'set-icon' }, icon(ICONS[glyph])), h('span', { class: 'set-name' }, name), val,
+    h('span', { class: 'set-chevron' }, icon(ICONS.chevron)));
+}
+
+function index(state, id) {
+  const isAdmin = state.me.role === 'admin';
+  const shown = (g) => SECTIONS.filter((s) => s.group === g && (!s.admin || isAdmin));
+  const shownName = state.me.display_name || state.me.username;
+  const group = (title, rows) => (rows.length ? h('section', { class: 'set-group', 'aria-label': title },
+    h('h2', { class: 'set-group-title' }, title), ...rows) : '');
+  const sectionRow = (s) => row({ href: `#/settings/${s.id}`, name: s.name, glyph: s.icon, value: valueOf(s.id, state), current: s.id === id });
+  return h('nav', { class: 'set-index', 'aria-label': 'Settings' },
+    h('a', { href: '#/settings/account', class: 'set-profile', 'aria-current': id === 'account' ? 'page' : null },
+      h('span', { class: 'set-avatar', 'aria-hidden': 'true' }, (shownName || '?').trim().charAt(0).toUpperCase()),
+      h('span', { class: 'set-who' }, h('strong', {}, shownName),
+        h('span', { class: 'when' }, `${state.me.username} · ${isAdmin ? 'Manages Logos' : 'Member'}`)),
+      h('span', { class: 'set-chevron' }, icon(ICONS.chevron))),
+    group('You', shown('You').map(sectionRow)),
+    group('This device', shown('This device').map(sectionRow)),
+    isAdmin ? group('Logos', [...shown('Logos').map(sectionRow),
+      ...ELSEWHERE.map((e) => row({ href: e.href, name: e.name, glyph: e.icon, cls: ' set-elsewhere' }))]) : '',
+    h('section', { class: 'set-group set-end' },
+      h('button', { type: 'button', class: 'set-row set-danger', onclick: () => { const b = document.querySelector('.logout-btn'); if (b) b.click(); } },
+        h('span', { class: 'set-icon' }, icon(ICONS.logout)), h('span', { class: 'set-name' }, 'Sign out'))));
+}
+
 export async function settingsView(root, [section], state) {
   const isAdmin = state.me.role === 'admin';
-  const shown = SECTIONS.filter((s) => !s.admin || isAdmin);
-  const id = shown.some((s) => s.id === section) ? section : 'appearance';
+  const known = SECTIONS.filter((s) => !s.admin || isAdmin);
+  const wide = matchMedia(WIDE).matches;
+  // A phone opens on the list; a wider screen opens on Look beside it. Old links still land
+  // (#/settings/chat went under Look on 22 Nov).
+  const id = known.some((s) => s.id === section) ? section : (section === 'chat' ? 'appearance' : (wide ? 'appearance' : null));
+  const page = h('div', { class: `page settings${id ? '' : ' at-index'}` });
   const body = h('div', { class: 'settings-body' });
   let done = null;
-  const tabs = h('nav', { class: 'settings-tabs', 'aria-label': 'Settings sections' },
-    shown.map((s) => h('a', { href: `#/settings/${s.id}`, class: 'settings-tab', title: s.full || s.name, 'aria-current': s.id === id ? 'page' : null }, s.name)));
-  root.replaceChildren(h('div', { class: 'page settings' },
-    h('header', {}, h('h1', {}, 'Settings')),
-    h('div', { class: 'settings-layout' }, tabs, body)));
-  // Chat's two options live under Look now (Greg, 22 Nov: a tab for one checkbox on a phone); old links land there.
+  const sec = SECTIONS.find((s) => s.id === id);
+  if (!wide && id) {
+    // The top bar names the page (as on every screen); the back link sits above it, Element X style.
+    const name = document.getElementById('screen-name');
+    if (name) name.textContent = sec.full;
+    page.append(h('header', { class: 'set-head' },
+      h('a', { href: '#/settings', class: 'set-back' }, icon(ICONS.back), h('span', {}, 'Settings'))), body);
+  } else if (!wide) {
+    page.append(index(state, null));
+  } else {
+    page.append(h('header', {}, h('h1', {}, 'Settings')), h('div', { class: 'settings-layout' }, index(state, id), body));
+  }
+  root.replaceChildren(page);
   if (id === 'appearance') body.replaceChildren(...appearance(), ...chat());
   else if (id === 'account') body.replaceChildren(...account(state));
   else if (id === 'matrix') body.replaceChildren(...matrix(state));
   else if (id === 'notifications') body.replaceChildren(...notifications(state));
+  else if (id === 'tips') body.replaceChildren(...tips());
   else if (id === 'email') done = email(body);
   else if (id === 'updates') done = await updatesView(body, [], state, true);
-  return () => { if (done) done(); };
+  // Turning a foldable or resizing across the line: the other layout.
+  const mq = matchMedia(WIDE);
+  const flip = () => { if (root.contains(page)) settingsView(root, [section], state); };
+  mq.addEventListener('change', flip);
+  return () => { mq.removeEventListener('change', flip); if (done) done(); };
 }
