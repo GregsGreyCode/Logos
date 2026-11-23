@@ -522,7 +522,16 @@ function index(state, id) {
       ...ELSEWHERE.map((e) => row({ href: e.href, name: e.name, glyph: e.icon, cls: ' set-elsewhere' }))]) : '',
     h('section', { class: 'set-group set-end' },
       h('button', { type: 'button', class: 'set-row set-danger', onclick: () => { const b = document.querySelector('.logout-btn'); if (b) b.click(); } },
-        h('span', { class: 'set-icon' }, icon(ICONS.logout)), h('span', { class: 'set-name' }, 'Sign out'))));
+        h('span', { class: 'set-icon' }, icon(ICONS.logout)), h('span', { class: 'set-name' }, 'Sign out'))),
+    versionLine(state));
+}
+
+// The end of the list, as in Element X: which Logos this is (the commit, and when it was made).
+function versionLine(state) {
+  const v = state.me.version || {};
+  if (!v.commit) return '';
+  const day = v.date ? new Date(v.date * 1000).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+  return h('p', { class: 'set-version' }, `Logos ${v.commit}${day ? ` · ${day}` : ''}`);
 }
 
 export async function settingsView(root, [section], state) {

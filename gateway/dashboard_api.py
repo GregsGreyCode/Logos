@@ -19,6 +19,7 @@ import os
 import re
 import logging
 import time
+import subprocess
 import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -203,12 +204,30 @@ def matrix_id_of(request: web.Request, username: str) -> Optional[str]:
     return f"@{username}:{name}" if name and username else None
 
 
+_VERSION: Optional[dict] = None
+
+
+def version() -> dict:
+    """What this Logos runs: the commit and its date (Settings shows it at the end of the list, like
+    Element X's version line). Read once per start; every deploy restarts the dashboard."""
+    global _VERSION
+    if _VERSION is None:
+        try:
+            out = subprocess.run(["git", "log", "-1", "--format=%h %ct"], cwd=Path(__file__).resolve().parent.parent,
+                                 capture_output=True, text=True, timeout=5).stdout.split()
+            _VERSION = {"commit": out[0], "date": int(out[1])} if len(out) == 2 else {}
+        except (OSError, subprocess.SubprocessError, ValueError):
+            _VERSION = {}
+    return _VERSION
+
+
 async def handle_me(request: web.Request) -> web.Response:
     user = _user(request)
     look, prefs, colours = await asyncio.gather(asyncio.to_thread(look_of, user["id"]), asyncio.to_thread(prefs_of, user["id"]),
                                                 asyncio.to_thread(agent_colours))
     matrix = await asyncio.to_thread(matrix_id_of, request, user["username"])
-    return web.json_response({**user, "look": look, "prefs": prefs, "agent_colours": colours, "matrix_id": matrix})
+    return web.json_response({**user, "look": look, "prefs": prefs, "agent_colours": colours, "matrix_id": matrix,
+                              "version": version()})
 
 
 async def handle_agent_colour(request: web.Request) -> web.Response:

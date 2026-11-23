@@ -2234,3 +2234,4 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .page.settings.at-index .set-index { gap: 22px; }
 [data-look="hud"] .set-group-title { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
 [data-look="hud"] .set-row[aria-current="page"] { background: transparent; box-shadow: inset 2px 0 0 var(--accent); }
+.set-version { margin: 4px 0 0; text-align: center; color: var(--muted); font-size: var(--t-xs); font-variant-numeric: tabular-nums; }
