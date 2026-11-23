@@ -124,6 +124,7 @@ async function route() {
   if (location.hash.startsWith('#/updates')) { history.replaceState(null, '', '#/settings/updates'); }
   const [, name = 'home', ...rest] = location.hash.split('/');
   const mine = ++visit;
+  try { sessionStorage.setItem(`logos.last.${name}`, location.hash); } catch (e) { /* private window: no memory */ }
   dropSheet();
   tips.hide();
   if (cleanup) { cleanup(); cleanup = null; }
@@ -259,6 +260,17 @@ activity();
 setInterval(activity, 10000);
 document.addEventListener('visibilitychange', activity);
 window.addEventListener('hashchange', route);
+// The menu remembers where you were in each section (Greg, 23 Nov: going back and forth between menus on a desktop was poor):
+// from Brain, Agents takes you back into the chat you left; pressing the section you are already in goes to its start.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('.nav-links a[data-view]');
+  if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  const here = location.hash.split('/')[1] || 'home';
+  if (a.dataset.view === here) return;                              // the same section: its start (the link itself)
+  let last = null;
+  try { last = sessionStorage.getItem(`logos.last.${a.dataset.view}`); } catch (err) { /* none */ }
+  if (last && last.startsWith(`#/${a.dataset.view}/`) && last !== a.getAttribute('href')) { e.preventDefault(); location.hash = last; }
+});
 
 // Phone (Greg, 21 Nov; 22 Nov: smoother): swipe between Home, Agents and Notifications, the first three tabs.
 // The screen follows the finger one to one (and only stretches a little past the first and last tab);

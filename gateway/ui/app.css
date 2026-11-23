@@ -2511,3 +2511,23 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
   /* In the narrow rail Beta sits in the item's corner, so it does not add a row. */
   .nav-links a .beta-tag { position: absolute; top: 2px; right: 0; margin: 0; padding: 0 4px; font-size: 8px; line-height: 1.5; }
 }
+
+/* Desktop (Greg, 23 Nov): an agent's Brain and Routines carry the chat's Chat | Brain | Routines pill, in the title band's right
+   corner (the title stays in the band, as on every screen), so you can go back and forth between its three views. */
+@media (min-width: 600px) {
+  .brain, .agents-page { position: relative; }
+  .brain > .agent-bar, .agents-page > .agent-bar { display: block; position: absolute; top: 17px; right: 24px; z-index: 36; margin: 0; padding: 0; border: 0; width: auto; }
+  .brain > .agent-bar .agent-bar-who, .brain > .agent-bar .agent-bar-name, .brain > .agent-bar .agent-back,
+  .agents-page > .agent-bar .agent-bar-who, .agents-page > .agent-bar .agent-bar-name, .agents-page > .agent-bar .agent-back { display: none; }
+  .brain > .agent-bar .agent-tab, .agents-page > .agent-bar .agent-tab { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
+  .brain > .agent-bar .agent-tab.on, .agents-page > .agent-bar .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
+  .brain .chat-head { padding-right: 150px; }
+}
+
+/* The Terminal HUD menu (Greg, 23 Nov): its wide monospace labels were cut by the unread badge ("Notificatio…" with the
+   highlight through the o). A little narrower, tighter gaps; and a label that has a Beta tag may wrap rather than be cut. */
+@media (min-width: 1100px) {
+  [data-look="hud"] .nav-links a, [data-look="warm"] .nav-links a { gap: 10px; padding-left: 12px; padding-right: 10px; }
+  [data-look="hud"] .nav-links a .nav-label { font-size: 13px; letter-spacing: -0.03em; }
+  .nav-links a:has(.beta-tag) .nav-label { white-space: normal; line-height: 1.15; overflow: visible; text-overflow: clip; }
+}
