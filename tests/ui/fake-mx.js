@@ -37,7 +37,12 @@ const client = {
   on: (name, f) => handlers.set(name, [...(handlers.get(name) || []), f]), off: () => {},
   sendReadReceipt: async (ev) => { (window.__mx.receipts ||= []).push(ev.getId()); }, scrollback: async () => {}, sendTyping: async () => {},
   sendMessage: async (roomId, a, b) => { const r = client.getRoom(roomId); const content = b || a; window.__mx.sent.push([roomId, content]);
-    const ev = new Ev(roomId, 'm.room.message', content, ME); r.events.push(ev); emit('Room.timeline', ev, r); return { event_id: ev.id }; },
+    const ev = new Ev(roomId, 'm.room.message', content, ME); r.events.push(ev);
+    // window.__mx.offline: the send fails and stays in the chat as "not sent" (as matrix-js-sdk's local echo does)
+    if (window.__mx.offline) { ev.status = 'not_sent'; emit('Room.timeline', ev, r); throw new Error('fetch failed: Failed to fetch'); }
+    emit('Room.timeline', ev, r); return { event_id: ev.id }; },
+  resendEvent: async (ev) => { (window.__mx.resent ||= []).push(ev.c.body); if (window.__mx.offline) throw new Error('still offline'); ev.status = null; return {}; },
+  cancelPendingEvent: (ev) => { for (const r of rooms) { const i = r.events.indexOf(ev); if (i >= 0) r.events.splice(i, 1); } (window.__mx.cancelled ||= []).push(ev.c.body); },
   createRoom: async (o) => { window.__mx.created = o; const id = '!new:test'; rooms.push(mkRoom(id, o.name, [ME, ...o.invite], [])); return { room_id: id }; },
   joinRoom: async (id) => { (window.__mx.joined ||= []).push(id); return {}; },
   leave: async (id) => { (window.__mx.left ||= []).push(id); return {}; },

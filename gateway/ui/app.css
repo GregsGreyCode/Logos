@@ -2164,3 +2164,10 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   .budget-row .actions { justify-content: flex-start; flex-wrap: wrap; }
   .card .actions select { width: 100%; }
 }
+/* A message that did not go (Greg, 23 Nov, as Element X): a small red ! on it, "not sent · tap or hold to
+   retry" under it, and Send again / Delete when held or tapped. It also retries by itself. */
+.msg.failed { position: relative; opacity: .75; cursor: pointer; }
+.mx-failed { position: absolute; left: -30px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; border: 0;
+  background: var(--bad); color: #fff; font: 700 13px/22px var(--font-body, inherit); text-align: center; padding: 0; cursor: pointer; }
+.mx-failmenu { align-self: flex-end; }
+.mx-failmenu button { padding: 0 14px; width: auto; font-size: var(--t-sm); }
