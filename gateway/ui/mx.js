@@ -5,6 +5,8 @@
 // to sign in, and for signing out other devices; it is never kept.
 // The session is kept per dashboard account: a browser only ever uses the Matrix session of whoever
 // is signed in to the dashboard (owner, from /api/v2/me), never one a previous person left behind.
+import * as reach from './reach.js';
+
 const LEGACY = 'logos-mx-session';
 let owner = null;
 const key = () => `logos-mx-session:${owner}`;
@@ -24,7 +26,9 @@ const sdk = () => (sdkP ||= import('/ui/vendor/matrix/matrix.js'));
 const base = () => location.origin;
 // The Matrix library sends its requests without cookies; the pass-through needs the dashboard's
 // session cookie (same origin only), alongside the Matrix token in the Authorization header.
-const fetchFn = (url, opts) => fetch(url, { ...opts, credentials: 'same-origin' });
+const fetchFn = (url, opts = {}) => fetch(url, { ...opts, credentials: 'same-origin' }).then(
+  (r) => { reach.ok(); return r; },
+  (e) => { if (!(opts.signal && opts.signal.aborted)) reach.lost(); throw e; });   // reach.js
 
 export function saved() {
   if (!owner) return null;

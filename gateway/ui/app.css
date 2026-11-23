@@ -2176,3 +2176,20 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   background: color-mix(in srgb, var(--attn, #f59e0b) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--attn, #f59e0b) 35%, var(--line)); }
 .mx-asks p { margin: 2px 0 0; color: var(--ink); line-height: 1.4; }
 .mx-asks-label { font-size: var(--t-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--attn, #e0b04a); }
+
+/* Out of reach (reach.js; Greg, 23 Nov: Tailscale off, and the app failed quietly). A card just under
+   the top bar, above everything, that keeps clear of the phone's notch. */
+.reach-bar { position: fixed; z-index: 120; left: 50%; transform: translateX(-50%);
+  top: calc(env(safe-area-inset-top, 0px) + var(--topbar-h) + 8px);
+  width: min(520px, calc(100vw - 32px)); box-sizing: border-box;
+  display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px;
+  background: linear-gradient(var(--warn-bg), var(--warn-bg)), var(--ground); color: var(--warn-ink);   /* solid, whatever the look */ border: 1px solid color-mix(in srgb, var(--warn-ink) 35%, transparent);
+  border-radius: var(--r-card); box-shadow: 0 8px 24px rgba(0, 0, 0, .35); font-size: var(--t-md); line-height: 1.35;
+  animation: reach-in .25s ease-out; }
+.reach-bar > span { flex: 1; min-width: 0; }
+.reach-again { flex: none; min-height: var(--ctl-sm); padding: 0 14px; border-radius: var(--r-pill); cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--warn-ink) 45%, transparent); background: transparent; color: var(--warn-ink);
+  font: 600 var(--t-sm) var(--font-body); }
+.reach-again:disabled { opacity: .6; cursor: default; }
+@keyframes reach-in { from { opacity: 0; transform: translate(-50%, -6px); } }
+@media (prefers-reduced-motion: reduce) { .reach-bar { animation: none; } }

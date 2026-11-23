@@ -31,11 +31,11 @@ class H(http.server.BaseHTTPRequestHandler):
         p = self.path.split('?')[0]
         if p == '/':
             html = open(os.path.join(REPO, 'gateway/html/app.html')).read()
-            html = html.replace('<head>', '<head><script type="importmap">{"imports": {"/ui/mx.js": "/fake/mx.js", "@matrix-org/matrix-sdk-crypto-wasm": "/ui/vendor/matrix/crypto/index.mjs"}}</script>', 1)
+            html = html.replace('<head>', '<head><script type="importmap">{"imports": {"/ui/mx.js": "/ui/__fake-mx.js", "@matrix-org/matrix-sdk-crypto-wasm": "/ui/vendor/matrix/crypto/index.mjs"}}</script>', 1)
             html = re.sub(r'<link[^>]*fonts\.googleapis[^>]*>', '', html)
             return self.send(200, html.encode(), 'text/html')
         if p == '/sw.js': return self.send(200, open(os.path.join(UI, 'sw.js'), 'rb').read(), 'text/javascript')
-        if p == '/fake/mx.js': return self.send(200, open(os.path.join(HERE, 'fake-mx.js'), 'rb').read(), 'text/javascript')
+        if p == "/ui/__fake-mx.js": return self.send(200, open(os.path.join(HERE, 'fake-mx.js'), 'rb').read(), 'text/javascript')
         # A check slows the API by leaving a file named slow here or in $OUT (run.sh's screenshot folder).
         if p.startswith('/api/') and any(os.path.exists(os.path.join(d, 'slow')) for d in (HERE, os.environ.get('OUT', HERE))): import time as _t; _t.sleep(1.2)
         if p in EXTRA: return self.send(200, json.dumps(EXTRA[p]).encode(), 'application/json')
