@@ -7,8 +7,14 @@ import { api, getJSON } from './util.js';
 import * as mx from './mx.js';
 
 const KEY = 'logos.push.pushkey';
+const EP = 'logos.push.endpoint';            // the subscription Logos was given, to notice when Chrome swaps it
 const saved = () => { try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; } };
-const keep = (v) => { try { if (v) localStorage.setItem(KEY, v); else localStorage.removeItem(KEY); } catch (e) { /* kept server side */ } };
+const savedEndpoint = () => { try { return localStorage.getItem(EP) || ''; } catch (e) { return ''; } };
+const keep = (v, endpoint = '') => {
+  try {
+    if (v) { localStorage.setItem(KEY, v); localStorage.setItem(EP, endpoint); } else { localStorage.removeItem(KEY); localStorage.removeItem(EP); }
+  } catch (e) { /* kept server side */ }
+};
 
 export const supported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && window.isSecureContext;
 
@@ -50,17 +56,46 @@ export async function turnOn() {
   } catch (e) {
     throw new Error(`This phone could not sign up for notifications (${e.message}). Try again from the Logos icon on your home screen.`);
   }
+  return register(sub, info);
+}
+
+// Hand a subscription to Logos and register it with the Matrix account; the old one goes.
+async function register(sub, info) {
   const device = deviceName();
   const r = await api('/api/v2/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON(), device } });
   const { pushkey } = await r.json();
   if (!r.ok || !pushkey) throw new Error('Logos could not keep this phone\'s subscription.');
   const c = await mx.get();
   const old = saved();
-  if (old && old !== pushkey) await c.setPusher({ pushkey: old, app_id: info.app_id, kind: null }).catch(() => {});
+  if (old && old !== pushkey) {
+    await c.setPusher({ pushkey: old, app_id: info.app_id, kind: null }).catch(() => {});
+    await api('/api/v2/push/unsubscribe', { method: 'POST', body: { pushkey: old } }).catch(() => {});
+  }
   await c.setPusher({ kind: 'http', app_id: info.app_id, pushkey, app_display_name: 'Logos', device_display_name: device,
     lang: navigator.language || 'en', data: { url: info.gateway_url }, append: true });
-  keep(pushkey);
+  keep(pushkey, sub.endpoint);
   return pushkey;
+}
+
+// Alerts that stopped by themselves (23 Nov: both phones). Chrome sometimes swaps a phone's push
+// subscription for a new one; the old one then answers "gone", Logos forgets it, and nothing told
+// Logos about the new one. Each time the app opens (at most once an hour), a phone that had alerts
+// turned on checks that Logos still has its current subscription, and quietly signs up again if not.
+// A phone where they were turned off, or whose permission was taken away, is left alone.
+let lastHeal = 0;
+export async function heal() {
+  if (!supported() || !saved() || Notification.permission !== 'granted' || !mx.saved()) return 'skip';
+  if (Date.now() - lastHeal < 3600e3) return 'skip';
+  lastHeal = Date.now();
+  const info = await getJSON('/api/v2/push');
+  const reg = await worker();
+  await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  const known = (info.devices || []).some((d) => d.pushkey === saved());
+  if (sub && known && sub.endpoint === savedEndpoint()) return 'fine';
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: fromB64u(info.public_key) });
+  await register(sub, info);
+  return 'renewed';
 }
 
 export async function turnOff() {

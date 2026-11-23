@@ -211,6 +211,10 @@ state.me = await getJSON('/api/v2/me').catch((e) => {
 reach.onBack(() => { badge(); if (!location.hash.startsWith('#/chat')) route(); });
 cacheOwner(state.me.username);
 mx.bind(state.me.matrix_id);
+// Phone alerts that Chrome quietly swapped out are signed up again (push.js heal).
+const healPush = () => push.heal().catch(() => {});
+setTimeout(healPush, 3000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') healPush(); });
 adopt(state.me);
 adoptPrefs(state.me);
 const shown = state.me.display_name || state.me.username;
