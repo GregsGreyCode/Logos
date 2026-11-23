@@ -59,7 +59,7 @@ function appearance() {
       (c) => { setAgentColour(a.name, c); say(cNote, api(`/api/v2/agents/${a.name}/colour`, { method: 'PUT', body: { colour: c } }).then((r) => r.ok)); },
       false)), ...fixed);
   }).catch(() => agentsBox.replaceChildren(h('p', { class: 'none' }, 'The agents could not be listed just now.')));
-  const motion = getPref('motion', 'calm'), names = getPref('names', 'hover');
+  const motion = getPref('motion', 'calm'), names = getPref('names', 'always');
   const pickMotion = (v) => { setMotion(v, null); say(mNote, setPref('motion', v)); };
   const pickNames = (v) => { setMotion(null, v); say(mNote, setPref('names', v)); };
   const anim = getPref('animations', 'on');
