@@ -1,0 +1,33 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const out = process.argv[2];
+// A tiny PNG (1x1), sent as several photos.
+const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+const picker = page.locator('.composer input[type=file]');
+ok(await picker.evaluate((e) => e.multiple), 'the picker takes several files');
+await picker.setInputFiles(['a', 'b', 'c'].map((n) => ({ name: `IMG_${n}.png`, mimeType: 'image/png', buffer: png })));
+await page.waitForTimeout(300);
+ok(await page.locator('.mx-pending-item').count() === 3, 'three thumbnails wait above the box');
+ok(!(await page.locator('.send-btn').evaluate((e) => e.classList.contains('idle'))), 'with files waiting the button sends (not the microphone)');
+await page.locator('.mx-pending-x').nth(1).tap(); await page.waitForTimeout(200);
+ok(await page.locator('.mx-pending-item').count() === 2, '✕ leaves one out');
+await page.screenshot({ path: out + '/photos-tray.png' });
+await page.fill('#chat-input', 'This is the bin rota, remember it');
+await page.locator('.send-btn').click(); await page.waitForTimeout(1200);
+const sent = await page.evaluate(() => window.__mx.sent.map(([, c]) => c.msgtype + ':' + (c.msgtype === 'm.image' ? c.body : c.body.slice(0, 20))));
+ok(JSON.stringify(sent) === JSON.stringify(['m.image:IMG_a.png', 'm.image:IMG_c.png', 'm.text:This is the bin rota']), `the photos, then the message (${sent.join(' | ')})`);
+ok(await page.locator('.mx-pending').isHidden(), 'the strip empties once sent');
+// The thinking line: one sentence that wraps, not columns.
+await page.evaluate(() => { const r = document.querySelector('.mx-thinking'); r.hidden = false; r.querySelector('.mx-thinking-more').textContent = '· 2 min · writing the answer'; });
+await page.waitForTimeout(100);
+const lines = await page.evaluate(() => { const t = document.querySelector('.mx-thinking-text'); const r = t.getBoundingClientRect(); const lh = parseFloat(getComputedStyle(t).lineHeight); return { h: r.height, lh, w: r.width }; });
+ok(lines.h <= lines.lh * 2 + 2 && lines.w > 250, `the thinking line reads as one sentence (${Math.round(lines.h)}px tall, ${Math.round(lines.w)}px wide)`);
+await page.locator('.mx-thinking').screenshot({ path: out + '/thinking-line.png' });
+ok(errs.length === 0, `no page errors ${errs.join('|')}`);
+await browser.close();
