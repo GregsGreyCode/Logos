@@ -2018,3 +2018,7 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 }
 /* The weather says all of it: its lines wrap instead of being cut off with "…". */
 .home-weather-text > span { white-space: normal; overflow: visible; text-overflow: clip; }
+/* The phone's centred title never reaches the buttons beside it (Home's pencil, your initial). */
+@media (max-width: 599px) {
+  .title-centred .screen-name { min-width: 0; margin-inline: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
