@@ -2003,9 +2003,10 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-edit-link.done { width: auto; padding: 0 18px; border-radius: 999px; color: #fff; background: var(--accent); border-color: var(--accent); font: 600 15px/1 var(--font-body, inherit); }
 .home-edit-link.done .icon { stroke-width: 2.4; }
 @media (max-width: 599px) {
-  /* On a phone the pencil is in the top bar, just before your initial. */
-  .topbar .home-edit-link { position: absolute; right: 58px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; }
-  .topbar .home-edit-link.done { width: 34px; height: 34px; padding: 0; }
+  /* On a phone: the pencil at the end of Home, centred; Done floats above the Ask box while arranging. */
+  .home > .home-edit-link { align-self: center; margin: 4px 0 8px; }
+  .home > .home-edit-link.done { position: fixed; z-index: 30; left: 50%; transform: translateX(-50%); height: 44px; padding: 0 28px;
+    bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 84px); box-shadow: 0 8px 24px rgb(0 0 0 / .4); }
 }
 /* While arranging on a wide screen, the title band (with Done) stays at the top as you scroll. */
 @media (min-width: 600px) { .home > .home-head:has(.home-edit-link.done) { position: sticky; top: 0; z-index: 6; background: var(--ground); } }
@@ -2020,7 +2021,7 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-weather-text > span { white-space: normal; overflow: visible; text-overflow: clip; }
 /* The phone's centred title never reaches the buttons beside it (Home's pencil, your initial). */
 @media (max-width: 599px) {
-  .title-centred .screen-name { min-width: 0; margin-inline: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .title-centred .screen-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
 /* ── Large screens (Greg, 23 Nov: "we use so little space at 1080p or 1440p") ────────────────────

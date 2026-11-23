@@ -352,8 +352,7 @@ export async function homeView(root) {
     editing = v;
     board.classList.toggle('editing', v);
     tray.hidden = !v;
-    // On a phone (the top bar) Done is a round ✓ where the pencil was; on a wide screen the word.
-    editBtn.replaceChildren(v ? (matchMedia('(max-width: 599px)').matches ? icon(ICONS.check) : 'Done') : icon(ICONS.pencil));
+    editBtn.replaceChildren(v ? 'Done' : icon(ICONS.pencil));
     editBtn.setAttribute('aria-label', v ? 'Done arranging' : 'Arrange Home'); editBtn.title = v ? 'Done' : 'Arrange Home';
     editBtn.classList.toggle('done', v);
     if (!v) for (const el of board.querySelectorAll('.home-place')) el.remove();
@@ -483,14 +482,12 @@ export async function homeView(root) {
   await load();
   setTimeout(() => { if (alive) warmAgents(); }, 300);   // the Agents tab, ready before the swipe
   timer = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
-  // On a phone the pencil sits in the top bar, beside your initial (no row of its own); on a wide screen
-  // in Home's title band. It moves when the window crosses that width.
+  // On a phone the pencil sits at the end of Home, under the last widget (Greg, 23 Nov: not in the top
+  // bar), and Done floats above the Ask box while arranging; on a wide screen it is in Home's title band.
+  // It moves when the window crosses that width.
   const phone = matchMedia('(max-width: 599px)');
   const dateRow = editBtn.parentElement;
-  const placeEdit = () => {
-    const acct = document.getElementById('acct-btn');
-    if (phone.matches && acct) acct.before(editBtn); else dateRow.append(editBtn);
-  };
+  const placeEdit = () => { if (phone.matches) tray.after(editBtn); else dateRow.append(editBtn); };
   placeEdit();
   phone.addEventListener('change', placeEdit);
   return () => { alive = false; clearInterval(timer); phone.removeEventListener('change', placeEdit); editBtn.remove(); };
