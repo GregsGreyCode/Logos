@@ -19,7 +19,7 @@ BRAIN = HOME / "brain"
 MEMORY = HOME / "memories" / "MEMORY.md"
 DELIM = "\n§\n"                       # hermes's separator between memory entries
 MARK = "BRAIN INDEX"
-FOLDERS = ("people", "projects", "topics")
+FOLDERS = ("people", "projects", "topics", "files")        # files: a note on each photo or document sent (the vault)
 SKIP = re.compile(r"sync-conflict|^\.")
 
 
