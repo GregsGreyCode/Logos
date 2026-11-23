@@ -33,6 +33,8 @@ _PUBLIC_PATHS = frozenset({
     "/chat_logo.png",
     "/favicon.ico",
     "/sw.js",          # F37: the service worker (code, no data); the browser fetches it to update
+    "/api/v2/alert-text",  # an agent's first words for a phone alert; checks the agent's own token
+                           # (gateway/alert_text.py), and the sandbox may reach only this path
     # "/ws/worker" removed — Plan A refactor (TASKS.md #24) deleted the
     # reverse-connection WebSocket endpoint. Workers are now subprocess-
     # per-sandbox, launched via `openshell sandbox exec` from the host

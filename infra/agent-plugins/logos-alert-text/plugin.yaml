@@ -1,0 +1,10 @@
+name: logos-alert-text
+label: Logos phone alerts say what the agent wrote
+kind: standalone
+version: 1.0.0
+description: >
+  As the agent sends a reply in Matrix, it hands Logos the reply's text (Logos shows the first words),
+  so the person's phone alert can say what it is about instead of "New message". The messages are
+  end-to-end encrypted, so Logos could not otherwise know. Kept by Logos in memory for two minutes.
+author: Logos
+provides_hooks: []
