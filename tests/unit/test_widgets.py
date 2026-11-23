@@ -464,3 +464,11 @@ def test_plex_now_playing():
     d = run_with([("GET", "/status/sessions", sessions)],
                  lambda base, s: w.fetch_playing({"product": "plex", "url": base, "api_key": "tok"}, s, {}))
     assert d["items"][0]["title"] == "A series · S2 E4" and d["items"][0]["paused"] and d["items"][0]["percent"] == 21
+
+
+def test_a_widget_may_be_chosen_compact_or_full_by_each_person():
+    from gateway import dashboard_api as d
+    assert d._pref_ok("widget_sizes", {"lists": "full"}) and d._pref_ok("widget_sizes", {})
+    assert not d._pref_ok("widget_sizes", {"lists": "huge"})          # a size it does not have
+    assert not d._pref_ok("widget_sizes", {"weather": "full"})        # a widget with no sizes
+    assert not d._pref_ok("widget_sizes", "full")
