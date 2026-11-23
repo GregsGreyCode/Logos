@@ -1,0 +1,18 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+const puts = []; page.on('request', (r) => { if (r.method() === 'PUT' && r.url().includes('/me/prefs')) puts.push(r.postData()); });
+await page.goto('http://127.0.0.1:8779/#/settings/notifications'); await page.waitForTimeout(2000);
+const sec = page.locator('section[aria-label="What an alert shows"]');
+ok(await sec.isVisible(), 'Phone alerts has "What an alert shows"');
+ok(await sec.locator('input[value="who"]').isChecked(), 'who wrote it, by default');
+await sec.locator('label', { hasText: 'Nothing' }).tap(); await page.waitForTimeout(400);
+ok(puts.some((p) => p === '{"alerts":"private"}'), `choosing Nothing saves it with your login (${puts.at(-1)})`);
+ok((await sec.innerText()).includes('no name or group'), 'and says what it means');
+await sec.screenshot({ path: process.argv[2] + '/alert-privacy.png' });
+ok(errs.length === 0, `no page errors ${errs.join('|')}`);
+await browser.close();

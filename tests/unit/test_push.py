@@ -134,3 +134,21 @@ def test_a_read_room_sends_nothing(app):
     status, out = post(app, {"notification": {"room_id": "!r", "counts": {"unread": 0},
                                               "devices": [{"app_id": "logos.web", "pushkey": good}]}})
     assert status == 200 and out == {"rejected": []} and app["sent"] == []
+
+
+def test_a_private_alert_says_nothing_about_who_or_where():
+    n = {"event_id": "$e", "room_id": "!g", "room_name": "Household Group", "sender_display_name": "Béré", "counts": {"unread": 3}}
+    msg = push.message_for(n, private=True)
+    assert msg["title"] == "Logos" and msg["body"] == "3 new messages" and msg["link"] == "#/chat/room/!g"
+    assert "Béré" not in json.dumps(msg) and "Household" not in json.dumps(msg)
+
+
+def test_notify_uses_each_persons_choice(app, monkeypatch):
+    store = app["push_store"]
+    g = store.add("greg", "https://push.example/1", "p", "a", "Pixel")
+    b = store.add("bere", "https://push.example/2", "p", "a", "Pixel")
+    monkeypatch.setattr(push, "alerts_private", lambda who: who == "bere")
+    post(app, {"notification": {"event_id": "$e", "room_id": "!r", "sender_display_name": "Greg's agent", "counts": {"unread": 1},
+                                "devices": [{"app_id": "logos.web", "pushkey": g}, {"app_id": "logos.web", "pushkey": b}]}})
+    by = dict(app["sent"])
+    assert by[g]["title"] == "Greg's agent" and by[b]["title"] == "Logos"
