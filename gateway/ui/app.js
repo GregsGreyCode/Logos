@@ -175,6 +175,7 @@ async function route() {
   root.replaceChildren(box);
   window.scrollTo(0, 0);                 // every screen starts at its top
   progress(true);
+  state.refresh = null;                  // a screen says here how to refresh itself (pull down); else it is drawn again
   const done = await views[name](box, rest, state);
   if (mine === visit) progress(false);
   if (mine === visit) tips.show(tips.keyFor(name, rest), () => mine === visit);    // F41: first visit only
@@ -336,4 +337,67 @@ function swipeTabs(el) {
   el.addEventListener('touchcancel', () => { if (s) { s = null; reset(true); } }, { passive: true });
 }
 swipeTabs(root);
+
+// Pull down to refresh (Greg, 23 Nov). On a phone, Chrome's own pull-to-refresh reloads the whole app and draws
+// its spinner from the very top of the screen, over the top bar; it is switched off in CSS and this replaces it:
+// at the top of a screen, pulling down brings a round spinner out from *under* the top bar; let go past
+// the line and it spins while that screen asks for fresh data (state.refresh, else the screen is drawn again),
+// then tucks away. Not in a chat (pulling down there scrolls back through the messages), not while something
+// is being arranged, typed or slid.
+const pull = (() => {
+  const dot = h('div', { class: 'ptr', 'aria-hidden': 'true' }, h('div', { class: 'ptr-dot' }, icon(ICONS.refresh)));
+  document.body.append(dot);
+  const TRIGGER = 56, HOLD = 48, MAX = 88;
+  const phone = () => window.matchMedia('(max-width: 599px)').matches;
+  let s = null, running = false, buzzed = false;
+  const show = (px, spin = false, settle = false) => {
+    dot.style.setProperty('--pull', `${px}px`);
+    dot.style.setProperty('--turn', `${px * 4}deg`);
+    dot.classList.toggle('on', px > 0 || spin);
+    dot.classList.toggle('spinning', spin);
+    dot.classList.toggle('settling', settle);
+    // The screen moves down with the finger, so the spinner has its own gap under the top bar.
+    root.style.transition = settle ? 'transform .26s cubic-bezier(.2, .9, .3, 1)' : 'none';
+    root.style.transform = px > 0 ? `translateY(${px}px)` : '';
+    if (!px && settle) setTimeout(() => { root.style.transition = ''; }, 300);
+  };
+  const skip = (t) => !phone() || running || window.scrollY > 0 || document.documentElement.classList.contains('in-agent')
+    || document.documentElement.classList.contains('in-conv') || document.querySelector('.sheet:not([hidden]), .ask-layer, .home-widgets.editing')
+    || (t.closest && t.closest('textarea, input, select, [contenteditable], .topbar, .tabbar, .widget-handle, .home-light, .home-lights-sec, .table-box, pre, .mx-chips'));
+  document.addEventListener('touchstart', (e) => {
+    s = null;
+    if (e.touches.length !== 1 || skip(e.target)) return;
+    s = { x: e.touches[0].clientX, y: e.touches[0].clientY, lock: null, px: 0 };
+    buzzed = false;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!s || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - s.x, dy = e.touches[0].clientY - s.y;
+    if (!s.lock) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      s.lock = dy > 0 && dy > Math.abs(dx) * 1.2 && window.scrollY <= 0 ? 'down' : 'no';
+    }
+    if (s.lock !== 'down') return;
+    s.px = Math.min(MAX, Math.max(0, dy) * 0.55);          // the finger moves further than the spinner (it resists)
+    if (!buzzed && s.px >= TRIGGER) { buzzed = true; try { navigator.vibrate && navigator.vibrate(8); } catch (err) { /* fine */ } }
+    if (buzzed && s.px < TRIGGER) buzzed = false;
+    show(s.px);
+  }, { passive: true });
+  const end = async () => {
+    if (!s) return;
+    const { lock, px } = s; s = null;
+    if (lock !== 'down') return;
+    if (px < TRIGGER) { show(0, false, true); return; }
+    running = true;
+    show(HOLD, true, true);
+    const started = Date.now();
+    try { await (state.refresh ? state.refresh() : route()); } catch (err) { /* the screen shows its own trouble */ }
+    await new Promise((r) => setTimeout(r, Math.max(0, 700 - (Date.now() - started))));   // long enough to be seen
+    show(0, false, true);
+    running = false;
+  };
+  document.addEventListener('touchend', end, { passive: true });
+  document.addEventListener('touchcancel', () => { if (s) { s = null; show(0, false, true); } }, { passive: true });
+  return { show };
+})();
 route();
