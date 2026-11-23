@@ -1911,3 +1911,9 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .mail-add input { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);
   background: transparent; color: var(--ink); font: inherit; }
 .mail-foot { border-top: 1px solid var(--line); padding-top: 10px; display: flex; justify-content: flex-end; }
+
+/* The side menu's count (Greg, 23 Nov): the same round counter as the phone's tab bar, at the row's end. */
+.nav-links .nb-badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid;
+  place-items: center; font-size: 11px; font-weight: 700; line-height: 1; white-space: nowrap;
+  background: var(--attn, var(--accent)); color: var(--attn-ink, #fff); }
+.nav-links .nb-badge[hidden] { display: none; }

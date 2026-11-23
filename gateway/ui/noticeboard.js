@@ -13,11 +13,11 @@ export function outcome(m) {
 }
 
 export function setBadge(n) {
-  // What waits on you plus what is new (notify.js). The side menu says "3 new"; the tab bar, the number.
+  // What waits on you plus what is new (notify.js): the number alone, in the side menu as in the tab bar
+  // (Greg, 23 Nov: "1 new" wrapped into a lump on the desktop).
   for (const el of document.querySelectorAll('.nb-badge')) {
-    const small = el.classList.contains('tab-badge');
-    el.textContent = n ? (small ? String(n) : `${n} new`) : '';
-    if (small) el.setAttribute('aria-label', n ? `${n} new` : '');
+    el.textContent = n ? (n > 99 ? '99+' : String(n)) : '';
+    el.setAttribute('aria-label', n ? `${n} new` : '');
     el.hidden = !n;
   }
 }
