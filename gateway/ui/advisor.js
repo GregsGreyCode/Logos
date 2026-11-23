@@ -100,11 +100,12 @@ export async function advisorView(root) {
     } else parts.push(none('Nothing is waiting for your yes.'));
     if (d.history.length) {
       parts.push(h('h2', { class: 'label' }, 'Log'));
-      parts.push(...d.history.map((r) => h('details', { class: 'card' },
+      // The log as one list, its entries close together (Greg, 23 Nov: they sat a section's gap apart).
+      parts.push(h('div', { class: 'advisor-log' }, ...d.history.map((r) => h('details', { class: 'card' },
         h('summary', {}, `${when(r.created)} · ${r.status}${r.model ? ` · ${r.model}` : ''}${r.cost ? ` · ${usd(r.cost)}` : ''}`),
         h('p', { class: 'when' }, 'Question'), h('blockquote', { class: 'advisor-q' }, r.question),
         r.answer ? [h('p', { class: 'when' }, 'Answer'), h('div', { class: 'advisor-a' }, r.answer)] : null,
-        r.note ? h('p', { class: 'when' }, r.note) : null)));
+        r.note ? h('p', { class: 'when' }, r.note) : null))));
     }
     root.replaceChildren(h('div', { class: 'page' }, parts));
   }
