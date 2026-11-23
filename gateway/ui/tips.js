@@ -22,7 +22,7 @@ export const TIPS = {
   ],
   notifications: [
     { title: 'What happened', text: 'Messages, agent updates and changes, grouped by day. New ones are marked until you tap them: a tap opens it in full and marks it read.' },
-    { title: 'All at once', text: 'Mark all read clears everything new in one go.', at: '.notifications .feed-head' },
+    { title: 'All at once', text: 'Mark all read clears everything new in one go.', at: '.feed-allread' },
   ],
   routines: [
     { title: 'Routines', text: 'Things your agent does on its own, on a schedule: briefings, digests, reminders. Switch any of them off here.' },

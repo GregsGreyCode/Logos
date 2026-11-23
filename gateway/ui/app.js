@@ -23,7 +23,7 @@ const root = document.getElementById('view');
 let slideNext = null;               // 'left' or 'right': the next screen slides in (swipeTabs, below)
 let cleanup = null;
 
-const NAMES = { home: 'Home', chat: 'Chat', brain: 'Brain', noticeboard: 'Notifications', agents: 'Agents', models: 'Models',
+const NAMES = { home: 'Home', chat: 'Agents', brain: 'Brain', noticeboard: 'Notifications', agents: 'Routines', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
 // The screens in the account panel: the initial, top right, lights up on them.
 const IN_ACCOUNT = ['advisor', 'models', 'people', 'settings'];

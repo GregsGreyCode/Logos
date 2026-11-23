@@ -166,8 +166,9 @@ export async function noticeboardView(root) {
   }
 
   root.replaceChildren(h('div', { class: 'page notifications' },
-    h('header', { class: 'visually-hidden' }, h('h1', {}, 'Notifications')),
-    error, h('div', { class: 'feed-head' }, caught, allRead), waitSec, days));
+    // A title like every screen's on a desktop (Greg, 23 Nov), with Mark all read in it; the phone's top bar names it.
+    h('header', { class: 'page-band' }, h('h1', {}, 'Notifications'), allRead),
+    error, h('div', { class: 'feed-head' }, caught), waitSec, days));
   await load();
   timer = setInterval(load, 15000);
   return () => { alive = false; clearInterval(timer); };
