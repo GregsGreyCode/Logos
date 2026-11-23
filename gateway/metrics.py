@@ -116,7 +116,8 @@ def esc(v: Any) -> str:
 
 
 def render(rows: List[dict], model: Optional[bool], needs: Mapping[str, bool], version: Mapping[str, Any],
-           vaults: Optional[Mapping[str, Optional[Mapping[str, int]]]] = None, guard: Optional[Mapping[str, Any]] = None) -> str:
+           vaults: Optional[Mapping[str, Optional[Mapping[str, int]]]] = None, guard: Optional[Mapping[str, Any]] = None,
+           extra: Optional[Mapping[str, Any]] = None) -> str:
     out: List[str] = []
 
     def metric(name: str, kind: str, help_: str, samples: List[tuple]) -> None:
@@ -158,8 +159,67 @@ def render(rows: List[dict], model: Optional[bool], needs: Mapping[str, bool], v
            [({"agent": a, "state": k}, st.get("state_" + k, 0)) for a, st in v.items() for k in ("new", "retry", "done", "failed")])
     metric("logos_vault_oldest_file_timestamp_seconds", "gauge", "When the oldest vault file was kept (0: none).", [({"agent": a}, st.get("oldest", 0)) for a, st in v.items()])
     metric("logos_vault_newest_file_timestamp_seconds", "gauge", "When the newest vault file was kept (0: none).", [({"agent": a}, st.get("newest", 0)) for a, st in v.items()])
+    x = extra or {}
+    jobs = [(a, name, j) for a, js in (x.get("jobs") or {}).items() for name, j in sorted((js or {}).items())]
+    metric("logos_job_last_run_timestamp_seconds", "gauge", "When the agent's scheduled job last ran.", [({"agent": a, "job": n}, j["last"]) for a, n, j in jobs])
+    metric("logos_job_last_success_timestamp_seconds", "gauge", "When the job last finished without error (0: not in the history kept).", [({"agent": a, "job": n}, j["ok"]) for a, n, j in jobs])
+    metric("logos_job_last_run_failed", "gauge", "1 when the job's latest run failed or was missed.", [({"agent": a, "job": n}, j["failed"]) for a, n, j in jobs])
+    metric("logos_job_runs_24h", "gauge", "Runs of the job in the last 24 hours.", [({"agent": a, "job": n}, j["runs24"]) for a, n, j in jobs])
+    metric("logos_job_failures_24h", "gauge", "Of those, runs that failed or were missed.", [({"agent": a, "job": n}, j["fail24"]) for a, n, j in jobs])
+    br = {a: b for a, b in (x.get("brain") or {}).items() if b}
+    metric("logos_brain_pages", "gauge", "Pages in the agent's brain.", [({"agent": a}, b["pages"]) for a, b in br.items()])
+    metric("logos_brain_bytes", "gauge", "Disk the agent's brain uses (with its history).", [({"agent": a}, b.get("kb", 0) * 1024) for a, b in br.items()])
+    metric("logos_brain_last_commit_timestamp_seconds", "gauge", "When the brain was last saved to its history (0: never).", [({"agent": a}, b.get("last_commit", 0)) for a, b in br.items()])
+    metric("logos_brain_sync_conflicts", "gauge", "Conflict copies Syncthing made in the brain (the same page changed in two places).", [({"agent": a}, b.get("conflicts", 0)) for a, b in br.items()])
+    if x.get("sync_up") is not None:
+        metric("logos_sync_up", "gauge", "1 when Syncthing (the brains' sync to phones) answers.", [({}, int(bool(x["sync_up"])))])
+    if x.get("sync_behind") is not None:
+        metric("logos_sync_devices_behind", "gauge", "Phones that lack some of the brain's changes and have been quiet for hours.", [({"agent": a}, n) for a, n in sorted(x["sync_behind"].items())])
+    metric("logos_noticeboard_open_requests", "gauge", "Requests waiting on the agent's person (questions, shared changes, reminders).", [({"agent": a}, n) for a, n in sorted((x.get("requests") or {}).items())])
     metric("logos_widget_needs", "gauge", "1 when the Home widget's last check needs someone.", [({"widget": k}, int(v)) for k, v in sorted(needs.items())])
     return "\n".join(out) + "\n"
+
+
+REQUEST_KINDS = ("question", "shared_change", "reminder")
+
+
+async def gather_extra(app: web.Application, runtime: Any, rows: List[dict]) -> Dict[str, Any]:
+    """Jobs, brains, Syncthing and the noticeboard; whatever cannot be read is left out, never invented."""
+    from gateway import agent_stats, sync_status
+    out: Dict[str, Any] = {"jobs": {}, "brain": {}, "sync_up": None, "sync_behind": None, "requests": {}}
+    if runtime is None:
+        return out
+    for r in rows:
+        out["jobs"][r["agent"]] = await asyncio.to_thread(agent_stats.jobs, runtime, r["agent"])
+        out["brain"][r["agent"]] = await asyncio.to_thread(agent_stats.brain, runtime, r["agent"])
+    try:
+        up = bool(await asyncio.to_thread(sync_status.api_key, runtime.runner))
+        out["sync_up"] = up
+        if up:
+            behind = await asyncio.to_thread(sync_status.behind, runtime.runner, time.time())
+            counts = {r["agent"]: 0 for r in rows}
+            for b in behind:
+                if b.get("agent") in counts:
+                    counts[b["agent"]] += 1
+            out["sync_behind"] = counts
+    except Exception:
+        pass
+    client = app.get("noticeboard_client")
+    if client is None:
+        try:
+            from gateway.noticeboard_client import NoticeboardClient
+            from gateway import dashboard_api
+            client = dashboard_api._board(type("R", (), {"app": app})())
+        except Exception:
+            client = None
+    if client is not None:
+        for r in rows:
+            try:
+                out["requests"][r["agent"]] = sum(1 for m in await client.history(r["agent"])
+                                                  if m.get("kind") in REQUEST_KINDS and m.get("status") == "open" and m.get("to") == r["agent"])
+            except Exception:
+                pass
+    return out
 
 
 async def handle_metrics(request: web.Request) -> web.Response:
@@ -183,7 +243,8 @@ async def handle_metrics(request: web.Request) -> web.Response:
             guard = {"off": bool(h.get("model_server_off")), "off_since": h.get("off_since"), "queue": h.get("queue")}
         except Exception:
             guard = None                                      # no guard (or it is down): no model queue numbers
-    body = render(rows, model, needs, dashboard_api.version(), vaults, guard)
+    extra = await gather_extra(request.app, runtime, rows)
+    body = render(rows, model, needs, dashboard_api.version(), vaults, guard, extra)
     return web.Response(text=body, content_type="text/plain", charset="utf-8", headers={"Cache-Control": "no-store"})
 
 

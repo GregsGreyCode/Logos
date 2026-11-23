@@ -43,10 +43,18 @@ Off, or without the right token, `/metrics` answers 404 as if it were not there.
 | `logos_model_requests_served_total`, `..._queued_total` | requests served since the guard started, and how many had to wait (counters) |
 | `logos_model_wait_seconds_avg`, `..._max` | how long requests waited in the queue since the guard started |
 | `logos_agent_home_bytes{agent}` | disk the agent's home volume uses |
+| `logos_job_last_run_timestamp_seconds{agent,job}`, `..._last_success_...` | when each scheduled job last ran, and last finished without error |
+| `logos_job_last_run_failed{agent,job}` | 1 when the latest run failed or was missed |
+| `logos_job_runs_24h{agent,job}`, `logos_job_failures_24h{agent,job}` | runs in the last day, and those that failed (a script job exits cleanly when the model is off, so those show as successful) |
+| `logos_brain_pages{agent}`, `logos_brain_bytes{agent}` | pages in the brain and the disk it uses (with history) |
+| `logos_brain_last_commit_timestamp_seconds{agent}` | when the brain was last saved to its history |
+| `logos_brain_sync_conflicts{agent}` | Syncthing conflict copies waiting to be sorted out |
+| `logos_sync_up`, `logos_sync_devices_behind{agent}` | Syncthing answers; phones behind on a brain (a count: never a phone's name) |
+| `logos_noticeboard_open_requests{agent}` | requests waiting on the agent's person |
 | `logos_model_up` | 1 when the AI computer answers (absent with no local model) |
 | `logos_widget_needs{widget}` | 1 when a Home widget's last check needs someone |
 
-The vault numbers are counted by a short helper container with no network that mounts the agent's volume read-only; the count is kept five minutes (`gateway/vault_stats.py`), so a frequent scrape costs nothing. Only counts and sizes: never a file name or what is in it.
+The jobs and the brain are read the same way (a helper container with no network and the volume mounted read-only: the agent's own Python for the job history, which it opens immutable, and alpine/git for the brain), and kept five minutes. The vault numbers are counted by a short helper container with no network that mounts the agent's volume read-only; the count is kept five minutes (`gateway/vault_stats.py`), so a frequent scrape costs nothing. Only counts and sizes: never a file name or what is in it.
 
 **Never:** a message, a person's name, a room, a key. Agent names only as labels (`greg`, not "Greg's
 agent"). The widget numbers come from each widget's last copy: `/metrics` never calls a service itself.

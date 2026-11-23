@@ -252,3 +252,52 @@ def test_the_model_queue_and_disk_numbers():
     off = metrics.render(ROWS, False, {}, {}, None, {"off": True, "off_since": 1795470000, "queue": None})
     assert "logos_model_server_off 1" in off and "logos_model_server_off_since_timestamp_seconds 1795470000" in off and "logos_model_requests_waiting" not in off
     assert "logos_model_server_off" not in metrics.render(ROWS, None, {}, {})              # no guard: nothing invented
+
+
+def test_jobs_script_reads_hermes_history_and_the_numbers_render(tmp_path):
+    import json as _j, sqlite3, subprocess, sys as _s, time as _t
+    from datetime import datetime, timezone
+    from gateway import agent_stats
+    (tmp_path / "cron").mkdir()
+    (tmp_path / "cron" / "jobs.json").write_text(_j.dumps({"jobs": [{"id": "a1", "name": "brain-commit"}, {"id": "b2", "name": "morning-briefing"}]}))
+    db = sqlite3.connect(tmp_path / "cron" / "executions.db")
+    db.execute("create table executions (id text, job_id text, status text, finished_at text, claimed_at text)")
+    iso = lambda ago: datetime.fromtimestamp(_t.time() - ago, timezone.utc).isoformat()
+    for i, (job, status, ago) in enumerate([("a1", "completed", 7200), ("a1", "completed", 600), ("b2", "completed", 3000), ("b2", "failed", 100),
+                                            ("b2", "running", 50), ("zz", "completed", 10), ("a1", "completed", 3 * 86400)]):
+        db.execute("insert into executions values (?,?,?,?,?)", (str(i), job, status, iso(ago), iso(ago)))
+    db.commit(); db.close()
+    out = subprocess.run([_s.executable, "-c", agent_stats._JOBS.replace("/opt/data", str(tmp_path))], capture_output=True, text=True, check=True).stdout
+    got = agent_stats.parse_jobs(out)
+    assert set(got) == {"brain-commit", "morning-briefing"}                          # a job that is no longer listed is left out
+    assert got["brain-commit"]["runs24"] == 2 and got["brain-commit"]["failed"] == 0 and got["brain-commit"]["fail24"] == 0
+    assert got["morning-briefing"]["failed"] == 1 and got["morning-briefing"]["fail24"] == 1 and got["morning-briefing"]["runs24"] == 2   # "running" is not counted
+    assert 0 < got["morning-briefing"]["ok"] < got["morning-briefing"]["last"]
+    text = metrics.render(ROWS, None, {}, {}, None, None, {"jobs": {ROWS[0]["agent"]: got}})
+    a = ROWS[0]["agent"]
+    assert f'logos_job_last_run_failed{{agent="{a}",job="morning-briefing"}} 1' in text and f'logos_job_runs_24h{{agent="{a}",job="brain-commit"}} 2' in text
+    assert f'logos_job_failures_24h{{agent="{a}",job="brain-commit"}} 0' in text
+
+
+def test_brain_sync_and_noticeboard_numbers_and_the_helpers_are_read_only():
+    from gateway import agent_stats
+    assert agent_stats.parse_brain("pages 5\nkb 780\nlast_commit 1795460408\nconflicts 0\n") == {"pages": 5, "kb": 780, "last_commit": 1795460408, "conflicts": 0}
+    assert agent_stats.parse_brain("") is None and agent_stats.parse_jobs("nonsense") is None and agent_stats.parse_jobs("[1]") is None
+    a = ROWS[0]["agent"]
+    text = metrics.render(ROWS, None, {}, {}, None, None, {"brain": {a: {"pages": 5, "kb": 780, "last_commit": 100, "conflicts": 2}, "x": None},
+                                                            "sync_up": True, "sync_behind": {a: 1}, "requests": {a: 3}})
+    for line in (f'logos_brain_pages{{agent="{a}"}} 5', f'logos_brain_bytes{{agent="{a}"}} 798720', f'logos_brain_sync_conflicts{{agent="{a}"}} 2',
+                 f'logos_brain_last_commit_timestamp_seconds{{agent="{a}"}} 100', "logos_sync_up 1", f'logos_sync_devices_behind{{agent="{a}"}} 1',
+                 f'logos_noticeboard_open_requests{{agent="{a}"}} 3'):
+        assert line in text, line
+    assert "logos_sync_up" not in metrics.render(ROWS, None, {}, {}) and "logos_job_" not in metrics.render(ROWS, None, {}, {})
+    seen = []
+
+    class R:
+        def run(self, argv):
+            seen.append(argv)
+            return types.SimpleNamespace(returncode=0, stdout="pages 1\n")
+    agent_stats._cache.clear()
+    agent_stats.brain(types.SimpleNamespace(runner=R()), "q", now=1)
+    run = seen[1]
+    assert run[run.index("--entrypoint") + 1] == "sh" and "--network" in run and run[run.index("-v") + 1].endswith(":ro")
