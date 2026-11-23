@@ -289,7 +289,7 @@ export async function homeView(root) {
   const ROW = 4, GAP = 22;
   const pack = () => {
     for (const el of board.children) {
-      if (!wide.matches || board.classList.contains('editing') || el.hidden) { el.style.gridRowEnd = ''; continue; }
+      if (!wide.matches || getComputedStyle(el).display === 'none') { el.style.gridRowEnd = ''; continue; }   // packed while editing too
       el.style.gridRowEnd = `span ${Math.max(1, Math.ceil((el.getBoundingClientRect().height + GAP) / ROW))}`;
     }
   };

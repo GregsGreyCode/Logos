@@ -1694,16 +1694,13 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 /* Home is yours to arrange (Greg, 22 Nov): Edit Home, drag by the handle, ✕ to take off, Add to put back. */
 .home-widgets { display: flex; flex-direction: column; gap: 22px; }
 .home-widget.off { display: none !important; }
-.home-widgets.editing > .home-widget { position: relative; padding: 8px 10px 12px; border: 1px dashed var(--line); border-radius: var(--r-card);
-  background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.home-widgets.editing > .home-widget { position: relative; outline: 1px dashed var(--line); outline-offset: 6px; border-radius: var(--r-card); }
 .home-widgets.editing > .home-widget[hidden]:not(.off) { display: block !important; }
 .home-widgets.editing > .home-widget[hidden]:not(.off) .widget-name::after { content: ' · shows when there is something'; font-weight: 400; color: var(--muted); font-size: var(--t-sm); }
-/* While editing, each widget folds to its bar: Home becomes a short list to put in order. */
-.home-widgets.editing > .home-widget > :not(.widget-bar):not(.home-place) { display: none !important; }
-.home-widgets.editing > .home-widget { padding: 6px 8px; }
-.home-widgets.editing > .home-widget .widget-bar { margin-bottom: 0; }
-.home-widgets.editing { gap: 8px; }
-.home-widget.dragging { z-index: 20; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); border-style: solid; border-color: var(--accent); opacity: .95; }
+/* While editing, each widget keeps what it shows, dimmed and not tappable, so the spacing you arrange
+   is the spacing you get (Greg, 23 Nov: it used to fold to its name). */
+.home-widgets.editing > .home-widget > :not(.widget-bar):not(.home-place) { opacity: .5; pointer-events: none; }
+.home-widget.dragging { z-index: 20; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); outline: 2px solid var(--accent); outline-offset: 6px; background: var(--ground); opacity: .97; }
 .widget-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .widget-handle { touch-action: none; cursor: grab; min-width: 40px; min-height: 40px; font-size: 22px; line-height: 1; border: 0; border-radius: var(--r-ctl);
   background: var(--chip); color: var(--ink); user-select: none; }
@@ -1725,8 +1722,8 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   .home > .home-widgets, .home > .home-tray, .home > .home-edit-link { grid-column: 1 / -1; }
   .home-widgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; row-gap: 22px; align-items: start; }
   /* Packed (home.js): 4 px rows, each widget spanning its height plus the 22 px gap. */
-  .home-widgets:not(.editing) { grid-auto-rows: 4px; row-gap: 0; }
-  .home-widgets:not(.editing) > .home-widget { align-self: start; }
+  .home-widgets { grid-auto-rows: 4px; row-gap: 0; }
+  .home-widgets > .home-widget { align-self: start; }
 }
 .home-coming .home-line .home-time { width: 62px; white-space: nowrap; }
 /* A notification opens in place when tapped (the whole text, and a button to go to it) and is then read. */
@@ -1993,3 +1990,8 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .feed.needs > .feed-item.type-problem { border-left-color: var(--bad); }
 .feed.needs > .feed-item .feed-dot { margin-left: 2px; }
 .notifications .feed-top { gap: 10px; }
+/* Editing (Greg, 23 Nov): the bar names the widget, so its own heading steps aside (Lights keeps All
+   off); the one being moved is solid, so what is under it does not show through. */
+.home-widgets.editing > .home-widget > h2.label, .home-widgets.editing > .home-widget > .home-sec-head > h2.label { display: none; }
+.home-widgets.editing > .home-widget.dragging { background: var(--surface) !important; opacity: 1; }
+.home-widgets.editing > .home-widget.dragging > :not(.widget-bar) { opacity: .8; }
