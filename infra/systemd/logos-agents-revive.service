@@ -1,0 +1,22 @@
+# Bring agents back after this machine restarts (23 Nov: the dev agent stayed down for a day
+# after a restart). OpenShell leaves the sandboxes it had in Error; this recreates those, once,
+# at boot. An agent with no sandbox was taken down on purpose and stays down.
+#
+# Install once (scripts/logos-deploy keeps an installed copy up to date after that):
+#   sed "s#@REPO@#$HOME/logos#g" infra/systemd/logos-agents-revive.service > ~/.config/systemd/user/logos-agents-revive.service
+#   systemctl --user daemon-reload && systemctl --user enable logos-agents-revive
+#   loginctl enable-linger "$USER"        # so it runs at boot without a login
+[Unit]
+Description=Logos: recreate agents left in Error by a restart
+# Not ordered after OpenShell's unit (a cycle at boot: see logos-gateway.service); the command
+# waits up to 10 minutes for OpenShell to answer instead.
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@REPO@/scripts/logos-agent revive
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=default.target
