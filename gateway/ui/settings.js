@@ -147,9 +147,9 @@ function chat() {
     h('input', { type: 'checkbox', checked: getPref(key, false), onchange: (e) => saved(setPref(key, e.target.checked)) }),
     h('span', {}, h('strong', {}, label), h('span', { class: 'when block' }, help)));
   return [
-    h('section', { 'aria-label': 'Conversations panel', class: 'wide-only' }, heading('Chat: conversations panel (desktop)'),
-      h('div', { class: 'settings-choices', role: 'radiogroup', 'aria-label': 'Conversations panel' },
-        choice('slide', 'Slides away', 'Shows for a moment when Chat opens, then tucks into a tab on the right.'),
+    h('section', { 'aria-label': 'Chats panel', class: 'wide-only' }, heading('Chat: chats panel (desktop)'),
+      h('div', { class: 'settings-choices', role: 'radiogroup', 'aria-label': 'Chats panel' },
+        choice('slide', 'Slides away', 'Shows for a moment when a chat opens, then tucks away; the Chats button brings it back.'),
         choice('open', 'Stays open', 'Always beside the conversation; hide it with its own button.'))),
     h('section', { 'aria-label': 'In each conversation' }, heading('Chat: in each conversation'),
       h('div', { class: 'settings-choices' },

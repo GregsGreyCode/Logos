@@ -143,7 +143,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const main = group ? groupLink(agent, group) : `#/chat/${agent.name}`;
   const crumb = threadId ? h('a', { href: main, class: 'mx-crumb' }, 'Main conversation ›') : null;
   const convTitle = h('span', { class: 'mx-conv-title' }, isNew ? 'New conversation' : '');
-  const chipsRow = h('div', { class: 'mx-chips phone-only', role: 'tablist', 'aria-label': 'Conversations' });
+  const chipsRow = h('div', { class: 'mx-chips phone-only', role: 'tablist', 'aria-label': 'Chats' });
   // Send, and hold to record (Greg, 21 Nov): with the box empty the button slowly turns between the arrow
   // and a microphone, so people find out they can hold it down to speak a message.
   const send = h('button', { type: 'submit', class: 'btn send-btn idle', 'aria-label': 'Send, or hold to record a voice message' },
@@ -717,7 +717,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         h('span', { class: 'when' }, agentIds.has(mb.userId) ? 'agent · answers when asked' : mb.membership === 'invite' ? 'invited' : '')))));
   } else sideBits.side.replaceChildren(sideBits.sideTop || '',
     h('a', { href: `${main}/thread/new`, class: 'btn mx-new' }, 'New conversation'),
-    h('h2', { class: 'label' }, 'Conversations'), convList,
+    h('h2', { class: 'label' }, 'Chats'), convList,
     h('h2', { class: 'label' }, 'Archive (old web chats)'), archive,
     ...(sideBits.toggles || []));
   if (!group) getJSON(`/api/v2/agents/${agent.name}/conversations`).then(({ conversations }) => {

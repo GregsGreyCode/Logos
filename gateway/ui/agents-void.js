@@ -323,7 +323,7 @@ export async function voidView(root, agents, others = []) {
 
   // Conversations (Greg, 22 Nov): under the agents, each agent's chat and each group (F36), newest first,
   // with its last message and an unread count, so more groups and agents only add rows.
-  const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Conversations' }, loading('cards', 2));
+  const convBox = h('nav', { class: 'void-groups', 'aria-label': 'Chats' }, loading('cards', 2));
   let convShown = false;
   root.replaceChildren(h('section', { class: 'chat void', 'aria-label': 'Your agents' },
     h('header', { class: 'page-band void-band' }, h('h1', {}, 'Agents')), ask, field, convBox));
@@ -387,7 +387,7 @@ export async function voidView(root, agents, others = []) {
       if (!alive) return;
       const inviter = (r) => { const m = r.getMember(c.getUserId()); const by = m?.events?.member?.getSender?.(); return by ? (r.getMember(by)?.name || by) : ''; };
       if (!convShown) { convShown = true; reveal(convBox); }
-      convBox.replaceChildren(h('div', { class: 'void-convs-head' }, h('h2', { class: 'label' }, 'Conversations'), newBtn),
+      convBox.replaceChildren(h('div', { class: 'void-convs-head' }, h('h2', { class: 'label' }, 'Chats'), newBtn),
         ...invites.map((r) => h('div', { class: 'void-group invite' },
           h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name || 'A group'), h('span', { class: 'void-unread' }, 'Invited')),
           h('span', { class: 'void-group-last' }, inviter(r) ? `${inviter(r)} invited you` : 'You are invited'),
