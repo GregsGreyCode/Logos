@@ -412,14 +412,51 @@ export async function voidView(root, agents, others = []) {
     document.documentElement.classList.remove('sheet-open'); if (g) { if (g.rec) { g.send = false; g.rec.stop(); } finish(); } };
 }
 
-// In a conversation: the current agent's mark and name, then the others, small, one click to switch.
+// In a conversation: the agent switcher (Greg, 23 Nov: "a smoother, cooler switching mechanism that can
+// accommodate more agents"). One button, the agent's mark, its name and ▾, opens a list of every agent with
+// its mark and what it is doing, the one you are in ticked; a search box once there are more than five;
+// arrows and Enter to move and pick, Escape to close, and Ctrl+K (⌘K) opens it from anywhere in a chat.
 export function markBar(agents, current) {
-  const bar = h('div', { class: 'mark-bar', role: 'navigation', 'aria-label': 'Agents' },
-    h('a', { href: '#/chat', class: 'mark-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
-    mark(current, { size: 'small', current: true, href: '#/chat' }),
-    h('a', { href: '#/chat', class: 'mark-name', title: 'All agents' }, current.display_name),
-    h('span', { class: 'mark-others' }, agents.filter((a) => a.name !== current.name)
-      .map((a) => mark(a, { size: 'tiny', href: `#/chat/${a.name}` }))));
+  const list = h('div', { class: 'switch-list', role: 'listbox', 'aria-label': 'Switch agent' });
+  const search = agents.length > 5 ? h('input', { type: 'search', class: 'switch-search', placeholder: 'Find an agent…', 'aria-label': 'Find an agent', autocomplete: 'off' }) : null;
+  const pop = h('div', { class: 'switch-pop', hidden: true },
+    search, list, h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
+  const btn = h('button', { type: 'button', class: 'switch-btn', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+    title: 'Switch agent (Ctrl+K)' },
+  mark(current, { size: 'small', current: true }), h('span', { class: 'mark-name' }, current.display_name),
+  h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
+  const row = (a) => h('a', { href: `#/chat/${a.name}`, class: `switch-item${a.name === current.name ? ' on' : ''}`, role: 'option',
+    'aria-selected': String(a.name === current.name), 'data-agent': a.name },
+  mark(a, { size: 'tiny' }), h('span', { class: 'switch-text' }, h('strong', {}, a.display_name), h('span', { class: 'switch-mood' }, 'Asleep')),
+  a.name === current.name ? h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓') : null);
+  const items = agents.map(row);
+  list.replaceChildren(...items);
+  const shown = () => items.filter((el) => !el.hidden);
+  const open = () => {
+    pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); bar.classList.add('open');
+    if (search) { search.value = ''; filter(); search.focus(); } else (items.find((el) => el.classList.contains('on')) || items[0])?.focus();
+  };
+  const close = (refocus) => { if (pop.hidden) return; pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); bar.classList.remove('open'); if (refocus) btn.focus(); };
+  const filter = () => { const q = (search?.value || '').trim().toLowerCase(); for (const el of items) el.hidden = !!q && !el.textContent.toLowerCase().includes(q); };
+  btn.addEventListener('click', () => (pop.hidden ? open() : close(true)));
+  search?.addEventListener('input', filter);
+  pop.addEventListener('keydown', (e) => {
+    const vis = shown(), i = vis.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); close(true); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); (vis[i + 1] || vis[0])?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); (i <= 0 ? (search || vis[vis.length - 1]) : vis[i - 1])?.focus(); }
+    else if (e.key === 'Enter' && document.activeElement === search && vis[0]) { e.preventDefault(); vis[0].click(); }
+  });
+  pop.addEventListener('click', (e) => { if (e.target.closest('a')) close(false); });
+  const outside = (e) => { if (!bar.isConnected) { document.removeEventListener('pointerdown', outside, true); return; } if (!bar.contains(e.target)) close(false); };
+  document.addEventListener('pointerdown', outside, true);
+  const hotkey = (e) => {
+    if (!bar.isConnected) { document.removeEventListener('keydown', hotkey); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); pop.hidden ? open() : close(true); }
+  };
+  document.addEventListener('keydown', hotkey);
+  const bar = h('div', { class: 'mark-bar switch', role: 'navigation', 'aria-label': 'Agents' },
+    h('a', { href: '#/chat', class: 'mark-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'), btn, pop);
   let alive = true;
   const tick = async () => {
     if (!alive || !bar.isConnected) return;
@@ -430,6 +467,7 @@ export function markBar(agents, current) {
       const a = agents.find((x) => x.name === el.dataset.agent);
       el.setAttribute('aria-label', `${a.display_name}: ${MOODS[mood]}`); el.title = `${a.display_name} · ${MOODS[mood]}`;
     }
+    for (const el of items) { const w = el.querySelector('.switch-mood'); if (w) w.textContent = MOODS[m[el.dataset.agent] || 'asleep']; }
   };
   tick();
   const t = setInterval(() => { if (!bar.isConnected) { alive = false; clearInterval(t); } else tick(); }, 8000);
