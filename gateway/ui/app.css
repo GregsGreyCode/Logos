@@ -2130,3 +2130,24 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .agent-bar-switch[aria-expanded="true"] { background: var(--chip); }
 .agent-bar-switch[aria-expanded="true"] .switch-caret { transform: rotate(180deg); }
 .agent-bar-pop { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 56px); width: auto; z-index: 60; }
+.mx-thinking { align-items: flex-start; }
+.mx-thinking-mark { margin-top: 2px; }
+.mx-thinking-text { flex: 1; min-width: 0; line-height: 1.4; }
+.mx-thinking-text > * { display: inline; }
+/* Several photos waiting to be sent: a strip of thumbnails above the box, each with ✕, and + for more. */
+.mx-pending { flex-wrap: wrap; gap: 8px; }
+.mx-pending-item { position: relative; display: inline-flex; }
+.mx-pending-item .mx-pending-img { width: 64px; height: 64px; border-radius: 10px; object-fit: cover; display: block; }
+.mx-pending-file { display: inline-flex; align-items: center; gap: 6px; max-width: 180px; height: 64px; padding: 0 10px; border: 1px solid var(--line);
+  border-radius: 10px; font-size: var(--t-sm); overflow: hidden; }
+.mx-pending-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-pending-file .icon { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.mx-pending-x { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); font-size: 12px; line-height: 1; cursor: pointer; display: grid; place-items: center; }
+.mx-pending-add { width: 64px; height: 64px; border-radius: 10px; border: 1px dashed var(--line); background: transparent; color: var(--muted);
+  font-size: 24px; cursor: pointer; }
+.mx-pending-hint { flex-basis: 100%; }
+/* The gesture tip at the top of the chat, under its header (Greg, 23 Nov: at the bottom it covered the
+   photos waiting to be sent and the thinking line). */
+.gesture-tip { top: 64px; bottom: auto !important; }
+@media (max-width: 599px) { .in-conv .gesture-tip { top: 116px; } }

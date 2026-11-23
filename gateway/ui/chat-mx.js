@@ -10,7 +10,7 @@
 import { reveal, h, api, getJSON, markdown, when, none, loading, focusIfKeyboard, icon, ICONS } from './util.js';
 import * as mx from './mx.js';
 import { clearRoom } from './push.js';
-import { voiceNote, imageThumb, fileCard, sendFile, fileSize } from './media.js';
+import { voiceNote, imageThumb, fileCard, prepareFile, sendPrepared, fileSize } from './media.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
 import { markBar, agentBar, takeVoice } from './agents-void.js';
@@ -151,38 +151,61 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const note = h('p', { class: 'when mx-note', role: 'status' });
   const thinkingMore = h('span', { class: 'mx-thinking-more' });
   const thinkingRow = h('div', { class: 'mx-thinking', hidden: true },
-    h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }), `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'),
-    thinkingMore);
+    // One sentence that wraps as text (Greg, 23 Nov: as three flex items it split into columns on a phone).
+    h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }),
+    h('span', { class: 'mx-thinking-text' }, `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'), ' ', thinkingMore));
   const modelLine = h('div', { class: 'model-line down', role: 'status', hidden: agent.model_up !== false },
     'AI computer off · your message will queue');
-  // 📎 (Greg, 22 Nov): a photo or a file, shown first with Send and ✕; on a phone the picker offers the camera.
-  const picker = h('input', { type: 'file', class: 'visually-hidden', tabindex: '-1', 'aria-hidden': 'true',
+  // 📎 (Greg, 22 Nov; several at once 23 Nov): photos and files wait in a strip above the box, each with
+  // ✕, while you type the message that goes with them; Send sends them all, then the message, so the agent
+  // answers them together (the logos-media-batch plugin makes them one turn). The phone's picker offers
+  // the camera too.
+  const MAX_FILES = 10;
+  const picker = h('input', { type: 'file', multiple: true, class: 'visually-hidden', tabindex: '-1', 'aria-hidden': 'true',
     accept: 'image/*,video/*,audio/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.md' });
-  const attach = h('button', { type: 'button', class: 'mx-attach', 'aria-label': 'Send a photo or a file', title: 'Send a photo or a file',
+  const attach = h('button', { type: 'button', class: 'mx-attach', 'aria-label': 'Add photos or files', title: 'Add photos or files',
     onclick: () => picker.click() }, icon(ICONS.clip));
   const pending = h('div', { class: 'mx-pending', hidden: true });
+  let files = [];
+  function drawPending() {
+    pending.hidden = !files.length;
+    pending.replaceChildren(...files.map((f, i) => h('span', { class: 'mx-pending-item', title: f.name },
+      f.type.startsWith('image/') ? h('img', { class: 'mx-pending-img', alt: f.name, src: f._url || (f._url = URL.createObjectURL(f)) })
+        : h('span', { class: 'mx-pending-file' }, icon(ICONS.file), h('span', {}, f.name)),
+      h('button', { type: 'button', class: 'mx-pending-x', 'aria-label': `Leave out ${f.name}`, onclick: () => { files.splice(i, 1); drawPending(); idle(); } }, '✕'))),
+    files.length < MAX_FILES ? h('button', { type: 'button', class: 'mx-pending-add', 'aria-label': 'Add more', onclick: () => picker.click() }, '+') : '',
+    h('span', { class: 'when mx-pending-hint' }, `${files.length} ${files.length === 1 ? 'file' : 'files'} · add a message, then send`));
+  }
   picker.addEventListener('change', () => {
-    const f = picker.files && picker.files[0];
+    const picked = [...(picker.files || [])];
     picker.value = '';
-    if (!f) return;
-    if (f.size > 45 * 1024 * 1024) { note.textContent = 'That file is too big to send (45 MB at most).'; return; }
-    const preview = f.type.startsWith('image/') ? h('img', { class: 'mx-pending-img', alt: '', src: URL.createObjectURL(f) }) : h('span', { class: 'mx-file-ico' }, icon(ICONS.file));
-    const go = h('button', { type: 'button', class: 'btn small', onclick: async () => {
-      go.disabled = true; note.textContent = `Sending ${f.name}…`;
-      try {
-        const extra = group ? (() => { const g = groupMessage(''); return { 'm.mentions': g['m.mentions'] || {} }; })() : {};
-        await sendFile(c, room.roomId, f, { threadId: threadId && !isNew ? threadId : null, extra });
-        note.textContent = ''; pending.hidden = true; pending.replaceChildren();
-      } catch (err) { note.textContent = `Not sent: ${err.message}`; go.disabled = false; }
-    } }, 'Send');
-    pending.replaceChildren(preview, h('span', { class: 'mx-pending-text' }, h('strong', {}, f.name), h('span', { class: 'when' }, fileSize(f.size))),
-      go, h('button', { type: 'button', class: 'btn quiet small', 'aria-label': 'Do not send it', onclick: () => { pending.hidden = true; pending.replaceChildren(); } }, '✕'));
-    pending.hidden = false;
+    const big = picked.filter((f) => f.size > 45 * 1024 * 1024);
+    const all = [...files, ...picked.filter((f) => f.size <= 45 * 1024 * 1024)];
+    files = all.slice(0, MAX_FILES);
+    note.textContent = big.length ? `${big.map((f) => f.name).join(', ')}: too big to send (45 MB at most).`
+      : all.length > MAX_FILES ? `${MAX_FILES} at most in one go: the rest were left out.` : '';
+    drawPending(); idle(); input.focus();
   });
-  const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); sendText(input.value); } },
+  // Every file uploaded first, then the messages back to back: the photos, then the text.
+  async function sendFiles(text) {
+    const list = files.slice();
+    files = []; drawPending();
+    note.textContent = list.length === 1 ? `Sending ${list[0].name}…` : `Sending ${list.length} files…`;
+    try {
+      const extra = group ? (() => { const g = groupMessage(text || ''); return { 'm.mentions': g['m.mentions'] || {} }; })() : {};
+      const contents = await Promise.all(list.map((f) => prepareFile(c, room.roomId, f)));
+      const where = threadId && !isNew ? threadId : null;
+      for (const content of contents) await sendPrepared(c, room.roomId, content, { threadId: where, extra });
+      note.textContent = '';
+      for (const f of list) if (f._url) URL.revokeObjectURL(f._url);
+      if (text && text.trim()) await sendText(text);
+    } catch (err) { note.textContent = `Not sent: ${err.message}. They are kept above; send again.`; files = list; drawPending(); idle(); }
+  }
+  const submit = () => (files.length ? sendFiles(input.value) : sendText(input.value));
+  const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); submit(); } },
     h('label', { for: 'chat-input', class: 'sr' }, 'Message'), attach, picker, input, send);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(input.value); } });
-  const idle = () => send.classList.toggle('idle', !input.value.trim());
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+  const idle = () => send.classList.toggle('idle', !input.value.trim() && !files.length);   // files waiting: Send, not the microphone
   input.addEventListener('input', idle);
 
   // Hold the button to record; let go to stop. The words land in the box to check, then Send.

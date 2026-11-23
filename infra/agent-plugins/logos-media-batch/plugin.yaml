@@ -1,0 +1,10 @@
+name: logos-media-batch
+label: Logos photos and their message as one turn
+kind: standalone
+version: 1.0.0
+description: >
+  Several photos (or files) sent together, with the message typed for them, reach the agent as one turn
+  instead of one turn each. hermes already merges quick text messages, and can carry photos in that
+  merge, but sends Matrix photos straight on; this routes them through the merge too.
+author: Logos
+provides_hooks: []

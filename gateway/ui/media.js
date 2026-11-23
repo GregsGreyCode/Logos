@@ -150,7 +150,16 @@ export function fileCard(c, content, kind) {
 
 // Sending a photo or a file (📎): encrypted first when the room is, then uploaded and sent as an
 // m.image / m.video / m.audio / m.file message. ``extra`` adds fields (a group's mentions).
-export async function sendFile(c, roomId, file, { threadId = null, extra = {} } = {}) {
+// In two steps for several at once (Greg, 23 Nov): every file is uploaded first (prepareFile), then the
+// messages go out back to back (sendPrepared), so the agent's merge sees them together with the text.
+export async function sendFile(c, roomId, file, opts = {}) {
+  return sendPrepared(c, roomId, await prepareFile(c, roomId, file), opts);
+}
+export function sendPrepared(c, roomId, content, { threadId = null, extra = {} } = {}) {
+  const msg = { ...content, ...extra };
+  return threadId ? c.sendMessage(roomId, threadId, msg) : c.sendMessage(roomId, msg);
+}
+export async function prepareFile(c, roomId, file) {
   const data = await file.arrayBuffer();
   const room = c.getRoom(roomId);
   const encrypted = !!(room && (room.hasEncryptionStateEvent ? room.hasEncryptionStateEvent() : c.isRoomEncrypted?.(roomId)));
@@ -169,8 +178,7 @@ export async function sendFile(c, roomId, file, { threadId = null, extra = {} } 
     const up = await c.uploadContent(file, { type, name: file.name });
     content = { msgtype, body: file.name, info, url: up.content_uri };
   }
-  Object.assign(content, extra);
-  return threadId ? c.sendMessage(roomId, threadId, content) : c.sendMessage(roomId, content);
+  return content;
 }
 
 export { size as fileSize, icon, ICONS };
