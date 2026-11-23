@@ -118,14 +118,15 @@ def test_a_server_that_stays_off_is_refused_in_plain_words_after_the_wait():
 def test_after_one_full_wait_the_next_requests_are_answered_at_once():
     """hermes retries and probes a failed call; those must not each wait another minute."""
     g = serve(model_guard.make_handler(f"http://127.0.0.1:{free_port()}", connect_timeout=0.1,
-                                       wait=0.6, retry_every=0.1))
+                                       wait=1.5, retry_every=0.1))
     try:
         times = []
         for _ in range(3):
             started = time.monotonic()
             assert post(g.server_address[1]).status == 503
             times.append(time.monotonic() - started)
-        assert times[0] > 0.4 and times[1] < 0.3 and times[2] < 0.3
+        # Wide margins: the suite runs in parallel, and a busy machine slowed a 0.3 s bound (23 Nov).
+        assert times[0] > 1.2 and times[1] < 0.75 and times[2] < 0.75
     finally:
         g.shutdown()
 
