@@ -520,6 +520,23 @@ async def fetch_plex(conf: Mapping[str, Any], session: aiohttp.ClientSession) ->
     return items
 
 
+# ── agents today: what each of your agents did (counts only), from Logos itself ──────────────
+
+async def agents_today(request: web.Request) -> dict:
+    """Per person: the agents they may use. No fetching, so no cache: it is only Logos's own counters."""
+    from gateway import dashboard_api, metrics
+    user = _who(request)
+    visible = await dashboard_api._visible_agents(request, user["username"])
+    rows = await metrics.agent_rows(request.app, visible)
+    model = await metrics.model_up(request.app, visible)
+    return {"state": "ok", "items": rows, "model_up": model, "at": time.time(),
+            "summary": {True: "AI computer on", False: "AI computer off"}.get(model, "")}
+
+
+async def _logos_itself(conf, session, memo):               # never called: agents_today answers instead
+    raise Problem("This one is answered by Logos itself.")
+
+
 # ── bookmarks: the household's services, a tap away ──────────────────────────────────────────
 
 async def fetch_bookmarks(conf: Mapping[str, Any], session: aiohttp.ClientSession, memo: dict) -> dict:
@@ -581,6 +598,8 @@ KINDS: Dict[str, Kind] = {k.id: k for k in [
         Field("radarr_url", "Radarr address", "url", required=False, placeholder="http://192.168.1.40:7878"),
         Field("radarr_key", "Radarr API key", "secret", required=False, help="Each one's Settings › General › API Key."),
     ], fetch_downloads, about="The download queue from Sonarr and Radarr, and what is coming this week. A stalled one needs you."),
+    Kind("agents", "Agents today", "home", 60, [], _logos_itself, extra={"per_user": True},
+         about="What each of your agents did today: messages sent and when the last one went. Counts only, never what was said."),
     Kind("bookmarks", "Bookmarks", "home", 3600, [
         Field("links", "Links", "lines", placeholder="Proxmox, https://192.168.1.10:8006\nHome Assistant, http://192.168.1.20:8123",
               help="One per line: a name, a comma, then its address."),
@@ -766,6 +785,8 @@ async def handle_list(request: web.Request) -> web.Response:
 async def handle_get(request: web.Request) -> web.Response:
     """GET /api/v2/widgets/{kind} — its numbers (fetched at most once per refresh)."""
     kind = _kind_for(request)
+    if kind.extra.get("per_user"):
+        return web.json_response(await agents_today(request))
     return web.json_response(await request.app["widgets"].get(kind, force=bool(request.query.get("fresh"))))
 
 

@@ -154,6 +154,9 @@ async def handle_put(request: "web.Request") -> "web.Response":
         return web.json_response({"error": "forbidden"}, status=403)
     if not event_id.startswith("$") or len(event_id) > 255:
         return web.json_response({"error": "bad_request"}, status=400)
+    activity = request.app.get("activity")
+    if activity is not None:
+        activity.record(agent, event_id)                  # a message sent: counted, never its text
     words = shorten(text[:4000])
     if words:
         request.app["alert_text"].put(event_id, agent, words)
