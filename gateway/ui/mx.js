@@ -62,9 +62,31 @@ export async function get() {
     const c = await make(s);
     await new Promise((ok) => { c.once(m.ClientEvent.Sync, () => ok()); c.startClient({ initialSyncLimit: 20 }); });
     client = c;
+    watch(c, m);
     return c;
   })().catch((e) => { startP = null; throw e; });
   return startP;
+}
+
+// A sync that stopped by itself (23 Nov: after a dashboard restart the library caught up once, then
+// never asked again, so Greg's message stayed "sending…" and the reply never showed). While the app
+// is on screen, a working sync finishes at least every 30 s. Stalled for 75 s: ask the library to
+// retry now. Still stalled 75 s later: reload the page (a restart of the client itself would stop its
+// encryption), unless something is being typed, or the server is out of reach (reach.js says so).
+export const SYNC_STALL_MS = 75000;
+export function watch(c, m) {
+  let lastSync = Date.now(), visibleSince = Date.now(), nudged = 0;
+  const OK = new Set(['PREPARED', 'SYNCING', 'CATCHUP']);
+  c.on(m.ClientEvent.Sync, (state) => { if (OK.has(String(state))) { lastSync = Date.now(); nudged = 0; } });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') visibleSince = Date.now(); });
+  const typing = () => [...document.querySelectorAll('textarea, input[type="text"]')].some((el) => el.value && el.value.trim());
+  setInterval(() => {
+    if (document.visibilityState !== 'visible' || reach.isDown() || (client && client !== c)) return;
+    const stalled = Date.now() - Math.max(lastSync, visibleSince);
+    if (stalled < SYNC_STALL_MS) return;
+    if (!nudged) { nudged = Date.now(); try { c.retryImmediately(); } catch (e) { /* reloaded below if it stays stuck */ } return; }
+    if (Date.now() - nudged >= SYNC_STALL_MS && !typing()) location.reload();
+  }, 15000);
 }
 
 // Step 1: sign in with the Matrix password (used once) and become a new device.
