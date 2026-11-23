@@ -7,6 +7,8 @@ Usage:
   scripts/logos-agent status [name]   show sandbox phase
   scripts/logos-agent exec <name> -- <cmd...>   run a command inside the sandbox
   scripts/logos-agent policy <name>   print the path of the policy the sandbox is created with
+  scripts/logos-agent revive          recreate agents left in Error by a restart of this machine
+                                      (run at boot by infra/systemd/logos-agents-revive.service)
 
 Each agent has two labelled Docker volumes (docs/adr/0001):
   logos-home-<name>  -> /opt/data        hermes home (config, SOUL.md, memories, sessions)
@@ -49,6 +51,9 @@ def main(argv):
                     continue        # an identity only (see agents/bench-peer.yaml)
                 print(f"{n}: {rt.phase(n)}")
             return 0
+        if cmd == "revive":
+            done = rt.revive()
+            print(f"revive: {', '.join(done) if done else 'nothing to do'}"); return 0
         if cmd == "policy" and name:
             print(rt.policy_path(name, rt.load(name))); return 0
         if cmd == "exec" and name and "--" in argv:

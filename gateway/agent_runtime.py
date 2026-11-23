@@ -878,6 +878,32 @@ class AgentRuntime:
     def phase(self, name: str) -> str:
         return self.phases().get(name, MISSING)
 
+    def revive(self, wait_s: float = 600) -> list:
+        """After this machine restarts, OpenShell leaves the sandboxes it had in Error, and they
+        stayed down until someone ran `up` (the dev agent from 22 Nov's restart until 23 Nov).
+        Waits for OpenShell to answer, then recreates each agent whose sandbox is in Error.
+        An agent with no sandbox was taken down on purpose and stays down. Returns the names."""
+        for _ in range(max(1, int(wait_s // 10))):
+            out = self.run(["openshell", "sandbox", "list"], check=False)
+            phases = parse_phases(out)
+            if phases.get("NAME") == "PHASE" or "no sandboxes" in (out or "").lower():
+                break                       # its list, not an error saying it is not up yet
+            self.runner.sleep(10)
+        else:
+            print("revive: OpenShell did not answer; nothing done")
+            return []
+        revived = []
+        for name in self.defined():
+            if self.load(name).get("sandbox") is False or phases.get(name) != "Error":
+                continue
+            print(f"revive: {name} was in Error after a restart; recreating it", flush=True)
+            try:
+                if self.up(name) == 0:
+                    revived.append(name)
+            except AgentRuntimeError as e:
+                print(f"revive: {name}: {e}", flush=True)
+        return revived
+
     def policy_path(self, name: str, agent: Mapping[str, Any]) -> Path:
         """The policy file to create the sandbox with.
 

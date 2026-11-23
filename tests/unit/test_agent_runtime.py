@@ -1345,3 +1345,27 @@ def test_a_routine_change_puts_back_only_the_routine_jobs(repo, monkeypatch):
     assert any("--name morning-briefing " in s and '"45 6 * * 1-5"' in s for s in created)
     assert any("--name weekly-digest " in s and '"0 19 * * 5"' in s for s in created)
     assert not any("brain-commit" in s or "noticeboard" in s for s in created)
+
+
+class TestRevive:
+    """After a restart OpenShell leaves sandboxes in Error; revive recreates those only (23 Nov)."""
+
+    def test_an_agent_in_error_is_recreated(self, repo, capsys):
+        runner = FakeRunner("NAME  CREATED  PHASE\nalpha  openshell  then  \x1b[31mError\x1b[0m\n",
+                            volumes=["logos-home-alpha", "logos-brain-alpha"])
+        assert rt(repo, runner).revive() == ["alpha"]
+        kinds = [c[2] for c in runner.calls if c[:2] == ["openshell", "sandbox"] and c[2] in ("delete", "create")]
+        assert kinds == ["delete", "create"]
+
+    def test_ready_and_stopped_agents_are_left_alone(self, repo):
+        for listing in ("NAME  CREATED  PHASE\nalpha  openshell  then  Ready\n",      # running
+                        "NAME  CREATED  PHASE\n"):                                    # taken down on purpose
+            runner = FakeRunner(listing)
+            assert rt(repo, runner).revive() == []
+            assert runner.matching("openshell", "sandbox", "create") == []
+
+    def test_waits_for_openshell_then_gives_up_without_touching_anything(self, repo, capsys):
+        runner = FakeRunner("Error: could not connect to the gateway\n")
+        assert rt(repo, runner).revive(wait_s=60) == []
+        assert runner.slept == 60 and runner.matching("openshell", "sandbox", "create") == []
+        assert "did not answer" in capsys.readouterr().out
