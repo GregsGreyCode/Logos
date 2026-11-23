@@ -138,8 +138,10 @@ async function route() {
   document.documentElement.classList.toggle('in-agent', (name === 'chat' && !!rest[0]) || name === 'brain' || (name === 'agents' && !!rest[0]));
   // The top bar's middle (Greg, 21-23 Nov): Home's date, and on the other two tabs their name, centred,
   // between the logo and your initial. Inside an agent its own bar takes over.
+  // Every other screen too (Greg, 23 Nov: "Settings" sat further in, behind a divider, than the others).
+  const inAgent = (name === 'chat' && !!rest[0]) || name === 'brain' || (name === 'agents' && !!rest[0]);
   const centred = name === 'home' ? new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })
-    : name === 'chat' && !rest[0] ? 'Agents' : name === 'noticeboard' ? 'Notifications' : null;
+    : name === 'chat' && !rest[0] ? 'Agents' : name === 'noticeboard' ? 'Notifications' : !inAgent && NAMES[name] ? NAMES[name] : null;
   document.getElementById('screen-name').textContent = centred !== null ? centred : tabbed ? '' : (NAMES[name] || '');
   document.documentElement.classList.toggle('on-home', name === 'home');
   document.documentElement.classList.toggle('title-centred', centred !== null);
