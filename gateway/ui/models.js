@@ -1,6 +1,7 @@
 // Models screen: is everything that answers up, who answers each agent right now, and what
 // the paid fallbacks have cost this month. All figures come from the model gateway's records.
 import { h, getJSON, api, none, loading, modelName, ask } from './util.js';
+const PROVIDER_NAMES = { anthropic: 'Claude Advisor (Anthropic)', openrouter: 'OpenRouter', openai: 'OpenAI' };
 
 const NS = 'http://www.w3.org/2000/svg';
 const svg = (tag, attrs = {}, ...kids) => {
@@ -315,15 +316,19 @@ export async function modelsView(root) {
               h('p', { class: 'when' }, `of ${usd(d.total.limit_usd)} in limits`)),
             h('div', { class: 'card tile' }, h('p', { class: 'when' }, 'Projected month end'),
               h('div', { class: 'figure' }, usd(d.total.projected_usd))),
-            d.providers.map((p) => h('div', { class: 'card tile' }, h('p', { class: 'when' }, p.kind === 'local' ? 'Local model' : p.provider),
+            // Names people know, not provider ids ("anthropic" is the Claude Advisor's spend, Greg 23 Nov).
+            d.providers.map((p) => h('div', { class: 'card tile' }, h('p', { class: 'when' }, p.kind === 'local' ? 'Local model' : PROVIDER_NAMES[p.provider] || p.provider),
               h('div', { class: 'figure' }, p.kind === 'local' ? 'Free' : usd(p.usd)),
               h('p', { class: 'when' }, `${count(p.requests)} requests`))))),
         h('section', { 'aria-label': 'Over time' },
           h('div', { class: 'cards charts' },
             h('div', { class: 'card' }, h('h2', {}, 'Requests per day'),
               columns(d.daily, requestSeries, { label: 'Requests per day over the last 30 days, local and paid' })),
-            h('div', { class: 'card' }, h('h2', {}, 'Paid spend per day'),
-              columns(d.daily, [{ key: 'usd', label: 'Spend', cls: 's2' }], { money: true, label: 'Paid spend per day over the last 30 days' }))),
+            // An empty chart when nothing was paid says less than one line (Greg, 23 Nov).
+            (d.daily || []).some((x) => Number(x.usd) > 0)
+              ? h('div', { class: 'card' }, h('h2', {}, 'Paid spend per day'),
+                columns(d.daily, [{ key: 'usd', label: 'Spend', cls: 's2' }], { money: true, label: 'Paid spend per day over the last 30 days' }))
+              : h('div', { class: 'card' }, h('h2', {}, 'Paid spend per day'), h('p', { class: 'when' }, 'Nothing paid in the last 30 days.'))),
           toggle, table));
     }
     root.replaceChildren(h('div', { class: 'page' }, sections));
