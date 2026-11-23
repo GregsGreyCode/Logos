@@ -417,6 +417,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const ACK = new Set(['✅', '✔️', '👀']);
   const unfolded = new Set();              // long posts opened with Show all (kept across redraws)
 
+  let latestShown = null;
+  // The questions in a reply: its sentences that end in "?" (markdown stripped), the last three.
+  function questionsIn(text) {
+    const plain = String(text).replace(/```[\s\S]*?```/g, ' ').replace(/[*_`#>|]/g, '').replace(/\[(.*?)\]\([^)]*\)/g, '$1');
+    const found = plain.split(/\n+/).flatMap((line) => line.match(/[^.!?]*\?/g) || []).map((q) => q.replace(/^[\s\-•\d.)]+/, '').trim())
+      .filter((q) => q.length > 8 && q.length < 300);
+    return [...new Set(found)].slice(-3);
+  }
   function bubbleFor(ev, edits, reactions, inMain, showTime = true, showName = false) {
     const mine = ev.getSender() === me;
     const fromAgent = agentIds.has(ev.getSender());
@@ -458,8 +466,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const canReact = ev.getId() && !ev.getId().startsWith('~') && !(ev.isDecryptionFailure && ev.isDecryptionFailure());
     const bubble = h('div', { class: `msg ${mine ? 'user' : 'assistant'}${mine || fromAgent ? '' : ' person'}` }, ...body);
     const text = String(content.body || '');
-    const long = !mine && (text.length > 700 || text.split('\n').length > 12);
-    if (long && !unfolded.has(ev.getId())) bubble.classList.add('folded');
+    // Long replies fold, but not the newest one while it is the last thing said and under 10 minutes old
+    // (Greg, 23 Nov: a question at the end of a long answer was hidden while it waited on him).
+    const fresh = ev === latestShown && Date.now() - ev.getTs() < 10 * 60000;
+    const long = !mine && !fresh && (text.length > 700 || text.split('\n').length > 12);
+    const folded = long && !unfolded.has(ev.getId());
+    if (folded) bubble.classList.add('folded');
+    // A folded message that asks something shows its question under the fold, so it is never missed.
+    const asks = folded ? questionsIn(text) : [];
     const turn = h('div', { class: `mx-turn ${mine ? 'me' : 'agent'}${showTime ? '' : ' grouped'}` },
       showName ? h('span', { class: `mx-sender${fromAgent ? ' bot' : ''}` }, nameOf(ev.getSender())) : null,
       bubble,
@@ -467,6 +481,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         if (unfolded.has(ev.getId())) unfolded.delete(ev.getId()); else unfolded.add(ev.getId());
         draw(false);
       } }, unfolded.has(ev.getId()) ? 'Show less' : 'Show all') : null,
+      asks.length ? h('div', { class: 'mx-asks', role: 'note' }, h('span', { class: 'mx-asks-label' }, asks.length > 1 ? 'It asks you' : 'It asks you'),
+        ...asks.map((q) => h('p', {}, q))) : null,
       chips.length ? h('div', { class: 'mx-reactions' }, chips.map(([k, r]) => h('button', {
         type: 'button', class: `chip mx-react${r.mine ? ' mine' : ''}`, 'aria-pressed': String(!!r.mine),
         title: r.mine ? 'Take your reaction back' : 'React with this too', onclick: () => react(ev, k, r.mine),
@@ -628,6 +644,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const older = h('button', { type: 'button', class: 'linkish mx-older', onclick: async (e) => {
       e.target.textContent = 'Loading…'; await c.scrollback(room, 30); draw(false);
     } }, 'Earlier messages');
+    latestShown = shown[shown.length - 1] || null;
     log.replaceChildren(...(threadId ? [] : [older]), ...(shown.length ? shown.map((ev, i) => {
       // The time shows at the end of a run: the next message is from someone else, or 5+ minutes later.
       const next = shown[i + 1];

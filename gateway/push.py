@@ -167,8 +167,9 @@ async def send(session: aiohttp.ClientSession, sub: Dict[str, str], message: Dic
 
 # ── what a Matrix notification becomes ───────────────────────────────────────────────────────
 
-def message_for(notification: Dict[str, Any]) -> Dict[str, Any]:
-    """Who wrote, where, and the chat to open; never the content (it is not read)."""
+def message_for(notification: Dict[str, Any], private: bool = False) -> Dict[str, Any]:
+    """Who wrote, where, and the chat to open; never the content (it is not read). ``private`` (the
+    person's choice in Settings › Phone alerts): not even who or where, only "Logos · New message"."""
     room = str(notification.get("room_id") or "")
     if not notification.get("event_id"):
         return {"clear": room, "unread": int((notification.get("counts") or {}).get("unread") or 0)}
@@ -176,8 +177,22 @@ def message_for(notification: Dict[str, Any]) -> Dict[str, Any]:
     room_name = str(notification.get("room_name") or "")
     unread = int((notification.get("counts") or {}).get("unread") or 0)
     words = "New message" if unread <= 1 else f"{unread} new messages"
+    if private:
+        return {"title": "Logos", "body": words, "room": room, "link": f"#/chat/room/{room}", "unread": unread}
     return {"title": room_name or who, "body": f"{who}: {words}" if room_name else words,
             "room": room, "link": f"#/chat/room/{room}", "unread": unread}
+
+
+def alerts_private(username: str) -> bool:
+    """The person chose "Nothing but New message" for their phone alerts (prefs.alerts == "private")."""
+    try:
+        from gateway.auth import db as auth_db
+        from gateway.dashboard_api import prefs_of
+        user = auth_db.get_user_by_username(username) if username else None
+        return bool(user) and prefs_of(str(user["id"])).get("alerts") == "private"
+    except Exception:                                    # pragma: no cover - a lookup that fails keeps the default
+        logger.warning("push: could not read %s's alert choice", username, exc_info=True)
+        return False
 
 
 def trusted(remote: Optional[str]) -> bool:
@@ -281,6 +296,7 @@ async def handle_notify(request: web.Request) -> web.Response:
         # nothing, so none is sent: the page takes the room's notification away when it is opened.
         return web.json_response({"rejected": []})
     key = store.vapid_key()
+    hidden: Dict[str, bool] = {}
     for d in devices:
         pushkey = str(d.get("pushkey") or "")
         if d.get("app_id") != APP_ID:
@@ -289,7 +305,10 @@ async def handle_notify(request: web.Request) -> web.Response:
         if not sub:
             rejected.append(pushkey)
             continue
-        status = await send(request.app["push_session"], sub, message, key)
+        who = sub.get("username") or ""
+        if who not in hidden:
+            hidden[who] = alerts_private(who)
+        status = await send(request.app["push_session"], sub, message_for(notification, True) if hidden[who] else message, key)
         if status in (404, 410):
             store.remove(pushkey)
             rejected.append(pushkey)

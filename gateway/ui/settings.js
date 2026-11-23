@@ -297,7 +297,20 @@ function notifications(state) {
       msg);
   }
   show();
-  return [h('section', { 'aria-label': 'Phone alerts' }, heading('Phone alerts'), box)];
+  // What an alert shows (Greg, 23 Nov): who wrote it, or nothing but "Logos · New message" (nothing about who
+  // or which chat on the lock screen). Messages are end-to-end encrypted: an alert never has their words.
+  const choice = getPref('alerts', 'who');
+  const cNote = savedNote();
+  const SAYS = { who: 'Shows who wrote, or the group: "Greg\'s agent · New message". Never the words.',
+    private: 'Shows only "Logos · New message", with no name or group on your lock screen.' };
+  const says = h('p', { class: 'when' }, SAYS[choice]);
+  const privacy = h('section', { 'aria-label': 'What an alert shows' }, heading('What an alert shows'),
+    h('div', { class: 'appearance-modes', role: 'radiogroup', 'aria-label': 'What an alert shows' },
+      [['who', 'Who wrote it'], ['private', 'Nothing']].map(([v, label]) => h('label', { class: 'appearance-mode', title: SAYS[v] },
+        h('input', { type: 'radio', name: 'alerts', value: v, checked: choice === v,
+          onchange: () => { says.textContent = SAYS[v]; say(cNote, setPref('alerts', v)); } }), label))),
+    says, cNote);
+  return [h('section', { 'aria-label': 'Phone alerts' }, heading('Phone alerts'), box), privacy];
 }
 
 // F40 Email (Greg, 23 Nov): connect your own mailbox here, no server commands. Gmail with an app password
