@@ -13,6 +13,7 @@ import { clearRoom } from './push.js';
 import { voiceNote, imageThumb, fileCard, prepareFile, sendPrepared, fileSize } from './media.js';
 import { stepsView } from './chat.js';
 import { takeAsk } from './home.js';
+import { createRecorder } from './voice.js';
 import { markBar, agentBar, takeVoice } from './agents-void.js';
 import { getPref } from './prefs.js';
 
@@ -146,10 +147,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const crumb = threadId ? h('a', { href: main, class: 'mx-crumb' }, 'Main conversation ›') : null;
   const convTitle = h('span', { class: 'mx-conv-title' }, isNew ? 'New conversation' : '');
   const chipsRow = h('div', { class: 'mx-chips phone-only', role: 'tablist', 'aria-label': 'Chats' });
-  // Send, and hold to record (Greg, 21 Nov): with the box empty the button slowly turns between the arrow
-  // and a microphone, so people find out they can hold it down to speak a message.
-  const send = h('button', { type: 'submit', class: 'btn send-btn idle', 'aria-label': 'Send, or hold to record a voice message' },
-    h('span', { class: 'btn-words' }, 'Send'), h('span', { class: 'send-ico' }, icon(ICONS.send)), h('span', { class: 'mic-ico' }, icon(ICONS.mic)));
+  // Send (Greg, 23 Nov): the arrow when there is something to send; with nothing in the box and the agent working,
+  // it is Stop (■), which asks the agent to stop; otherwise it rests. The microphone is a button of its own,
+  // tap to start and tap to finish (voice.js), no longer a hold.
+  const send = h('button', { type: 'submit', class: 'btn send-btn idle', 'aria-label': 'Send', title: 'Send', disabled: true },
+    h('span', { class: 'btn-words' }, 'Send'), h('span', { class: 'send-ico' }, icon(ICONS.send)), h('span', { class: 'stop-ico' }, icon(ICONS.stop)));
   const note = h('p', { class: 'when mx-note', role: 'status' });
   const thinkingMore = h('span', { class: 'mx-thinking-more' });
   const thinkingRow = h('div', { class: 'mx-thinking', hidden: true },
@@ -203,63 +205,38 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       if (text && text.trim()) await sendText(text);
     } catch (err) { note.textContent = `Not sent: ${err.message}. They are kept above; send again.`; files = list; drawPending(); idle(); }
   }
-  const submit = () => (files.length ? sendFiles(input.value) : sendText(input.value));
-  const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); submit(); } },
-    h('label', { for: 'chat-input', class: 'sr' }, 'Message'), attach, picker, input, send);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
-  const idle = () => send.classList.toggle('idle', !input.value.trim() && !files.length);   // files waiting: Send, not the microphone
-  input.addEventListener('input', idle);
-
-  // Hold the button to record; let go to stop. The words land in the box to check, then Send.
-  let rec = null, holdTimer = null, held = false;
-  const say = (t) => { note.textContent = t; };
-  async function startRecording() {
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      say(window.isSecureContext ? 'This browser cannot record audio.' : 'The microphone only works on the https address.'); return;
-    }
-    let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) {
-      say('The microphone is blocked. Allow it for this site in the browser, then try again.'); return;
-    }
-    if (!held) { stream.getTracks().forEach((t) => t.stop()); return; }      // let go before it started
-    const recorder = new MediaRecorder(stream); const chunks = []; const started = Date.now();
-    recorder.addEventListener('dataavailable', (e) => { if (e.data.size) chunks.push(e.data); });
-    recorder.addEventListener('stop', () => {
-      stream.getTracks().forEach((t) => t.stop()); clearInterval(rec?.timer); rec = null; send.classList.remove('recording');
-      if (alive && chunks.length && Date.now() - started > 600) toWords(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
-      else say('Hold a little longer to record.');
-    });
-    recorder.start(); send.classList.add('recording');
-    const tick = () => { const s = Math.floor((Date.now() - started) / 1000);
-      say(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · let go to stop`); if (s >= 300) stopRecording(); };
-    tick(); rec = { recorder, timer: setInterval(tick, 500) };
-  }
-  function stopRecording() { if (rec && rec.recorder.state !== 'inactive') rec.recorder.stop(); }
-  // autoSend: a voice note recorded by holding the agent's mark (agents-void) goes straight out.
-  async function toWords(blob, autoSend = false) {
-    say('Turning it into words…'); send.disabled = true;
-    try {
-      const r = await api(`/api/v2/agents/${agent.name}/voice`, { method: 'POST', raw: blob, headers: { 'Content-Type': blob.type || 'audio/webm' } });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.message || 'That did not work. Try again.');
-      if (!d.text) say('No words were heard in that recording.');
-      else if (autoSend) { say(''); await sendText(d.text); }
-      else { input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + d.text; grow(); idle(); say('Check it, then send.'); }
-    } catch (e) { say(e.message); }
-    send.disabled = false;
-  }
-  send.addEventListener('pointerdown', (e) => {
-    if (input.value.trim() || send.disabled) return;           // with words in the box it is just Send
-    e.preventDefault(); held = true;
-    holdTimer = setTimeout(startRecording, 200);
-  });
-  const letGo = () => {
-    if (!held) return; held = false; clearTimeout(holdTimer);
-    if (rec) stopRecording(); else if (!input.value.trim()) say('Hold to record a voice message.');
+  const say = (t) => { note.replaceChildren(typeof t === 'string' ? document.createTextNode(t) : t); };
+  const voice = createRecorder({ agent: agent.name, say,
+    onWords: (text) => { input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + text; grow(); syncSend(); input.focus(); },
+    onBusy: (b) => form.classList.toggle('transcribing', b) });
+  const submit = () => {
+    if (send.dataset.mode === 'stop') { stopAgent(); return; }
+    return files.length ? sendFiles(input.value) : sendText(input.value);
   };
-  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) send.addEventListener(ev, letGo);
-  send.addEventListener('contextmenu', (e) => e.preventDefault());
-  off.push(() => { held = false; clearTimeout(holdTimer); stopRecording(); });
+  const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); submit(); } },
+    h('label', { for: 'chat-input', class: 'sr' }, 'Message'), attach, picker, input, voice.mic, send, voice.bar);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+  // Send, Stop or resting, from what is in the box and whether the agent is working (thinkingRow shows it).
+  function syncSend() {
+    const has = !!input.value.trim() || files.length > 0;
+    const mode = has ? 'send' : (!thinkingRow.hidden ? 'stop' : 'idle');
+    send.dataset.mode = mode;
+    send.classList.toggle('idle', mode === 'idle'); send.classList.toggle('stop', mode === 'stop');
+    const words = mode === 'stop' ? `Stop ${agent.display_name}` : 'Send';
+    send.setAttribute('aria-label', words); send.title = words;
+    send.disabled = mode === 'idle';
+  }
+  const idle = syncSend;                                   // its old name, used where files are added or removed
+  input.addEventListener('input', syncSend);
+  // Stop: hermes stops the running answer for /stop whatever its settings (it is sent as a message).
+  async function stopAgent() {
+    send.disabled = true;
+    await sendText('/stop');
+    say(`Asked ${agent.display_name} to stop.`);
+    setTimeout(syncSend, 1200);
+  }
+  syncSend();
+  off.push(() => voice.destroy());
 
   // In a group: ‹ back, the group's name and who is in it; and above the box, the agents to ask. Agents
   // answer in a group only when asked (an @mention), so the message says whom it is for.
@@ -682,10 +659,12 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // Waiting for the agent: your newest readable message, under 15 minutes old, that is not a conversation's
     // opening (its title notice, or a message whose thread already has replies).
     const waitingOnAgent = !!(last && last.getSender() === me && last.status !== 'not_sent' && !last.isDecryptionFailure()
+      && String(last.getContent().body || '').trim().toLowerCase() !== '/stop'      // a Stop is not a question waiting
       && last.getContent().msgtype !== 'm.notice' && !replyMap.has(last.getId()) && Date.now() - last.getTs() < 15 * 60000
       && (!group || (last.getContent()['m.mentions']?.user_ids || []).some((id) => agentIds.has(id))));
     const wasWorking = !thinkingRow.hidden;
     thinkingRow.hidden = !waitingOnAgent && !typing;
+    syncSend();
     if (wasWorking !== !thinkingRow.hidden && shown.some((e) => e.getSender() === me && e.status === 'sent')) setTimeout(() => redraw(), 0);
     askedAt = waitingOnAgent ? last.getTs() : (typing ? askedAt || Date.now() : 0);
     progress();
@@ -835,7 +814,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const asked = group ? null : takeAsk(agent.name);           // a question asked on Home
   if (asked) sendText(asked);
   const spoken = group ? null : takeVoice(agent.name);        // a voice note recorded by holding the agent's mark
-  if (spoken) toWords(spoken, true);
+  if (spoken) voice.send(spoken, 0, { auto: true }).then((t) => { if (t) sendText(t); });
+  voice.resume();                                              // words from a recording made before a reload
   focusIfKeyboard(input);
   return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };
 }

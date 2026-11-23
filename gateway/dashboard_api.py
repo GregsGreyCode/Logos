@@ -19,6 +19,7 @@ import os
 import re
 import logging
 import time
+import secrets
 import subprocess
 import urllib.parse
 from pathlib import Path
@@ -594,7 +595,9 @@ async def handle_home(request: web.Request) -> web.Response:
     definition = agents[name]["definition"]
     runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
     out: Dict[str, Any] = {"me": user["username"], "agent": {"name": name, "display_name": str(definition.get("display_name") or name),
-                                     "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}")},
+                                     "obsidian_vault": str(definition.get("obsidian_vault") or f"brain-{name}"),
+                                     "matrix": bool((definition.get("matrix") or {}).get("enabled")),
+                                     "voice": bool(definition.get("voice"))},
                            "model_up": await model_server_up(request, definition)}
     out["model_off_since"] = model_off_since(request, definition)
     if runtime is None:
@@ -1218,7 +1221,12 @@ async def handle_noticeboard_answer(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "delegated": False})
 
 
-VOICE_MAX_BYTES = 25 * 1024 * 1024
+# A voice note may be long (Greg, 23 Nov: "the maximum transcription time is quite low"): the page records up to
+# 30 minutes at 32 kbit/s (about 7 MB), so the limit here is 100 MB, and the voice service accepts the same.
+# On this server speech takes about a fifth of its length to transcribe: 30 minutes is about 6.
+VOICE_MAX_BYTES = 100 * 1024 * 1024
+VOICE_TIMEOUT_S = 1800
+VOICE_JOB_KEEP_S = 1800
 _VOICE_SUFFIXES = {"audio/webm": ".webm", "video/webm": ".webm", "audio/ogg": ".ogg", "audio/mp4": ".m4a",
                    "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/aac": ".aac"}
 
@@ -1228,60 +1236,124 @@ def audio_suffix(content_type: str) -> Optional[str]:
     return _VOICE_SUFFIXES.get((content_type or "").split(";", 1)[0].strip().lower())
 
 
+class VoiceError(Exception):
+    def __init__(self, status: int, error: str, message: str):
+        super().__init__(message)
+        self.status, self.error, self.message = status, error, message
+
+
+async def _transcribe(app: web.Application, name: str, audio: bytes, suffix: str) -> str:
+    """The recording's words from the voice service (with the agent's own token), or a VoiceError."""
+    import aiohttp
+    from gateway import voice_host
+    runtime = agent_chat.runtime_of(app.get("sandbox_backend"))
+    host = voice_host.VoiceHost(runtime)
+    tokens = app.setdefault("voice_tokens", {})
+    if name not in tokens:
+        tokens[name] = await asyncio.to_thread(host.token_for, name)
+    if not tokens[name]:
+        tokens.pop(name)
+        raise VoiceError(503, "no_voice", f"Voice is not set up for this agent yet (scripts/logos-agent up {name}).")
+    base = app.get("voice_base_url") or await asyncio.to_thread(host.base_url)
+    app["voice_base_url"] = base
+    form = aiohttp.FormData()
+    form.add_field("file", audio, filename="recording" + suffix, content_type="application/octet-stream")
+    form.add_field("model", "whisper-1")
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=VOICE_TIMEOUT_S)) as s:
+            async with s.post(base + "/audio/transcriptions", data=form,
+                              headers={"Authorization": f"Bearer {tokens[name]}"}) as r:
+                if r.status == 401:
+                    tokens.pop(name, None)          # the agent was set up again; read its token afresh next time
+                if r.status == 422:
+                    raise VoiceError(422, "unreadable", "That recording could not be read. Try again.")
+                r.raise_for_status()
+                return str((await r.json()).get("text") or "").strip()
+    except VoiceError:
+        raise
+    except Exception as e:
+        logger.warning("voice: transcription for %s failed: %s", name, type(e).__name__)
+        raise VoiceError(503, "voice_unreachable", "The voice service did not answer.")
+
+
+async def _read_recording(request: web.Request) -> tuple:
+    """(bytes, suffix) of the recording sent, or a VoiceError."""
+    suffix = audio_suffix(request.headers.get("Content-Type", ""))
+    if suffix is None:
+        raise VoiceError(415, "not_audio", "That is not a recording.")
+    chunks, size = [], 0
+    async for chunk in request.content.iter_chunked(65536):
+        size += len(chunk)
+        if size > VOICE_MAX_BYTES:
+            raise VoiceError(413, "too_large", "That recording is too long.")
+        chunks.append(chunk)
+    if not size:
+        raise VoiceError(400, "empty", "Nothing was recorded.")
+    return b"".join(chunks), suffix
+
+
+def _voice_failed(e: VoiceError) -> web.Response:
+    return web.json_response({"error": e.error, "message": e.message}, status=e.status)
+
+
 async def handle_voice(request: web.Request) -> web.Response:
     """POST /api/v2/agents/{name}/voice  (body: the recording)  ->  {"text": "..."}
 
     The microphone button in web chat. The recording goes to the voice service with the
     agent's own token, exactly as a voice note in chat does, and only its words come back;
     the person sees them in the message box before anything is sent to the agent.
+
+    With ``?job=1`` it answers at once with {"job": id} and works in the background, and the words are
+    fetched with GET .../voice/{id}: a long recording does not hold one connection open for minutes
+    (a proxy may cut a quiet one), and the words are still there if the page was reloaded meanwhile.
     """
-    import aiohttp
     from gateway import voice_host
-    name, info, _user_ = await _agent_or_404(request)
+    name, info, user = await _agent_or_404(request)
     if not voice_host.uses_voice(info["definition"]):
         return web.json_response({"error": "no_voice", "message": "Voice is not switched on for this agent."},
                                  status=400)
-    suffix = audio_suffix(request.headers.get("Content-Type", ""))
-    if suffix is None:
-        return web.json_response({"error": "not_audio", "message": "That is not a recording."}, status=415)
-    chunks, size = [], 0
-    async for chunk in request.content.iter_chunked(65536):
-        size += len(chunk)
-        if size > VOICE_MAX_BYTES:
-            return web.json_response({"error": "too_large", "message": "That recording is too long."}, status=413)
-        chunks.append(chunk)
-    if not size:
-        return web.json_response({"error": "empty", "message": "Nothing was recorded."}, status=400)
-    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
-    host = voice_host.VoiceHost(runtime)
-    tokens = request.app.setdefault("voice_tokens", {})
-    if name not in tokens:
-        tokens[name] = await asyncio.to_thread(host.token_for, name)
-    if not tokens[name]:
-        tokens.pop(name)
-        return web.json_response({"error": "no_voice", "message":
-                                  f"Voice is not set up for this agent yet (scripts/logos-agent up {name})."}, status=503)
-    base = request.app.get("voice_base_url") or await asyncio.to_thread(host.base_url)
-    request.app["voice_base_url"] = base
-    form = aiohttp.FormData()
-    form.add_field("file", b"".join(chunks), filename="recording" + suffix, content_type="application/octet-stream")
-    form.add_field("model", "whisper-1")
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=300)) as s:
-            async with s.post(base + "/audio/transcriptions", data=form,
-                              headers={"Authorization": f"Bearer {tokens[name]}"}) as r:
-                if r.status == 401:
-                    tokens.pop(name, None)          # the agent was set up again; read its token afresh next time
-                if r.status == 422:
-                    return web.json_response({"error": "unreadable", "message":
-                                              "That recording could not be read. Try again."}, status=422)
-                r.raise_for_status()
-                text = str((await r.json()).get("text") or "").strip()
-    except Exception as e:
-        logger.warning("voice: transcription for %s failed: %s", name, type(e).__name__)
-        return web.json_response({"error": "voice_unreachable", "message": "The voice service did not answer."},
-                                 status=503)
-    return web.json_response({"text": text})
+        audio, suffix = await _read_recording(request)
+        if not request.query.get("job"):
+            return web.json_response({"text": await _transcribe(request.app, name, audio, suffix)})
+    except VoiceError as e:
+        return _voice_failed(e)
+    jobs = request.app.setdefault("voice_jobs", {})
+    now = time.time()
+    for k in [k for k, j in jobs.items() if now - j["at"] > VOICE_JOB_KEEP_S]:
+        jobs.pop(k, None)
+    job = secrets.token_urlsafe(12)
+    jobs[job] = {"user": user["id"], "agent": name, "state": "working", "at": now, "seconds": None}
+
+    async def work():
+        began = time.time()
+        try:
+            jobs[job].update(text=await _transcribe(request.app, name, audio, suffix), state="done")
+        except VoiceError as e:
+            jobs[job].update(state="failed", message=e.message)
+        except Exception:
+            logger.exception("voice: job for %s failed", name)
+            jobs[job].update(state="failed", message="That did not work. Try again.")
+        jobs[job]["seconds"] = round(time.time() - began, 1)
+    request.app.setdefault("voice_tasks", set())
+    task = asyncio.create_task(work())
+    request.app["voice_tasks"].add(task)
+    task.add_done_callback(request.app["voice_tasks"].discard)
+    return web.json_response({"job": job}, status=202)
+
+
+async def handle_voice_job(request: web.Request) -> web.Response:
+    """GET /api/v2/agents/{name}/voice/{job} -> {"state": "working"|"done"|"failed", "text"?, "message"?}"""
+    name, _info, user = await _agent_or_404(request)
+    j = request.app.get("voice_jobs", {}).get(request.match_info["job"])
+    if not j or j["user"] != user["id"] or j["agent"] != name:
+        return web.json_response({"error": "unknown_job", "message": "That recording is no longer kept."}, status=404)
+    out = {"state": j["state"]}
+    if j["state"] == "done":
+        out["text"] = j["text"]
+    if j["state"] == "failed":
+        out["message"] = j["message"]
+    return web.json_response(out)
 
 
 MODELS_CACHE_SECONDS = 30
@@ -1974,6 +2046,7 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/v2/notifications/read", require_csrf(handle_notifications_read))
     app.on_startup.append(_watch_ai)
     app.router.add_post("/api/v2/agents/{name}/voice", require_csrf(handle_voice))
+    app.router.add_get("/api/v2/agents/{name}/voice/{job}", handle_voice_job)
     app.router.add_get("/api/v2/agents/{name}/status", handle_agent_status)
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/cancel", require_csrf(handle_job_cancel))
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/{action}", require_csrf(handle_job_action))

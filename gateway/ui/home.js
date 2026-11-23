@@ -2,6 +2,8 @@
 // ask box that hands the question to Chat.
 import { swr, forget, peek, clearAll } from './cache.js';
 import { widget as homelabWidget } from './widgets.js';
+import { createRecorder } from './voice.js';
+import * as mx from './mx.js';
 import { h, api, getJSON, when, none, loading, aiState, reveal, icon, ICONS } from './util.js';
 import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
@@ -503,18 +505,33 @@ export async function homeView(root, rest, state) {
     waitingSec.hidden = !nb.waiting.length;
     for (const id of chosen()) if (id !== 'next' && SHOW[id]) SHOW[id]();
     ask.placeholder = `Ask ${data.agent.display_name}…`;
+    voice.mic.hidden = !data.agent.voice;                     // an agent without voice has no microphone
   }
 
   // The ask box: the question goes to Chat, which sends it in a new conversation.
-  const ask = h('input', { id: 'home-ask', type: 'text', placeholder: 'Ask your agent…', autocomplete: 'off' });
-  const askForm = h('form', { class: 'home-ask', onsubmit: (e) => {
-    e.preventDefault();
+  // The ask box (Greg, 23 Nov: it took you somewhere that was not your agent). It is the chat's own composer now: a
+  // box that grows, the microphone (tap to start, tap to finish), and Ask, which opens your agent's real chat and
+  // sends the question there.
+  const ask = h('textarea', { id: 'home-ask', rows: '1', placeholder: 'Ask your agent…', autocomplete: 'off', enterkeyhint: 'send' });
+  const askNote = h('p', { class: 'when mx-note home-ask-note', role: 'status' });
+  const askGrow = () => { ask.style.height = 'auto'; ask.style.height = `${Math.min(ask.scrollHeight + 2, 132)}px`; };
+  const say = (t) => { askNote.replaceChildren(typeof t === 'string' ? document.createTextNode(t) : t); };
+  const voice = createRecorder({ agent: () => (data && data.agent ? data.agent.name : ''), say,
+    onWords: (text) => { ask.value = (ask.value.trim() ? ask.value.trimEnd() + ' ' : '') + text; askGrow(); ask.focus(); } });
+  const submitAsk = () => {
     const text = ask.value.trim();
     if (!text || !data || !data.agent) return;
     try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent: data.agent.name, text })); } catch (err) { /* sent below anyway */ }
-    location.hash = `#/chat/${data.agent.name}/${Math.random().toString(36).slice(2, 12)}`;
-  } }, h('label', { for: 'home-ask', class: 'sr' }, 'Ask your agent'), ask,
-    h('button', { type: 'submit', class: 'btn' }, 'Ask'));
+    // An agent on Matrix is asked in its own chat (#/chat/<agent>); the old web chat is a read-only archive now.
+    location.hash = data.agent.matrix && mx.saved() ? `#/chat/${data.agent.name}` : `#/chat/${data.agent.name}/${Math.random().toString(36).slice(2, 12)}`;
+  };
+  const askForm = h('form', { class: 'home-ask', onsubmit: (e) => { e.preventDefault(); submitAsk(); } },
+    h('label', { for: 'home-ask', class: 'sr' }, 'Ask your agent'), ask, voice.mic,
+    h('button', { type: 'submit', class: 'btn ask-go', 'aria-label': 'Ask' }, h('span', { class: 'btn-words' }, 'Ask'), icon(ICONS.send)),
+    voice.bar, askNote);
+  ask.addEventListener('input', askGrow);
+  ask.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAsk(); } });
+  voice.resume();
 
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
@@ -546,7 +563,7 @@ export async function homeView(root, rest, state) {
   const placeEdit = () => { if (phone.matches) tray.after(editBtn); else dateRow.append(editBtn); };
   placeEdit();
   phone.addEventListener('change', placeEdit);
-  return () => { alive = false; clearInterval(timer); phone.removeEventListener('change', placeEdit); editBtn.remove(); };
+  return () => { alive = false; clearInterval(timer); phone.removeEventListener('change', placeEdit); editBtn.remove(); voice.destroy(); };
 }
 
 // Chat calls this when it opens: a question asked on Home, still to be sent.
