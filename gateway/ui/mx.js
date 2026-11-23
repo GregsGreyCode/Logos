@@ -6,6 +6,7 @@
 // The session is kept per dashboard account: a browser only ever uses the Matrix session of whoever
 // is signed in to the dashboard (owner, from /api/v2/me), never one a previous person left behind.
 import * as reach from './reach.js';
+import { wouldLose } from './util.js';
 
 const LEGACY = 'logos-mx-session';
 let owner = null;
@@ -74,19 +75,36 @@ export async function get() {
 // retry now. Still stalled 75 s later: reload the page (a restart of the client itself would stop its
 // encryption), unless something is being typed, or the server is out of reach (reach.js says so).
 export const SYNC_STALL_MS = 75000;
+export const PUSH_WAIT_MS = 20000;
+let news = Date.now();                      // when the chat last received anything at all
+let watched = null;                         // the client being watched, for pushed()
 export function watch(c, m) {
   let lastSync = Date.now(), visibleSince = Date.now(), nudged = 0;
+  watched = c;
   const OK = new Set(['PREPARED', 'SYNCING', 'CATCHUP']);
   c.on(m.ClientEvent.Sync, (state) => { if (OK.has(String(state))) { lastSync = Date.now(); nudged = 0; } });
+  if (m.RoomEvent && m.RoomEvent.Timeline) c.on(m.RoomEvent.Timeline, () => { news = Date.now(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') visibleSince = Date.now(); });
-  const typing = () => [...document.querySelectorAll('textarea, input[type="text"]')].some((el) => el.value && el.value.trim());
   setInterval(() => {
     if (document.visibilityState !== 'visible' || reach.isDown() || (client && client !== c)) return;
     const stalled = Date.now() - Math.max(lastSync, visibleSince);
     if (stalled < SYNC_STALL_MS) return;
     if (!nudged) { nudged = Date.now(); try { c.retryImmediately(); } catch (e) { /* reloaded below if it stays stuck */ } return; }
-    if (Date.now() - nudged >= SYNC_STALL_MS && !typing()) location.reload();
+    if (Date.now() - nudged >= SYNC_STALL_MS && !wouldLose()) location.reload();
   }, 15000);
+}
+
+// A phone alert just arrived while this page is open (sw.js tells it). The chat should be getting that very
+// message: if nothing at all has come through within 20 s, its connection has stopped even though it looks
+// fine (Béré, 23 Nov: the alert came, the chat stayed on "sending…"). Ask the library to try again; if still
+// nothing 20 s later, start over (unless something would be lost).
+export function pushed(wait = PUSH_WAIT_MS) {
+  const at = Date.now();
+  setTimeout(() => {
+    if (news >= at || !watched || document.visibilityState !== 'visible') return;
+    try { watched.retryImmediately(); } catch (e) { /* the reload below covers it */ }
+    setTimeout(() => { if (news < at && !wouldLose() && document.visibilityState === 'visible') location.reload(); }, wait);
+  }, wait);
 }
 
 // Step 1: sign in with the Matrix password (used once) and become a new device.
