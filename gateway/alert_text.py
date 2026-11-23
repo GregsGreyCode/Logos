@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import hmac
 import os
 import re
@@ -27,6 +28,8 @@ from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple
 
 # aiohttp only in the handlers: the deploy tools load this file with the system Python, which has none.
+
+logger = logging.getLogger(__name__)
 
 PATH = "/api/v2/alert-text"
 TOKEN_ENV = "LOGOS_ALERT_TOKEN"
@@ -154,6 +157,7 @@ async def handle_put(request: "web.Request") -> "web.Response":
     words = shorten(text[:4000])
     if words:
         request.app["alert_text"].put(event_id, agent, words)
+        logger.info("alert text: %s's reply noted for its alert", agent)          # that it came; never what
     return web.json_response({"kept": bool(words)})
 
 

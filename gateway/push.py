@@ -312,6 +312,8 @@ async def handle_notify(request: web.Request) -> web.Response:
             said = await alert_text.wait_words(kept, str(notification.get("event_id") or ""),
                                                str(notification.get("sender") or ""))
     message = message_for(notification, said=said)
+    if "-agent:" in str(notification.get("sender") or ""):
+        logger.info("push: an agent's reply, alert %s", "with its first words" if said else "says New message")
     for d in devices:
         pushkey = str(d.get("pushkey") or "")
         if d.get("app_id") != APP_ID:

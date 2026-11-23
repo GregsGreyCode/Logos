@@ -96,3 +96,4 @@ evals/results/
 tests/ui/out/
 tests/ui/node_modules/
 tests/ui/package-lock.json
+uv.lock
