@@ -60,6 +60,90 @@ HEALTH_PROBE = 1.0                      # seconds: /guard/health answers well in
 FULL = b"Context size has been exceeded"  # LM Studio: the shared context is in use by other requests
 
 
+# ── keeping the model loaded at its window ──────────────────────────────────
+
+class Loader:
+    """Loads a model at the window Logos chose for it, before LM Studio loads it by itself.
+
+    LM Studio loads a model that a request names but that is not loaded ("just in time") with its
+    own defaults: on 23 Nov qwen came back at its full 262,144-token window, beside the copy being
+    loaded at 96,512, after qwen was unloaded for a test. So, for each model in ``windows`` (the
+    agents' ``load_context_length``, from GUARD_LOAD):
+
+    - not loaded: the guard loads it once at its window; other requests wait for that load;
+    - loaded at another window: reloaded at its window, but only when no other reply is running
+      through the guard (``alone``), so nothing is cut off;
+    - anything failing: the request goes on as before, and LM Studio does what it would have done.
+    """
+
+    CHECK_EVERY = 5.0                        # seconds a look at what is loaded is trusted
+
+    def __init__(self, host: str, port: int, windows: dict, log=print, timeout: float = 600.0,
+                 clock=time.monotonic):
+        self.host, self.port, self.windows, self.log, self.timeout, self.clock = host, port, dict(windows or {}), log, timeout, clock
+        self.lock = threading.Lock()
+        self.seen = {"at": -1e9, "loaded": {}}
+
+    def _call(self, method: str, path: str, body=None, timeout: float = 10.0):
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
+        try:
+            conn.request(method, path, body=json.dumps(body).encode() if body is not None else None,
+                         headers={"Content-Type": "application/json"} if body is not None else {})
+            r = conn.getresponse()
+            data = r.read()
+            if r.status >= 400:
+                raise OSError(f"{path}: {r.status} {data[:200]!r}")
+            return json.loads(data or b"{}")
+        finally:
+            conn.close()
+
+    def loaded(self, fresh: bool = False) -> dict:
+        """model -> [(instance id, window)], from LM Studio's own list."""
+        if fresh or self.clock() - self.seen["at"] > self.CHECK_EVERY:
+            data = self._call("GET", "/api/v1/models")
+            self.seen = {"at": self.clock(), "loaded": {
+                str(m.get("key")): [(str(i.get("id")), int((i.get("config") or {}).get("context_length") or 0))
+                                    for i in (m.get("loaded_instances") or [])]
+                for m in data.get("models", []) if isinstance(m, dict) and m.get("loaded_instances")}}
+        return self.seen["loaded"]
+
+    def ensure(self, model: str, alone: bool) -> str:
+        """What was done: "", "loaded", "reloaded", or "failed"."""
+        # LM Studio's own key; also as the agents name it to the gateway ("lm-studio/qwen/…"),
+        # in case it arrives with that prefix.
+        model = next((k for k in self.windows if model == k or model.endswith("/" + k)), model)
+        window = self.windows.get(model)
+        if not window:
+            return ""
+        try:
+            have = self.loaded().get(model, [])
+            if have and (all(w == window for _, w in have) or not alone):
+                return ""
+            with self.lock:
+                have = self.loaded(fresh=True).get(model, [])
+                if have and (all(w == window for _, w in have) or not alone):
+                    return ""                    # another request has just seen to it
+                for inst, _ in have:
+                    self._call("POST", "/api/v1/models/unload", {"instance_id": inst}, timeout=120)
+                self._call("POST", "/api/v1/models/load", {"model": model, "context_length": int(window),
+                           "flash_attention": True, "offload_kv_cache_to_gpu": True}, timeout=self.timeout)
+                self.loaded(fresh=True)
+                what = "reloaded" if have else "loaded"
+                self.log(json.dumps({"event": f"model_{what}", "model": model, "window": int(window),
+                                     "was": [w for _, w in have], "at": time.strftime("%Y-%m-%d %H:%M:%S")}), flush=True)
+                return what
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            self.log(json.dumps({"event": "model_load_failed", "model": model, "error": str(e)[:200]}), flush=True)
+            return "failed"
+
+
+def model_of(body: bytes) -> str:
+    try:
+        return str((json.loads(body or b"{}") or {}).get("model") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
 # ── the queue ────────────────────────────────────────────────────────────────
 
 SLOTS = 2                    # chat requests at once (GUARD_SLOTS overrides); never more than LM Studio's own
@@ -305,9 +389,11 @@ def off_body() -> bytes:
 def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: float = 900.0,
                  wait: float = WAIT, retry_every: float = RETRY_EVERY, sleep=time.sleep,
                  known_off: float = KNOWN_OFF, slots: int = SLOTS, max_queue_wait: float = MAX_QUEUE_WAIT,
-                 log=print, loop_ratio: float = LOOP_RATIO, loop_window: int = LOOP_WINDOW, loop_every: int = LOOP_EVERY):
+                 log=print, loop_ratio: float = LOOP_RATIO, loop_window: int = LOOP_WINDOW, loop_every: int = LOOP_EVERY,
+                 windows: dict = None):
     target = urllib.parse.urlsplit(upstream)
     host, port = target.hostname, target.port or 80
+    loader = Loader(host, port, windows or {}, log=log)
     # For /guard/health: whether the last attempt found the model server off, and since when.
     # ``known_off_at``: when a request last waited the whole minute in vain. hermes tries a failed
     # call several times (and probes it once more without streaming); without this each of those
@@ -451,7 +537,12 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             began, alongside = time.monotonic(), len(gate.running) - 1
             record = {}
             try:
-                record = self._forward(body) or {}
+                # Loaded, and at its window, before LM Studio would load it by itself (Loader).
+                fixed = loader.ensure(model_of(body), alone=alongside == 0)
+                if fixed:
+                    record["model"] = fixed
+                    options["at"] = -OPTIONS_TTL     # the window may have changed: the queue looks again
+                record.update(self._forward(body) or {})
             finally:
                 gate.leave(ticket)
                 log(json.dumps({"event": "chat", "at": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -549,7 +640,8 @@ def main() -> int:
         wait=float(os.environ.get("GUARD_WAIT", str(WAIT))),
         slots=int(os.environ.get("GUARD_SLOTS", str(SLOTS))),
         max_queue_wait=float(os.environ.get("GUARD_MAX_QUEUE_WAIT", str(MAX_QUEUE_WAIT))),
-        loop_ratio=float(os.environ.get("GUARD_LOOP_RATIO", str(LOOP_RATIO)))))
+        loop_ratio=float(os.environ.get("GUARD_LOOP_RATIO", str(LOOP_RATIO))),
+        windows=json.loads(os.environ.get("GUARD_LOAD") or "{}")))
     server.daemon_threads = True
     print(f"model guard: {port} -> {upstream}", flush=True)
     server.serve_forever()
