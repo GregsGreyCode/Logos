@@ -43,7 +43,10 @@ for (const [label, vp, mobile] of [['phone', { width: 412, height: 915 }, true],
   ok(!(await order()).includes('coming') && await page.locator('.home-add', { hasText: 'Coming up' }).count() === 1, `${label}: ✕ takes it off, Add offers it`);
   await page.locator('.home-add', { hasText: 'Coming up' }).click(); await page.waitForTimeout(400);
   ok((await order()).at(-1) === 'coming', `${label}: Add puts it back at the end`);
-  await page.locator('.home-edit-link').click(); await page.waitForTimeout(200);
+  // Done: the bar at the bottom on a phone, the button in the title band on a wide screen
+  const bottom = page.locator('.home-ask .ask-done');
+  if (await bottom.isVisible()) await bottom.click(); else await page.locator('.home-edit-link').click();
+  await page.waitForTimeout(200);
   ok(await page.locator('.home-widgets.editing').count() === 0 && await page.locator('.widget-bar').count() === 0, `${label}: Done leaves Edit`);
   await page.screenshot({ path: `${out}/e-${label}-done.png` });
   ok(errs.length === 0, `${label}: no page errors ${errs.join(' | ')}`);

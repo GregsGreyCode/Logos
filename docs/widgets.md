@@ -19,6 +19,7 @@ it shows. Whoever manages Logos taps **Set it up**, fills in the sheet, taps **T
 | **Now playing** | everyone at home | Jellyfin (an API key) or Plex (an X-Plex-Token), and the address. |
 | **Downloads** | everyone at home | Sonarr and/or Radarr: address and API key (Settings › General). A stalled download needs you. |
 | **Agents today** | everyone at home | Nothing: Logos counts itself. Messages each of your agents sent today and when the last went, and whether the AI computer is on. Never what was said. Also exposed to Prometheus: see [metrics.md](metrics.md). |
+| **Las Vegas sign** | everyone at home | Text that scrolls across the top of Home, between the date and the pencil, on a wide screen (not shown on a phone). Your own lines, one per line, and RSS or Atom feeds, one address per line, up to 5; each feed item's title scrolls past, so a stock or crypto price feed works as a ticker ("BTC $64,210 (+1.2%)"). Speed: slow, medium or fast. Pauses when pointed at. A feed that fails is skipped, the rest still scroll. Feeds are fetched by the Logos server, never by a browser. |
 | **Bookmarks** | everyone at home | One per line: `Name, address`. |
 | **Energy** | everyone at home | Which Home Assistant sensors: power now, energy today, and optionally a price and the UPS (battery, status, time left). Uses the Home Assistant account Logos already has for the lights; Test lists sensors when one is not found. On battery needs you. |
 | **Network** | whoever manages Logos | Speedtest Tracker's address and a read-only API token. Under half the usual download speed needs you. |
@@ -55,3 +56,16 @@ All the widgets in the design are built.
 
 A kind may share another's setup (`uses="servers"`: Proxmox reads and edits the Servers token), read
 another's alongside its own (`extra={"with": "servers"}`: Backups), or need none (no fields).
+
+## Lists: Compact, Full, and ticking things off
+
+Edit (the pencil) shows **Compact / Full** in the Lists widget's bar, each person's own choice. Compact is a tile
+per list. Full shows each list's things one under another, with when they are due. In Full each thing has a box:
+tap it and the item is ticked off in Home Assistant (through the house service, as the household agent), with
+**Undo** for a few seconds. The lists are read live from Home Assistant; if it cannot be reached the copy the
+household agent keeps (refreshed every 15 minutes) shows instead, to read only. `GET /api/v2/home/lists`,
+`POST /api/v2/home/lists/tick {list, item, done?}`.
+
+## Arranging Home on a phone
+
+While you arrange Home, the bar at the bottom (where Ask is) becomes one big **Done**, always in view.

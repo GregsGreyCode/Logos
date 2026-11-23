@@ -45,8 +45,8 @@ export function voiceBar(v, extra = '') {
 // agent: the agent's name (or something that gives it). say(text | node): the line under the box.
 // onWords(text, {seconds, wave}): the words are ready. onBusy(true|false): working on it.
 // onTranscribing({seconds, wave}): the recording has gone to be turned into words (a placeholder can show);
-// onSettled(): that is over (words delivered, or it failed).
-export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}, onTranscribing = () => {}, onSettled = () => {}, maxSeconds = MAX_RECORD_S }) {
+// onSettled(): that is over (words delivered, or it failed). onRecording(true|false): the microphone is on or off.
+export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}, onTranscribing = () => {}, onSettled = () => {}, onRecording = () => {}, maxSeconds = MAX_RECORD_S }) {
   const agent = () => (typeof agentOf === 'function' ? agentOf() : agentOf);       // a name, or something that gives it
   let rec = null, destroyed = false, busy = false, last = null;      // last: the recording kept for "Try again"
   const canvas = h('canvas', { class: 'rec-wave', 'aria-hidden': 'true' });
@@ -98,7 +98,7 @@ export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}
       clearInterval(rec && rec.timer); clearInterval(meter);
       if (ctx) ctx.close().catch(() => {});
       if (lock) lock.release().catch(() => {});
-      rec = null; bar.hidden = true; form()?.classList.remove('recording');
+      rec = null; bar.hidden = true; form()?.classList.remove('recording'); onRecording(false);
       if (discarded || destroyed) { if (!destroyed) say(''); return; }
       const seconds = Math.round((Date.now() - started) / 100) / 10;
       if (!chunks.length || seconds < 0.8) { say('That was too short: tap the microphone, say it, then tap ■.'); return; }
@@ -107,7 +107,7 @@ export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}
     // A phone's screen going dark would stop a long recording: ask it to stay on (where the browser lets us).
     try { if (navigator.wakeLock) lock = await navigator.wakeLock.request('screen'); } catch (e) { /* fine */ }
     recorder.start(1000);
-    bar.hidden = false; form()?.classList.add('recording');
+    bar.hidden = false; form()?.classList.add('recording'); onRecording(true);
     say('');
     // How loud you are, to see it is hearing you: a sample every 60 ms, drawn as the waveform.
     try {
@@ -197,7 +197,7 @@ export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}
     }
   }
   return {
-    mic, bar, send, resume,
+    mic, bar, send, resume, start,
     get recording() { return !!rec; }, get busy() { return busy; },
     discard: () => { if (rec) { rec.discard(); finish(); } },
     destroy() { destroyed = true; if (rec) { rec.discard(); finish(); } },

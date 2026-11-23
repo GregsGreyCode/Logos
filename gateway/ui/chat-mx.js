@@ -14,7 +14,7 @@ import { voiceNote, imageThumb, fileCard, prepareFile, sendPrepared, fileSize } 
 import { stepsView } from './chat.js';
 import { takeAskFull } from './home.js';
 import { createRecorder, voiceBar } from './voice.js';
-import { markBar, agentBar, takeVoice } from './agents-void.js';
+import { markBar, agentBar } from './agents-void.js';
 import { getPref } from './prefs.js';
 
 const ARCHIVE_DAYS = 30;
@@ -826,8 +826,6 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   draw(true);
   const asked = group ? null : takeAskFull(agent.name);       // a question asked on Home (spoken or typed)
   if (asked) sendText(asked.text, asked.voice);
-  const spoken = group ? null : takeVoice(agent.name);        // a voice note recorded by holding the agent's mark
-  if (spoken) voice.send(spoken, 0);                          // its words are sent as soon as they are ready (onWords)
   voice.resume();                                              // words from a recording made before a reload
   focusIfKeyboard(input);
   return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };

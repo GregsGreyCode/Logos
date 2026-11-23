@@ -1,7 +1,7 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
 import { swr, forget, peek, clearAll } from './cache.js';
-import { widget as homelabWidget } from './widgets.js';
+import { widget as homelabWidget, BAND, setupSheet } from './widgets.js';
 import { createRecorder } from './voice.js';
 import * as mx from './mx.js';
 import { h, api, getJSON, when, none, loading, aiState, reveal, icon, ICONS } from './util.js';
@@ -71,17 +71,29 @@ export async function homeView(root, rest, state) {
   const haTodo = (id) => `intent://navigate/todo${id ? `?entity_id=${encodeURIComponent(id)}` : ''}#Intent;scheme=homeassistant;`
     + 'package=io.homeassistant.companion.android;'
     + `S.browser_fallback_url=${encodeURIComponent(`${location.origin}/#/brain/household/lists.md`)};end`;
+  const listsNote = h('p', { class: 'when home-lists-note', role: 'status' });
   const listsBox = h('div', { class: 'home-lists-row' }, loading('tiles', 2));
   const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists' },
-    h('h2', { class: 'label' }, 'Lists'), listsBox);
-  const showLists = () => swr('/api/v2/agents/household/brain/page?path=lists.md', 5 * 60000, drawLists, null);   // kept 5 minutes
-  let listsPage = null;                // the copy last read, so changing the size redraws without asking again
+    h('h2', { class: 'label' }, 'Lists'), listsBox, listsNote);
+  // The lists as they are now in Home Assistant (Greg, 23 Nov: "more of an image of the to-do list rather than an
+  // actual to-do list"): read live, and in Full an item can be ticked off. If Home Assistant cannot be reached, the
+  // copy the household agent keeps (refreshed every 15 minutes) is shown instead, to read only.
+  const LIVE = '/api/v2/home/lists';
+  const showLists = () => swr(LIVE, 60 * 1000, drawLive, { error: 'x' });            // kept 1 minute
+  const showListsCopy = () => swr('/api/v2/agents/household/brain/page?path=lists.md', 5 * 60000, drawLists, null);
+  function drawLive(d) {
+    if (!alive) return;
+    if (!d || d.error || !Array.isArray(d.lists)) { showListsCopy(); return; }
+    listsLive = true;
+    drawListsData(d.lists.map((l) => ({ name: l.name, id: l.id, items: (l.items || []).map((i) => ({ text: i.text, due: i.due || '' })) })));
+  }
+  let listsData = null, listsLive = false;     // what is drawn, so changing the size or ticking redraws without asking again
   // Which widgets have more than one size (Greg, 23 Nov): chosen in Edit, each person's own.
   const SIZES = { lists: [['compact', 'Compact'], ['full', 'Full']] };
   const sizeOf = (id) => { const v = (getPref('widget_sizes', {}) || {})[id]; return (SIZES[id] || []).some(([k]) => k === v) ? v : (SIZES[id] || [[null]])[0][0]; };
-  function drawLists(page) {
+  function drawLists(page) {              // the copy in the brain: the same lists, to read
     if (!alive || !page || !page.text) return;
-    listsPage = page;
+    listsLive = false;
     const lists = [];
     for (const line of String(page.text).split('\n')) {
       const head = line.match(/^##\s+(.+)/);
@@ -94,6 +106,37 @@ export async function homeView(root, rest, state) {
         lists[lists.length - 1].items.push({ text: item[1].replace(/\s*\(due [^)]*\)\s*$/, '').trim(), due: due ? due[1].trim() : '' });
       }
     }
+    drawListsData(lists);
+  }
+  // Ticking off: the item is struck through at once, then Home Assistant is asked; if it says no, it comes back with
+  // the reason. When it worked the item leaves the list, with Undo for a few seconds (the house service puts a ticked
+  // item back when it is added again).
+  let undoTimer = null;
+  async function tickOff(l, i, row, box) {
+    row.classList.add('ticking'); box.setAttribute('aria-checked', 'true'); box.disabled = true;
+    listsNote.replaceChildren();
+    const r = await api('/api/v2/home/lists/tick', { method: 'POST', body: { list: l.name, item: i.text, done: true } }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok || d.error) {
+      row.classList.remove('ticking'); box.setAttribute('aria-checked', 'false'); box.disabled = false;
+      listsNote.textContent = d.message ? `Could not tick it off: ${d.message}` : 'Could not tick it off just now: Home Assistant did not answer.';
+      return;
+    }
+    forget(LIVE);
+    setTimeout(() => { l.items = l.items.filter((x) => x !== i); if (alive) drawListsData(listsData); }, 400);
+    clearTimeout(undoTimer);
+    listsNote.replaceChildren(`Ticked off “${i.text}” · `, h('button', { type: 'button', class: 'linkish', onclick: async () => {
+      listsNote.textContent = 'Putting it back…';
+      const u = await api('/api/v2/home/lists/tick', { method: 'POST', body: { list: l.name, item: i.text, done: false } }).catch(() => null);
+      forget(LIVE);
+      listsNote.textContent = u && u.ok ? '' : 'Could not put it back just now.';
+      showLists();
+    } }, 'Undo'));
+    undoTimer = setTimeout(() => listsNote.replaceChildren(), 7000);
+  }
+  function drawListsData(lists) {
+    if (!alive) return;
+    listsData = lists;
     const shown = lists.filter((l) => l.items.length);
     listsSec.hidden = !lists.length;
     // On a phone a list opens in the Home Assistant app, where the lists live (Greg, 21 Nov); a desktop has
@@ -102,15 +145,19 @@ export async function homeView(root, rest, state) {
     const full = sizeOf('lists') === 'full';
     listsBox.classList.toggle('full', full);
     const href = (l) => (phone ? haTodo(l.id) : '#/brain/household/lists.md');
-    // Full (Béré, 23 Nov: "wants to see more"): every list as a card with its things one under another, and when
-    // they are due; up to 12 each, then how many more.
+    // Full (Béré, 23 Nov: "wants to see more"): every list as a card with its things one under another and when each
+    // is due, up to 12 each, then how many more. Live, each has a box to tick it off.
     const MORE = 12;
     const fullCard = (l) => h('section', { class: 'home-list-card full', 'aria-label': l.name },
       h('a', { class: 'home-list-head', href: href(l), title: phone ? `Open ${l.name} in Home Assistant` : 'Open the lists' },
         h('strong', {}, l.name), h('span', { class: 'home-list-count' }, String(l.items.length))),
-      h('ul', { class: 'home-list-all' }, ...l.items.slice(0, MORE).map((i) => h('li', {},
-        h('span', { class: 'home-list-box', 'aria-hidden': 'true' }), h('span', { class: 'home-list-text' }, i.text),
-        i.due ? h('span', { class: 'home-list-due' }, i.due) : null))),
+      h('ul', { class: 'home-list-all' }, ...l.items.slice(0, MORE).map((i) => {
+        const box = listsLive ? h('button', { type: 'button', class: 'home-list-box tick', role: 'checkbox', 'aria-checked': 'false', 'aria-label': `Tick off ${i.text}` })
+          : h('span', { class: 'home-list-box', 'aria-hidden': 'true' });
+        const row = h('li', {}, box, h('span', { class: 'home-list-text' }, i.text), i.due ? h('span', { class: 'home-list-due' }, i.due) : null);
+        if (listsLive) box.addEventListener('click', () => tickOff(l, i, row, box));
+        return row;
+      })),
       l.items.length > MORE ? h('a', { class: 'home-list-more', href: href(l) }, `+${l.items.length - MORE} more`) : null);
     const tile = (l) => h('a', { class: 'home-list-card', href: href(l), title: phone ? `Open ${l.name} in Home Assistant` : 'Open the lists' },
       h('span', { class: 'home-list-head' }, h('strong', {}, l.name), h('span', { class: 'home-list-count' }, String(l.items.length))),
@@ -331,7 +378,8 @@ export async function homeView(root, rest, state) {
 
   function applyWidgets() {
     const order = chosen();
-    for (const id of order) board.append(SECS[id]);                       // in your order
+    for (const [id, w] of Object.entries(BANDS)) w.el.hidden = !order.includes(id);        // the sign: on or off
+    for (const id of order) if (SECS[id]) board.append(SECS[id]);          // in your order
     for (const [id, el] of Object.entries(SECS)) {
       el.classList.toggle('off', !order.includes(id));
       if (!order.includes(id)) board.append(el);                           // kept, out of sight, after the rest
@@ -342,15 +390,25 @@ export async function homeView(root, rest, state) {
     await setPref('widgets', order);
     if (!getPref('widgets_v2', false)) await setPref('widgets_v2', true).catch(() => {});
   }
-  const orderNow = () => [...board.children].filter((el) => !el.classList.contains('off')).map((el) => el.dataset.widget);
+  const orderNow = () => [...[...board.children].filter((el) => !el.classList.contains('off')).map((el) => el.dataset.widget),
+    ...Object.keys(BANDS).filter(on)];            // the sign is chosen the same way, though it is not on the board
   // F42: the homelab widgets the server offers (gateway/widgets.py), added to the ones above. One that
   // is not set up is offered only to whoever can set it up.
   const KINDS = {};
+  // The Las Vegas sign lives in the title band, between the date and the pencil (wide screens), not on the board.
+  const bandSlot = h('div', { class: 'home-band' });
+  const BANDS = {};
   function addKinds(list) {
     for (const k of list || []) {
       KINDS[k.id] = k;
-      if (SECS[k.id]) continue;
+      if (SECS[k.id] || BANDS[k.id]) continue;
       const w = homelabWidget(k, { onChange: () => drawTray() });
+      if (BAND.has(k.id)) {
+        BANDS[k.id] = w; WIDGETS[k.id] = k.name; SHOW[k.id] = w.show;
+        w.el.dataset.widget = k.id; w.el.classList.add('home-band-widget');
+        bandSlot.append(w.el);
+        continue;
+      }
       WIDGETS[k.id] = k.name;
       SECS[k.id] = w.el;
       SHOW[k.id] = w.show;
@@ -370,11 +428,21 @@ export async function homeView(root, rest, state) {
     return h('div', { class: 'widget-size', role: 'group', 'aria-label': `${WIDGETS[id]} size` }, ...SIZES[id].map(([k, label]) => h('button', {
       type: 'button', class: k === now ? 'on' : '', 'aria-pressed': String(k === now), onclick: async () => {
         await setPref('widget_sizes', { ...(getPref('widget_sizes', {}) || {}), [id]: k });
-        if (id === 'lists' && listsPage) drawLists(listsPage);
+        if (id === 'lists' && listsData) drawListsData(listsData);
         decorate();
       } }, label)));
   }
   function decorate() {
+    for (const [id, w] of Object.entries(BANDS)) {
+      w.el.querySelector(':scope > .widget-bar')?.remove();
+      if (!editing || !on(id)) continue;
+      const k = KINDS[id];
+      w.el.prepend(h('div', { class: 'widget-bar band-bar' },
+        k && k.can_set_up ? h('button', { type: 'button', class: 'linkish small', onclick: () => setupSheet(k, () => { forget(`/api/v2/widgets/${id}`); w.show(); }) }, 'Edit') : null,
+        h('button', { type: 'button', class: 'widget-remove', 'aria-label': `Take ${WIDGETS[id]} off Home`, title: 'Take off Home', onclick: async () => {
+          await save(orderNow().filter((x) => x !== id)); applyWidgets(); decorate();
+        } }, '✕')));
+    }
     for (const [id, el] of Object.entries(SECS)) {
       el.querySelector(':scope > .widget-bar')?.remove();
       if (!editing) continue;
@@ -403,6 +471,7 @@ export async function homeView(root, rest, state) {
     editBtn.replaceChildren(v ? 'Done' : icon(ICONS.pencil));
     editBtn.setAttribute('aria-label', v ? 'Done arranging' : 'Arrange Home'); editBtn.title = v ? 'Done' : 'Arrange Home';
     editBtn.classList.toggle('done', v);
+    askForm.classList.toggle('editing', v);
     if (!v) for (const el of board.querySelectorAll('.home-place')) el.remove();
     decorate(); drawTray();
   }
@@ -529,14 +598,17 @@ export async function homeView(root, rest, state) {
   const askForm = h('form', { class: 'home-ask', onsubmit: (e) => { e.preventDefault(); submitAsk(); } },
     h('label', { for: 'home-ask', class: 'sr' }, 'Ask your agent'), ask, voice.mic,
     h('button', { type: 'submit', class: 'btn ask-go', 'aria-label': 'Ask' }, h('span', { class: 'btn-words' }, 'Ask'), icon(ICONS.send)),
-    voice.bar, askNote);
+    voice.bar, askNote,
+    // While arranging Home you are not asking anything (Greg, 23 Nov): the bar at the bottom of the screen is one big Done,
+    // always in view, instead of a button to scroll down to.
+    h('button', { type: 'button', class: 'ask-done', onclick: () => setEditing(false) }, 'Done'));
   ask.addEventListener('input', askGrow);
   ask.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitAsk(); } });
   voice.resume();
 
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
-      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), editBtn), statusWords),
+      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), bandSlot, editBtn), statusWords),
     waitingSec,
     board,
     tray,
@@ -568,6 +640,11 @@ export async function homeView(root, rest, state) {
 }
 
 // Chat calls this when it opens: a question asked on Home, still to be sent.
+// Hand a question, typed or spoken, to the agent's chat, which sends it when it opens (Home's Ask, a recording on the
+// Agents screen). voice: {seconds, wave} when it was spoken.
+export function handOver(agent, text, voice) {
+  try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent, text, voice: voice && voice.seconds > 0 ? voice : null })); } catch (e) { /* sent below anyway */ }
+}
 // The same, with the voice message's length and shape when it was spoken: {text, voice}.
 export function takeAskFull(agent) {
   try {

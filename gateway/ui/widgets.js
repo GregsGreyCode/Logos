@@ -163,7 +163,20 @@ function agentsToday(d) {
   })), h('p', { class: 'when' }, 'Counts only: never what was said.')];
 }
 
-const DRAW = { agents: agentsToday, services, servers, proxmox, backups, adblock, playing, downloads, bookmarks, energy, network, cameras };
+// The Las Vegas sign (Greg, 23 Nov): text scrolling across the top of Home on a wide screen. The items run twice
+// end to end and the track slides left by exactly one run, so it loops with no jump; pausing when pointed at.
+export const BAND = new Set(['marquee']);          // widgets that live in the title band of Home, not on the board
+const SIGN_SPEED = { slow: 8, medium: 13, fast: 22 };   // characters per second
+function marquee(d) {
+  const items = (d.items || []).map((i) => i.text).filter(Boolean);
+  if (!items.length) return [h('span', { class: 'when' }, 'Nothing to show yet.')];
+  const run = () => h('span', { class: 'mq-run' }, ...items.flatMap((t) => [h('span', { class: 'mq-item' }, t), h('span', { class: 'mq-sep', 'aria-hidden': 'true' }, '◆')]));
+  const seconds = Math.max(18, Math.round(items.join(' ◆ ').length / (SIGN_SPEED[d.speed] || SIGN_SPEED.medium)));
+  return [h('div', { class: 'mq', role: 'marquee', 'aria-label': `Scrolling text: ${items.slice(0, 4).join('; ')}`, style: `--mq-time:${seconds}s` },
+    h('div', { class: 'mq-track' }, run(), run()))];
+}
+
+const DRAW = { marquee, agents: agentsToday, services, servers, proxmox, backups, adblock, playing, downloads, bookmarks, energy, network, cameras };
 
 // ── one widget on Home ───────────────────────────────────────────────────────────────────────
 
@@ -178,6 +191,7 @@ export function widget(kind, { onChange } = {}) {
   function setupCard() {
     summary.textContent = '';
     el.classList.remove('needs', 'stale');
+    if (BAND.has(kind.id) && !kind.can_set_up) { body.replaceChildren(); return; }       // nothing for anyone who cannot set it up
     body.replaceChildren(h('div', { class: 'w-card setup' },
       h('p', {}, kind.about || `${kind.name} is not set up yet.`),
       kind.can_set_up ? h('button', { type: 'button', class: 'btn quiet', onclick: () => setupSheet(kind, () => { forget(url); show(); onChange?.(); }) }, 'Set it up')
