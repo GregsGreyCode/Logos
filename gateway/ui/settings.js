@@ -304,7 +304,7 @@ function notifications(state) {
 // (links straight to Google's pages); Outlook.com with Microsoft's sign-in code, through the one Logos app
 // that whoever manages Logos adds once (walked through below). Only your own mailbox; read only.
 function email(body) {
-  let alive = true, timer = null;
+  let alive = true, timer = null, openPrivate = false;
   const box = h('div', { class: 'mail-box' }, loading('rows', 2));
   const msg = h('p', { class: 'when', role: 'status' });
   body.replaceChildren(h('section', { 'aria-label': 'Email' }, heading('Email'),
@@ -314,8 +314,9 @@ function email(body) {
   const ext = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, text);
   const errOf = async (r) => { const d = await r.json().catch(() => ({})); return d.message || d.error || 'That did not work.'; };
 
-  async function load() {
+  async function load(keepOpen = false) {
     clearTimeout(timer);
+    if (!keepOpen) openPrivate = false;
     let d;
     try { d = await getJSON('/api/v2/mail'); } catch (e) { box.replaceChildren(h('p', { class: 'none' }, 'Email settings could not be loaded just now.')); return; }
     if (!alive) return;
@@ -325,28 +326,36 @@ function email(body) {
     choose(d);
   }
 
+  // The service's ISO time, as everywhere else: today the time alone, else the day and time.
+  const checked = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? when(t / 1000).toLowerCase() : String(iso); };
   function connected(d) {
     const m = d.mailbox, hl = d.health;
-    const state = !hl ? 'Starting to read it…' : hl.error ? `The last refresh failed: ${hl.error}` : hl.synced ? `Up to date (checked ${String(hl.synced).replace('T', ' ').slice(0, 16)})` : 'Copying your recent mail…';
-    const sender = h('input', { type: 'text', placeholder: 'mybank.example or someone@…', 'aria-label': 'Never read mail from', autocomplete: 'off' });
+    const state = !hl ? 'Starting to read it…' : hl.error ? `The last refresh failed: ${hl.error}` : hl.synced ? `Up to date, checked ${checked(hl.synced)}` : 'Copying your recent mail…';
+    const sender = h('input', { type: 'text', placeholder: 'mybank.example', 'aria-label': 'A sender to keep private', autocomplete: 'off',
+      autocapitalize: 'none', spellcheck: 'false' });
     const exclude = async (s, remove = false) => {
       const r = await api('/api/v2/mail/exclude', { method: 'POST', body: { sender: s, remove } });
-      msg.textContent = r.ok ? '' : await errOf(r); if (r.ok) load();
+      msg.textContent = r.ok ? '' : await errOf(r); if (r.ok) load(true);
     };
-    box.replaceChildren(
-      h('div', { class: 'card mail-card' },
-        h('div', { class: 'card-head' }, h('strong', {}, m.address || 'Your mailbox'), h('span', { class: `status ${hl && hl.error ? 'down' : 'up'}` }, '')),
-        h('p', { class: 'when' }, `${m.kind === 'gmail' ? 'Gmail' : 'Outlook.com'} · ${state}`)),
-      h('h3', { class: 'label' }, 'Never read mail from'),
-      h('p', { class: 'when' }, 'A bank or a doctor, say: their emails are never copied, and any already copied are removed.'),
-      ...(m.exclude.length ? [h('ul', { class: 'plain mail-excl' }, m.exclude.map((s) => h('li', {}, s,
-        h('button', { type: 'button', class: 'linkish', 'aria-label': `Read mail from ${s} again`, onclick: () => exclude(s, true) }, 'Remove'))))] : []),
-      h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); if (sender.value.trim()) exclude(sender.value.trim()); } },
-        sender, h('button', { type: 'submit', class: 'btn quiet' }, 'Add')),
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet danger', onclick: async () => {
-        if (!await ask({ title: 'Disconnect your email?', text: 'Your agent stops reading it, and Logos forgets the login. Its copy of your mail is removed on the next refresh.', yes: 'Disconnect', danger: true })) return;
+    // The mailbox and everything about it in one card (Greg, 23 Nov: the senders list below it looked
+    // bizarre): who it is and how it is doing, private senders folded away, and Disconnect at its foot.
+    const n = m.exclude.length;
+    const priv = h('details', { class: 'mail-private', open: openPrivate },
+      h('summary', {}, h('span', {}, 'Private senders'), h('span', { class: 'when' }, n ? `${n} kept out` : 'None')),
+      h('p', { class: 'when' }, 'Your agent never sees email from these: a bank or a doctor, say. A whole domain or one address.'),
+      n ? h('div', { class: 'mail-chips' }, m.exclude.map((s) => h('span', { class: 'mail-chip' }, s,
+        h('button', { type: 'button', 'aria-label': `Let your agent read mail from ${s} again`, onclick: () => exclude(s, true) }, '✕')))) : '',
+      h('form', { class: 'mail-add', onsubmit: (e) => { e.preventDefault(); if (sender.value.trim()) exclude(sender.value.trim()); } },
+        sender, h('button', { type: 'submit', class: 'btn quiet small' }, 'Add')));
+    priv.addEventListener('toggle', () => { openPrivate = priv.open; });
+    box.replaceChildren(h('div', { class: 'card mail-card' },
+      h('div', { class: 'mail-who' }, h('span', { class: `status ${hl && hl.error ? 'down' : 'up'}`, 'aria-hidden': 'true' }),
+        h('div', {}, h('strong', {}, m.address || 'Your mailbox'), h('p', { class: 'when' }, `${m.kind === 'gmail' ? 'Gmail' : 'Outlook.com'} · ${state}`))),
+      priv,
+      h('div', { class: 'mail-foot' }, h('button', { type: 'button', class: 'linkish danger-text', onclick: async () => {
+        if (!await ask({ title: 'Disconnect your email?', text: 'Your agent stops reading it, and Logos forgets the login. Its copy of your mail is removed.', yes: 'Disconnect', danger: true })) return;
         const r = await api('/api/v2/mail', { method: 'DELETE' }); msg.textContent = r.ok ? 'Disconnected.' : await errOf(r); load();
-      } }, 'Disconnect')));
+      } }, 'Disconnect'))));
   }
 
   function choose(d) {

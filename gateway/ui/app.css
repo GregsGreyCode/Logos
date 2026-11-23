@@ -1890,5 +1890,24 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .mail-step .form, .mail-step form.row { margin-top: 6px; }
 .mail-code { font: 600 1.6rem/1.2 ui-monospace, monospace; letter-spacing: .12em; margin: 4px 0 8px; }
 .mail-choose .btn { flex: 1; }
-.mail-excl li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
-.mail-card { margin-bottom: 14px; }
+.mail-card { display: grid; gap: 0; padding-bottom: 6px; }
+.mail-who { display: flex; gap: 12px; align-items: flex-start; padding-bottom: 12px; }
+.mail-who .status { margin-top: 7px; flex: none; }
+.mail-who strong { overflow-wrap: anywhere; }
+.mail-who p { margin: 2px 0 0; }
+.mail-private { border-top: 1px solid var(--line); }
+.mail-private > summary { display: flex; align-items: center; gap: 10px; min-height: 48px; cursor: pointer; list-style: none; }
+.mail-private > summary::-webkit-details-marker { display: none; }
+.mail-private > summary .when { margin-left: auto; }
+.mail-private > summary::after { content: "›"; font-size: 20px; color: var(--muted); transition: transform .2s ease; }
+.mail-private[open] > summary::after { transform: rotate(90deg); }
+.mail-private > p { margin: 0 0 10px; }
+.mail-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.mail-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 4px 4px 12px; border: 1px solid var(--line);
+  border-radius: 999px; font-size: var(--t-sm); }
+.mail-chip button { width: 28px; height: 28px; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.mail-chip button:hover, .mail-chip button:focus-visible { color: var(--ink); background: var(--line); }
+.mail-add { display: flex; gap: 8px; margin-bottom: 12px; }
+.mail-add input { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: transparent; color: var(--ink); font: inherit; }
+.mail-foot { border-top: 1px solid var(--line); padding-top: 10px; display: flex; justify-content: flex-end; }
