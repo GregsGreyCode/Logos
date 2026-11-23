@@ -1,0 +1,33 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.evaluate(() => { window.__mx.offline = true; });
+await page.fill('#chat-input', 'Shared'); await page.locator('.send-btn').click(); await page.waitForTimeout(600);
+ok(await page.locator('.msg.failed', { hasText: 'Shared' }).count() === 1 && await page.locator('.mx-failed').count() === 1, 'a message that did not go shows its ! in the chat');
+ok((await page.inputValue('#chat-input')) === '', 'its words are not put back in the box (no duplicate)');
+ok(!(await page.locator('.composer').evaluate((f) => f.closest('.chat').innerText.includes('It is kept above'))), 'no line of text across the screen about it');
+ok((await page.locator('.mx-turn.me').last().innerText()).includes('tap or hold to retry'), 'under it: not sent · tap or hold to retry');
+ok(await page.locator('.mx-thinking').isHidden(), 'and the agent is not shown as thinking about it');
+await page.screenshot({ path: process.argv[2] + '/failed.png' });
+await page.locator('.msg.failed').tap(); await page.waitForTimeout(300);
+ok(await page.locator('.mx-failmenu').isVisible(), 'a tap offers Send again and Delete');
+await page.evaluate(() => { window.__mx.offline = false; });
+await page.locator('.mx-failmenu button', { hasText: 'Send again' }).tap(); await page.waitForTimeout(600);
+ok(await page.locator('.msg.failed').count() === 0 && (await page.evaluate(() => window.__mx.resent || [])).includes('Shared'), 'Send again sends it');
+// Delete
+await page.evaluate(() => { window.__mx.offline = true; });
+await page.fill('#chat-input', 'Oops'); await page.locator('.send-btn').click(); await page.waitForTimeout(600);
+await page.locator('.msg.failed', { hasText: 'Oops' }).tap(); await page.waitForTimeout(300);
+await page.locator('.mx-failmenu button', { hasText: 'Delete' }).tap(); await page.waitForTimeout(400);
+ok(await page.locator('.msg', { hasText: 'Oops' }).count() === 0, 'Delete takes it away');
+// By itself, once back online
+await page.fill('#chat-input', 'Later'); await page.locator('.send-btn').click(); await page.waitForTimeout(500);
+await page.evaluate(() => { window.__mx.offline = false; window.dispatchEvent(new Event('online')); }); await page.waitForTimeout(800);
+ok(await page.locator('.msg.failed').count() === 0 && (await page.evaluate(() => window.__mx.resent || [])).includes('Later'), 'it retries by itself when the connection is back');
+ok(errs.length === 0, `no page errors ${errs.join('|')}`);
+await browser.close();

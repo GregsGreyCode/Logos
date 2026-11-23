@@ -324,7 +324,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   await Promise.race([readNames(), new Promise((ok) => setTimeout(ok, 300))]);
   let looking = false;
   const fromWhere = (ev) => {
-    if (ev.status) return ev.status === 'not_sent' ? 'not sent' : 'sending…';
+    if (ev.status) return ev.status === 'not_sent' ? 'not sent · tap or hold to retry' : 'sending…';
     const key = ev.getSenderKey && ev.getSenderKey();
     if (!key || key === ownKey) return 'sent';
     const name = deviceNames.get(key);
@@ -474,6 +474,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       meta || think ? h('div', { class: 'mx-foot' }, meta, think) : null,
       thread ? h('a', { class: 'mx-thread-link', href: `${main}/thread/${encodeURIComponent(ev.getId())}` },
         `↳ ${thread.count} repl${thread.count === 1 ? 'y' : 'ies'} · open this conversation`) : null);
+    if (mine && ev.status === 'not_sent') {
+      bubble.classList.add('failed');
+      const openFail = () => { failMenuFor = failMenuFor === ev ? null : ev; draw(false); };
+      bubble.append(h('button', { type: 'button', class: 'mx-failed', 'aria-label': 'Not sent: retry or delete', title: 'Not sent: retry or delete', onclick: (e) => { e.stopPropagation(); openFail(); } }, '!'));
+      longPress(bubble, openFail);
+      bubble.addEventListener('click', openFail);
+      if (failMenuFor === ev) turn.insertBefore(failMenu(ev), bubble.nextSibling);
+    }
     if (canReact) {
       const open = () => { pickerFor = ev.getId(); draw(false); };
       bubble.append(h('button', { type: 'button', class: 'mx-react-open', 'aria-label': 'React to this message', title: 'React', onclick: (e) => { e.stopPropagation(); open(); } }, '☺'));
@@ -642,7 +650,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // (a conversation's title notice is not a message waiting for an answer)
     // Waiting for the agent: your newest readable message, under 15 minutes old, that is not a conversation's
     // opening (its title notice, or a message whose thread already has replies).
-    const waitingOnAgent = !!(last && last.getSender() === me && !last.isDecryptionFailure()
+    const waitingOnAgent = !!(last && last.getSender() === me && last.status !== 'not_sent' && !last.isDecryptionFailure()
       && last.getContent().msgtype !== 'm.notice' && !replyMap.has(last.getId()) && Date.now() - last.getTs() < 15 * 60000
       && (!group || (last.getContent()['m.mentions']?.user_ids || []).some((id) => agentIds.has(id))));
     thinkingRow.hidden = !waitingOnAgent && !typing;
@@ -726,8 +734,39 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text });
       else if (group) await c.sendMessage(room.roomId, groupMessage(text));
       else await c.sendMessage(room.roomId, { msgtype: 'm.text', body: text });
-    } catch (e) { note.textContent = `Not sent: ${e.message}. It is kept above; send it again.`; input.value = text; grow(); }
+    } catch (e) {
+      // The failed message stays in the chat with its ! (retried by itself, or held to retry), as in
+      // Element X (Greg, 23 Nov: a line of text and the words back in the box took the screen). Only if
+      // it is not there is the text given back.
+      if (!failedNow().some((ev) => String(ev.getContent().body || '') === text)) { note.textContent = `Not sent: ${e.message}`; input.value = text; grow(); }
+    }
     draw(true);
+  }
+  // ── messages that did not go: retry and delete ─────────────────────────────────────────────
+  function failedNow() {
+    if (!room) return [];
+    const seen = new Set();
+    return [...(room.getPendingEvents?.() || []), ...room.getLiveTimeline().getEvents()]
+      .filter((ev) => ev.status === 'not_sent' && !seen.has(ev) && seen.add(ev));
+  }
+  const tries = new WeakMap();
+  async function resend(ev) {
+    tries.set(ev, (tries.get(ev) || 0) + 1);
+    try { await c.resendEvent(ev, room); } catch (e) { /* still not sent: it keeps its ! */ }
+    draw(false);
+  }
+  // By itself: when the connection comes back, and every 10 s while something waits (5 tries each).
+  const retryAll = () => { for (const ev of failedNow()) if ((tries.get(ev) || 0) < 5) resend(ev); };
+  const onSync = (state, prev) => { if ((state === 'SYNCING' || state === 'PREPARED') && prev && prev !== state && prev !== 'SYNCING') retryAll(); };
+  if (m.ClientEvent?.Sync) { c.on(m.ClientEvent.Sync, onSync); off.push(() => c.off(m.ClientEvent.Sync, onSync)); }
+  const retryTimer = setInterval(() => { if (navigator.onLine !== false && failedNow().length) retryAll(); }, 10000);
+  off.push(() => clearInterval(retryTimer));
+  window.addEventListener('online', retryAll); off.push(() => window.removeEventListener('online', retryAll));
+  let failMenuFor = null;
+  function failMenu(ev) {
+    return h('div', { class: 'mx-picker mx-failmenu', role: 'menu', 'aria-label': 'Not sent' },
+      h('button', { type: 'button', role: 'menuitem', onclick: () => { failMenuFor = null; tries.delete(ev); resend(ev); } }, 'Send again'),
+      h('button', { type: 'button', role: 'menuitem', class: 'danger-text', onclick: () => { failMenuFor = null; try { c.cancelPendingEvent(ev); } catch (e) { /* gone already */ } draw(false); } }, 'Delete'));
   }
 
   // Panel: the main conversation (threads arrive with M3), then old web chats for 30 days.
