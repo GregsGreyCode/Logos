@@ -1,0 +1,25 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
+const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+const S = { agent: 'greg', outlook_ready: true, is_admin: true, mailbox: null, signin: null };
+const msg = 'Microsoft has no app with that ID that personal accounts can use. Check that you copied the Application (client) ID, not the Directory (tenant) ID just under it.';
+await page.route('**/api/v2/mail**', async (route) => {
+  const r = route.request(), u = new URL(r.url());
+  if (r.method() === 'GET') return route.fulfill({ json: S });
+  return route.fulfill({ status: u.pathname.endsWith('/outlook') ? 502 : 400, json: { error: 'refused', message: msg } });
+});
+await page.goto('http://127.0.0.1:8779/#/settings/email'); await page.waitForTimeout(1500);
+await page.getByRole('button', { name: 'Outlook.com / Hotmail' }).tap(); await page.waitForTimeout(300);
+await page.getByRole('button', { name: 'Get a sign-in code' }).tap(); await page.waitForTimeout(500);
+ok((await page.locator('[role=status]').allInnerTexts()).join(' ').includes('Directory (tenant) ID'), 'the error says what to check');
+await page.getByRole('button', { name: 'Change the Logos app' }).tap(); await page.waitForTimeout(300);
+ok(await page.locator('#mail-app').count() === 1, 'and the manager can put in the right ID');
+await page.fill('#mail-app', '9188040d-6c67-4c5b-b112-36a304b66dad'); await page.getByRole('button', { name: 'Save' }).tap(); await page.waitForTimeout(400);
+ok((await page.locator('[role=status]').allInnerTexts()).join(' ').includes('tenant'), 'a wrong one is refused with the reason');
+await page.screenshot({ path: process.argv[2] + '/mail-wrongid.png' });
+ok(errs.length === 0, `no page errors ${errs.join('|')}`);
+await browser.close();

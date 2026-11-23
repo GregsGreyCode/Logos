@@ -39,3 +39,31 @@ jobs:
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""
           NOUS_API_KEY: ""
+
+  # Screen checks (tests/ui): the dashboard in a real Chrome at phone, foldable and desktop sizes against
+  # a fake server. Screenshots are kept for a week as the run's "ui-screenshots".
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install the browser library
+        run: npm install --prefix tests/ui --no-audit --no-fund
+
+      - name: Screen checks
+        run: CHROME="$(command -v google-chrome)" tests/ui/run.sh
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: tests/ui/out
+          retention-days: 7

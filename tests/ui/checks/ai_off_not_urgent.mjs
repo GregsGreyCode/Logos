@@ -1,0 +1,25 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+await page.route('**/api/v2/notifications', async (route) => { const r = await route.fetch(); const d = await r.json();
+  d.items = d.items.filter((i) => i.kind !== 'ai');
+  d.items.unshift({ id: 'ai:off', kind: 'ai', type: 'problem', up: false, ts: Date.now() / 1000 - 1800, title: 'AI computer is off', text: 'Agents answer again when it is back.' },
+    { id: 'agent:bere', kind: 'agent', type: 'problem', ts: Date.now() / 1000 - 600, title: "Béré's agent is not running", text: 'Greg can start it again.' });
+  await route.fulfill({ json: d }); });
+await page.goto('http://127.0.0.1:8779/#/noticeboard'); await page.waitForTimeout(2200);
+const inNeeds = await page.locator('section[aria-label="Needs you"] .feed-item').allInnerTexts();
+ok(!inNeeds.some((t) => t.includes('AI computer')), `the AI computer being off is not under Needs you (${inNeeds.length} there)`);
+ok(inNeeds.some((t) => t.includes("Béré's agent")), 'an agent that should run still is');
+ok(await page.locator('.feed-days .feed-item', { hasText: 'AI computer is off' }).count() === 1, 'it shows in today\'s list instead');
+const badge = await page.locator('.tab-badge').innerText().catch(() => '');
+ok(!badge || Number(badge) >= 1, `bell: ${badge}`);
+const gap = await page.evaluate(() => { const row = [...document.querySelectorAll('.feed-item.type-problem')][0]; if (!row) return null;
+  const chip = row.querySelector('.feed-type'), title = row.querySelector('.feed-title'), dot = row.querySelector('.feed-dot');
+  const r = row.getBoundingClientRect(), c = chip.getBoundingClientRect(), t = title.getBoundingClientRect();
+  return { edgeToFirst: Math.round(Math.min(c.left, dot && dot.offsetParent ? dot.getBoundingClientRect().left : 9999) - r.left), chipToTitle: Math.round(t.left - c.right) }; });
+console.log('spacing', JSON.stringify(gap));
+await page.screenshot({ path: process.argv[2] + '/aioff.png' });
+await browser.close();

@@ -1,0 +1,35 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+const posts = []; page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/home/lights')) posts.push(r.postData()); });
+await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2200);
+await page.evaluate(() => { const s = document.querySelector('.home-lights-sec'); window.scrollBy(0, s.getBoundingClientRect().top - 120); }); await page.waitForTimeout(400);
+const cdp = await ctx.newCDPSession(page);
+const drag = async (room, fromFrac, toFrac, steps = 12, dy = 0) => {
+  const b = await page.locator('.home-light', { hasText: room }).boundingBox();
+  const y = b.y + b.height / 2, x0 = b.x + b.width * fromFrac, x1 = b.x + b.width * toFrac;
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+  for (let i = 1; i <= steps; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x0 + (x1 - x0) * i / steps, y: y + dy * i / steps }] }); await page.waitForTimeout(16); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await page.waitForTimeout(400);
+};
+const fillOf = (room) => page.locator('.home-light', { hasText: room }).locator('.home-light-fill').evaluate((el) => el.style.width);
+ok(await fillOf('Living Room') === '72%' && await fillOf('Kitchen') === '0%', 'the pill is filled to its brightness');
+await drag('Bedroom', 0.3, 0.6);
+const last = JSON.parse(posts.at(-1) || '{}');
+ok(last.targets?.[0] === 'Bedroom' && last.on === true && last.brightness >= 55 && last.brightness <= 65, `sliding along the pill sets the level (${posts.at(-1)})`);
+ok(await page.evaluate(() => location.hash) === '#/home', 'and does not change tab');
+await drag('Kitchen', 0.1, 0.45);
+ok(JSON.parse(posts.at(-1)).targets[0] === 'Kitchen' && JSON.parse(posts.at(-1)).brightness > 30, 'sliding an off room turns it on at that level');
+const before = posts.length;
+await page.locator('.home-light', { hasText: 'Hallway' }).tap(); await page.waitForTimeout(400);
+ok(posts.length === before + 1 && posts.at(-1) === '{"targets":["Hallway"],"on":true}', 'a tap switches it');
+const n = posts.length;
+await drag('Living Room', 0.5, 0.52, 10, 160);
+ok(posts.length === n, 'an up-and-down drag is a scroll, not a change');
+await page.locator('.home-lights-sec').screenshot({ path: process.argv[2] + '/pill.png' });
+ok(errs.length === 0, `no page errors ${errs.join('|')}`);
+await browser.close();

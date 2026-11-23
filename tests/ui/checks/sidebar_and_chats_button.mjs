@@ -1,0 +1,22 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { chromium } = require('playwright-core');
+const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
+for (const [w, hgt] of [[1440, 900], [1024, 768]]) {
+  const page = await browser.newPage({ viewport: { width: w, height: hgt } });
+  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2000);
+  await page.mouse.wheel(0, 3000); await page.waitForTimeout(400);
+  const so = await page.locator('.nav .logout-btn').boundingBox();
+  ok(so && so.y + so.height <= hgt && so.y > hgt - 80, `${w}: Sign out snug at the bottom after scrolling (y=${so && Math.round(so.y)})`);
+  ok((await page.locator('.nav .logo').boundingBox()).y >= 0, `${w}: the menu did not scroll away`);
+  await page.close();
+}
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(3000);
+const btn = page.locator('.chat-head .side-reopen');
+ok(await btn.isVisible() && (await btn.innerText()) === 'Chats', 'a chat: a Chats button in its header once the panel slides away');
+await btn.click(); await page.waitForTimeout(500);
+ok(await page.locator('#chat-side').isVisible(), 'which opens the panel');
+await page.screenshot({ path: process.argv[2] + '/desk/b2-chat.png' });
+await browser.close();
