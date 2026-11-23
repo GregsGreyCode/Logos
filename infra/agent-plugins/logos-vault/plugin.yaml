@@ -1,0 +1,11 @@
+name: logos-vault
+label: Logos keeps what the agent is sent
+kind: standalone
+version: 1.0.0
+description: >
+  Every photo and document sent to the agent is copied, as it arrives, into the agent's own vault
+  (/opt/data/vault) with who sent it, when and where, so it is still there long after hermes empties its
+  cache (about a day). A background job writes a note about each one into the brain; the agent is told a
+  file was kept. Private to the agent's own volume. Nothing is deleted in this phase.
+author: Logos
+provides_hooks: []
