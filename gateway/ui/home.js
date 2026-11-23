@@ -73,8 +73,13 @@ export async function homeView(root, rest, state) {
   const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists' },
     h('h2', { class: 'label' }, 'Lists'), listsBox);
   const showLists = () => swr('/api/v2/agents/household/brain/page?path=lists.md', 5 * 60000, drawLists, null);   // kept 5 minutes
+  let listsPage = null;                // the copy last read, so changing the size redraws without asking again
+  // Which widgets have more than one size (Greg, 23 Nov): chosen in Edit, each person's own.
+  const SIZES = { lists: [['compact', 'Compact'], ['full', 'Full']] };
+  const sizeOf = (id) => { const v = (getPref('widget_sizes', {}) || {})[id]; return (SIZES[id] || []).some(([k]) => k === v) ? v : (SIZES[id] || [[null]])[0][0]; };
   function drawLists(page) {
     if (!alive || !page || !page.text) return;
+    listsPage = page;
     const lists = [];
     for (const line of String(page.text).split('\n')) {
       const head = line.match(/^##\s+(.+)/);
@@ -82,18 +87,33 @@ export async function homeView(root, rest, state) {
       const id = line.match(/^<!--\s*(todo\.[\w-]+)\s*-->/);
       if (id && lists.length) { lists[lists.length - 1].id = id[1]; continue; }
       const item = line.match(/^- \[ \]\s+(.+)/);
-      if (item && lists.length) lists[lists.length - 1].items.push(item[1].replace(/\s*\(due [^)]*\)\s*$/, '').trim());
+      if (item && lists.length) {
+        const due = item[1].match(/\s*\(due ([^)]*)\)\s*$/);
+        lists[lists.length - 1].items.push({ text: item[1].replace(/\s*\(due [^)]*\)\s*$/, '').trim(), due: due ? due[1].trim() : '' });
+      }
     }
     const shown = lists.filter((l) => l.items.length);
     listsSec.hidden = !lists.length;
     // On a phone a list opens in the Home Assistant app, where the lists live (Greg, 21 Nov); a desktop has
     // no app, so there it opens the copy in Logos.
     const phone = window.matchMedia('(max-width: 599px)').matches;
-    listsBox.replaceChildren(...(shown.length ? shown.map((l) => h('a', { class: 'home-list-card', href: phone ? haTodo(l.id) : '#/brain/household/lists.md',
-      title: phone ? `Open ${l.name} in Home Assistant` : 'Open the lists' },
+    const full = sizeOf('lists') === 'full';
+    listsBox.classList.toggle('full', full);
+    const href = (l) => (phone ? haTodo(l.id) : '#/brain/household/lists.md');
+    // Full (Béré, 23 Nov: "wants to see more"): every list as a card with its things one under another, and when
+    // they are due; up to 12 each, then how many more.
+    const MORE = 12;
+    const fullCard = (l) => h('section', { class: 'home-list-card full', 'aria-label': l.name },
+      h('a', { class: 'home-list-head', href: href(l), title: phone ? `Open ${l.name} in Home Assistant` : 'Open the lists' },
+        h('strong', {}, l.name), h('span', { class: 'home-list-count' }, String(l.items.length))),
+      h('ul', { class: 'home-list-all' }, ...l.items.slice(0, MORE).map((i) => h('li', {},
+        h('span', { class: 'home-list-box', 'aria-hidden': 'true' }), h('span', { class: 'home-list-text' }, i.text),
+        i.due ? h('span', { class: 'home-list-due' }, i.due) : null))),
+      l.items.length > MORE ? h('a', { class: 'home-list-more', href: href(l) }, `+${l.items.length - MORE} more`) : null);
+    const tile = (l) => h('a', { class: 'home-list-card', href: href(l), title: phone ? `Open ${l.name} in Home Assistant` : 'Open the lists' },
       h('span', { class: 'home-list-head' }, h('strong', {}, l.name), h('span', { class: 'home-list-count' }, String(l.items.length))),
-      h('span', { class: 'home-list-items' }, l.items.slice(0, 3).join(' · ') + (l.items.length > 3 ? ` · +${l.items.length - 3}` : ''))))
-      : [none('Every list is empty.')]));
+      h('span', { class: 'home-list-items' }, l.items.slice(0, 3).map((i) => i.text).join(' · ') + (l.items.length > 3 ? ` · +${l.items.length - 3}` : '')));
+    listsBox.replaceChildren(...(shown.length ? shown.map(full ? fullCard : tile) : [none('Every list is empty.')]));
   }
 
   function showToday(today) {
@@ -342,6 +362,16 @@ export async function homeView(root, rest, state) {
         await save([...orderNow(), id]); applyWidgets(); decorate(); SHOW[id]();
       } }, `+ ${WIDGETS[id]}`)));
   }
+  // Compact or Full, in the widget's bar while arranging; kept with your login, redrawn at once.
+  function sizeSwitch(id) {
+    const now = sizeOf(id);
+    return h('div', { class: 'widget-size', role: 'group', 'aria-label': `${WIDGETS[id]} size` }, ...SIZES[id].map(([k, label]) => h('button', {
+      type: 'button', class: k === now ? 'on' : '', 'aria-pressed': String(k === now), onclick: async () => {
+        await setPref('widget_sizes', { ...(getPref('widget_sizes', {}) || {}), [id]: k });
+        if (id === 'lists' && listsPage) drawLists(listsPage);
+        decorate();
+      } }, label)));
+  }
   function decorate() {
     for (const [id, el] of Object.entries(SECS)) {
       el.querySelector(':scope > .widget-bar')?.remove();
@@ -355,6 +385,7 @@ export async function homeView(root, rest, state) {
         if (sib && !sib.classList.contains('off')) { if (e.key === 'ArrowUp') sib.before(el); else sib.after(el); save(orderNow()); handle.focus(); }
       });
       el.prepend(h('div', { class: 'widget-bar' }, handle, h('span', { class: 'widget-name' }, WIDGETS[id]),
+        SIZES[id] ? sizeSwitch(id) : null,
         id === 'weather' ? h('button', { type: 'button', class: 'linkish small', onclick: () => {
           const open = el.querySelector('.home-place'); if (open) open.remove(); else el.querySelector('.widget-bar').after(placePicker());
         } }, 'Town') : null,

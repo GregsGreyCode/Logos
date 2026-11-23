@@ -145,6 +145,9 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 # Home's widgets, each person's own choice (Greg, 22 Nov); the calendar is always there.
 WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming")
+# Widgets that come in more than one size, each person's own choice in Edit (Greg, 23 Nov: his To-do compact,
+# Béré's full). The first is the default.
+WIDGET_SIZES = {"lists": ("compact", "full")}
 # F41: the screens whose first-visit tips someone has seen (gateway/ui/tips.js)
 TIP_SCREENS = ("home", "agents", "chat", "notifications", "routines")
 
@@ -169,6 +172,8 @@ def _pref_ok(key: str, value: Any) -> bool:
         return isinstance(value, list) and len(value) == len(set(value)) and all(t in TIP_SCREENS for t in value)
     if key == "weather_place":
         return _place_ok(value)
+    if key == "widget_sizes":
+        return isinstance(value, dict) and all(w in WIDGET_SIZES and v in WIDGET_SIZES[w] for w, v in value.items())
     if key in COLOUR_PREFS:
         return isinstance(value, str) and (value == "" or bool(_HEX.match(value)))
     return key in PREFS and value in PREFS[key]
@@ -256,7 +261,8 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
     if not isinstance(body, dict) or not body or not all(_pref_ok(k, v) for k, v in body.items()):
         return web.json_response({"error": "bad_prefs", "allowed": {**{k: list(v) for k, v in PREFS.items()},
                                                                    **{k: "#rrggbb" for k in COLOUR_PREFS},
-                                                                   "widgets": list(WIDGETS), "tips_seen": list(TIP_SCREENS), "weather_place": "{name, lat, lon}"}},
+                                                                   "widgets": list(WIDGETS), "tips_seen": list(TIP_SCREENS), "weather_place": "{name, lat, lon}",
+                                                                   "widget_sizes": {w: list(v) for w, v in WIDGET_SIZES.items()}}},
                                  status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
     seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not settings
