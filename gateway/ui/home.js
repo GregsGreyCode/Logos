@@ -517,11 +517,12 @@ export async function homeView(root, rest, state) {
   const askGrow = () => { ask.style.height = 'auto'; ask.style.height = `${Math.min(ask.scrollHeight + 2, 132)}px`; };
   const say = (t) => { askNote.replaceChildren(typeof t === 'string' ? document.createTextNode(t) : t); };
   const voice = createRecorder({ agent: () => (data && data.agent ? data.agent.name : ''), say,
-    onWords: (text) => { ask.value = (ask.value.trim() ? ask.value.trimEnd() + ' ' : '') + text; askGrow(); ask.focus(); } });
-  const submitAsk = () => {
+    // A recording is sent as soon as its words are ready, as a voice message (see voice.js), to your agent's chat.
+    onWords: (text, meta) => { ask.value = text; submitAsk(meta); } });
+  const submitAsk = (spoken) => {
     const text = ask.value.trim();
     if (!text || !data || !data.agent) return;
-    try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent: data.agent.name, text })); } catch (err) { /* sent below anyway */ }
+    try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent: data.agent.name, text, voice: spoken && spoken.seconds > 0 ? spoken : null })); } catch (err) { /* sent below anyway */ }
     // An agent on Matrix is asked in its own chat (#/chat/<agent>); the old web chat is a read-only archive now.
     location.hash = data.agent.matrix && mx.saved() ? `#/chat/${data.agent.name}` : `#/chat/${data.agent.name}/${Math.random().toString(36).slice(2, 12)}`;
   };
@@ -567,6 +568,14 @@ export async function homeView(root, rest, state) {
 }
 
 // Chat calls this when it opens: a question asked on Home, still to be sent.
+// The same, with the voice message's length and shape when it was spoken: {text, voice}.
+export function takeAskFull(agent) {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');
+    if (v && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return { text: v.text, voice: v.voice || null }; }
+  } catch (e) { /* nothing waiting */ }
+  return null;
+}
 export function takeAsk(agent) {
   try {
     const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');

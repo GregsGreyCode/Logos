@@ -1259,16 +1259,17 @@ form.recording > :not(.rec-bar) { display: none !important; }
   border: 1px solid color-mix(in srgb, var(--danger, #e5484d) 55%, var(--line)); background: color-mix(in srgb, var(--danger, #e5484d) 10%, var(--surface)); }
 .rec-bar[hidden] { display: none; }
 .rec-dot { flex: none; width: 12px; height: 12px; margin-left: 8px; border-radius: 50%; background: var(--danger, #e5484d);
-  transform: scale(calc(1 + var(--level, 0) * 0.9)); transition: transform .09s linear; box-shadow: 0 0 0 calc(var(--level, 0) * 7px) color-mix(in srgb, var(--danger, #e5484d) 30%, transparent); }
+  animation: rec-blink 1.2s ease-in-out infinite; }
+@keyframes rec-blink { 50% { opacity: .35; } }
 .rec-time { flex: none; font: 600 var(--t-md) var(--font-body); font-variant-numeric: tabular-nums; color: var(--ink); }
-.rec-hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--t-sm); }
+.rec-wave { flex: 1; min-width: 0; height: 32px; color: var(--danger, #e5484d); }          /* the live waveform (voice.js) */
 .rec-discard, .rec-done { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; border: 0; }
 .rec-discard { background: transparent; color: var(--muted); }
 .rec-discard:hover { color: var(--danger, #e5484d); }
 .rec-done { background: var(--danger, #e5484d); color: #fff; }
 .rec-discard svg, .rec-done svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .rec-done svg { fill: currentColor; }
-@media (prefers-reduced-motion: reduce) { .rec-dot { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .rec-dot { animation: none; } }
 /* The queue line sits just above the message box. */
 .chat .model-line { margin: 0 16px 8px; border-radius: 12px; }
 @media (max-width: 599px) {
@@ -2402,3 +2403,18 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-ask textarea:focus-visible { outline: 0; border-color: var(--accent-text); }
 .home-ask .mx-note { flex: 1 0 100%; margin: 0; padding: 0 6px; order: 5; }
 .home-ask .mx-note:empty { display: none; }
+
+/* A voice message you sent (Greg, 23 Nov): its shape and length, the transcript underneath. */
+.mx-voice-bar { display: flex; align-items: center; gap: 10px; min-width: 190px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid rgb(255 255 255 / .22); }
+.mx-voice-mic { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgb(255 255 255 / .2); }
+.mx-voice-mic svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mx-voice-wave { flex: 1; min-width: 0; height: 26px; display: flex; align-items: center; gap: 2px; }
+.mx-voice-wave i { flex: 1; min-width: 1px; max-width: 4px; height: var(--h, 20%); border-radius: 2px; background: currentColor; opacity: .85; }
+.mx-voice-time { flex: none; font: 500 var(--t-xs) var(--font-body); font-variant-numeric: tabular-nums; opacity: .85; }
+.mx-voice-words { font-size: var(--t-md); line-height: 1.45; overflow-wrap: anywhere; }
+.mx-voice-words.wait { opacity: .7; font-style: italic; }
+.mx-turn.voicing .mx-voice-wave i { animation: voice-wait 1.4s ease-in-out infinite; }
+.mx-turn.voicing .mx-voice-wave i:nth-child(3n) { animation-delay: .25s; }
+.mx-turn.voicing .mx-voice-wave i:nth-child(3n+1) { animation-delay: .5s; }
+@keyframes voice-wait { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .mx-turn.voicing .mx-voice-wave i { animation: none; } }

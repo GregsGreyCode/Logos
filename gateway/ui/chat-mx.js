@@ -12,8 +12,8 @@ import * as mx from './mx.js';
 import { clearRoom } from './push.js';
 import { voiceNote, imageThumb, fileCard, prepareFile, sendPrepared, fileSize } from './media.js';
 import { stepsView } from './chat.js';
-import { takeAsk } from './home.js';
-import { createRecorder } from './voice.js';
+import { takeAskFull } from './home.js';
+import { createRecorder, voiceBar } from './voice.js';
 import { markBar, agentBar, takeVoice } from './agents-void.js';
 import { getPref } from './prefs.js';
 
@@ -206,8 +206,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     } catch (err) { note.textContent = `Not sent: ${err.message}. They are kept above; send again.`; files = list; drawPending(); idle(); }
   }
   const say = (t) => { note.replaceChildren(typeof t === 'string' ? document.createTextNode(t) : t); };
+  // A finished recording is sent at once as a voice message (Greg, 23 Nov): a bubble with the recording's shape and
+  // length and its transcript underneath, to glance over and correct names in a later message. While the words are
+  // being worked out a placeholder bubble shows (voicing).
+  let voicing = null;
   const voice = createRecorder({ agent: agent.name, say,
-    onWords: (text) => { input.value = (input.value.trim() ? input.value.trimEnd() + ' ' : '') + text; grow(); syncSend(); input.focus(); },
+    onWords: (text, meta) => sendText(text, meta),
+    onTranscribing: (meta) => { voicing = meta; draw(true); },
+    onSettled: () => { voicing = null; draw(false); },
     onBusy: (b) => form.classList.toggle('transcribing', b) });
   const submit = () => {
     if (send.dataset.mode === 'stop') { stopAgent(); return; }
@@ -438,7 +444,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     else if (kind === 'm.audio') body = [voiceNote(c, content)];
     else if (kind === 'm.image') body = [imageThumb(c, content)];
     else if (kind === 'm.file' || kind === 'm.video') body = [fileCard(c, content, kind)];
-    else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));
+    else if (mine && content['org.logos.voice'] && content['org.logos.voice'].seconds > 0) {
+      // A voice message: its shape and length, the transcript underneath.
+      body = [voiceBar(content['org.logos.voice']), h('div', { class: 'mx-voice-words' }, String(content.body || ''))];
+    } else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));
     const rx = [...(reactions.get(ev.getId()) || [])];
     const seen = mine && rx.some(([k, r]) => ACK.has(k) && r.n > (r.mine ? 1 : 0));
     const chips = rx.filter(([k, r]) => !(mine && ACK.has(k) && !r.mine));
@@ -636,6 +645,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       e.target.textContent = 'Loading…'; await c.scrollback(room, 30); draw(false);
     } }, 'Earlier messages');
     latestShown = shown[shown.length - 1] || null;
+    const voicingTurn = voicing ? h('div', { class: 'mx-turn me voicing' },
+      h('div', { class: 'msg user' }, voiceBar(voicing), h('div', { class: 'mx-voice-words wait' }, 'Turning it into words…'))) : null;
     log.replaceChildren(...(threadId ? [] : [older]), ...(shown.length ? shown.map((ev, i) => {
       // The time shows at the end of a run: the next message is from someone else, or 5+ minutes later.
       const next = shown[i + 1];
@@ -644,7 +655,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       const prev = shown[i - 1];
       const showName = !!group && ev.getSender() !== me && (!prev || cronJob(prev) || prev.getSender() !== ev.getSender() || ev.getTs() - prev.getTs() > 5 * 60000);
       return bubbleFor(ev, edits, reactions, inMain, showTime, showName);
-    }) : [none('Nothing said here yet.')]));
+    }) : [none('Nothing said here yet.')]), ...(voicingTurn ? [voicingTurn] : []));
     // Read: tell Matrix this chat has been read up to its newest message (as Element X does), so it
     // leaves Notifications here and on the phone (Greg, 21 Nov). Only while the page is on screen.
     const newest = [...room.getLiveTimeline().getEvents()].reverse().find((e) => e.getId() && !e.getId().startsWith('~') && e.getSender() !== me);
@@ -729,9 +740,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       formatted_body: `${pills}: ${escapeHtml(text).replace(/\n/g, '<br>')}`, 'm.mentions': { user_ids: to.map((a) => a.matrix_id) } };
   }
 
-  async function sendText(text) {
+  async function sendText(text, spoken) {
     text = String(text || '').trim();
     if (!text || !room) return;
+    // A voice message carries its length and shape beside the words (agents ignore it; Element X shows plain text).
+    const extra = spoken && spoken.seconds > 0 ? { 'org.logos.voice': { seconds: spoken.seconds, wave: spoken.wave || [] } } : {};
     input.value = ''; grow();
     idle();
     note.textContent = '';
@@ -743,9 +756,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         location.hash = `${main}/thread/${encodeURIComponent(r.event_id)}`;
         return;
       }
-      if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text });
-      else if (group) await c.sendMessage(room.roomId, groupMessage(text));
-      else await c.sendMessage(room.roomId, { msgtype: 'm.text', body: text });
+      if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text, ...extra });
+      else if (group) await c.sendMessage(room.roomId, { ...groupMessage(text), ...extra });
+      else await c.sendMessage(room.roomId, { msgtype: 'm.text', body: text, ...extra });
     } catch (e) {
       // The failed message stays in the chat with its ! (retried by itself, or held to retry), as in
       // Element X (Greg, 23 Nov: a line of text and the words back in the box took the screen). Only if
@@ -811,10 +824,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     }
   }
   draw(true);
-  const asked = group ? null : takeAsk(agent.name);           // a question asked on Home
-  if (asked) sendText(asked);
+  const asked = group ? null : takeAskFull(agent.name);       // a question asked on Home (spoken or typed)
+  if (asked) sendText(asked.text, asked.voice);
   const spoken = group ? null : takeVoice(agent.name);        // a voice note recorded by holding the agent's mark
-  if (spoken) voice.send(spoken, 0, { auto: true }).then((t) => { if (t) sendText(t); });
+  if (spoken) voice.send(spoken, 0);                          // its words are sent as soon as they are ready (onWords)
   voice.resume();                                              // words from a recording made before a reload
   focusIfKeyboard(input);
   return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };
