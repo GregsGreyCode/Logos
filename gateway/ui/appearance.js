@@ -153,7 +153,7 @@ export function adopt(me) {
   const p = (me && me.prefs) || {};
   mine = { primary: p.primary || '', attention: p.attention || '' };
   agentColours = { ...((me && me.agent_colours) || {}) };
-  setMotion(p.motion || 'calm', p.names || 'hover');
+  setMotion(p.motion || 'calm', p.names || 'always');   // names shown unless you choose on hover (Greg, 23 Nov)
   setAnimations(p.animations || 'on');
   if (me && me.look) apply(me.look);
   else { paintColours(); paintBars(); }

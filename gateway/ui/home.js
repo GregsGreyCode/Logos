@@ -281,6 +281,21 @@ export async function homeView(root) {
   const SECS = { next: nextSec, weather: weatherSec, calendar: calSec, messages: msgSec, coming: comingSec, lights: lightsSec, lists: listsSec };
   for (const [id, el] of Object.entries(SECS)) { el.dataset.widget = id; el.classList.add('home-widget'); }
   const board = h('div', { class: 'home-widgets' });
+  // A wide screen (Greg, 23 Nov): two columns that each pack up on their own, still in your order
+  // (left, right, left…), instead of rows that leave a gap under the shorter widget. Each widget spans
+  // as many 4 px grid rows as it is tall; repacked whenever one changes size or the order changes.
+  const wide = matchMedia('(min-width: 1100px)');
+  const ROW = 4, GAP = 22;
+  const pack = () => {
+    for (const el of board.children) {
+      if (!wide.matches || board.classList.contains('editing') || el.hidden) { el.style.gridRowEnd = ''; continue; }
+      el.style.gridRowEnd = `span ${Math.max(1, Math.ceil((el.getBoundingClientRect().height + GAP) / ROW))}`;
+    }
+  };
+  const sizes = new ResizeObserver(() => requestAnimationFrame(pack));
+  new MutationObserver(() => { for (const el of board.children) sizes.observe(el); requestAnimationFrame(pack); })
+    .observe(board, { childList: true, attributes: true, attributeFilter: ['hidden', 'class'], subtree: false });
+  wide.addEventListener('change', pack);
   let editing = false;
   const tray = h('div', { class: 'home-tray', hidden: true });
   const editBtn = h('button', { type: 'button', class: 'linkish home-edit-link', onclick: () => setEditing(!editing) }, 'Edit Home');

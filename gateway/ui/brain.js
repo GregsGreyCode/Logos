@@ -184,7 +184,8 @@ export async function brainView(root, [agentArg, ...pathParts]) {
         h('a', { class: 'icon-btn phone-only obsidian-link', href: obsidian(d.path), 'aria-label': 'Open in Obsidian', title: 'Open in Obsidian' }, icon(ICONS.external))),
       ask || askBox(page),
       h('div', { class: 'doc-body' }, ...(body.trim() ? markdown(body) : [h('p', { class: 'when' }, 'This page is empty.')])),
-      h('div', { class: 'doc-foot when' }, `Changed ${when(d.modified)}`, h('span', { class: 'wide-only' }, `. Your edits win: ${agent.display_name} keeps what you write.`)));
+      // (No "Changed ." when the page has no date, Greg 23 Nov.)
+      h('div', { class: 'doc-foot when' }, d.modified ? `Changed ${when(d.modified)}. ` : '', h('span', { class: 'wide-only' }, `Your edits win: ${agent.display_name} keeps what you write.`)));
     showTree();
   }
 

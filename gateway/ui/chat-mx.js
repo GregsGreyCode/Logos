@@ -254,9 +254,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         group ? groupHead : threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
         threadId || group ? null : agentBar(agent, 'chat'),
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
-        sideBits.viewMenu || null, sideBits.convBtn || null),
+        sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null),
       group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, pending, form),
-    sideBits.side, sideBits.sideScrim || null, sideBits.reopen || null);
+    sideBits.side, sideBits.sideScrim || null);
 
   // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
   // back to all your agents by swiping right, by pinching (zooming out to the floating agents), or by

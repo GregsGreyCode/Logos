@@ -527,8 +527,9 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   const side = h('aside', { class: 'side', id: 'chat-side', 'aria-label': 'Conversations' });
   // Desktop: the conversations panel starts open; a small button tucks it away and a tab on the right
   // edge brings it back. Remembered on this device. (On a phone it is the Conversations panel instead.)
-  const reopen = h('button', { type: 'button', class: 'side-reopen', 'aria-label': 'Show conversations',
-    title: 'Show conversations', 'aria-controls': 'chat-side', onclick: () => tuck(false) }, icon(['M15 6l-6 6 6 6']));
+  // A labelled button in the header (Greg, 23 Nov: the thin tab at the screen's edge went unnoticed).
+  const reopen = h('button', { type: 'button', class: 'btn quiet small side-reopen', title: 'Show your earlier conversations',
+    'aria-controls': 'chat-side', onclick: () => tuck(false) }, 'Conversations');
   // It shows for a moment when Chat opens, then slides away to its tab, so you know where it is.
   // Reopen it and it stays (remembered) until you hide it again.
   const wide = () => window.matchMedia('(min-width: 600px)').matches;
@@ -615,9 +616,9 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
         h('h1', { class: tabs ? null : 'agent-solo' }, agent.display_name), tabs,
         h('span', { class: `status running ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
         agent.shared ? h('span', { class: 'status scope' }, 'Shared with the household') : null,
-        viewMenu, convBtn),
+        reopen, viewMenu, convBtn),
       connectNote, modelStatus, log, micNote, form),
-    side, sideScrim, reopen);
+    side, sideScrim);
   side.append(
     h('div', { class: 'side-top' }, h('button', { type: 'button', class: 'side-hide', 'aria-label': 'Hide conversations',
       title: 'Hide conversations', 'aria-controls': 'chat-side', onclick: () => tuck(true) }, icon(['M9 6l6 6-6 6']))),

@@ -659,8 +659,8 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .side-reopen { display: none; }
 @media (min-width: 600px) {
   .side.tucked { display: none; }
-  .side-reopen.shown { display: inline-flex; position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 5;
-    width: 28px; height: 72px; border-right: 0; border-radius: var(--r-small) 0 0 var(--r-small); background: var(--surface); }
+  .side-reopen.shown { display: inline-flex; width: auto; height: auto; margin-left: auto; }
+  .side-reopen.shown + .view-menu { margin-left: 0; }
 }
 @media (max-width: 599px) { .side-top { display: none; } }
 
@@ -1724,6 +1724,9 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 @media (min-width: 1100px) {
   .home > .home-widgets, .home > .home-tray, .home > .home-edit-link { grid-column: 1 / -1; }
   .home-widgets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; row-gap: 22px; align-items: start; }
+  /* Packed (home.js): 4 px rows, each widget spanning its height plus the 22 px gap. */
+  .home-widgets:not(.editing) { grid-auto-rows: 4px; row-gap: 0; }
+  .home-widgets:not(.editing) > .home-widget { align-self: start; }
 }
 .home-coming .home-line .home-time { width: 62px; white-space: nowrap; }
 /* A notification opens in place when tapped (the whole text, and a button to go to it) and is then read. */
@@ -1953,4 +1956,33 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   .page.home > .home-head { margin: -32px -40px 0; padding: 0 40px; min-height: 68px; justify-content: center; border-bottom: 1px solid var(--line); }
   .page.home > .home-head .home-date { font-size: 22px; line-height: 28px; }
   [data-look="glass"] .page.home > .home-head { background: var(--glass); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
+}
+
+/* Agents on a desktop (Greg, 23 Nov): the agents float in a band under the title, their names showing,
+   and the conversations follow straight under them, instead of two marks lost in the whole screen and
+   the conversations pinned to its bottom. */
+@media (min-width: 600px) {
+  .chat.void { display: flex; flex-direction: column; overflow: visible; }
+  .chat.void > .void-ask { top: 88px; }
+  .chat.void > .void-field { position: relative; inset: auto; flex: none; height: clamp(220px, 34vh, 320px); width: auto; max-width: 760px; margin: 0 40px; }
+  .chat.void > .void-groups { position: static; max-height: none; overflow: visible; width: 100%; max-width: 760px;
+    margin: 8px 0 40px; padding: 0 40px; box-sizing: content-box; }
+}
+/* An invitation: Join and Decline together at its end, not one in the middle. */
+.void-invite-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.void-invite-actions > .btn { margin: 0; }
+/* The side menu stays put (Greg, 23 Nov): as tall as the window, not scrolling with the page, so your
+   name and Sign out sit snug at its foot; it scrolls on its own only if the window is too short. */
+@media (min-width: 600px) {
+  .nav { position: sticky; top: 0; height: 100vh; height: 100dvh; overflow-y: auto; align-self: flex-start; }
+  .side-reopen.shown { animation: none; }
+}
+/* Brain's list: each heading and its + on one line, and the same space above every heading. Routines:
+   the agent picker as wide as the list under it (Greg, 23 Nov). */
+@media (min-width: 600px) {
+  .tree-head { align-items: center; margin-top: 10px; }
+  .tree-head .label, .tree > .label { padding: 4px 8px; }
+  .tree > .label { margin-top: 10px; }
+  .tree-head .tree-add { margin-top: 0; }
+  .agent-cards { max-width: 760px; }
 }

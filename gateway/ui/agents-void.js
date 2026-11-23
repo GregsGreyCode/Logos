@@ -391,7 +391,7 @@ export async function voidView(root, agents, others = []) {
         ...invites.map((r) => h('div', { class: 'void-group invite' },
           h('span', { class: 'void-group-head' }, h('span', { class: 'void-group-name' }, r.name || 'A group'), h('span', { class: 'void-unread' }, 'Invited')),
           h('span', { class: 'void-group-last' }, inviter(r) ? `${inviter(r)} invited you` : 'You are invited'),
-          h('span', { class: 'row' },
+          h('span', { class: 'row void-invite-actions' },
             h('button', { type: 'button', class: 'btn small', onclick: async (e) => { e.target.disabled = true; try { await c.joinRoom(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Join'),
             h('button', { type: 'button', class: 'btn quiet small', onclick: async (e) => { e.target.disabled = true; try { await c.leave(r.roomId); } catch (err) { e.target.disabled = false; } setTimeout(showConvs, 800); } }, 'Decline')))),
         ...list.map((r) => h('a', { href: r.link, class: `void-group${r.unread ? ' unread' : ''}` },
