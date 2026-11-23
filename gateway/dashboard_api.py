@@ -163,7 +163,8 @@ def _place_ok(value: Any) -> bool:
 
 def _pref_ok(key: str, value: Any) -> bool:
     if key == "widgets":
-        return isinstance(value, list) and len(value) == len(set(value)) and all(w in WIDGETS for w in value)
+        from gateway.widgets import KINDS          # F42: the homelab widgets too
+        return isinstance(value, list) and len(value) == len(set(value)) and all(w in WIDGETS or w in KINDS for w in value)
     if key == "tips_seen":
         return isinstance(value, list) and len(value) == len(set(value)) and all(t in TIP_SCREENS for t in value)
     if key == "weather_place":
@@ -1819,6 +1820,11 @@ async def handle_notifications(request: web.Request) -> web.Response:
     items.sort(key=lambda i: -i["ts"])
     seen = await asyncio.to_thread(_seen_until, user["id"])
     read = await asyncio.to_thread(_read_ids, user["id"])
+    # F42: a widget whose last check needs someone (a service down, a disk full) says so here too.
+    w = request.app.get("widgets")
+    if w is not None:
+        items.extend(w.needs(user.get("role") == "admin"))
+        items.sort(key=lambda i: i.get("ts") or 0, reverse=True)
     # Whoever manages Logos is reminded when an update is ready (Greg, 23 Nov); the others cannot install it.
     if user.get("role") == "admin":
         from gateway import updates

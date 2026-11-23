@@ -751,6 +751,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _push.register(app, _hermes_home)
     from gateway import alert_text as _alert_text       # what an agent said, for its phone alert
     _alert_text.register(app)
+    from gateway import widgets as _widgets             # F42: homelab widgets on Home
+    _widgets.register(app)
     from gateway import matrix_proxy as _matrix_proxy   # M1: the browser's Matrix device reaches the server here
     _matrix_proxy.register(app)
     from gateway import updates as _updates

@@ -1,0 +1,345 @@
+"""F42: homelab widgets (gateway/widgets.py)."""
+import asyncio
+import json
+import stat
+
+import aiohttp
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+from gateway import widgets as w
+
+
+# ── services ─────────────────────────────────────────────────────────────────────────────────
+
+def test_services_are_read_one_per_line():
+    got = w.parse_services("Home Assistant, http://192.0.2.20:8123\n\n# a note\nhttps://jellyfin.home/\n")
+    assert got == [{"name": "Home Assistant", "url": "http://192.0.2.20:8123"},
+                   {"name": "jellyfin.home", "url": "https://jellyfin.home/"}]
+    for bad in ("", "Router, 192.0.2.1", "ftp://nas"):
+        with pytest.raises(w.Problem):
+            w.parse_services(bad)
+
+
+def test_a_service_that_fails_or_does_not_answer_is_down_and_comes_first(unused_tcp_port_factory):
+    async def ok(_):
+        return web.Response(status=401, text="sign in")          # a login page: it answers, so up
+
+    async def broken(_):
+        return web.Response(status=502)
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/ok", ok)
+        app.router.add_get("/broken", broken)
+        server = TestServer(app)
+        await server.start_server()
+        base = f"http://127.0.0.1:{server.port}"
+        conf = {"services": f"Fine, {base}/ok\nBroken, {base}/broken\nGone, http://127.0.0.1:{unused_tcp_port_factory()}/"}
+        memo = {}
+        async with aiohttp.ClientSession(timeout=w.TIMEOUT) as s:
+            first = await w.fetch_services(conf, s, memo)
+            second = await w.fetch_services(conf, s, memo)
+        await server.close()
+        return first, second
+    first, second = asyncio.run(run())
+    assert first["state"] == "needs" and first["down"] == 2 and first["summary"] == "2 down"
+    assert [i["name"] for i in first["items"]][-1] == "Fine"                    # problems first
+    by = {i["name"]: i for i in first["items"]}
+    assert by["Fine"]["up"] and by["Broken"]["detail"] == "error 502" and by["Gone"]["detail"] == "not answering"
+    assert {i["name"]: i.get("since") for i in second["items"]}["Gone"] == by["Gone"]["since"]   # down since the first
+
+
+@pytest.fixture
+def unused_tcp_port_factory():
+    import socket
+
+    def free():
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+    return free
+
+
+# ── servers (Proxmox) ────────────────────────────────────────────────────────────────────────
+
+def test_proxmox_needs_https_and_a_full_token():
+    with pytest.raises(w.Problem):
+        w._proxmox_base("http://pve:8006")
+    assert w._proxmox_base("https://192.0.2.10:8006/") == "https://192.0.2.10:8006"
+
+    async def run():
+        async with aiohttp.ClientSession() as s:
+            await w.proxmox_get({"url": "https://pve:8006", "token_id": "no-bang", "secret": "x"}, s, "/nodes")
+    with pytest.raises(w.Problem, match="token ID"):
+        asyncio.run(run())
+
+
+def test_nodes_become_meters_and_a_full_disk_needs_you(monkeypatch):
+    nodes = [{"node": "pve", "status": "online", "cpu": 0.18, "mem": 41 * 2**30, "maxmem": 64 * 2**30,
+              "disk": 96, "maxdisk": 100, "uptime": 23 * 86400},
+             {"node": "spare", "status": "offline"}]
+
+    async def fake_get(conf, session, path):
+        assert path == "/nodes"
+        return nodes
+    monkeypatch.setattr(w, "proxmox_get", fake_get)
+    d = asyncio.run(w.fetch_servers({}, None, {}))
+    pve = d["items"][0]
+    assert (pve["cpu"], pve["mem"], pve["disk"], pve["mem_total_gb"]) == (18, 64, 96, 64)
+    assert d["state"] == "needs" and d["summary"] == "spare is offline"
+
+
+# ── fetching: once per refresh, the last copy when the source is out of reach ────────────────
+
+def kind(calls, fail=lambda: False):
+    async def fetch(conf, session, memo):
+        calls.append(1)
+        if fail():
+            raise w.Problem("Nothing answered at that address.")
+        return {"state": "ok", "summary": f"call {len(calls)}"}
+    return w.Kind("demo", "Demo", "home", 60, [w.Field("x", "X")], fetch)
+
+
+def test_fetched_once_per_refresh_and_the_last_copy_kept_when_it_fails(tmp_path):
+    now, calls, failing = [1000.0], [], [False]
+    k = kind(calls, lambda: failing[0])
+    ws = w.Widgets(tmp_path / "widgets.json", clock=lambda: now[0])
+    w.save_all({"demo": {"x": 1}}, ws.path)
+
+    async def run():
+        a = await ws.get(k)
+        b = await ws.get(k)                                   # within the minute: the same copy
+        now[0] += 61
+        failing[0] = True
+        c = await ws.get(k)                                   # the source is out of reach
+        await ws.session.close() if ws.session else None
+        return a, b, c
+    a, b, c = asyncio.run(run())
+    assert len(calls) == 2 and a["summary"] == b["summary"] == "call 1"
+    assert c["stale"] and c["summary"] == "call 1" and c["at"] == 1000.0 and "Nothing answered" in c["error"]
+
+
+def test_not_set_up_and_never_reached(tmp_path):
+    calls = []
+    ws = w.Widgets(tmp_path / "widgets.json")
+    assert asyncio.run(ws.get(kind(calls))) == {"state": "setup"} and calls == []
+    w.save_all({"demo": {"x": 1}}, ws.path)
+    out = asyncio.run(ws.get(kind(calls, lambda: True)))
+    assert out["state"] == "unreachable" and "Nothing answered" in out["error"]
+
+
+def test_needs_goes_to_notifications_for_who_may_see_it(tmp_path):
+    ws = w.Widgets(tmp_path / "widgets.json")
+    ws.cache = {"services": {"at": 5, "data": {"state": "needs", "summary": "1 down", "items": [{"name": "Nextcloud", "up": False}]}},
+                "servers": {"at": 6, "data": {"state": "needs", "summary": "pve: disk 96%", "items": []}}}
+    member = ws.needs(is_admin=False)
+    assert [i["title"] for i in member] == ["Services: 1 down"] and member[0]["text"] == "Nextcloud"
+    assert len(ws.needs(is_admin=True)) == 2
+
+
+# ── HTTP: who sees and sets what; a secret never comes back out ──────────────────────────────
+
+@pytest.fixture
+def app(tmp_path, monkeypatch):
+    role = {"role": "admin"}
+    monkeypatch.setattr(w, "_who", lambda request: {"role": role["role"], "username": "x", "id": "1"})
+    monkeypatch.setattr("gateway.auth.middleware.require_csrf", lambda f: f)
+
+    async def fake_test(self, kind, conf):
+        if conf.get("secret") == "wrong":
+            raise w.Problem("Proxmox refused the token: check the token ID and secret.")
+        return {"state": "ok", "summary": "1 node"}
+    monkeypatch.setattr(w.Widgets, "test", fake_test)
+    a = web.Application()
+    w.register(a, tmp_path / "widgets.json")
+    a["role"] = role
+    return a
+
+
+def call(app, steps):
+    async def run():
+        out = []
+        async with TestClient(TestServer(app)) as c:
+            for role, method, path, body in steps:
+                app["role"]["role"] = role
+                r = await c.request(method, path, json=body)
+                out.append((r.status, await r.json() if r.content_type == "application/json" else None))
+        return out
+    return asyncio.run(run())
+
+
+def test_members_see_only_home_widgets_and_cannot_set_them_up(app):
+    (s1, listing), (s2, _), (s3, _) = call(app, [
+        ("user", "GET", "/api/v2/widgets", None),
+        ("user", "GET", "/api/v2/widgets/servers", None),
+        ("user", "PUT", "/api/v2/widgets/services", {"fields": {"services": "A, http://a"}}),
+    ])
+    ids = [k["id"] for k in listing["widgets"]]
+    assert "services" in ids and not {"servers", "proxmox", "backups"} & set(ids)
+    assert all("fields" not in k for k in listing["widgets"])
+    assert s2 == 404 and s3 == 403
+
+
+def test_setup_is_tried_then_saved_owner_only_and_the_secret_stays_here(app, tmp_path):
+    conf = {"url": "https://pve:8006", "token_id": "logos@pve!home", "secret": "s3cret", "own_certificate": True}
+    out = call(app, [
+        ("admin", "PUT", "/api/v2/widgets/servers", {"fields": {**conf, "secret": "wrong"}}),
+        ("admin", "PUT", "/api/v2/widgets/servers", {"fields": conf}),
+        ("admin", "PUT", "/api/v2/widgets/servers", {"fields": {**conf, "secret": ""}}),   # blank: kept
+        ("admin", "GET", "/api/v2/widgets", None),
+    ])
+    assert out[0][0] == 400 and "refused" in out[0][1]["error"]
+    assert out[1] == (200, {"ok": True, "summary": "1 node"}) and out[2][0] == 200
+    path = tmp_path / "widgets.json"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert json.loads(path.read_text())["servers"]["secret"] == "s3cret"
+    listed = {k["id"]: k for k in out[3][1]["widgets"]}["servers"]
+    assert listed["set_up"] and "s3cret" not in json.dumps(listed)
+    assert {f["key"]: f.get("set") for f in listed["fields"]}["secret"] is True
+
+
+def test_the_arrangement_may_name_the_new_widgets():
+    from gateway import dashboard_api
+    assert dashboard_api._pref_ok("widgets", ["weather", "services", "servers"])
+    assert not dashboard_api._pref_ok("widgets", ["weather", "nope"])
+
+
+# ── the second batch: Proxmox guests, backups, ad blocking, now playing, downloads, bookmarks ──
+
+def serve_app(routes):
+    """A local stand-in service; returns (base url, stop)."""
+    async def start():
+        app = web.Application()
+        for method, path, handler in routes:
+            app.router.add_route(method, path, handler)
+        server = TestServer(app)
+        await server.start_server()
+        return server
+    return start
+
+
+def run_with(routes, fn):
+    async def go():
+        server = await serve_app(routes)()
+        try:
+            async with aiohttp.ClientSession(timeout=w.TIMEOUT) as s:
+                return await fn(f"http://127.0.0.1:{server.port}", s)
+        finally:
+            await server.close()
+    return asyncio.run(go())
+
+
+def test_proxmox_guests_without_templates(monkeypatch):
+    async def fake_get(conf, session, path):
+        assert path.startswith("/cluster/resources")
+        return [{"vmid": 110, "name": "logos", "status": "running", "type": "qemu", "cpu": 0.09, "mem": 6.1 * 2**30, "node": "pve"},
+                {"vmid": 130, "name": "test", "status": "stopped", "type": "lxc", "node": "pve"},
+                {"vmid": 9000, "name": "tmpl", "status": "stopped", "template": 1}]
+    monkeypatch.setattr(w, "proxmox_get", fake_get)
+    d = asyncio.run(w.fetch_guests({}, None, {}))
+    assert [g["id"] for g in d["items"]] == [110, 130] and d["summary"] == "1 running · 1 stopped"
+    assert d["items"][1]["kind"] == "container" and d["items"][0]["cpu"] == 9
+
+
+def test_backups_late_or_failed_need_you(monkeypatch):
+    now = time_now = __import__("time").time()
+    monkeypatch.setattr(w, "logos_export_status", lambda: {"ran": int(now - 3600), "ok": True})
+
+    async def fake_get(conf, session, path):
+        if path == "/nodes":
+            return [{"node": "pve"}]
+        return [{"endtime": int(now - 9 * 86400), "status": "OK"}]                 # nine days ago: late
+    monkeypatch.setattr(w, "proxmox_get", fake_get)
+    d = asyncio.run(w.fetch_backups({}, None, {"with_conf": {"url": "https://pve:8006"}}))
+    assert d["state"] == "needs" and d["summary"] == "Proxmox · pve: late"
+    assert [i["name"] for i in d["items"]] == ["Proxmox · pve", "Logos export"]
+    # without Servers set up: only Logos's own
+    d = asyncio.run(w.fetch_backups({}, None, {}))
+    assert d["state"] == "ok" and d["summary"] == "all 1 OK"
+
+
+def test_pihole_signs_in_reads_and_always_signs_out():
+    seen = []
+
+    async def auth(r):
+        body = await r.json()
+        return web.json_response({"session": {"sid": "abc" if body["password"] == "right" else None}},
+                                 status=200 if body["password"] == "right" else 401)
+
+    async def summary(r):
+        seen.append(r.headers.get("X-FTL-SID"))
+        return web.json_response({"queries": {"total": 20940, "blocked": 4812}})
+
+    async def top(r):
+        return web.json_response({"domains": [{"domain": "ads.example"}, {"domain": "telemetry.example"}]})
+
+    async def logout(r):
+        seen.append("logout")
+        return web.Response(status=204)
+    routes = [("POST", "/api/auth", auth), ("GET", "/api/stats/summary", summary), ("GET", "/api/stats/top_domains", top),
+              ("DELETE", "/api/auth", logout)]
+    d = run_with(routes, lambda base, s: w.fetch_adblock({"product": "pihole", "url": base, "password": "right"}, s, {}))
+    assert (d["percent"], d["blocked"], d["top"]) == (23, 4812, ["ads.example", "telemetry.example"])
+    assert seen == ["abc", "logout"]
+    with pytest.raises(w.Problem, match="refused the password"):
+        run_with(routes, lambda base, s: w.fetch_adblock({"product": "pihole", "url": base, "password": "wrong"}, s, {}))
+
+
+def test_adguard_with_its_login():
+    async def stats(r):
+        if r.headers.get("Authorization") != aiohttp.BasicAuth("admin", "pw").encode():
+            return web.Response(status=401)
+        return web.json_response({"num_dns_queries": 1000, "num_blocked_filtering": 150, "top_blocked_domains": [{"ads.example": 40}]})
+    d = run_with([("GET", "/control/stats", stats)],
+                 lambda base, s: w.fetch_adblock({"product": "adguard", "url": base, "username": "admin", "password": "pw"}, s, {}))
+    assert (d["percent"], d["top"], d["summary"]) == (15, ["ads.example"], "AdGuard")
+
+
+def test_jellyfin_now_playing():
+    async def sessions(r):
+        assert r.headers.get("X-Emby-Token") == "k"
+        return web.json_response([
+            {"DeviceName": "Living room TV", "UserName": "Béré", "PlayState": {"PositionTicks": 3720 * 10**7, "IsPaused": False},
+             "NowPlayingItem": {"Name": "A film", "RunTimeTicks": 6420 * 10**7}},
+            {"DeviceName": "Laptop", "UserName": "Greg", "PlayState": {"IsPaused": True},
+             "NowPlayingItem": {"Name": "Ep", "SeriesName": "A series", "ParentIndexNumber": 2, "IndexNumber": 4}},
+            {"DeviceName": "Phone"}])
+    d = run_with([("GET", "/Sessions", sessions)], lambda base, s: w.fetch_playing({"url": base, "api_key": "k"}, s, {}))
+    assert [i["title"] for i in d["items"]] == ["A film", "A series · S2 E4"] and d["items"][0]["percent"] == 58
+    assert d["items"][1]["paused"] and d["summary"] == "2 playing"
+
+
+def test_downloads_from_sonarr_and_radarr_with_a_stalled_one():
+    async def queue(r):
+        assert r.headers.get("X-Api-Key") == "k"
+        return web.json_response({"records": [
+            {"title": "Show S01E05", "size": 100, "sizeleft": 28, "timeleft": "00:04:00", "status": "downloading"},
+            {"title": "Show S01E06", "size": 100, "sizeleft": 100, "status": "warning", "trackedDownloadState": "importBlocked"}]})
+
+    async def calendar(r):
+        return web.json_response([{}, {}, {}, {}])
+    routes = [("GET", "/api/v3/queue", queue), ("GET", "/api/v3/calendar", calendar)]
+    d = run_with(routes, lambda base, s: w.fetch_downloads({"sonarr_url": base, "sonarr_key": "k"}, s, {}))
+    assert [i["percent"] for i in d["items"]] == [72, 0] and d["items"][1]["stalled"]
+    assert d["state"] == "needs" and d["summary"] == "1 stalled" and d["upcoming"] == 4
+    with pytest.raises(w.Problem, match="Sonarr, Radarr"):
+        asyncio.run(w.fetch_downloads({}, None, {}))
+
+
+def test_proxmox_shares_the_servers_setup_and_backups_needs_none(app, tmp_path):
+    conf = {"url": "https://pve:8006", "token_id": "logos@pve!home", "secret": "s3cret", "own_certificate": True}
+    out = call(app, [
+        ("admin", "GET", "/api/v2/widgets", None),
+        ("admin", "PUT", "/api/v2/widgets/proxmox", {"fields": conf}),      # set up from the Proxmox widget
+        ("admin", "GET", "/api/v2/widgets", None),
+    ])
+    before = {k["id"]: k for k in out[0][1]["widgets"]}
+    after = {k["id"]: k for k in out[2][1]["widgets"]}
+    assert not before["proxmox"]["set_up"] and before["backups"]["set_up"] and before["proxmox"]["uses"] == "servers"
+    assert [f["key"] for f in before["proxmox"]["fields"]] == ["url", "token_id", "secret", "own_certificate"]
+    assert after["proxmox"]["set_up"] and after["servers"]["set_up"]
+    assert set(json.loads((tmp_path / "widgets.json").read_text())) == {"servers"}

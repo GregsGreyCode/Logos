@@ -2235,3 +2235,79 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 [data-look="hud"] .set-group-title { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
 [data-look="hud"] .set-row[aria-current="page"] { background: transparent; box-shadow: inset 2px 0 0 var(--accent); }
 .set-version { margin: 4px 0 0; text-align: center; color: var(--muted); font-size: var(--t-xs); font-variant-numeric: tabular-nums; }
+
+/* Homelab widgets (F42; design board "States"): the same five states for every kind. */
+.home-widget-kind { display: flex; flex-direction: column; gap: 10px; }
+.w-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.w-top .label { margin: 0; }
+.home-widget-kind.needs .w-summary { color: var(--bad); font-weight: 600; }
+.w-rows { display: flex; flex-direction: column; }
+.w-row { display: flex; align-items: center; gap: 10px; min-height: 40px; border-bottom: 1px solid var(--line);
+  color: var(--ink); text-decoration: none; font-size: var(--t-md); }
+.w-row:last-child { border-bottom: 0; }
+.w-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.w-row.slow .w-dot { background: var(--warn-ink); }
+.w-row.down .w-dot { background: var(--bad); }
+.w-row.down .w-name, .w-row.down .w-meta { color: var(--bad); font-weight: 600; }
+.w-row.slow .w-meta { color: var(--warn-ink); }
+.w-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-meta { flex: none; color: var(--muted); font-size: var(--t-sm); font-variant-numeric: tabular-nums; }
+.w-card { border: var(--card-border); border-radius: var(--r-card); background: var(--card-bg); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 10px; }
+.w-card + .w-card { margin-top: 8px; }
+.w-card.setup { border-style: dashed; align-items: flex-start; }
+.w-card.setup p { margin: 0; }
+.w-card.off { border-style: dashed; }
+.w-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.w-meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.w-meter { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.w-num { font: 600 18px var(--font-display); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w-num small { font: 400 var(--t-xs) var(--font-body); color: var(--muted); }
+.w-meter.warn .w-num { color: var(--warn-ink); }
+.w-meter.bad .w-num, .when.bad { color: var(--bad); }
+.w-bar { height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; }
+.w-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.w-meter.warn .w-bar > span { background: var(--warn-ink); }
+.w-meter.bad .w-bar > span { background: var(--bad); }
+.home-widget-kind.needs .w-card:not(.setup) { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.home-widget-kind.stale .w-body > :not(.w-stale) { opacity: 0.6; }
+.w-stale { margin: 0; }
+.w-skeleton { display: flex; flex-direction: column; gap: 10px; padding: 6px 0; }
+.w-skeleton span { display: block; height: 12px; border-radius: 6px; background: var(--chip); }
+.w-skeleton span:nth-child(1) { width: 60%; } .w-skeleton span:nth-child(2) { width: 90%; } .w-skeleton span:nth-child(3) { width: 75%; }
+.w-setup { max-width: 520px; max-height: 90dvh; overflow-y: auto; }
+.w-setup h2 { margin: 0 0 4px; font: 600 var(--t-lg) var(--font-display); }
+.w-field { display: flex; flex-direction: column; gap: 6px; }
+.w-field p { margin: 0; }
+.w-setup textarea, .w-setup input[type="text"], .w-setup input[type="url"], .w-setup input[type="password"] {
+  width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--surface); color: var(--ink); font: 400 var(--t-md) var(--font-body); }
+.w-setup textarea { font-family: var(--font-mono); font-size: var(--t-sm); resize: vertical; }
+@media (max-width: 380px) { .w-meters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.w-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.w-grid2 .w-card + .w-card { margin-top: 0; }
+.w-guest { gap: 4px; padding: 10px 12px; }
+.w-guest strong { font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-dot.idle { background: var(--muted); opacity: .6; }
+.w-adblock-card { flex-direction: row; align-items: center; gap: 16px; }
+.w-ring { width: 64px; height: 64px; flex: none; }
+.w-ring circle { fill: none; stroke-width: 5; }
+.w-ring-bg { stroke: var(--chip); }
+.w-ring-fg { stroke: var(--accent); stroke-linecap: round; }
+.w-adblock-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.w-adblock-words .when { overflow: hidden; text-overflow: ellipsis; }
+.w-play { flex-direction: row; align-items: center; gap: 12px; }
+.w-poster { flex: none; width: 48px; height: 68px; border-radius: 8px; background: linear-gradient(160deg, var(--accent-soft), var(--chip)); }
+.w-play-words { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.w-play-words strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-play.paused .w-bar > span { background: var(--muted); }
+.w-dl { display: flex; flex-direction: column; gap: 6px; }
+.w-dl.stalled .w-name, .w-dl.stalled .w-meta { color: var(--bad); }
+.w-dl .w-bar > span { background: var(--ok); }
+.w-marks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 8px; }
+.w-mark { display: flex; flex-direction: column; align-items: center; gap: 6px; text-decoration: none; color: var(--ink); font-size: var(--t-xs); min-width: 0; }
+.w-mark-tile { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--chip);
+  border: 1px solid var(--line); color: var(--accent-text); font: 600 16px var(--font-display); }
+.w-mark:hover .w-mark-tile { border-color: var(--accent); }
+.w-mark-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 820px) { .w-marks { grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); } }
