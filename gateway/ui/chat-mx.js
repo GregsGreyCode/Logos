@@ -302,7 +302,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     c = await mx.get();
   } catch (e) {
     log.replaceChildren(h('div', { class: 'notice' }, `This device could not connect to your chats (${e.message}). `,
-      h('a', { href: '#/settings/matrix' }, 'Check Settings › Devices'), '.'));
+      h('a', { href: '#/settings/matrix' }, 'Check Settings › Chats & devices'), '.'));
     return () => {};
   }
   if (!alive) return () => {};

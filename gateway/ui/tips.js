@@ -1,6 +1,6 @@
 // F41 First-visit tips (Greg, 23 Nov): the first time someone opens a screen, a small card or two on
 // what can be done there. "Got it" (or Skip) remembers it with their login, so it never shows again on
-// any device; Settings › Look › Tips shows them all again.
+// any device; Settings › Tips shows them all again.
 import { h } from './util.js';
 import { getPref, setPref } from './prefs.js';
 

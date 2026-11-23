@@ -2193,3 +2193,44 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .reach-again:disabled { opacity: .6; cursor: default; }
 @keyframes reach-in { from { opacity: 0; transform: translate(-50%, -6px); } }
 @media (prefers-reduced-motion: reduce) { .reach-bar { animation: none; } }
+
+/* Settings as a list (F45, Greg 23 Nov: like Element X). Grouped rows with an icon and what each is
+   set to; a phone opens a row as its own page with a back arrow, a wider screen keeps the list on
+   the left beside the page. */
+.settings-layout { grid-template-columns: 290px minmax(0, 1fr); }
+.set-index { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.settings-layout > .set-index { position: sticky; top: 24px; }
+.set-profile { display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: var(--r-card);
+  color: var(--ink); text-decoration: none; }
+.set-avatar { flex: none; width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent-text); font: 600 22px var(--font-display); }
+.set-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.set-who strong { font: 600 var(--t-lg) var(--font-display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-group { display: flex; flex-direction: column; gap: 2px; }
+.set-group-title { margin: 0 0 4px; padding: 0 12px; font: 600 var(--t-sm) var(--font-body); color: var(--muted); }
+.set-row { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 12px; border-radius: var(--r-ctl);
+  color: var(--ink); text-decoration: none; font: 500 var(--t-md) var(--font-body); background: none; border: 0;
+  width: 100%; box-sizing: border-box; text-align: left; cursor: pointer; }
+.set-row:hover, .set-profile:hover { background: var(--chip); }
+.set-row[aria-current="page"], .set-profile[aria-current="page"] { background: var(--accent-soft); }
+.set-row[aria-current="page"] .set-name { font-weight: 600; }
+.set-icon { flex: none; display: grid; place-items: center; width: 24px; color: var(--muted); }
+.set-icon svg, .set-chevron svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.set-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-value { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--t-sm); }
+.set-value.attention { color: var(--accent-text); }
+.set-chevron { flex: none; display: grid; place-items: center; color: var(--muted); }
+.set-chevron svg { width: 18px; height: 18px; }
+.settings-layout .set-chevron { display: none; }
+.set-danger, .set-danger .set-icon { color: var(--bad); }
+.set-end { border-top: 1px solid var(--line); padding-top: 14px; }
+/* phone: the list fills the screen; a row's page has a back arrow and its name */
+.page.settings > header.set-head { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; margin: -8px 0 14px -10px; }
+.set-back { display: inline-flex; align-items: center; gap: 6px; min-height: var(--ctl); padding: 0 12px 0 8px; border-radius: var(--r-pill);
+  color: var(--muted); text-decoration: none; font: 500 var(--t-md) var(--font-body); }
+.set-back:hover { background: var(--chip); color: var(--ink); }
+.settings-layout .set-elsewhere { display: none; }      /* on a wide screen they are in the sidebar */
+.set-back svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.page.settings.at-index .set-index { gap: 22px; }
+[data-look="hud"] .set-group-title { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+[data-look="hud"] .set-row[aria-current="page"] { background: transparent; box-shadow: inset 2px 0 0 var(--accent); }
