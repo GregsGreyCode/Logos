@@ -50,7 +50,11 @@ const client = {
   getAccessToken: () => 'tok',
   uploadContent: async (blob, opts) => { const id = `mxc://test/up${Object.keys(window.__mx.blobs ||= {}).length}`; window.__mx.blobs[id] = URL.createObjectURL(blob); (window.__mx.uploads ||= []).push({ id, opts, size: blob.size }); return { content_uri: id }; },
   setPusher: async (p) => { (window.__mx.pushers ||= []).push(p); return {}; },
-  sendEvent: async () => ({ event_id: 'x' }), redactEvent: async () => ({}),
+  // A reaction appears in the chat as it does from the server; a take-back is accepted but, as on Greg's phone
+  // (23 Nov, an encrypted room), the reaction is never marked redacted: the page must drop it itself.
+  sendEvent: async (roomId, type, content) => { const r = client.getRoom(roomId); const ev = new Ev(roomId, type, content, ME); r.events.push(ev);
+    (window.__mx.events ||= []).push([type, content]); emit('Room.timeline', ev, r); return { event_id: ev.id }; },
+  redactEvent: async (roomId, id) => { (window.__mx.redacted ||= []).push(id); return {}; },
 };
 export const saved = () => true;
 export const get = async () => client;
