@@ -1965,7 +1965,7 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   .page > header.page-band { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; min-height: 68px;
     margin: -32px -40px 0; padding: 0 40px; border-bottom: 1px solid var(--line); }
   .page > header.page-band > h1 { display: block; margin: 0; font-size: 22px; line-height: 28px; min-height: 0; border: 0; padding: 0; }
-  .chat.void > .void-band { display: flex; align-items: center; min-height: 68px; padding: 0 40px; border-bottom: 1px solid var(--line); }
+  .chat.void > .void-band { display: flex; align-items: center; justify-content: center; min-height: 68px; padding: 0 40px; border-bottom: 1px solid var(--line); }
   .chat.void > .void-band > h1 { margin: 0; font-size: 22px; line-height: 28px; }
   [data-look="glass"] .page-band { background: var(--glass); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
   /* Home: the date is the band. */
@@ -2467,7 +2467,7 @@ button.home-list-box.tick:hover:not(:disabled) { border-color: var(--accent); }
 .home-band-widget .w-card.setup p { display: none; }
 
 /* A microphone on each agent's mark, and the recording bar over the Agents screen (Greg, 23 Nov). */
-.agent-mark .mark-mic { position: absolute; right: -4px; top: 0; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+.agent-mark .mark-mic { position: absolute; left: calc(50% + var(--glyph) / 2 - 16px); top: -6px; z-index: 3; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
   border: 1px solid var(--line); background: var(--surface); color: var(--muted); box-shadow: 0 4px 12px rgb(0 0 0 / .35); padding: 0; }
 .agent-mark .mark-mic:hover { color: var(--ink); border-color: var(--accent); }
 .agent-mark .mark-mic svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

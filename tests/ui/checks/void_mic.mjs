@@ -21,6 +21,10 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   const box = await first.boundingBox(), mic = await first.locator('.mark-mic').boundingBox();
   ok(mic.width >= 36 && mic.x >= box.x - 12 && mic.x + mic.width <= box.x + box.width + 12, `${n}: a thumb-sized button on the mark (${Math.round(mic.width)}px)`);
 
+  const glyph = await first.locator('.mark-glyph').boundingBox();      // the microphone sits on the logo, not on the (wider) name beneath it
+  ok(Math.abs((mic.x + mic.width / 2) - (glyph.x + glyph.width)) <= 14 && mic.y + mic.height / 2 <= glyph.y + glyph.height / 2, `${n}: the microphone is fixed to the logo's corner (${Math.round(mic.x + mic.width / 2 - glyph.x - glyph.width)}px off)`);
+  if (!mob) { const hb = await page.locator('.void-band > h1').boundingBox(), pb = await page.locator('.chat.void').boundingBox(); ok(Math.abs(hb.x + hb.width / 2 - (pb.x + pb.width / 2)) <= 3, `${n}: "Agents" is centred at the top (${Math.round(hb.x + hb.width / 2 - pb.x - pb.width / 2)}px off)`); await page.screenshot({ path: `${OUT}/agents-top-desktop.png` }); }
+
   // holding a mark lifts it, and does not record
   const cx = box.x + box.width / 2 - 20, cy = box.y + box.height / 3;
   await page.mouse.move(cx, cy); await page.mouse.down(); await page.waitForTimeout(1700);
