@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple
 
-from aiohttp import web
+# aiohttp only in the handlers: the deploy tools load this file with the system Python, which has none.
 
 PATH = "/api/v2/alert-text"
 TOKEN_ENV = "LOGOS_ALERT_TOKEN"
@@ -48,9 +48,13 @@ def key(env: Optional[Mapping[str, str]] = None) -> bytes:
     path = _config_dir(env if env is not None else os.environ) / KEY_FILE
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(secrets.token_urlsafe(32) + "\n")
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:            # made just now by the dashboard or a deploy
+            time.sleep(0.1)
+        else:
+            with os.fdopen(fd, "w") as f:
+                f.write(secrets.token_urlsafe(32) + "\n")
     return path.read_text().strip().encode()
 
 
@@ -134,8 +138,9 @@ async def wait_words(kept: "Kept", event_id: str, sender: str, timeout: float = 
     return got[1] if got and sender_is(got[0], sender) else None
 
 
-async def handle_put(request: web.Request) -> web.Response:
+async def handle_put(request: "web.Request") -> "web.Response":
     """POST /api/v2/alert-text {agent, token, event_id, text} — from an agent's plugin."""
+    from aiohttp import web
     try:
         body = await request.json()
         agent, token = str(body["agent"]), str(body["token"])
@@ -152,6 +157,6 @@ async def handle_put(request: web.Request) -> web.Response:
     return web.json_response({"kept": bool(words)})
 
 
-def register(app: web.Application) -> None:
+def register(app: "web.Application") -> None:
     app["alert_text"] = Kept()
     app.router.add_post(PATH, handle_put)

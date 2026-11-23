@@ -191,3 +191,15 @@ def test_the_plugin_does_nothing_without_its_settings():
 def test_a_failed_note_never_raises():
     p = load_plugin()
     assert p.note("$e", "hi", {p.TOKEN_ENV: "t", p.URL_ENV: "http://127.0.0.1:9/nothing", p.AGENT_ENV: "greg"}, timeout=0.5) is False
+
+
+def test_the_deploy_tools_can_load_it_without_aiohttp():
+    """scripts/logos-agent and logos-deploy run with the system Python, which has no aiohttp (23 Nov)."""
+    import subprocess
+    import sys
+    code = ("import sys, importlib.util; sys.modules['aiohttp'] = None; "
+            f"spec = importlib.util.spec_from_file_location('m', {str(Path(at.__file__))!r}); "
+            "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); print(m.PATH)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == at.PATH
