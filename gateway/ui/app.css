@@ -2327,3 +2327,12 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .w-cam img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .w-cam-label { position: absolute; left: 8px; bottom: 8px; right: 8px; padding: 3px 8px; border-radius: var(--r-pill);
   background: rgba(15, 17, 21, .75); color: #e8eaf0; font-size: var(--t-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: fit-content; max-width: calc(100% - 16px); }
+.w-agent { display: flex; align-items: center; gap: 12px; }
+.w-agents { gap: 12px; }
+.w-agent.idle .w-agent-words strong { color: var(--muted); }
+.w-agent-words { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.w-mark { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft);
+  color: var(--accent-text); font: 600 15px var(--font-display); }
+.w-token { word-break: break-all; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--chip); margin: 0; }
+.w-config { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-ctl); background: var(--chip);
+  font: 400 var(--t-xs) var(--font-mono); overflow-x: auto; white-space: pre; }

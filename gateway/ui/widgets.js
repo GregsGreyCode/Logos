@@ -3,6 +3,7 @@
 // same five states for every kind, and asks for their setup. A new kind needs only its DRAW entry.
 import { swr, forget } from './cache.js';
 import { h, api, when } from './util.js';
+import { agentColour } from './appearance.js';
 
 const SECOND = 1000;
 
@@ -146,7 +147,23 @@ function cameras(d) {
   })), h('p', { class: 'when' }, 'Snapshots, not live video, through Logos.')];
 }
 
-const DRAW = { services, servers, proxmox, backups, adblock, playing, downloads, bookmarks, energy, network, cameras };
+function agentsToday(d) {
+  const rows = d.items || [];
+  if (!rows.length) return [h('p', { class: 'when' }, 'No agents yet.')];
+  const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const words = (r) => (!r.ready ? 'Not running'
+    : r.messages ? `${r.messages} message${r.messages === 1 ? '' : 's'} today · last ${hhmm(r.last)}`
+      : r.last ? `Quiet today · last ${when(r.last)}` : 'Quiet today');
+  return [h('div', { class: 'w-card w-agents' }, ...rows.map((r) => {
+    const colour = agentColour(r.agent);
+    return h('div', { class: `w-agent${r.ready ? '' : ' idle'}` },
+      h('span', { class: 'w-mark', style: colour ? `background:color-mix(in srgb, ${colour} 22%, transparent);color:${colour}` : '', 'aria-hidden': 'true' },
+        (r.name || '?').trim().charAt(0).toUpperCase()),
+      h('div', { class: 'w-agent-words' }, h('strong', {}, r.name), h('span', { class: 'when' }, words(r))));
+  })), h('p', { class: 'when' }, 'Counts only: never what was said.')];
+}
+
+const DRAW = { agents: agentsToday, services, servers, proxmox, backups, adblock, playing, downloads, bookmarks, energy, network, cameras };
 
 // ── one widget on Home ───────────────────────────────────────────────────────────────────────
 
