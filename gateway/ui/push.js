@@ -132,5 +132,6 @@ export function listen() {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.addEventListener('message', (e) => {
     if (e.data && e.data.type === 'logos-open' && typeof e.data.link === 'string' && e.data.link.startsWith('#/')) location.hash = e.data.link;
+    if (e.data && e.data.type === 'logos-push') mx.pushed();
   });
 }

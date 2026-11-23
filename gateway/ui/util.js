@@ -140,6 +140,13 @@ function csrf() {
   return m ? decodeURIComponent(m[1]) : '';
 }
 
+// Whether the page may reload itself now without losing anything: nothing typed, no photo waiting, no
+// message that has not gone (the Matrix library does not keep those across a reload).
+export function wouldLose() {
+  const typed = [...document.querySelectorAll('textarea, input[type="text"], input[type="search"]')].some((el) => el.value && el.value.trim());
+  return typed || !!document.querySelector('.mx-pending-item, .msg.failed, .ask-layer, .w-setup');
+}
+
 // One refresh at a time (F34). The dashboard asks for several things at once, so when the 15-minute
 // access token runs out they all get 401 together. Each used to call /auth/refresh with the same
 // refresh token: the first rotated it, the others were refused and sent the page to /login, which
