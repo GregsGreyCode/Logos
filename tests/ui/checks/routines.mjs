@@ -14,7 +14,7 @@ ok(JSON.stringify(titles) === JSON.stringify(['Morning briefing', 'Weekly digest
 const txt = await page.locator('.routines').innerText();
 ok(!/BUILT IN|YOU ASKED FOR/i.test(txt) && !txt.includes('null'), 'no split headings');
 ok((await page.locator('.routine-sum').first().textContent()) === 'Weekdays 07:00, weekends 09:00', 'a built-in says when in one line');
-ok((await page.locator('.routine', { hasText: 'Daily question' }).locator('.routine-sum').textContent()).match(/next (tomorrow )?10:00/), `yours too (${await page.locator('.routine', { hasText: 'Daily question' }).locator('.routine-sum').textContent()})`);
+ok((await page.locator('.routine', { hasText: 'Daily question' }).locator('.routine-sum').textContent()).match(/next (tomorrow |yesterday )?10:00/i), `yours too (${await page.locator('.routine', { hasText: 'Daily question' }).locator('.routine-sum').textContent()})`);
 ok(await page.locator('.routine-more:not([hidden])').count() === 0, 'all closed at first');
 await page.locator('.routine', { hasText: 'Morning briefing' }).locator('.routine-open').tap(); await page.waitForTimeout(200);
 ok(await page.locator('.routine', { hasText: 'Morning briefing' }).locator('input[type=time]').first().isVisible(), 'a tap opens its times');

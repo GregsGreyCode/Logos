@@ -539,3 +539,19 @@ def test_the_sign_is_for_everyone_at_home_and_set_up_by_whoever_manages_logos(ap
     out = call(app, [("user", "GET", "/api/v2/widgets", None), ("user", "PUT", "/api/v2/widgets/marquee", {"fields": {"text": "hi"}})])
     assert "marquee" in [k["id"] for k in out[0][1]["widgets"]] and out[1][0] == 403
     assert w.KINDS["marquee"].who == "home" and not any(f.required for f in w.KINDS["marquee"].fields)
+
+
+def test_the_looks_and_the_desktop_widget_layout_are_validated_by_the_server():
+    from gateway import dashboard_api as d
+    assert set(d.LOOKS) == {"glass", "hud", "warm", "paper", "pop"}
+    ok = {"lists": {"x": 6, "y": 0, "w": 6, "h": 0}, "weather": {"x": 0, "y": 8, "w": 4, "h": 30}}
+    assert d._pref_ok("widget_grid", ok) and d._pref_ok("widget_grid", {})
+    assert d._pref_ok("widget_grid", {"lists": {"x": 0, "y": 20000, "w": 6, "h": 5000}})        # far down, very tall: allowed
+    for bad in ({"lists": {"x": 7, "y": 0, "w": 6, "h": 0}},            # runs off the 12 columns
+                {"lists": {"x": 0, "y": 0, "w": 0, "h": 0}},            # no width
+                {"lists": {"x": 0, "y": -1, "w": 6, "h": 0}},
+                {"lists": {"x": 0, "y": 0, "w": 6, "h": 0, "extra": 1}},
+                {"nonsense": {"x": 0, "y": 0, "w": 6, "h": 0}},         # not a widget
+                {"lists": {"x": "0", "y": 0, "w": 6, "h": 0}}, {"lists": {"x": True, "y": 0, "w": 6, "h": 0}},
+                [], "x", {"lists": None}):
+        assert not d._pref_ok("widget_grid", bad), bad

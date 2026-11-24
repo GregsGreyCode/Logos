@@ -29,9 +29,11 @@ for (const [label, vp, mobile] of [['phone', { width: 412, height: 915 }, true],
   await hnd.scrollIntoViewIfNeeded();
   const hb = await hnd.boundingBox();
   await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await page.mouse.down();
+  const freeGrid = await page.evaluate(() => !!document.querySelector('.home-widgets.free'));      // a desktop places widgets on a grid: drop at Weather's top-left corner
+  const tb0 = await page.locator('.home-widget[data-widget="weather"]').boundingBox();      // where Weather starts: it is pushed down as Lights arrives
   for (let i = 0; i < 40; i++) {
-    const tb = await page.locator('.home-widget[data-widget="weather"]').boundingBox();
-    await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2, { steps: 3 });
+    const tb = freeGrid ? tb0 : await page.locator('.home-widget[data-widget="weather"]').boundingBox();
+    await page.mouse.move(freeGrid ? tb.x + 6 : tb.x + tb.width / 2, freeGrid ? tb.y + 6 : tb.y + tb.height / 2, { steps: 3 });
     if ((await order())[0] === 'lights') break;
     await page.waitForTimeout(30);
   }

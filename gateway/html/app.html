@@ -17,12 +17,14 @@
 <link rel="stylesheet" href="/ui/looks/glass.css">
 <link rel="stylesheet" href="/ui/looks/hud.css">
 <link rel="stylesheet" href="/ui/looks/warm.css">
+<link rel="stylesheet" href="/ui/looks/paper.css">
+<link rel="stylesheet" href="/ui/looks/pop.css">
 <script>
 // The look before first paint (L3): this device's memory of it; the one saved with the login follows.
 try {
   var d = document.documentElement, look = localStorage.getItem('logos-look') || 'glass';
   var mode = localStorage.getItem('logos-mode') || localStorage.getItem('logos-theme') || 'dark';
-  if (['glass', 'hud', 'warm'].indexOf(look) < 0) look = 'glass';
+  if (['glass', 'hud', 'warm', 'paper', 'pop'].indexOf(look) < 0) look = 'glass';
   if (look === 'hud') mode = 'dark';
   d.dataset.look = look; d.dataset.mode = mode;
   d.dataset.theme = mode === 'auto' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : mode;

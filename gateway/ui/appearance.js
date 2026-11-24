@@ -1,4 +1,4 @@
-// Looks (L3): Calm glass, Terminal HUD and Warm & personal, each person's own choice, kept with their
+// Looks (L3): Calm glass, Terminal HUD, Warm & personal, Paper & ink and Sorbet pop, each person's own choice, kept with their
 // login (PUT /api/v2/me/look) and remembered on this device so the page opens in it with no flash.
 // A look only restyles the same screens: nothing is reachable in one look and not another.
 import { h, api } from './util.js';
@@ -10,6 +10,10 @@ export const LOOKS = [
     swatch: ['#05080a', '#7df9c5', '#ffb547'] },
   { id: 'warm', name: 'Warm & personal', feel: 'Cream and rounded, a colour each', modes: ['dark', 'light', 'auto'],
     swatch: ['#f6f1ea', '#2e5bd8', '#e39b2d'] },
+  { id: 'paper', name: 'Paper & ink', feel: 'An editorial page: serif headings, hairlines, one vermilion', modes: ['light', 'dark', 'auto'],
+    swatch: ['#fbfaf6', '#16140f', '#d1411e'] },
+  { id: 'pop', name: 'Sorbet pop', feel: 'Loud and friendly: thick outlines, hard shadows, bold colour', modes: ['light', 'dark', 'auto'],
+    swatch: ['#fff3c4', '#ff4f87', '#1b1630'] },
 ];
 const MODE_NAMES = { dark: 'Dark', light: 'Light', auto: 'Auto' };   // Auto: follows the device
 const root = document.documentElement;

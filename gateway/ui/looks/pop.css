@@ -1,0 +1,78 @@
+/* Sorbet pop (L9, Greg 23 Nov: "two brand new feeling looks"): loud and friendly. Thick outlines, hard offset shadows, flat blocks
+   of colour: butter yellow paper, hot pink for the main thing, a bouncy press on every button. Dark is a deep violet with cream outlines.
+   Only variables and a few rules: every screen is the same, dressed differently. */
+:root[data-look="pop"] {
+  --ground: #fff3c4; --surface: #ffffff; --raised: #fff9e0; --line: #1b1630;
+  --ink: #1b1630; --muted: #5f5780; --accent: #ff4f87; --accent-ink: #1b1630; --accent-soft: #ffd3e2;
+  --accent-text: #b8134f; --ok: #0b7a4c; --warn-bg: #ffd84d; --warn-ink: #3b2a00; --bad: #c4122f;
+  --chip: #ffe27a; --greg: #3256ff; --bere: #ff7a00; --household: #0b7a4c;
+  --brand-gradient: linear-gradient(135deg, #ff4f87, #ffb800);
+  --font-display: "Arial Rounded MT Bold", "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Trebuchet MS", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --card-bg: var(--surface); --card-border: 2px solid var(--ink); --card-shadow: 4px 4px 0 var(--ink);
+  --r-small: 10px; --r-ctl: 12px; --r-card: 16px; --r-sheet: 24px; --r-pill: 999px; --r-bubble: 18px;
+  --t-md: 15px;
+  --bar: #fff3c4;
+  color-scheme: light;
+}
+:root[data-look="pop"][data-theme="dark"] {
+  --ground: #17112e; --surface: #241a47; --raised: #2d2157; --line: #f6efe0;
+  --ink: #fff6e4; --muted: #b9acd9; --accent: #ff6b9a; --accent-ink: #1b1630; --accent-soft: rgba(255, 107, 154, 0.2);
+  --accent-text: #ff9bbd; --ok: #6fe3a8; --warn-bg: #5a4510; --warn-ink: #ffd666; --bad: #ff8a9b;
+  --chip: #35276a; --greg: #8ea2ff; --bere: #ffae52; --household: #6fe3a8;
+  --card-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6);
+  --bar: #17112e;
+  color-scheme: dark;
+}
+[data-look="pop"] body { font-family: var(--font-body); }
+[data-look="pop"] h1, [data-look="pop"] h2, [data-look="pop"] .brand, [data-look="pop"] .screen-name { font-family: var(--font-display); font-weight: 800; letter-spacing: -0.01em; }
+[data-look="pop"] .page h1, [data-look="pop"] .page-band h1, [data-look="pop"] .screen-name { font-size: 26px; }
+[data-look="pop"] .label { font-family: var(--font-display); text-transform: none; letter-spacing: 0; font-size: 17px; font-weight: 800; color: var(--ink); line-height: 22px; }
+[data-look="pop"] .sub-label { font-weight: 800; color: var(--muted); }
+/* Buttons: outlined, with a hard shadow that they press into */
+[data-look="pop"] .btn { border: 2px solid var(--ink); border-radius: var(--r-pill); font-weight: 800; box-shadow: 3px 3px 0 var(--ink); transition: transform .08s ease, box-shadow .08s ease; }
+[data-look="pop"][data-theme="dark"] .btn { border-color: var(--line); box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6); }
+[data-look="pop"] .btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink); }
+[data-look="pop"] .btn:active { transform: translate(3px, 3px); box-shadow: 0 0 0 var(--ink); }
+[data-look="pop"] .btn.quiet, [data-look="pop"] .btn.ghost { background: var(--surface); color: var(--ink); }
+[data-look="pop"] .btn.danger { background: var(--surface); color: var(--bad); border-color: var(--bad); box-shadow: 3px 3px 0 var(--bad); }
+/* Boxes: a thick outline and a hard shadow */
+[data-look="pop"] .card, [data-look="pop"] .home-list-card, [data-look="pop"] .hud-cell, [data-look="pop"] .mx-card, [data-look="pop"] .done-group,
+[data-look="pop"] .feed, [data-look="pop"] .home-list, [data-look="pop"] .mx-devices .rows { background: var(--card-bg); border: var(--card-border); border-radius: var(--r-card); box-shadow: var(--card-shadow); }
+[data-look="pop"] .feed { padding: 4px 16px; }
+[data-look="pop"][data-theme="dark"] .card, [data-look="pop"][data-theme="dark"] .home-list-card, [data-look="pop"][data-theme="dark"] .mx-card { border-color: var(--line); }
+[data-look="pop"] .feed-item, [data-look="pop"] .row-item { border-color: var(--line); }
+/* The menu: chunky pills; the current one filled pink with an outline */
+[data-look="pop"] .nav { background: var(--ground); border-right: 2px solid var(--ink); }
+[data-look="pop"][data-theme="dark"] .nav { border-right-color: var(--line); }
+[data-look="pop"] .nav-links a { border: 2px solid transparent; border-radius: var(--r-ctl); font-weight: 800; }
+[data-look="pop"] .nav-links a[aria-current="page"] { background: var(--accent); color: var(--accent-ink); border-color: var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+[data-look="pop"][data-theme="dark"] .nav-links a[aria-current="page"] { border-color: var(--line); box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6); }
+[data-look="pop"] .nav-links a[aria-current="page"] .icon { color: inherit; }
+[data-look="pop"] .topbar, [data-look="pop"] .chat-head, [data-look="pop"] .page > header.page-band, [data-look="pop"] .chat.void > .void-band { background: var(--ground); border-bottom: 2px solid var(--ink); }
+[data-look="pop"][data-theme="dark"] .topbar, [data-look="pop"][data-theme="dark"] .chat-head, [data-look="pop"][data-theme="dark"] .page > header.page-band { border-bottom-color: var(--line); }
+[data-look="pop"] .tabs { background: var(--chip); border: 2px solid var(--ink); border-radius: var(--r-pill); }
+[data-look="pop"] .tabs button { border-radius: var(--r-pill); font-weight: 800; }
+[data-look="pop"] .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+[data-look="pop"] .pill, [data-look="pop"] .badge, [data-look="pop"] .chip { border: 2px solid var(--ink); border-radius: 999px; font-weight: 800; }
+[data-look="pop"] .avatar { background: var(--accent); color: var(--accent-ink); border: 2px solid var(--ink); }
+/* Chat: bubbles with an outline; yours pink, theirs white */
+[data-look="pop"] .msg { border: 2px solid var(--ink); font-weight: 600; box-shadow: 3px 3px 0 var(--ink); }
+[data-look="pop"][data-theme="dark"] .msg { border-color: var(--line); box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6); }
+[data-look="pop"] .msg.user, [data-look="pop"] .mx-turn.me .msg { background: var(--accent); color: var(--accent-ink); }
+[data-look="pop"] .composer, [data-look="pop"] .home-ask { background: var(--ground); border-color: var(--ink); }
+[data-look="pop"] input, [data-look="pop"] textarea, [data-look="pop"] select { border: 2px solid var(--ink); border-radius: var(--r-ctl); background: var(--surface); }
+[data-look="pop"][data-theme="dark"] input, [data-look="pop"][data-theme="dark"] textarea { border-color: var(--line); }
+[data-look="pop"] .set-row[aria-current="page"], [data-look="pop"] .settings-tab[aria-current="page"] { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--ink); border-radius: var(--r-ctl); }
+@media (max-width: 599px) {
+  [data-look="pop"] .tabbar { background: var(--ground); border-top: 2px solid var(--ink); }
+  [data-look="pop"] .tabbar [aria-current="page"] { color: var(--accent-text); }
+}
+/* the day's blocks need room inside their outline, and the menu a little less width than its heavy type wants */
+[data-look="pop"] .home-list { padding: 8px 16px; }
+@media (min-width: 1100px) {
+  [data-look="pop"] .nav-links a { gap: 10px; padding-left: 12px; padding-right: 10px; letter-spacing: -0.02em; }
+}
+@media (min-width: 1100px) {
+  [data-look="pop"] .nav-links a .nav-label { font-size: 14px; font-weight: 700; }
+}

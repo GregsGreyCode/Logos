@@ -113,12 +113,12 @@ async def _agent_or_404(request: web.Request) -> tuple[str, dict, Dict[str, str]
     return name, agents[name], user
 
 
-LOOKS = ("glass", "hud", "warm")
+LOOKS = ("glass", "hud", "warm", "paper", "pop")
 MODES = ("dark", "light", "auto")
 
 
 def look_of(user_id: str) -> Optional[Dict[str, str]]:
-    """The person's chosen look ("glass" | "hud" | "warm") and light/dark mode, kept with their login
+    """The person's chosen look ("glass" | "hud" | "warm" | "paper" | "pop") and light/dark mode, kept with their login
     (user_settings.ui_theme as "look:mode"), so it follows them from one device to another. None until
     they choose."""
     getter = getattr(auth_db, "get_user_settings", None)
@@ -175,6 +175,13 @@ def _pref_ok(key: str, value: Any) -> bool:
         return _place_ok(value)
     if key == "widget_sizes":
         return isinstance(value, dict) and all(w in WIDGET_SIZES and v in WIDGET_SIZES[w] for w, v in value.items())
+    if key == "widget_grid":
+        # F49: the desktop Home layout: {widget: {x, y, w, h}} on a 12-column grid (h 0: as tall as its content)
+        from gateway.widgets import KINDS
+        def cell(c: Any) -> bool:
+            return (isinstance(c, dict) and set(c) == {"x", "y", "w", "h"} and all(isinstance(c[k], int) and not isinstance(c[k], bool) for k in c)
+                    and 0 <= c["x"] <= 11 and 1 <= c["w"] <= 12 and c["x"] + c["w"] <= 12 and 0 <= c["y"] <= 1_000_000 and 0 <= c["h"] <= 1_000_000)      # no practical limit: a widget may go as far down as you like
+        return (isinstance(value, dict) and len(value) <= 40 and all((w in WIDGETS or w in KINDS) and cell(c) for w, c in value.items()))
     if key in COLOUR_PREFS:
         return isinstance(value, str) and (value == "" or bool(_HEX.match(value)))
     return key in PREFS and value in PREFS[key]

@@ -283,10 +283,20 @@ function matrix(state, redraw) {
   async function stepDone() {
     const list = h('div', { class: 'rows' }, loading());
     const msg = note();
-    const fold = h('details', { class: 'mx-devices' }, h('summary', {}, 'Your devices'), list);
-    box.replaceChildren(
-      h('div', { class: 'mx-ok', title: `This browser is a verified device of ${me}.` }, '✓ This device is connected and secure'),
-      fold, msg);
+    const disconnect = h('button', { type: 'button', class: 'btn danger mx-disconnect', onclick: async () => {
+      if (!await ask({ title: 'Disconnect this device?', text: 'It signs out of your chats here and forgets its keys. You can connect it again with your password and recovery key.', yes: 'Disconnect', danger: true })) return;
+      await mx.disconnect(); show();
+    } }, 'Disconnect this device');
+    const thisCard = h('section', { class: 'mx-card', 'aria-label': 'This device' },
+      h('div', { class: 'mx-card-top' },
+        h('span', { class: 'mx-ok-dot', 'aria-hidden': 'true' }, '✓'),
+        h('div', { class: 'mx-card-text' }, h('strong', {}, 'Connected and secure'),
+          h('span', { class: 'when' }, `This browser is a verified device of ${me}.`))),
+      h('div', { class: 'mx-card-actions' }, disconnect,
+        h('span', { class: 'when' }, 'Signs out of your chats here and forgets its keys. You can connect it again later.')));
+    const head = h('div', { class: 'mx-list-head' }, h('div', { class: 'mx-card-text' }, h('h3', { class: 'mx-h' }, 'Your devices'), h('span', { class: 'when mx-count' }, '')));
+    const fold = h('section', { class: 'mx-devices', 'aria-label': 'Your devices' }, head, list);
+    box.replaceChildren(thisCard, fold, msg);
     const devs = (await mx.devices()).sort((a, b) => Number(b.here) - Number(a.here) || b.lastSeen - a.lastSeen);
     const plain = (n) => String(n || 'A device').replace(/^Logos \((.*)\)$/, 'Logos · $1');
     // Old: not used for three days, not verified (agents ignore it anyway), or an older copy of a device
@@ -295,7 +305,7 @@ function matrix(state, redraw) {
     const old = (d, i) => !d.here && (!d.verified || !d.lastSeen || d.lastSeen < week
       || devs.slice(0, i).some((x) => plain(x.name) === plain(d.name)));
     const olds = devs.filter(old);
-    fold.querySelector('summary').textContent = `Your devices (${devs.length})${olds.length ? ` · ${olds.length} not used lately` : ''}`;
+    head.querySelector('.mx-count').textContent = `${devs.length} device${devs.length === 1 ? '' : 's'}${olds.length ? ` · ${olds.length} not used lately` : ''}`;
     const signOut = async (targets, button) => {
       const pw = await ask({ title: targets.length === 1 ? `Sign out "${plain(targets[0].name)}"?` : `Sign out ${targets.length} old devices?`,
         text: targets.length === 1 ? 'It will need to sign in again to read your chats.' : targets.map((d) => plain(d.name)).join(', '),
@@ -310,19 +320,14 @@ function matrix(state, redraw) {
       if (done) msg.textContent = `Signed out ${done} device${done === 1 ? '' : 's'}.`;
       stepDone();
     };
-    list.replaceChildren(...devs.map((d, i) => h('div', { class: 'row-item mx-device' },
-      h('span', { class: 'row-main' }, d.here ? `${plain(d.name)} · this device` : plain(d.name)),
+    list.replaceChildren(...devs.map((d, i) => h('div', { class: `row-item mx-device${d.here ? ' here' : ''}` },
+      h('span', { class: 'row-main' }, plain(d.name), d.here ? h('span', { class: 'mx-here' }, 'This device') : null),
       h('span', { class: `row-meta ${old(d, i) ? 'warn' : 'ok'}` },
         [d.here ? 'in use now' : d.lastSeen ? `last used ${when(d.lastSeen / 1000)}` : 'never used',
           !d.verified ? 'not trusted: agents ignore it' : '', old(d, i) && d.verified ? 'not used lately' : ''].filter(Boolean).join(' · ')),
-      d.here ? null : h('button', { type: 'button', class: 'linkish mx-signout', onclick: (e) => signOut([d], e.target) }, 'Sign out'))),
-      ...(olds.length ? [h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: (e) => signOut(olds, e.target) },
-        `Sign out ${olds.length} old device${olds.length === 1 ? '' : 's'}`))] : []),
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn danger', onclick: async () => {
-        if (!await ask({ title: 'Disconnect this device?', text: 'It signs out of your chats here and forgets its keys. You can connect it again with your password and recovery key.', yes: 'Disconnect', danger: true })) return;
-        await mx.disconnect(); show();
-      } }, 'Disconnect this device')));
-    if (olds.length) fold.open = true;
+      d.here ? null : h('button', { type: 'button', class: 'btn quiet small mx-signout', onclick: (e) => signOut([d], e.target) }, 'Sign out'))));
+    if (olds.length) head.append(h('button', { type: 'button', class: 'btn quiet small mx-clean', onclick: (e) => signOut(olds, e.target) },
+      `Sign out ${olds.length} old device${olds.length === 1 ? '' : 's'}`));
   }
 
   async function show() {

@@ -1,0 +1,71 @@
+/* Paper & ink (L8, Greg 23 Nov: "two brand new feeling looks"): an editorial page. White paper and black ink, a serif for headings,
+   hairline rules instead of boxes, square corners, no glow and no shadow; one vermilion for what matters. Light by day,
+   warm "ink" at night. Everything is a change of variables and a few rules: no screen is different, only dressed differently. */
+:root[data-look="paper"] {
+  --ground: #fbfaf6; --surface: #ffffff; --raised: #f4f2ea; --line: rgba(20, 18, 14, 0.16);
+  --ink: #16140f; --muted: #6a655b; --accent: #d1411e; --accent-ink: #ffffff; --accent-soft: rgba(209, 65, 30, 0.09);
+  --accent-text: #b3300f; --ok: #2f6b3c; --warn-bg: #fbe9c4; --warn-ink: #6b4300; --bad: #a3231a;
+  --chip: #eeebe1; --greg: #1f4fa3; --bere: #b3541a; --household: #2f6b3c;
+  --brand-gradient: linear-gradient(135deg, #16140f, #d1411e);
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Charter, Georgia, serif;
+  --font-body: "Source Sans 3", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --card-bg: var(--surface); --card-border: 1px solid var(--line); --card-shadow: none;
+  --r-small: 2px; --r-ctl: 3px; --r-card: 3px; --r-sheet: 6px; --r-pill: 3px; --r-bubble: 3px;
+  --t-md: 15px;
+  --bar: #fbfaf6;
+  color-scheme: light;
+}
+:root[data-look="paper"][data-theme="dark"] {
+  --ground: #131210; --surface: #1a1916; --raised: #211f1b; --line: rgba(240, 232, 214, 0.17);
+  --ink: #efe8d8; --muted: #a39b8b; --accent: #ff7d57; --accent-ink: #1a0d07; --accent-soft: rgba(255, 125, 87, 0.12);
+  --accent-text: #ff9a7a; --ok: #8fd0a0; --warn-bg: #3a2c10; --warn-ink: #f6cf85; --bad: #ff9a8f;
+  --chip: #26231e; --greg: #8fb2ff; --bere: #f2a766; --household: #8fd0a0;
+  --brand-gradient: linear-gradient(135deg, #efe8d8, #ff7d57);
+  --bar: #131210;
+  color-scheme: dark;
+}
+[data-look="paper"] body { font-family: var(--font-body); font-size: var(--t-md); }
+[data-look="paper"] h1, [data-look="paper"] h2, [data-look="paper"] .brand, [data-look="paper"] .screen-name { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; }
+[data-look="paper"] .page h1, [data-look="paper"] .page-band h1, [data-look="paper"] .screen-name { font-size: 26px; font-weight: 600; }
+/* Section labels: small capitals with a rule above, as a newspaper's headings */
+[data-look="paper"] .label, [data-look="paper"] .sub-label { font-family: var(--font-body); text-transform: uppercase; letter-spacing: 0.14em; font-size: 11px; font-weight: 700; color: var(--ink); }
+[data-look="paper"] .label { padding-top: 8px; border-top: 2px solid var(--ink); }
+[data-look="paper"] .sub-label { color: var(--muted); }
+[data-look="paper"] .when, [data-look="paper"] .home-time { font-variant-numeric: tabular-nums; }
+/* Buttons: ink on paper; the main one vermilion; no rounding */
+[data-look="paper"] .btn { border-radius: var(--r-ctl); font-weight: 600; letter-spacing: 0.02em; box-shadow: none; }
+[data-look="paper"] .btn.quiet, [data-look="paper"] .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+[data-look="paper"] .btn.danger { background: transparent; color: var(--bad); border: 1px solid var(--bad); }
+[data-look="paper"] .linkish { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+/* Hairlines, not boxes: cards and rows sit on the page with a rule */
+[data-look="paper"] .card, [data-look="paper"] .home-list-card, [data-look="paper"] .hud-cell, [data-look="paper"] .mx-card, [data-look="paper"] .done-group { background: transparent; border: 0; border-top: 1px solid var(--ink); border-radius: 0; box-shadow: none; }
+[data-look="paper"] .home-list-card, [data-look="paper"] .mx-devices .rows { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); }
+[data-look="paper"] .feed { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 0; }
+[data-look="paper"] .feed-item, [data-look="paper"] .row-item { border-color: var(--line); }
+/* The menu: plain text; the current place marked by a bar and bold type */
+[data-look="paper"] .nav { background: var(--ground); border-right: 1px solid var(--ink); }
+[data-look="paper"] .nav-links a { border-radius: 0; font-weight: 500; }
+[data-look="paper"] .nav-links a[aria-current="page"] { background: transparent; color: var(--ink); font-weight: 700; box-shadow: inset 3px 0 0 var(--accent); }
+[data-look="paper"] .nav-links a[aria-current="page"] .icon { color: var(--accent); }
+[data-look="paper"] .nav-group { text-transform: uppercase; letter-spacing: 0.14em; font-size: 10px; }
+[data-look="paper"] .topbar, [data-look="paper"] .chat-head, [data-look="paper"] .page > header.page-band, [data-look="paper"] .chat.void > .void-band { background: var(--ground); border-bottom: 1px solid var(--ink); }
+[data-look="paper"] .tabs { background: transparent; border-radius: 0; border-bottom: 1px solid var(--line); }
+[data-look="paper"] .tabs button { border-radius: 0; background: transparent; color: var(--muted); }
+[data-look="paper"] .tabs button[aria-selected="true"] { color: var(--ink); font-weight: 700; box-shadow: inset 0 -2px 0 var(--accent); background: transparent; }
+[data-look="paper"] .pill, [data-look="paper"] .badge, [data-look="paper"] .chip { border-radius: 2px; }
+[data-look="paper"] .avatar { background: var(--ink); color: var(--ground); border-radius: 2px; }
+/* Chat: the words of an agent are set like a column of text; yours in a vermilion block */
+[data-look="paper"] .msg { border-radius: var(--r-bubble); }
+[data-look="paper"] .msg.assistant, [data-look="paper"] .mx-turn.agent .msg { background: transparent; border: 0; border-left: 2px solid var(--line); border-radius: 0; padding-left: 14px; box-shadow: none; }
+[data-look="paper"] .msg.user, [data-look="paper"] .mx-turn.me .msg { background: var(--ink); color: var(--ground); }
+[data-look="paper"] .composer, [data-look="paper"] .home-ask { background: var(--ground); border-color: var(--ink); }
+[data-look="paper"] input, [data-look="paper"] textarea, [data-look="paper"] select { border-radius: var(--r-ctl); border-color: var(--line); background: var(--surface); }
+[data-look="paper"] .set-row[aria-current="page"], [data-look="paper"] .settings-tab[aria-current="page"] { background: transparent; box-shadow: inset 3px 0 0 var(--accent); }
+@media (max-width: 599px) {
+  [data-look="paper"] .tabbar { background: var(--ground); border-top: 1px solid var(--ink); }
+  [data-look="paper"] .tabbar [aria-current="page"] { color: var(--accent-text); }
+}
+@media (min-width: 1100px) {
+  [data-look="paper"] .nav-links a { gap: 10px; padding-left: 12px; padding-right: 10px; }
+  [data-look="paper"] .nav-links a .nav-label { font-size: 14px; }
+}

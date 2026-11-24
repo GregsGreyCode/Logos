@@ -1,5 +1,6 @@
 // Home (S6.11): the first screen. What needs you, today's calendar, what the agents did, and an
 // ask box that hands the question to Chat.
+import * as G from './home-grid.js';
 import { swr, forget, peek, clearAll } from './cache.js';
 import { widget as homelabWidget, BAND, setupSheet } from './widgets.js';
 import { createRecorder } from './voice.js';
@@ -356,8 +357,118 @@ export async function homeView(root, rest, state) {
   // (left, right, left…), instead of rows that leave a gap under the shorter widget. Each widget spans
   // as many 4 px grid rows as it is tall; repacked whenever one changes size or the order changes.
   const wide = matchMedia('(min-width: 820px)');   // two columns from an unfolded foldable up
+  // ── The desktop grid (F49): widgets placed and sized anywhere on 12 columns (home-grid.js) ──
+  const grid = (() => {
+    const mq = matchMedia('(min-width: 1100px)');
+    let layout = { ...(getPref('widget_grid', {}) || {}) };
+    const shown = (el) => !el.classList.contains('off') && getComputedStyle(el).display !== 'none';
+    const widgets = () => [...board.children].filter((el) => el.dataset.widget && shown(el));
+    const api = {
+      on: () => mq.matches,
+      off() {
+        if (!board.classList.contains('free')) return;
+        board.classList.remove('free');
+        for (const el of board.children) { el.style.gridColumn = ''; el.style.gridRow = ''; el.style.height = ''; el.style.overflow = ''; }
+      },
+      // Place every shown widget; `movingId` keeps the place it was given while the others make room.
+      apply(movingId = null) {
+        if (!mq.matches) return api.off();
+        board.classList.add('free');
+        const els = widgets();
+        const width = board.getBoundingClientRect().width || 900;
+        const items = els.map((el) => {
+          const id = el.dataset.widget, c = layout[id];
+          const w = c ? c.w : G.defaultWidth(window.innerWidth), fixed = c ? c.h : 0;
+          if (!fixed) el.style.height = '';
+          return { id, x: c ? c.x : null, y: c ? c.y : 0, w, fixed, h: fixed || G.rowsFor(el.getBoundingClientRect().height) };
+        });
+        for (const it of G.compact(items, movingId)) {
+          const src = items.find((i) => i.id === it.id), el = els.find((e) => e.dataset.widget === it.id);
+          layout[it.id] = { x: it.x, y: it.y, w: it.w, h: src.fixed };
+          el.style.gridColumn = `${it.x + 1} / span ${it.w}`;
+          el.style.gridRow = `${it.y + 1} / span ${src.fixed || it.h}`;
+          if (src.fixed) { el.style.height = `${G.pxFor(src.fixed)}px`; el.style.overflow = 'auto'; } else { el.style.overflow = ''; }
+        }
+      },
+      forget(id) { delete layout[id]; },
+      reset() { layout = {}; setPref('widget_grid', {}).catch(() => {}); api.apply(); },
+      layout: () => layout,
+      persist() {
+        const ids = widgets().map((e) => e.dataset.widget);
+        setPref('widget_grid', G.clean(layout, ids)).catch(() => {});
+        const order = G.readingOrder(layout, ids);                         // the phone's order follows what was arranged here
+        if (order.join() !== ids.join()) for (const id of order) board.append(SECS[id]);      // moved only when it changed: a moved element loses a double-click
+        return save(orderNow());
+      },
+      move(el, e) {
+        e.preventDefault();
+        const id = el.dataset.widget, r0 = el.getBoundingClientRect(), grab = { x: e.clientX - r0.left, y: e.clientY - r0.top }, pid = e.pointerId;
+        el.classList.add('dragging');
+        let last = e;
+        const follow = () => {
+          el.style.transform = '';
+          const r = el.getBoundingClientRect();
+          el.style.transform = `translate(${last.clientX - grab.x - r.left}px, ${last.clientY - grab.y - r.top}px)`;
+        };
+        const move = (ev) => {
+          if (ev.pointerId !== pid) return;
+          ev.preventDefault(); last = ev;
+          const b = board.getBoundingClientRect(), m = G.metrics(b.width), c = layout[id];
+          const at = G.cellAt(m, ev.clientX - grab.x - b.left, ev.clientY - grab.y - b.top, c.w);
+          layout[id] = { ...c, x: at.x, y: at.y };
+          api.apply(id); follow();
+          if (ev.clientY < 90) window.scrollBy(0, -12); else if (ev.clientY > window.innerHeight - 160) window.scrollBy(0, 12);
+        };
+        const up = (ev) => {
+          if (ev.pointerId !== pid) return;
+          window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+          el.classList.remove('dragging'); el.style.transform = '';
+          api.apply(); api.persist();
+        };
+        window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+      },
+      resize(el, e) {
+        e.preventDefault(); e.stopPropagation();
+        const id = el.dataset.widget, r0 = el.getBoundingClientRect(), pid = e.pointerId;
+        el.classList.add('resizing');
+        const move = (ev) => {
+          if (ev.pointerId !== pid) return;
+          ev.preventDefault();
+          const b = board.getBoundingClientRect(), m = G.metrics(b.width), c = layout[id];
+          const w = Math.max(G.minWidth(id), Math.min(G.COLS - c.x, Math.round((ev.clientX - r0.left + G.GAPX) / m.stepX)));
+          const h = Math.max(G.MIN_H, G.rowsFor(ev.clientY - r0.top));
+          layout[id] = { ...c, w, h };
+          api.apply(id);
+        };
+        const up = (ev) => {
+          if (ev.pointerId !== pid) return;
+          window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+          el.classList.remove('resizing'); api.apply(); api.persist();
+        };
+        window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+      },
+      fit(el) { const c = layout[el.dataset.widget]; if (c) { layout[el.dataset.widget] = { ...c, h: 0 }; api.apply(); api.persist(); } },
+      // Keyboard: arrows move it a column or a row-step; with Alt they resize it.
+      key(el, e) {
+        const id = el.dataset.widget, c = layout[id];
+        if (!c || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return false;
+        e.preventDefault();
+        const dx = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0, dy = e.key === 'ArrowDown' ? 4 : e.key === 'ArrowUp' ? -4 : 0;
+        if (e.altKey) {
+          const rows = c.h || G.rowsFor(el.getBoundingClientRect().height);
+          layout[id] = { ...c, w: Math.max(G.minWidth(id), Math.min(G.COLS - c.x, c.w + dx)), h: dy ? Math.max(G.MIN_H, rows + dy) : c.h };
+        } else layout[id] = { ...c, x: Math.max(0, Math.min(G.COLS - c.w, c.x + dx)), y: Math.max(0, c.y + dy) };
+        api.apply(id); api.persist();
+        return true;
+      },
+    };
+    mq.addEventListener('change', () => api.apply());
+    return api;
+  })();
   const ROW = 4, GAP = 22;
   const pack = () => {
+    if (grid.on()) { grid.apply(); return; }              // a desktop: the free grid places everything
+    grid.off();
     for (const el of board.children) {
       if (!wide.matches || getComputedStyle(el).display === 'none') { el.style.gridRowEnd = ''; continue; }   // packed while editing too
       el.style.gridRowEnd = `span ${Math.max(1, Math.ceil((el.getBoundingClientRect().height + GAP) / ROW))}`;
@@ -418,8 +529,9 @@ export async function homeView(root, rest, state) {
   function drawTray() {
     const hidden = Object.keys(WIDGETS).filter((id) => !on(id) && (!KINDS[id] || KINDS[id].set_up || KINDS[id].can_set_up));
     tray.replaceChildren(h('span', { class: 'label' }, hidden.length ? 'Add' : 'Every widget is on Home'),
+      grid.on() ? h('button', { type: 'button', class: 'linkish small home-reset', onclick: () => grid.reset() }, 'Reset layout') : null,
       ...hidden.map((id) => h('button', { type: 'button', class: 'chip home-add', onclick: async () => {
-        await save([...orderNow(), id]); applyWidgets(); decorate(); SHOW[id]();
+        save([...orderNow(), id]); applyWidgets(); decorate(); SHOW[id](); grid.apply();
       } }, `+ ${WIDGETS[id]}`)));
   }
   // Compact or Full, in the widget's bar while arranging; kept with your login, redrawn at once.
@@ -440,27 +552,35 @@ export async function homeView(root, rest, state) {
       w.el.prepend(h('div', { class: 'widget-bar band-bar' },
         k && k.can_set_up ? h('button', { type: 'button', class: 'linkish small', onclick: () => setupSheet(k, () => { forget(`/api/v2/widgets/${id}`); w.show(); }) }, 'Edit') : null,
         h('button', { type: 'button', class: 'widget-remove', 'aria-label': `Take ${WIDGETS[id]} off Home`, title: 'Take off Home', onclick: async () => {
-          await save(orderNow().filter((x) => x !== id)); applyWidgets(); decorate();
+          save(orderNow().filter((x) => x !== id)); applyWidgets(); decorate();      // at once; kept in the background (Greg, 24 Nov: it took a second)
         } }, '✕')));
     }
     for (const [id, el] of Object.entries(SECS)) {
       el.querySelector(':scope > .widget-bar')?.remove();
-      if (!editing) continue;
+      if (!editing) { el.querySelector(':scope > .widget-grip')?.remove(); continue; }
       const handle = h('button', { type: 'button', class: 'widget-handle', 'aria-label': `Move ${WIDGETS[id]}`, title: 'Drag to move' }, '⠿');
-      handle.addEventListener('pointerdown', (e) => drag(el, e));
+      handle.addEventListener('pointerdown', (e) => (grid.on() ? grid.move(el, e) : drag(el, e)));
       handle.addEventListener('keydown', (e) => {                         // keyboard: arrows move it
+        if (grid.on()) { if (grid.key(el, e)) handle.focus(); return; }
         if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
         e.preventDefault();
         const sib = e.key === 'ArrowUp' ? el.previousElementSibling : el.nextElementSibling;
         if (sib && !sib.classList.contains('off')) { if (e.key === 'ArrowUp') sib.before(el); else sib.after(el); save(orderNow()); handle.focus(); }
       });
+      el.querySelector(':scope > .widget-grip')?.remove();
+      if (grid.on()) {
+        const grip = h('button', { type: 'button', class: 'widget-grip', 'aria-label': `Resize ${WIDGETS[id]}`, title: 'Drag to resize · double-click: fit its content (Alt+arrows with the handle)' });
+        grip.addEventListener('pointerdown', (e) => grid.resize(el, e));
+        grip.addEventListener('dblclick', () => grid.fit(el));
+        el.append(grip);
+      }
       el.prepend(h('div', { class: 'widget-bar' }, handle, h('span', { class: 'widget-name' }, WIDGETS[id]),
         SIZES[id] ? sizeSwitch(id) : null,
         id === 'weather' ? h('button', { type: 'button', class: 'linkish small', onclick: () => {
           const open = el.querySelector('.home-place'); if (open) open.remove(); else el.querySelector('.widget-bar').after(placePicker());
         } }, 'Town') : null,
         h('button', { type: 'button', class: 'widget-remove', 'aria-label': `Take ${WIDGETS[id]} off Home`, title: 'Take off Home', onclick: async () => {
-          await save(orderNow().filter((w) => w !== id)); applyWidgets(); decorate();
+          grid.forget(id); save(orderNow().filter((w) => w !== id)); applyWidgets(); decorate(); grid.apply(); grid.persist();   // the page first, the saving after
         } }, '✕')));
     }
   }
