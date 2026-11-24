@@ -389,6 +389,31 @@ export async function homeView(root, rest, state) {
           el.style.gridRow = `${it.y + 1} / span ${src.fixed || it.h}`;
           if (src.fixed) { el.style.height = `${G.pxFor(src.fixed)}px`; el.style.overflow = 'auto'; } else { el.style.overflow = ''; }
         }
+        requestAnimationFrame(() => api.syncGrips());
+      },
+      // The resize corners live in a layer of their own above the board (not inside the widgets: a stretched widget scrolls
+      // inside itself and would clip its own corner), each sitting on its widget's bottom-right corner.
+      syncGrips() {
+        const host = board.parentElement;
+        let layer = host.querySelector(':scope > .grip-layer');
+        if (!layer) { layer = h('div', { class: 'grip-layer' }); host.append(layer); }
+        if (!editing || !mq.matches) { layer.replaceChildren(); return; }
+        const hr = host.getBoundingClientRect();
+        const want = widgets();
+        for (const g of [...layer.children]) if (!want.some((el) => el.dataset.widget === g.dataset.widget)) g.remove();
+        for (const el of want) {
+          const id = el.dataset.widget;
+          let g = layer.querySelector(`[data-widget="${id}"]`);
+          if (!g) {
+            g = h('button', { type: 'button', class: 'widget-grip', 'data-widget': id, 'aria-label': `Resize ${WIDGETS[id]}`,
+              title: 'Drag to resize · double-click: fit its content (Alt+arrows with the handle)' });
+            g.addEventListener('pointerdown', (e) => api.resize(SECS[id], e));
+            g.addEventListener('dblclick', () => api.fit(SECS[id]));
+            layer.append(g);
+          }
+          const r = el.getBoundingClientRect();
+          g.style.left = `${r.right - hr.left - 10}px`; g.style.top = `${r.bottom - hr.top - 10}px`;
+        }
       },
       forget(id) { delete layout[id]; },
       reset() { layout = {}; setPref('widget_grid', {}).catch(() => {}); api.apply(); },
@@ -557,7 +582,7 @@ export async function homeView(root, rest, state) {
     }
     for (const [id, el] of Object.entries(SECS)) {
       el.querySelector(':scope > .widget-bar')?.remove();
-      if (!editing) { el.querySelector(':scope > .widget-grip')?.remove(); continue; }
+      if (!editing) continue;
       const handle = h('button', { type: 'button', class: 'widget-handle', 'aria-label': `Move ${WIDGETS[id]}`, title: 'Drag to move' }, '⠿');
       handle.addEventListener('pointerdown', (e) => (grid.on() ? grid.move(el, e) : drag(el, e)));
       handle.addEventListener('keydown', (e) => {                         // keyboard: arrows move it
@@ -567,13 +592,6 @@ export async function homeView(root, rest, state) {
         const sib = e.key === 'ArrowUp' ? el.previousElementSibling : el.nextElementSibling;
         if (sib && !sib.classList.contains('off')) { if (e.key === 'ArrowUp') sib.before(el); else sib.after(el); save(orderNow()); handle.focus(); }
       });
-      el.querySelector(':scope > .widget-grip')?.remove();
-      if (grid.on()) {
-        const grip = h('button', { type: 'button', class: 'widget-grip', 'aria-label': `Resize ${WIDGETS[id]}`, title: 'Drag to resize · double-click: fit its content (Alt+arrows with the handle)' });
-        grip.addEventListener('pointerdown', (e) => grid.resize(el, e));
-        grip.addEventListener('dblclick', () => grid.fit(el));
-        el.append(grip);
-      }
       el.prepend(h('div', { class: 'widget-bar' }, handle, h('span', { class: 'widget-name' }, WIDGETS[id]),
         SIZES[id] ? sizeSwitch(id) : null,
         id === 'weather' ? h('button', { type: 'button', class: 'linkish small', onclick: () => {
@@ -586,6 +604,7 @@ export async function homeView(root, rest, state) {
   }
   function setEditing(v) {
     editing = v;
+    requestAnimationFrame(() => requestAnimationFrame(() => grid.syncGrips()));
     board.classList.toggle('editing', v);
     tray.hidden = !v;
     editBtn.replaceChildren(v ? 'Done' : icon(ICONS.pencil));

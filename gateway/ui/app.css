@@ -2540,12 +2540,18 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
   .home-widgets.free.editing > .home-widget { transition: none; }
   .home-widgets.free > .home-widget.dragging { z-index: 20; box-shadow: 0 16px 40px rgb(0 0 0 / .4); pointer-events: none; }
   .home-widgets.free > .home-widget.resizing { outline-color: var(--accent); }
-  .widget-grip { position: absolute; right: -4px; bottom: -4px; z-index: 5; width: 26px; height: 26px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; touch-action: none; }
-  .widget-grip::after { content: ''; position: absolute; right: 6px; bottom: 6px; width: 12px; height: 12px; border-right: 2px solid var(--accent-text); border-bottom: 2px solid var(--accent-text); border-radius: 0 0 4px 0; opacity: .9; }
-  .widget-grip:hover::after, .widget-grip:focus-visible::after { opacity: 1; border-color: var(--accent); }
+  /* The corner sits ON the dashed outline, outside the widget's own content, so it never covers a word or a pill (Greg, 24 Nov). */
+  .home { position: relative; }
+  .grip-layer { position: absolute; inset: 0; pointer-events: none; z-index: 30; }
+  .grip-layer .widget-grip { position: absolute; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; touch-action: none; pointer-events: auto; }
+  .grip-layer .widget-grip::after { content: ''; position: absolute; right: 5px; bottom: 5px; width: 11px; height: 11px; border-right: 2px solid var(--accent-text); border-bottom: 2px solid var(--accent-text); border-radius: 0 0 4px 0; opacity: .9; }
+  /* A stretched widget scrolls inside itself (wheel or touch) but shows no scrollbar */
+  .home-widgets.free > .home-widget { scrollbar-width: none; -ms-overflow-style: none; }
+  .home-widgets.free > .home-widget::-webkit-scrollbar { display: none; width: 0; height: 0; }
+  .grip-layer .widget-grip:hover::after, .grip-layer .widget-grip:focus-visible::after { opacity: 1; border-color: var(--accent); }
   .home-reset { margin-left: auto; }
 }
-@media (max-width: 1099px) { .widget-grip { display: none; } }
+@media (max-width: 1099px) { .grip-layer { display: none; } }
 
 
 /* Settings > Chats & devices (Greg, 23 Nov: "the layout and sign out and disconnect is just so poor"): a card for this device with
@@ -2579,3 +2585,41 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
   .mx-clean { align-self: stretch; width: 100%; }
   .mx-card-actions .when { flex: none; }
 }
+
+/* ── The Brain, redesigned to match the rest (Greg, 24 Nov) ─────────────────────────────────────────────────────────────────
+   Band: the title, the chat's own agent switcher, and the Chat | Brain | Routines pill. The page list: a search field and one
+   "New page" button like the chat's "New conversation". The page: its title with Edit (pencil, as elsewhere) on the right, and
+   the "ask the agent" box docked at the bottom like the chat's composer. Editing: Cancel and Save in the title row, formatting
+   as one segmented control. */
+.brain-phone-search { flex: 1 1 100%; min-height: 40px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--chip); color: var(--ink); }
+@media (min-width: 600px) {
+  .brain-head { gap: 16px; }
+  .brain-head .agent-bar-who { flex: none; }
+  .brain-head .agent-bar-pop { position: absolute; left: 0; right: auto; top: calc(100% + 6px); width: 320px; }
+  .brain-head .agent-bar-switch { min-height: 36px; padding: 0 12px 0 8px; border: 1px solid var(--line); background: var(--chip); font: 600 14px/1.2 var(--font-body); }
+  .brain-head h1 { font-size: 22px; }
+  .tree-top { margin-bottom: 14px; }
+  .tree-top input[type="search"] { width: 100%; min-height: 40px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--chip); color: var(--ink); font: inherit; }
+  .brain-new { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-bottom: 14px; }
+  .brain-new .icon, .doc > .doc-head > .btn .icon { display: block; flex: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .tree .tree-head .label { padding: 14px 8px 4px; }
+  .doc { display: flex; flex-direction: column; }
+  .doc > .doc-body, .doc > .doc-foot, .doc > .doc-head { width: 100%; max-width: 780px; }
+  .doc > .doc-head { align-items: center; padding-bottom: 12px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+  .doc > .doc-head > .btn { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+  .doc-head.editing { max-width: none !important; }
+  .doc-head .doc-state { padding: 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 12px; font-weight: 600; }
+  .doc-head .doc-actions { margin-left: auto; display: flex; gap: 8px; }
+  .doc .ask { order: 99; position: sticky; bottom: 0; margin-top: auto; padding: 14px 0 6px; border-top: 1px solid var(--line); background: var(--surface); max-width: 780px; width: 100%; z-index: 2; }
+  .doc .ask-row { display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 10px; }
+  .doc .ask textarea { flex: 1 1 auto; min-height: 44px; max-height: 160px; padding: 11px 18px; border-radius: 22px; resize: none; }
+  .doc .ask-go { width: 44px; min-width: 44px; height: 44px; padding: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+  .doc .ask-go .btn-words { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .doc .ask-go .icon { display: block; width: 20px; height: 20px; }
+  .doc .toolbar { align-items: center; gap: 10px; }
+  .seg { display: inline-flex; padding: 3px; border-radius: 999px; background: var(--chip); border: 1px solid var(--line); }
+  .seg .tool { border: 0; background: transparent; border-radius: 999px; min-height: 30px; }
+  .seg .tool:hover { background: var(--accent-soft); color: var(--accent-text); }
+  .doc .toolbar .tool.accent { margin-left: auto; }
+}
+@media (max-width: 599px) { .brain-head .brain-phone-search { order: 3; } }

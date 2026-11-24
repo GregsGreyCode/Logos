@@ -40,7 +40,10 @@ ok(await page.locator('.home-widgets.free').count() === 1, 'desktop: Home uses t
 let rs = await rects();
 ok(Object.keys(rs).length >= 4 && clear(rs), `desktop: ${Object.keys(rs).length} widgets laid out with no overlap`);
 await page.locator('.home-edit-link').click(); await page.waitForTimeout(700);
-ok(await page.locator('.widget-grip').count() >= 4, 'desktop: Edit shows a resize grip on each widget');
+ok(await page.locator('.grip-layer .widget-grip').count() >= 4 && await page.locator('.home-widget .widget-grip').count() === 0, 'desktop: Edit shows a resize corner on each widget, in a layer of its own (never inside a widget)');
+{ const w = await page.locator('.home-widget[data-widget="weather"]').boundingBox(), g = await page.locator('.grip-layer .widget-grip[data-widget="weather"]').boundingBox();
+  const dx = Math.abs(g.x + g.width / 2 - (w.x + w.width)), dy = Math.abs(g.y + g.height / 2 - (w.y + w.height));
+  ok(dx <= 6 && dy <= 6, `the corner sits on its widget's corner (${Math.round(dx)}, ${Math.round(dy)} px off)`); }
 
 // drag Lists (by its handle) into the right-hand column, near the top
 rs = await rects(); const before = rs.lists;
@@ -56,16 +59,19 @@ ok(saved && saved.lists && (toRight ? saved.lists.x >= 6 : saved.lists.x < 6), `
 
 // resize Lists wider and taller with its grip
 const wBefore = rs.lists.w, hBefore = rs.lists.h;
-const grip = page.locator('.home-widget[data-widget="lists"] .widget-grip'); const gb = await grip.boundingBox();
+const grip = page.locator('.grip-layer .widget-grip[data-widget="lists"]'); const gb = await grip.boundingBox();
 await page.mouse.move(gb.x + 14, gb.y + 14); await page.mouse.down(); await page.mouse.move(gb.x + 60, gb.y + 60, { steps: 5 });
 await page.mouse.move(gb.x - 160, gb.y + 150, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(700);
 rs = await rects();
 ok(rs.lists.h > hBefore + 60 && clear(rs), `the grip resizes: taller (${Math.round(hBefore)} to ${Math.round(rs.lists.h)}px), still no overlap`);
 ok(saved.lists.h > 0, `a stretched height is kept (${saved.lists.h} rows)`);
-await page.locator('.home-widget[data-widget="lists"] .widget-grip').dblclick(); await page.waitForTimeout(700);
+ok(await page.evaluate(() => [...document.querySelectorAll('.home-widgets > .home-widget')].every((e) => e.offsetWidth - e.clientWidth <= 0)), 'a stretched widget shows no scrollbar');
+{ const w = await page.locator('.home-widget[data-widget="lists"]').boundingBox(), g = await page.locator('.grip-layer .widget-grip[data-widget="lists"]').boundingBox();
+  ok(Math.abs(g.x + g.width / 2 - (w.x + w.width)) <= 6 && Math.abs(g.y + g.height / 2 - (w.y + w.height)) <= 6, 'and its corner is still there, not clipped by it'); }
+await page.locator('.grip-layer .widget-grip[data-widget="lists"]').dblclick(); await page.waitForTimeout(700);
 ok(saved.lists.h === 0, 'double-clicking the grip fits the widget to its content again');
 // the narrowest it can be
-const g2 = await page.locator('.home-widget[data-widget="weather"] .widget-grip').boundingBox();
+const g2 = await page.locator('.grip-layer .widget-grip[data-widget="weather"]').boundingBox();
 await page.mouse.move(g2.x + 14, g2.y + 14); await page.mouse.down(); await page.mouse.move(g2.x - 300, g2.y + 14, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(600);
 ok(saved.weather.w >= 4, `a widget will not shrink past its minimum width (${saved.weather.w} columns)`);
 

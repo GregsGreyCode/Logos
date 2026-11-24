@@ -1,6 +1,6 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
 import { h, api, getJSON, when, markdown, none, loading, icon, ICONS, noteTitle, focusIfKeyboard } from './util.js';
-import { agentBar } from './agents-void.js';
+import { agentBar, agentSwitch } from './agents-void.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -56,9 +56,11 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   const article = h('article', { class: 'doc' });
   const changes = h('div', { class: 'changes' });
   const results = h('div', { class: 'changes results', hidden: true });
-  const search = h('input', { id: 'q', type: 'search', placeholder: 'Search pages and notes' });
+  const search = h('input', { id: 'q', type: 'search', placeholder: 'Search the brain', 'aria-label': 'Search the brain' });
   let pages = [];
   let recent = [];                 // pages changed this week, newest first
+
+  const sectionOfCurrent = () => { const p = pages.find((x) => x.path === current); return p && NEW_IN.some(([f]) => f === p.folder) ? p.folder : NEW_IN[0][0]; };
 
   // ── page list, with an inline "new page" form ──────────────────────────
   function newPageForm() {
@@ -78,9 +80,10 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn small-btn' }, 'Create'),
       h('button', { type: 'button', class: 'btn quiet small-btn', onclick: () => { form.hidden = true; opener.hidden = false; } }, 'Cancel')),
     note);
-    const opener = h('button', { type: 'button', class: 'btn quiet wide-only', hidden: true });
-    // P5: each folder has a small + that opens this form with that folder chosen.
-    form.openFor = (f) => { folder.value = f; form.hidden = false; focusIfKeyboard(title); };   // a phone keeps its keyboard down
+    // One "New page" button, like the chat's "New conversation" (Greg, 24 Nov: the Brain should look like the rest); the form
+    // opens with the section of the page you are on chosen.
+    const opener = h('button', { type: 'button', class: 'btn mx-new brain-new wide-only', onclick: () => form.openFor(sectionOfCurrent()) }, icon(ICONS.plus), ' New page');
+    form.openFor = (f) => { folder.value = f; form.hidden = false; opener.hidden = true; focusIfKeyboard(title); };   // a phone keeps its keyboard down
     return [opener, form];
   }
 
@@ -88,12 +91,9 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     const item = (p) => h('a', { href: link(p.path), 'aria-current': p.path === current ? 'page' : null }, noteTitle(p.title));
     const [opener, form] = newPageForm();
     const canAdd = new Set(NEW_IN.map(([f]) => f));
-    const heading = (folder, label) => h('div', { class: 'tree-head' }, h('h2', { class: 'label' }, label),
-      canAdd.has(folder) ? h('button', { type: 'button', class: 'tree-add wide-only', 'aria-label': `New page in ${label}`,
-        title: `New page in ${label}`, onclick: () => form.openFor(folder) }, '+') : null);
+    const heading = (folder, label) => h('div', { class: 'tree-head' }, h('h2', { class: 'label' }, label));
     const groups = FOLDERS.flatMap(([folder, label]) => {
       const mine = pages.filter((p) => p.folder === folder);
-      if (!mine.length && canAdd.has(folder)) { const e = heading(folder, label); e.classList.add('wide-only'); return [e]; }
       return mine.length ? [heading(folder, label), ...mine.map(item)] : [];
     });
     const other = pages.filter((p) => !FOLDERS.some(([f]) => f === p.folder));
@@ -102,7 +102,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     // A short brain lists every page anyway: "Recent" only earns its place once the list is long.
     const recentGroup = latest.length && pages.length > 8 ? [h('div', { class: 'wide-only tree-recent' }, h('h2', { class: 'label' }, 'Recent'),
       ...latest.map((c) => item({ path: c.path, title: c.title })))] : [];
-    tree.replaceChildren(opener, form, ...recentGroup, ...groups,
+    tree.replaceChildren(h('div', { class: 'tree-top' }, search), opener, form, ...recentGroup, ...groups,
       ...(other.length ? [h('h2', { class: 'label' }, 'Other'), ...other.map(item)] : []));
   }
 
@@ -132,9 +132,10 @@ export async function brainView(root, [agentArg, ...pathParts]) {
   // ── add or change by asking the agent ──────────────────────────────────
   function askBox(page) {
     const id = 'ask-brain';
-    const input = h('textarea', { id, rows: '3', placeholder: 'Add or change something…', title: 'For example: the table is booked for 7:30' });
+    const input = h('textarea', { id, rows: '1', placeholder: `Ask ${agent.display_name} to add or change something…`, title: 'For example: the table is booked for 7:30' });
     const out = h('div', { class: 'result' });
-    const go = h('button', { type: 'submit', class: 'btn ask-go', 'aria-label': 'Add to brain' }, h('span', { class: 'btn-words' }, 'Add to brain'), icon(ICONS.send));
+    const go = h('button', { type: 'submit', class: 'btn ask-go', 'aria-label': 'Add to brain', title: 'Add to brain' }, h('span', { class: 'btn-words' }, 'Add to brain'), icon(ICONS.send));
+    input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${Math.min(input.scrollHeight + 2, 160)}px`; });
     return h('form', { class: 'ask', onsubmit: async (e) => {
       e.preventDefault();
       const text = input.value.trim();
@@ -180,7 +181,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     const body = d.text.replace(/^# .*\n?/, '');
     article.replaceChildren(
       h('div', { class: 'doc-head' }, h('h1', {}, noteTitle(d.title)),
-        h('button', { type: 'button', class: 'btn quiet small wide-only', onclick: () => edit(page, d) }, 'Edit'),
+        h('button', { type: 'button', class: 'btn quiet small wide-only', onclick: () => edit(page, d) }, icon(ICONS.pencil), ' Edit'),
         h('a', { class: 'icon-btn phone-only obsidian-link', href: obsidian(d.path), 'aria-label': 'Open in Obsidian', title: 'Open in Obsidian' }, icon(ICONS.external))),
       ask || askBox(page),
       h('div', { class: 'doc-body' }, ...(body.trim() ? markdown(body) : [h('p', { class: 'when' }, 'This page is empty.')])),
@@ -259,16 +260,18 @@ export async function brainView(root, [agentArg, ...pathParts]) {
       showPage(pages.find((p) => p.path === d.path) || page);
     });
 
+    const cancel = h('button', { type: 'button', class: 'btn quiet small', onclick: () => showPage(page) }, 'Cancel');
+    save.classList.add('small');
     article.replaceChildren(
-      h('div', { class: 'doc-head' }, h('h1', {}, `Editing: ${d.title}`)),
+      h('div', { class: 'doc-head editing' }, h('h1', {}, noteTitle(d.title)), h('span', { class: 'doc-state' }, 'Editing'),
+        h('div', { class: 'doc-actions' }, cancel, save)),
       h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Formatting' },
-        tool('B', 'Bold', wrap('**')), tool('H', 'Heading', prefix('## ')), tool('List', 'Bullet list', prefix('- ')),
-        tool('To-do', 'To-do item', prefix('- [ ] ')), tool('Code', 'Code', wrap('`')), tidy, undo),
+        h('div', { class: 'seg', role: 'group', 'aria-label': 'Format the selection' },
+          tool('B', 'Bold', wrap('**')), tool('H', 'Heading', prefix('## ')), tool('List', 'Bullet list', prefix('- ')),
+          tool('To-do', 'To-do item', prefix('- [ ] ')), tool('Code', 'Code', wrap('`'))), tidy, undo),
       h('div', { class: 'edit-split' },
         h('div', {}, h('label', { for: 'page-text', class: 'label' }, 'Markdown'), area),
         h('div', {}, h('div', { class: 'label' }, 'How it will look'), preview)),
-      h('div', { class: 'row' }, save,
-        h('button', { type: 'button', class: 'btn quiet', onclick: () => showPage(page) }, 'Cancel')),
       note,
       h('p', { class: 'when' }, 'Select text and press a button to format it. "Tidy formatting" works on the selection, or the whole page if nothing is selected. If the agent changes this page while you edit, your save is refused so nothing is lost.'));
     area.focus();
@@ -276,7 +279,10 @@ export async function brainView(root, [agentArg, ...pathParts]) {
 
   // ── search ─────────────────────────────────────────────────────────────
   let timer = null;
-  search.addEventListener('input', () => {
+  // The desktop's search is at the top of the page list; a phone's page list is below the page, so it has its own in the band.
+  const phoneSearch = h('input', { type: 'search', class: 'phone-only brain-phone-search', placeholder: 'Search the brain', 'aria-label': 'Search the brain' });
+  for (const [a, b] of [[search, phoneSearch], [phoneSearch, search]]) a.addEventListener('input', () => { b.value = a.value; });
+  for (const el of [search, phoneSearch]) el.addEventListener('input', () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       const q = search.value.trim();
@@ -303,8 +309,7 @@ export async function brainView(root, [agentArg, ...pathParts]) {
       agents.map((a) => h('option', { value: a.name, selected: a.name === agent.name }, a.display_name)))) : null;
 
   root.replaceChildren(h('div', { class: 'brain' }, agentBar(agent, 'brain', agents),
-    h('header', { class: 'chat-head' }, h('h1', {}, 'Brain'), tabs,
-      h('label', { for: 'q', class: 'sr' }, 'Search the brain'), search),
+    h('header', { class: 'chat-head brain-head' }, h('h1', {}, 'Brain'), agents.length > 1 ? agentSwitch(agent, 'brain', agents) : null, phoneSearch),
     conflictsBox,
     h('div', { class: 'brain-body' }, tree, article, side)));
 
