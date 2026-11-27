@@ -747,6 +747,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app.router.add_get("/",              _handle_app)
     from gateway import dashboard_api as _dashboard_api
     _dashboard_api.register(app)
+    from gateway import people_api as _people_api          # F38: People › Add a person, invitations
+    _people_api.register(app)
     from gateway import push as _push                   # F37: phone notifications; its /_matrix/push route goes first
     _push.register(app, _hermes_home)
     from gateway import activity as _activity           # what each agent did today (counts only)

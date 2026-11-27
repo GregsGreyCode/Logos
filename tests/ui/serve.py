@@ -29,6 +29,41 @@ FAKE['/api/v2/speaker'] = {'on': True, 'problem': '', 'voices': [{'id': i, 'name
   'agents': [{'name': 'household', 'display_name': 'Household agent', 'shared': True, 'speaks': True, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE, 'set_by': None},
              {'name': 'greg', 'display_name': "Greg's agent", 'shared': False, 'speaks': False, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE, 'set_by': None}]}
 _b = io.BytesIO(); _w = wave.open(_b, 'wb'); _w.setframerate(22050); _w.setsampwidth(2); _w.setnchannels(1); _w.writeframes(b'\0\0' * 66150); _w.close(); SAMPLE = _b.getvalue()
+# People (F38): an admin's view with someone invited and someone removed, one person's page, the admin actions.
+import time as _time
+_NOW = int(_time.time())
+PEOPLE = {
+  '/api/v2/people/audit': {'actions': [{'at': _NOW - 60, 'action': 'invite_accepted', 'by': 'Ann', 'about': 'ann'},
+                                       {'at': _NOW - 3600, 'action': 'person_invited', 'by': 'Greg', 'about': 'Ann'},
+                                       {'at': _NOW - 7200, 'action': 'person_removed', 'by': 'Greg', 'about': 'Dan'}]},
+  '/api/v2/people/ann': {'username': 'ann', 'display_name': 'Ann', 'is_admin': False, 'is_you': False, 'created_at': (_NOW - 3600) * 1000,
+    'last_login': (_NOW - 60) * 1000, 'state': 'active', 'busy': None, 'email': 'ann@example.org', 'removable': True, 'not_removable_because': None,
+    'steps': [{'id': 'account', 'label': 'Account', 'state': 'ok', 'detail': 'Signed in for the first time'},
+              {'id': 'chat', 'label': 'Chat account (Element X)', 'state': 'ok', 'detail': '@ann:test, with the same password'},
+              {'id': 'calendar', 'label': 'Calendar', 'state': 'ok', 'detail': 'Their own calendar and Household, with the same password'},
+              {'id': 'agent', 'label': 'Their agent', 'state': 'ok', 'detail': 'Running'},
+              {'id': 'household', 'label': 'Household agent', 'state': 'failed', 'detail': 'It did not come back; see Agents'}],
+    'visibility': {'own_agent': 'ann', 'uses': [{'name': 'ann', 'display_name': "Ann's agent", 'shared_with': [], 'household': False},
+                                                {'name': 'household', 'display_name': 'Household agent', 'shared_with': ['Greg'], 'household': True}],
+                   'reach': ['Chats in Element X, only with the people it is set to answer', 'Calendars: their own and Household (read and change), Greg (read only)'],
+                   'seen_by': [{'what': "Ann's agent: its chats and its brain", 'who': ['Ann'], 'note': 'Admins get no exception.'},
+                               {'what': 'Their own calendar', 'who': ["Ann's agent (read and change)", "Greg's agent (read only)", 'Household agent (busy times only)'], 'note': ''}]}},
+  '/api/v2/people/cleo': {'username': 'cleo', 'display_name': 'Cléo', 'is_admin': False, 'is_you': False, 'state': 'invited', 'busy': None, 'steps': [],
+    'visibility': {'own_agent': None, 'uses': [], 'reach': [], 'seen_by': []}, 'invite': {'expires_at': _NOW + 6 * 86400, 'options': {}},
+    'removable': False, 'not_removable_because': 'Cancel the invitation instead.'},
+  '/api/v2/people/dan': {'username': 'dan', 'display_name': 'Dan', 'is_admin': False, 'is_you': False, 'state': 'removed', 'busy': None, 'steps': [],
+    'visibility': None, 'removed': {'removed_at': _NOW - 7200, 'delete_after': _NOW + 29 * 86400, 'notes': [], 'agent': 'dan', 'by': 'Greg'}},
+}
+# Added to the people list (extra.json has Greg and Béré): what only an admin sees.
+PEOPLE_ADMIN = {'is_admin': True,
+    'invited': [{'username': 'cleo', 'display_name': 'Cléo', 'state': 'invited', 'invite_expires': _NOW + 6 * 86400}],
+    'removed': [{'username': 'dan', 'display_name': 'Dan', 'state': 'removed', 'delete_after': _NOW + 29 * 86400}],
+    'offers': {'chat': True, 'calendar': True, 'household': True, 'email': True, 'matrix_server': 'test'}}
+PEOPLE_POST = {'/api/v2/people': (201, {'username': 'ella', 'token': 'TESTTOKEN-not-a-secret', 'expires_at': _NOW + 7 * 86400}),
+               '/auth/invite/check': (200, {'display_name': 'Ella', 'username': 'ella', 'invited_by': 'Greg', 'expires_at': _NOW + 7 * 86400,
+                                            'min_password': 10, 'chat_id': '@ella:test', 'calendar': True}),
+               '/auth/invite/accept': (200, {'ok': True, 'username': 'ella', 'steps': [{'id': 'account', 'label': 'Account', 'state': 'ok', 'detail': 'Signed in for the first time'},
+                                                                                     {'id': 'chat', 'label': 'Chat account (Element X)', 'state': 'ok', 'detail': '@ella:test'}]})}
 EXTRA = json.load(open(os.path.join(HERE, 'extra.json'))) if os.path.exists(os.path.join(HERE, 'extra.json')) else {}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -46,6 +81,9 @@ class H(http.server.BaseHTTPRequestHandler):
         # A check slows the API by leaving a file named slow here or in $OUT (run.sh's screenshot folder).
         if p.startswith('/api/') and any(os.path.exists(os.path.join(d, 'slow')) for d in (HERE, os.environ.get('OUT', HERE))): import time as _t; _t.sleep(1.2)
         if p == '/api/v2/speaker/sample': return self.send(200, SAMPLE, 'audio/wav')
+        if p == '/invite': return self.send(200, open(os.path.join(REPO, 'gateway/html/invite.html'), 'rb').read(), 'text/html')
+        if p == '/api/v2/people': return self.send(200, json.dumps({**EXTRA.get(p, {'people': [], 'agents': []}), **PEOPLE_ADMIN}).encode(), 'application/json')
+        if p in PEOPLE: return self.send(200, json.dumps(PEOPLE[p]).encode(), 'application/json')
         if p in EXTRA: return self.send(200, json.dumps(EXTRA[p]).encode(), 'application/json')
         if p in FAKE: return self.send(200, json.dumps(FAKE[p]).encode(), 'application/json')
         if p.startswith('/api/'): return self.send(200, b'{}', 'application/json')
@@ -55,6 +93,11 @@ class H(http.server.BaseHTTPRequestHandler):
             ct = 'text/javascript' if f.endswith(('.js', '.mjs')) else (mimetypes.guess_type(f)[0] or 'application/octet-stream')
             return self.send(200, open(f, 'rb').read(), ct)
         self.send(404, b'', 'text/plain')
-    def do_POST(self): self.send(200, b'{}', 'application/json')
+    def do_POST(self):
+        p = self.path.split('?')[0]
+        n = int(self.headers.get('Content-Length') or 0); body = json.loads(self.rfile.read(n) or b'{}') if n else {}
+        if p == '/auth/invite/check' and body.get('token') != 'GOODTOKEN': return self.send(410, json.dumps({'error': 'invite_unusable', 'message': 'This invitation link cannot be used.'}).encode(), 'application/json')
+        if p in PEOPLE_POST: code, out = PEOPLE_POST[p]; return self.send(code, json.dumps(out).encode(), 'application/json')
+        self.send(200, b'{}', 'application/json')
     def do_PUT(self): self.send(200, b'{"routines": {}}', 'application/json')
 http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[2])), H).serve_forever()

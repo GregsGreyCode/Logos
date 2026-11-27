@@ -462,7 +462,16 @@ def status(monkeypatch):
         def list_users(self, page=1, limit=20):
             return [{"id": "u-greg", "username": "greg", "display_name": "Greg", "role": "admin", "last_login": 5},
                     {"id": "u-bere", "username": "bere", "display_name": "Béré", "role": "user", "last_login": None}], 2
+
+        def latest_invite(self, user_id):
+            return None
+
+        def get_people_setup(self, username):
+            return []
     monkeypatch.setattr(dashboard_api, "auth_db", Db())
+    from gateway import people_api
+    monkeypatch.setattr(people_api, "auth_db", Db())
+    monkeypatch.setattr(people_api, "_people", lambda request: None)
     monkeypatch.setattr(dashboard_api.agent_chat, "sync_definitions",
                         lambda rt, db: {n: dashboard_api.agent_chat.owners_of(d) for n, d in DEFS.items()
                                         if d.get("dashboard") is not False})
@@ -482,6 +491,8 @@ def status(monkeypatch):
             app = web.Application(middlewares=[as_user])
             app["sandbox_backend"] = B()
             dashboard_api.register(app)
+            from gateway import people_api                 # /api/v2/people moved there (F38)
+            app.router.add_get("/api/v2/people", people_api.handle_people)
             async with TestClient(TestServer(app)) as client:
                 client.session.cookie_jar.update_cookies({"csrf_token": "t"})
                 r = await client.request(method, path, headers={"X-CSRF-Token": "t"})

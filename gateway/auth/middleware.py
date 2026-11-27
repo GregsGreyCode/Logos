@@ -41,6 +41,9 @@ _PUBLIC_PATHS = frozenset({
     # reverse-connection WebSocket endpoint. Workers are now subprocess-
     # per-sandbox, launched via `openshell sandbox exec` from the host
     # gateway, so no sandbox traffic ever hits an auth-gated URL.
+    "/invite",             # F38: the page an invited person opens; the secret travels in a JSON body
+    "/auth/invite/check",  # (never in an address) and is checked, single use, by gateway/people_api.py
+    "/auth/invite/accept",
     "/api/setup/status",
     "/api/setup/complete",
     "/setup",
@@ -119,8 +122,28 @@ async def auth_middleware(request: web.Request, handler):
             content_type="application/json",
         )
 
+    if not _still_active(user):
+        # F38: someone removed (suspended) or not yet set up cannot go on using a session they had.
+        accept = request.headers.get("Accept", "")
+        if "text/html" in accept:
+            raise web.HTTPFound("/login")
+        raise web.HTTPUnauthorized(text='{"error":"unauthenticated"}', content_type="application/json")
     request["current_user"] = user
     return await handler(request)
+
+
+def _still_active(user: dict) -> bool:
+    """The account behind a session is still active. Sessions last up to 15 minutes after a refresh, so
+    without this a person removed from the People screen could keep using theirs until it ran out."""
+    sub = user.get("sub")
+    if not sub or sub == "system":
+        return True
+    try:
+        import gateway.auth.db as auth_db
+        row = auth_db.get_user_by_id(sub)
+    except RuntimeError:              # no database (some tests): nothing to check against
+        return True
+    return bool(row) and row.get("status") == "active"
 
 
 def require_permission(permission: str):

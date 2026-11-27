@@ -158,6 +158,17 @@ people = {l.split(":", 1)[0]: l for l in lines if ":" in l}
 add = req.get("add")
 if add:
     people[add["name"]] = f"{add['name']}:{add['hash']}"
+# F38: someone removed from the dashboard can no longer sign in, and nobody sees their calendar any more;
+# it stays in the volume (restorable) until "purge", 30 days later, deletes it.
+gone = req.get("remove") or req.get("purge")
+removed_line = people.pop(gone, "") if gone else ""
+if gone and os.path.isdir(top):
+    import shutil
+    for d in os.listdir(top):
+        if os.path.lexists(f"{top}/{d}/view-{gone}"):
+            os.remove(f"{top}/{d}/view-{gone}")
+    if req.get("purge") and gone not in (req["service"], "household") and os.path.isdir(f"{top}/{gone}"):
+        shutil.rmtree(f"{top}/{gone}")
 secret = f"{etc}/service-password"
 if not os.path.exists(secret) or req["service"] not in people:
     import bcrypt, secrets as _s
@@ -195,7 +206,7 @@ git("add", "-A")
 if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=coll).returncode:
     git("-c", "user.name=Logos", "-c", "user.email=logos@logos.invalid", "commit", "-q", "-m", "Logos: calendar setup")
 print(json.dumps({"people": sorted(n for n in people if n != req["service"]),
-                  "service_password": open(secret).read().strip()}))
+                  "service_password": open(secret).read().strip(), "removed": removed_line}))
 """
 
 HASH = r"""
@@ -311,14 +322,15 @@ class CalendarHost:
                             "--entrypoint", PYTHON, "-v", f"{VOLUME}:{ROOT}", IMAGE,
                             "-c", script, *args], input=payload)
 
-    def _setup(self, add: Optional[Dict[str, str]] = None) -> List[str]:
+    def _setup(self, add: Optional[Dict[str, str]] = None, **extra: str) -> List[str]:
         if self.rt.runner.run(["docker", "volume", "inspect", VOLUME]).returncode != 0:
             self.rt.run(["docker", "volume", "create", VOLUME])
         req = {"config": radicale_config(), "rights": RIGHTS, "gitignore": GITIGNORE,
-               "shared_props": calendar_props("Household", "#2e7d32"), "add": add, "service": SERVICE_USER}
+               "shared_props": calendar_props("Household", "#2e7d32"), "add": add, "service": SERVICE_USER, **extra}
         out = self._in_image(SETUP, json.dumps(req), ROOT)
         found = json.loads(out.strip().splitlines()[-1])
         self._service_password = found["service_password"]
+        self._removed = found.get("removed") or ""
         return found["people"]
 
     # ── lifecycle ────────────────────────────────────────────────────────
@@ -453,25 +465,60 @@ class CalendarHost:
     # ── people ───────────────────────────────────────────────────────────
 
     def add_person(self, name: str, display_name: str = "", color: str = "#1565c0",
-                   reset: bool = False) -> Path:
+                   reset: bool = False, password: str = "") -> Optional[Path]:
         """Create (or with ``reset``, re-password) a person. Writes their new password to a 0600
-        file and returns its path. Their own calendar and the Household link are created too."""
+        file and returns its path. Their own calendar and the Household link are created too.
+
+        With ``password`` (F38: the one the person chose when they accepted their invitation), that is
+        their calendar password: nothing is written to a file and None is returned."""
         if not NAME_RE.match(name) or name in (SHARED, SERVICE_USER):
             raise CalendarError(f"{name!r} is not a usable name (lowercase letters, digits, dashes)")
         if name in self.people() and not reset:
             raise CalendarError(f"{name} already exists (use --reset for a new password)")
-        password = secrets.token_urlsafe(18)
+        chosen = bool(password)
+        password = password or secrets.token_urlsafe(18)
         hashed = self._in_image(HASH, password).strip()
         if not hashed.startswith("$2"):
             raise CalendarError("could not hash the password")
         self._setup({"name": name, "hash": hashed,
                      "props": calendar_props(display_name or name.capitalize(), color)})
+        if chosen:
+            return None
         path = password_file(self.rt.env, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(password + "\n")
         return path
+
+    def remove_person(self, name: str) -> str:
+        """F38: they can no longer sign in, and nobody sees their calendar any more (it stays in the volume).
+        Returns their account line (name and password hash), for putting it back with :meth:`restore_person`."""
+        if not NAME_RE.match(name) or name in (SHARED, SERVICE_USER):
+            raise CalendarError(f"{name!r} is not a usable name")
+        self._setup(remove=name)
+        return self._removed
+
+    def restore_person(self, line: str) -> None:
+        """Put back an account line from :meth:`remove_person`; their calendar was kept, so it is theirs again."""
+        name, _, hashed = (line or "").strip().partition(":")
+        if not NAME_RE.match(name) or name in (SHARED, SERVICE_USER) or not hashed.startswith("$2"):
+            raise CalendarError("that is not a calendar account line")
+        self._setup({"name": name, "hash": hashed, "props": calendar_props(name.capitalize(), "#1565c0")})
+
+    def purge_person(self, name: str) -> None:
+        """Delete their calendar for good (the history in the volume's git keeps what it was)."""
+        if not NAME_RE.match(name) or name in (SHARED, SERVICE_USER):
+            raise CalendarError(f"{name!r} is not a usable name")
+        self._setup(purge=name)
+        path = readers_file(self.rt.env)               # and their read-only key for Home
+        try:
+            tokens = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return
+        if tokens.pop(name, None) is not None:
+            path.write_text(json.dumps(tokens, indent=1, sort_keys=True))
+            path.chmod(0o600)
 
     def people(self) -> List[str]:
         if self.rt.runner.run(["docker", "volume", "inspect", VOLUME]).returncode != 0:

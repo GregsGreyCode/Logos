@@ -956,32 +956,7 @@ async def handle_job_cancel(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
-# ── people ───────────────────────────────────────────────────────────────────
-
-async def handle_people(request: web.Request) -> web.Response:
-    """GET /api/v2/people — who can sign in, and which agents each person can use."""
-    me = _user(request)
-    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
-    shown: Dict[str, Any] = {}
-    names: Dict[str, str] = {}
-    if runtime is not None:
-        shown = await asyncio.to_thread(agent_chat.sync_definitions, runtime, auth_db)
-        for name in shown:
-            names[name] = str((await asyncio.to_thread(runtime.load, name)).get("display_name") or name)
-    users, _total = auth_db.list_users(page=1, limit=50)
-    people = []
-    for u in users:
-        if u.get("status") not in (None, "active"):
-            continue
-        people.append({
-            "username": u["username"], "display_name": u.get("display_name") or u["username"],
-            "is_admin": u.get("role") == "admin", "is_you": u["id"] == me["id"],
-            "signed_in_before": bool(u.get("last_login")),
-            "agents": {n: agent_chat.may_use(owners, u["username"]) for n, owners in shown.items()},
-        })
-    people.sort(key=lambda p: (not p["is_you"], p["display_name"].lower()))
-    return web.json_response({"people": people, "is_admin": me["role"] == "admin",
-                              "agents": [{"name": n, "display_name": names[n]} for n in sorted(shown)]})
+# ── people: gateway/people_api.py (F38) ──────────────────────────────────────────
 
 
 # ── brain ────────────────────────────────────────────────────────────────────
@@ -2096,7 +2071,6 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/v2/agents/{name}/jobs/{job}/{action}", require_csrf(handle_job_action))
     app.router.add_get("/api/v2/agents/{name}/routines", handle_routines)
     app.router.add_put("/api/v2/agents/{name}/routines", require_csrf(handle_routines))
-    app.router.add_get("/api/v2/people", handle_people)
     app.router.add_get("/api/v2/activity", handle_activity)
     app.router.add_get("/api/v2/home", handle_home)
     app.router.add_get("/api/v2/home/coming", handle_home_coming)

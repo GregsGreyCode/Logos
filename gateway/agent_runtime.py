@@ -273,6 +273,62 @@ def save_routines(env: Mapping[str, str], name: str, choice: Mapping[str, Any]) 
     return mine
 
 
+# F38: agents added from the dashboard (People › Add a person) are defined outside the repo, because
+# their definitions name a person and the repo is public. The runtime reads them beside agents/.
+def people_dir(env: Mapping[str, str]) -> Path:
+    """Where the dashboard keeps the people it added: ``agents/`` (their definitions) and ``graveyard/``."""
+    if env.get("LOGOS_PEOPLE_DIR"):
+        return Path(env["LOGOS_PEOPLE_DIR"])
+    return Path(env.get("LOGOS_HOME") or Path(env.get("HOME") or Path.home()) / ".logos") / "people"
+
+
+def private_agents_dir(env: Mapping[str, str]) -> Path:
+    return people_dir(env) / "agents"
+
+
+def household_members(env: Mapping[str, str]) -> list:
+    """The people added from the dashboard who joined the household agent, from their agents' definitions:
+    ``[{"username", "display_name", "matrix_id", "calendar"}]``. Read straight from the files (never
+    through ``load``), so loading the household agent cannot recurse."""
+    out = []
+    folder = private_agents_dir(env)
+    for path in sorted(folder.glob("*.yaml")) if folder.is_dir() else []:
+        if path.stem.endswith(".local"):
+            continue
+        try:
+            agent = yaml.safe_load(path.read_text()) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        person = agent.get("person") or {}
+        if not isinstance(person, dict) or not person.get("household") or not person.get("username"):
+            continue
+        cal = agent.get("calendar") or {}
+        out.append({"username": str(person["username"]).lower(),
+                    "display_name": str(person.get("display_name") or person["username"]),
+                    "matrix_id": str(person.get("matrix_id") or ""),
+                    "calendar": bool(cal.get("enabled")) and cal.get("person") == person["username"]})
+    return out
+
+
+def join_household(agent: dict, members: Sequence[Mapping[str, Any]]) -> None:
+    """Lay the dashboard-added members over the household agent's definition, as is done by hand for the
+    first people: they become owners, may chat with it, and it sees their busy times."""
+    for m in members:
+        owners = agent.get("owners")
+        if isinstance(owners, list) and m["username"] not in [str(o).lower() for o in owners]:
+            agent["owners"] = [*owners, m["username"]]
+        mx = agent.get("matrix")
+        if isinstance(mx, dict) and m.get("matrix_id"):
+            allowed = list(mx.get("allowed_users") or [])
+            if m["matrix_id"] not in allowed:
+                mx["allowed_users"] = [*allowed, m["matrix_id"]]
+        cal = agent.get("calendar")
+        if isinstance(cal, dict) and cal.get("enabled") and m.get("calendar"):
+            busy = dict(cal.get("free_busy") or {})
+            busy.setdefault(m["username"], m["display_name"])
+            cal["free_busy"] = busy
+
+
 def merge(base: dict, extra: Mapping[str, Any]) -> None:
     """Deep-merge ``extra`` into ``base``: nested mappings merge, anything else replaces."""
     for k, v in extra.items():
@@ -343,12 +399,24 @@ class AgentRuntime:
     # ── definitions ──────────────────────────────────────────────────────
 
     def definition_path(self, name: str) -> Path:
-        return self.repo / "agents" / f"{name}.yaml"
+        """``agents/<name>.yaml`` in the repo, else the dashboard's own (F38: outside the repo)."""
+        repo = self.repo / "agents" / f"{name}.yaml"
+        if repo.exists():
+            return repo
+        private = private_agents_dir(self.env) / f"{name}.yaml"
+        return private if private.exists() else repo
+
+    def is_private(self, name: str) -> bool:
+        """True when the agent was added from the dashboard (its definition is outside the repo)."""
+        return self.definition_path(name).parent != self.repo / "agents"
 
     def defined(self) -> list[str]:
-        """Names of every agent with a definition in ``agents/``."""
-        return sorted(p.stem for p in (self.repo / "agents").glob("*.yaml")
-                      if not p.stem.endswith(".local"))
+        """Names of every agent with a definition in ``agents/`` or added from the dashboard."""
+        names = {p.stem for p in (self.repo / "agents").glob("*.yaml") if not p.stem.endswith(".local")}
+        folder = private_agents_dir(self.env)
+        if folder.is_dir():
+            names |= {p.stem for p in folder.glob("*.yaml") if not p.stem.endswith(".local")}
+        return sorted(names)
 
     def load(self, name: str) -> dict:
         path = self.definition_path(name)
@@ -357,10 +425,18 @@ class AgentRuntime:
         agent = yaml.safe_load(path.read_text())
         # Untracked overrides, so personal values (Matrix users and rooms) stay out of git:
         # agents/all.local.yaml applies to every agent (for example the model in use right now,
-        # see `scripts/logos-models local use`), then agents/<name>.local.yaml to this one.
-        for local in (path.with_name(ALL_LOCAL), path.with_suffix(".local.yaml")):
+        # see `scripts/logos-models local use`), then agents/<name>.local.yaml to this one
+        # (for an agent added from the dashboard, also <name>.local.yaml beside its definition).
+        agents = self.repo / "agents"
+        overlays = [agents / ALL_LOCAL, agents / f"{name}.local.yaml"]
+        if path.parent != agents:
+            overlays.append(path.with_suffix(".local.yaml"))
+        for local in overlays:
             if local.exists():
                 merge(agent, yaml.safe_load(local.read_text()) or {})
+        # People added from the dashboard who joined the household (F38).
+        if agent.get("role") == "household":
+            join_household(agent, household_members(self.env))
         # Last, what people chose for the routines in the dashboard (Agents › Routines).
         merge(agent, {k: v for k, v in (load_routines(self.env).get(name) or {}).items() if k in ROUTINE_KEYS})
         return agent
@@ -1078,8 +1154,11 @@ class AgentRuntime:
                     break
                 self.runner.sleep(1)
 
-    def up(self, name: str) -> int:
-        """Create or recreate the sandbox from its definition. 0 when it reaches Ready."""
+    def up(self, name: str, load_model: bool = True) -> int:
+        """Create or recreate the sandbox from its definition. 0 when it reaches Ready.
+
+        ``load_model=False`` leaves the model server alone (the dashboard's People flow: adding a
+        person must never load or reload the model on the AI computer)."""
         agent = self.load(name)
         try:
             _sibling("model_gateway").require_local_only(name, agent)
@@ -1122,7 +1201,8 @@ class AgentRuntime:
                 if path.is_file():
                     self.put(home, f"plugins/{plugin}/{path.name}", path.read_text())
         self.ensure_vault(brain)
-        self.ensure_model(agent["model"])
+        if load_model:
+            self.ensure_model(agent["model"])
         soul = self.soul_text(agent)
         if len(soul) > SOUL_MAX_CHARS:
             raise AgentRuntimeError(f"SOUL.md is {len(soul)} characters, over {SOUL_MAX_CHARS}: hermes would cut "

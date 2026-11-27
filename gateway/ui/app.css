@@ -2641,3 +2641,21 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
   .doc .toolbar .tool.accent { margin-left: auto; }
 }
 @media (max-width: 599px) { .brain-head .brain-phone-search { order: 3; } }
+
+/* People (F38): add a person by invitation, each person's page */
+.form select { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--ground); color: var(--ink); font: inherit; width: 100%; }
+.form input[type="checkbox"] { width: 20px; min-height: 20px; height: 20px; padding: 0; margin: 2px 0 0; flex: none; accent-color: var(--accent); }
+.ticks { border: 0; padding: 0; margin: 4px 0 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ticks > .field-label { margin-bottom: 2px; }
+.tick { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.invite-box { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; padding: 14px; border-radius: var(--r-ctl);
+  background: var(--accent-soft); overflow-wrap: anywhere; }
+.invite-box .invite-link { font-family: var(--font-mono); font-size: 13px; }
+.person-name { color: inherit; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.person-name:hover { text-decoration-color: currentColor; }
+.plain-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.danger-zone { border-color: var(--bad); }
+.page.person-page > header.set-head { display: flex; margin: -8px 0 6px -10px; }
+.person-state { max-width: none; }
+.audit-row { flex-direction: row; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

@@ -230,17 +230,10 @@ class MatrixHost:
             raise MatrixError(f"@{ADMIN} cannot sign in and the server offers no first-user token")
         self.register(ADMIN, password, token=first)
 
-    def reset_password(self, localpart: str, sleep=time.sleep) -> str:
-        """Give someone a new Matrix password (they forgot theirs) and return it. Their other sign-ins stay
-        signed in (no --logout) and their encryption is untouched; the recovery key is separate.
-
-        Done as @logos-admin with Continuwuity's own admin command in the server's admin room. The command
-        and the server's answer are redacted straight after, so the password does not stay in that room's
-        history; the new password is proven by signing in with it once."""
-        if not re.fullmatch(r"[a-z0-9._=-]{1,64}", localpart or ""):
-            raise MatrixError("give the part before the colon, e.g. bere")
-        if localpart == ADMIN:
-            raise MatrixError(f"@{ADMIN}'s own password lives in the settings file, not here")
+    def admin_command(self, command: str, sleep=time.sleep) -> str:
+        """Run one of Continuwuity's own admin commands as @logos-admin in the server's admin room and return
+        its answer. The command and the answer are redacted straight after, so nothing it carried (a new
+        password) stays in that room's history."""
         st = self.settings()
         server = st["MATRIX_SERVER_NAME"]
         admin_pw = st.get("MATRIX_ADMIN_PASSWORD")
@@ -251,21 +244,20 @@ class MatrixHost:
         token = login.get("access_token")
         if not token:
             raise MatrixError(f"@{ADMIN} could not sign in: {login.get('error') or login}")
-        password = secrets.token_urlsafe(15)
+        answer = ""
         try:
             alias = urllib.parse.quote(f"#admins:{server}")
             room = self._call(f"/_matrix/client/v3/directory/room/{alias}", token=token).get("room_id")
             if not room:
                 raise MatrixError("the server's admin room (#admins) was not found")
             rid = urllib.parse.quote(room)
-            sent = self._call(f"/_matrix/client/v3/rooms/{rid}/send/m.room.message/logos-reset-{secrets.token_hex(6)}",
-                              {"msgtype": "m.text", "body": f"!admin users reset-password {localpart} {password}"},
-                              token=token, method="PUT")
-            answer, answer_ids = "", []
+            sent = self._call(f"/_matrix/client/v3/rooms/{rid}/send/m.room.message/logos-cmd-{secrets.token_hex(6)}",
+                              {"msgtype": "m.text", "body": command}, token=token, method="PUT")
+            answer_ids = []
             for _ in range(60):                                  # up to 30 s: a busy server answers late
                 sleep(0.5)
                 # Newest first: only what came after our command (before it in this list) is its answer;
-                # an older message from the server (an earlier reset, a notice) is never taken for it.
+                # an older message from the server (an earlier command, a notice) is never taken for it.
                 for ev in self._call(f"/_matrix/client/v3/rooms/{rid}/messages?dir=b&limit=20", token=token).get("chunk", []):
                     if ev.get("event_id") == sent.get("event_id"):
                         break
@@ -274,12 +266,26 @@ class MatrixHost:
                         answer_ids.append(ev.get("event_id"))
                 if answer_ids:
                     break
-            for eid in [sent.get("event_id"), *answer_ids]:      # the password does not stay in the room
+            for eid in [sent.get("event_id"), *answer_ids]:      # nothing it carried stays in the room
                 if eid:
                     self._call(f"/_matrix/client/v3/rooms/{rid}/redact/{urllib.parse.quote(eid)}/logos-redact-{secrets.token_hex(6)}",
-                               {"reason": "password reset"}, token=token, method="PUT")
+                               {"reason": "admin command"}, token=token, method="PUT")
         finally:
             self._call("/_matrix/client/v3/logout", {}, token=token)
+        return answer
+
+    def reset_password(self, localpart: str, sleep=time.sleep) -> str:
+        """Give someone a new Matrix password (they forgot theirs) and return it. Their other sign-ins stay
+        signed in (no --logout) and their encryption is untouched; the recovery key is separate.
+
+        Done as @logos-admin with Continuwuity's own admin command (:meth:`admin_command`); the new
+        password is proven by signing in with it once."""
+        if not re.fullmatch(r"[a-z0-9._=-]{1,64}", localpart or ""):
+            raise MatrixError("give the part before the colon, e.g. bere")
+        if localpart == ADMIN:
+            raise MatrixError(f"@{ADMIN}'s own password lives in the settings file, not here")
+        password = secrets.token_urlsafe(15)
+        answer = self.admin_command(f"!admin users reset-password {localpart} {password}", sleep=sleep)
         check = self._call("/_matrix/client/v3/login", {"type": "m.login.password",
                                                         "identifier": {"type": "m.id.user", "user": localpart}, "password": password,
                                                         "initial_device_display_name": "Logos password check"})
@@ -287,6 +293,63 @@ class MatrixHost:
             raise MatrixError(f"the reset did not take: {answer.splitlines()[0] if answer else check.get('error') or check}")
         self._call("/_matrix/client/v3/logout", {}, token=check["access_token"])
         return password
+
+    # ── people added from the dashboard (F38) ────────────────────────────
+
+    def available(self, localpart: str) -> bool:
+        """True when no account has this name yet."""
+        out = self._call(f"/_matrix/client/v3/register/available?username={urllib.parse.quote(localpart)}")
+        return out.get("available") is True
+
+    def login(self, localpart: str, password: str, device: str = "Logos") -> dict:
+        out = self._call("/_matrix/client/v3/login", {"type": "m.login.password",
+                                                      "identifier": {"type": "m.id.user", "user": localpart},
+                                                      "password": password, "initial_device_display_name": device})
+        if "access_token" not in out:
+            raise MatrixError(f"@{localpart} could not sign in: {out.get('error') or out.get('errcode') or 'refused'}")
+        return out
+
+    def logout(self, token: str) -> None:
+        self._call("/_matrix/client/v3/logout", {}, token=token)
+
+    def register_person(self, localpart: str, password: str, display_name: str = "") -> str:
+        """A person's own account, with the password they chose. Signs the new session out again (they sign
+        in from Element X and the dashboard themselves). Returns their Matrix ID; refuses a taken name."""
+        if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", localpart or "") or localpart.endswith("-agent") or localpart == ADMIN:
+            raise MatrixError(f"{localpart!r} cannot be a person's chat name")
+        if not self.available(localpart):
+            raise MatrixError(f"@{localpart} already exists on the chat server; it was left as it is")
+        login = self.register(localpart, password)
+        try:
+            if display_name:
+                self._call(f"/_matrix/client/v3/profile/{urllib.parse.quote(login['user_id'])}/displayname",
+                           {"displayname": display_name}, token=login["access_token"], method="PUT")
+        finally:
+            self.logout(login["access_token"])
+        return str(login["user_id"])
+
+    def direct_room(self, token: str, creator: str, invitee: str) -> str:
+        """An encrypted direct chat made by ``creator`` (an agent, with its own token) with ``invitee``
+        invited, marked as direct for the creator. Returns the room id."""
+        room = self._call("/_matrix/client/v3/createRoom", {
+            "preset": "trusted_private_chat", "is_direct": True, "invite": [invitee],
+            "initial_state": [{"type": "m.room.encryption", "state_key": "",
+                               "content": {"algorithm": "m.megolm.v1.aes-sha2"}}]}, token=token)
+        rid = room.get("room_id")
+        if not rid:
+            raise MatrixError(f"could not make the chat: {room.get('error') or room}")
+        path = f"/_matrix/client/v3/user/{urllib.parse.quote(creator)}/account_data/m.direct"
+        direct = self._call(path, token=token)
+        direct = {k: v for k, v in direct.items() if isinstance(v, list)} if not direct.get("errcode") else {}
+        direct[invitee] = sorted(set(direct.get(invitee, [])) | {rid})
+        self._call(path, direct, token=token, method="PUT")
+        return str(rid)
+
+    def deactivate(self, localpart: str, sleep=time.sleep) -> str:
+        """Close an account for good (the 30 days after someone was removed are over). Returns the answer."""
+        if not re.fullmatch(r"[a-z0-9._=-]{1,64}", localpart or "") or localpart == ADMIN:
+            raise MatrixError(f"{localpart!r} cannot be closed from here")
+        return self.admin_command(f"!admin users deactivate {self.user_id(localpart)}", sleep=sleep)
 
     def set_display_name(self, user_id: str, token: str, name: str) -> bool:
         """Set an account's display name when it differs. True when it was changed."""
