@@ -44,6 +44,7 @@ GUARD_CONTAINER = "logos-model-guard"  # waits up to a minute for the local mode
 GUARD_PORT = 8094
 GUARD_FILE = Path(__file__).with_name("model_guard.py")
 GUARD_UID = "10000:10000"
+WARM_ENV = "LOGOS_VOICE_WARM_EVERY"     # passed to the guard as GUARD_WARM_EVERY when set
 #: API-key variable in models.env -> Bifrost provider it switches on.
 PAID_PROVIDERS = {
     "ANTHROPIC_API_KEY": "anthropic",
@@ -450,7 +451,9 @@ class ModelGateway:
         the agent image, which already has Python, with its one file mounted read-only.
         """
         load = json.dumps(dict(windows or {}), sort_keys=True)
-        stamp = hashlib.sha256((upstream + GUARD_FILE.read_text() + image + load).encode()).hexdigest()[:16]
+        # Seconds between warm-ups of the house speaker's prompt (model_guard.Warmer); "0" turns them off.
+        warm = os.environ.get(WARM_ENV, "").strip()
+        stamp = hashlib.sha256((upstream + GUARD_FILE.read_text() + image + load + warm).encode()).hexdigest()[:16]
         names = self.rt.run(["docker", "ps", "--filter", f"name=^{GUARD_CONTAINER}$", "--format", "{{.Names}}"],
                             check=False).split()
         label = self.rt.run(["docker", "inspect", GUARD_CONTAINER, "-f",
@@ -465,6 +468,7 @@ class ModelGateway:
                      "-v", f"{GUARD_FILE}:/app/model_guard.py:ro",
                      "-e", f"GUARD_UPSTREAM={upstream.rsplit('/v1', 1)[0]}", "-e", f"GUARD_PORT={GUARD_PORT}",
                      "-e", f"GUARD_LOAD={load}",                # each model's window (model_guard.Loader)
+                     *(["-e", f"GUARD_WARM_EVERY={warm}"] if warm else []),
                      "--entrypoint", "python3", image, "/app/model_guard.py"])
         return url
 

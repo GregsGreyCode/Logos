@@ -24,7 +24,14 @@ scheduled work (consolidation, digests, noticeboard checks). Each request's wait
 logged as one JSON line, and ``/guard/health`` shows the queue, so the number of slots can be
 chosen from measurements.
 
-It keeps nothing, and changes two things in the traffic: models whose reasoning is only on or
+The house speaker's first question used to wait some 35 seconds while the model read the Household
+agent's instructions (about 24,000 tokens) afresh. So the guard keeps the latest house-speaker
+request's instructions in memory (its system message and tools, never what was said) and every
+:data:`WARM_EVERY` seconds, when nothing else is running, sends them again with a one-character
+question and a one-token answer (:class:`Warmer`). LM Studio then still holds them when someone
+speaks. It takes 0.1 to 1 s when they are still held, and adds nothing to any conversation.
+
+Apart from that it keeps nothing, and changes two things in the traffic: models whose reasoning is only on or
 off get no ``reasoning_effort`` level they cannot take (:func:`fix_reasoning`), and a chat request
 that sets no presence penalty gets one (:func:`add_presence_penalty`), against thinking that loops. Stdlib only;
 runs in the ``logos-model-guard`` container (see :mod:`gateway.model_gateway`).
@@ -222,6 +229,10 @@ class Gate:
             self.running.pop(ticket, None)
             self.cond.notify_all()
 
+    def idle(self) -> bool:
+        with self.cond:
+            return not self.running and not self.waiting
+
     def view(self) -> dict:
         with self.cond:
             s = dict(self.stats)
@@ -244,6 +255,119 @@ def usage(tail: bytes) -> dict:
             if n:
                 out[key] = int(n)
     return out
+
+
+# ── keeping the house speaker's instructions warm ───────────────────────────
+# Measured 27 Nov on qwen3.6-35b-a3b (docs/voice.md, "Why the first question was slow"): the Household
+# agent's speaker requests start with ~24,000 tokens of tools and instructions. Read afresh that takes
+# ~35 s; already held by LM Studio, 0.1 s, and ~1 s when only the end of the instructions changed (a new
+# day's date, the hourly brain index). The model only reuses a prefix it computed itself, so the
+# warm-up has to send exactly the same tools and system message as hermes does: the guard copies them.
+WARM_MARK = "spoken aloud to the house speaker"  # in gateway.voice_converse.INSTRUCTIONS (a test checks)
+WARM_EVERY = 900.0      # seconds between warm-ups of one prompt (GUARD_WARM_EVERY; 0 turns them off)
+WARM_IDLE = 60.0        # only once no chat request has started or ended for this long
+WARM_HOLD = 90.0        # a speaker request waits at most this long for a warm-up of its own prompt
+WARM_KEEP = 3           # prompts remembered: one for each agent the speaker talks to
+WARM_TEXT = "."         # the warm-up's question; the real question differs from here on anyway
+
+
+def warm_seed(body: bytes):
+    """``(key, warm-up body)`` for a house-speaker chat request, else None.
+
+    The warm-up is the same request cut after its leading system message, with :data:`WARM_TEXT` as the
+    question, one token to answer and no streaming. The key names the agent's prompt by model and tools,
+    so a newer prompt (the next day's) replaces the older one."""
+    if WARM_MARK.encode() not in body:
+        return None
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return None
+    msgs = req.get("messages") if isinstance(req, dict) else None
+    if not isinstance(msgs, list):
+        return None
+    head = list(itertools.takewhile(lambda m: isinstance(m, dict) and m.get("role") in ("system", "developer"), msgs))
+    if not any(WARM_MARK in str(m.get("content")) for m in head):
+        return None                              # the words were in a message, not in the instructions
+    seed = {k: v for k, v in req.items()
+            if k not in ("messages", "stream", "stream_options", "max_tokens", "max_completion_tokens", "n")}
+    seed.update(messages=head + [{"role": "user", "content": WARM_TEXT}], max_tokens=1, stream=False)
+    key = hashlib.sha256(json.dumps([req.get("model"), req.get("tools")], sort_keys=True).encode()).hexdigest()[:12]
+    return key, json.dumps(seed).encode()
+
+
+class Warmer:
+    """The speaker prompts to keep warm, and when each was last sent (by a real request or a warm-up)."""
+
+    def __init__(self, every: float = WARM_EVERY, idle: float = WARM_IDLE, keep: int = WARM_KEEP,
+                 clock=time.monotonic):
+        self.every, self.idle, self.keep, self.clock = every, idle, keep, clock
+        self.lock = threading.Lock()
+        self.seeds: dict = {}            # key -> {"body", "auth", "path", "at"}
+        self.busy: dict = {}             # key -> Event, set when its warm-up is over
+        self.last = clock()              # when a chat request last started or ended
+        self.stats = {"warmed": 0, "cold": 0, "last_s": None}
+
+    def saw(self, body: bytes, auth: str = None, path: str = "/v1/chat/completions"):
+        """Every chat request passes here. Returns the prompt's key for a speaker request."""
+        seed = warm_seed(body)
+        with self.lock:
+            self.last = self.clock()
+            if not seed:
+                return None
+            key, warm = seed
+            self.seeds.pop(key, None)
+            self.seeds[key] = {"body": warm, "auth": auth, "path": path, "at": self.clock()}
+            while len(self.seeds) > self.keep:
+                self.seeds.pop(next(iter(self.seeds)))
+            return key
+
+    def ended(self) -> None:
+        with self.lock:
+            self.last = self.clock()
+
+    def hold(self, key: str, timeout: float = WARM_HOLD) -> float:
+        """Wait for a warm-up of this prompt that is under way: reading it twice at once is slower
+        for both. Returns the seconds waited."""
+        with self.lock:
+            ev = self.busy.get(key)
+        if ev is None:
+            return 0.0
+        t = self.clock()
+        ev.wait(timeout)
+        return self.clock() - t
+
+    def due(self) -> list:
+        """``[(key, seed)]`` to warm now: quiet for ``idle``, and not sent for ``every``."""
+        now = self.clock()
+        with self.lock:
+            if self.every <= 0 or now - self.last < self.idle:
+                return []
+            return [(k, dict(s)) for k, s in self.seeds.items() if now - s["at"] >= self.every and k not in self.busy]
+
+    def begin(self, key: str) -> None:
+        with self.lock:
+            self.busy[key] = threading.Event()
+
+    def end(self, key: str, seconds: float, ok: bool) -> None:
+        with self.lock:
+            ev = self.busy.pop(key, None)
+            if key in self.seeds:
+                self.seeds[key]["at"] = self.clock()
+            self.last = self.clock()
+            if ok:
+                self.stats["warmed"] += 1
+                self.stats["cold"] += seconds >= COLD_S
+                self.stats["last_s"] = round(seconds, 1)
+        if ev is not None:
+            ev.set()
+
+    def view(self) -> dict:
+        with self.lock:
+            return {"prompts": len(self.seeds), "every_s": self.every, **self.stats}
+
+
+COLD_S = 5.0     # a warm-up this slow had to read the prompt afresh: LM Studio had let it go
 
 
 def is_chat(command: str, path: str) -> bool:
@@ -390,7 +514,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                  wait: float = WAIT, retry_every: float = RETRY_EVERY, sleep=time.sleep,
                  known_off: float = KNOWN_OFF, slots: int = SLOTS, max_queue_wait: float = MAX_QUEUE_WAIT,
                  log=print, loop_ratio: float = LOOP_RATIO, loop_window: int = LOOP_WINDOW, loop_every: int = LOOP_EVERY,
-                 windows: dict = None):
+                 windows: dict = None, warm_every: float = WARM_EVERY, warm_idle: float = WARM_IDLE):
     target = urllib.parse.urlsplit(upstream)
     host, port = target.hostname, target.port or 80
     loader = Loader(host, port, windows or {}, log=log)
@@ -406,6 +530,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
     live_ids = itertools.count(1)
     options = {"at": -OPTIONS_TTL, "by_model": {}, "window": 0, "parallel": 0}
     gate = Gate(slots, lambda: options["window"], max_wait=max_queue_wait)
+    warmer = Warmer(warm_every, warm_idle)
 
     def options_for(model: str) -> list:
         """LM Studio's published reasoning options for ``model``, refreshed every ten minutes."""
@@ -479,7 +604,8 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                         "answer_chars": r["watch"].answer, "loop_ratio": round(r["watch"].worst, 1)}
                        for r in list(live.values())]
             out = json.dumps({"ok": True, "model_server_off": state["off"],
-                              "off_since": state["off_since"], "queue": gate.view(), "live": running}).encode()
+                              "off_since": state["off_since"], "queue": gate.view(), "live": running,
+                              "warm": warmer.view()}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(out)))
@@ -533,9 +659,11 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
             options_for("")                          # keeps the window and slots fresh (every ten minutes)
             tokens, prio = estimate(body), priority(body)
             self._who = "scheduled" if prio == SCHEDULED else "person"
+            spoken = warmer.saw(body, self.headers.get("Authorization"), self.path)
+            held = warmer.hold(spoken) if spoken else 0.0
             ticket, waited, forced = gate.enter(tokens, prio)
             began, alongside = time.monotonic(), len(gate.running) - 1
-            record = {}
+            record = {"speaker": True, **({"held_s": round(held, 1)} if held >= 0.1 else {})} if spoken else {}
             try:
                 # Loaded, and at its window, before LM Studio would load it by itself (Loader).
                 fixed = loader.ensure(model_of(body), alone=alongside == 0)
@@ -545,6 +673,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 record.update(self._forward(body) or {})
             finally:
                 gate.leave(ticket)
+                warmer.ended()
                 log(json.dumps({"event": "chat", "at": time.strftime("%Y-%m-%d %H:%M:%S"),
                                 "who": "scheduled" if prio == SCHEDULED else "person", "est_tokens": tokens,
                                 "waited_s": round(waited, 1), "forced": forced, "alongside": alongside,
@@ -629,20 +758,80 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
 
         do_GET = do_POST = do_PUT = do_DELETE = _pass
 
+    def warm_now() -> list:
+        """Warm each speaker prompt that is due, one at a time, only while nothing else runs.
+        Returns the log records. Never makes LM Studio load a model."""
+        done = []
+        for key, seed in warmer.due():
+            if not gate.idle() or state["off"] or time.monotonic() - state["known_off_at"] < known_off:
+                break                                # people first; and no use while it is off
+            model = model_of(seed["body"])
+            try:
+                loaded = loader.loaded()
+            except (OSError, ValueError, http.client.HTTPException):
+                break
+            if not any(model == k or model.endswith("/" + k) or k.endswith("/" + model) for k in loaded):
+                continue                             # not loaded: warming would load it
+            warmer.begin(key)
+            ticket, _, _ = gate.enter(estimate(seed["body"]), SCHEDULED)
+            began, record = time.monotonic(), {"status": "dropped"}
+            try:
+                record = send_warm(seed)
+            finally:
+                gate.leave(ticket)
+                seconds = time.monotonic() - began
+                warmer.end(key, seconds, record.get("status") == 200)
+                line = {"event": "warm", "at": time.strftime("%Y-%m-%d %H:%M:%S"), "prompt": key,
+                        "seconds": round(seconds, 1), "cold": seconds >= COLD_S, **record}
+                log(json.dumps(line), flush=True)
+                done.append(line)
+        return done
+
+    def send_warm(seed: dict) -> dict:
+        """One warm-up, its answer read and dropped."""
+        headers = {"Content-Type": "application/json", "Host": f"{host}:{port}", "Connection": "close"}
+        if seed.get("auth"):
+            headers["Authorization"] = seed["auth"]
+        conn = http.client.HTTPConnection(host, port, timeout=read_timeout)
+        try:
+            conn.request("POST", seed.get("path") or "/v1/chat/completions", body=seed["body"], headers=headers)
+            resp = conn.getresponse()
+            return {"status": resp.status, **usage(resp.read()[-4096:])}
+        except (OSError, http.client.HTTPException):
+            return {"status": "dropped"}
+        finally:
+            conn.close()
+
+    Handler.warm_now = staticmethod(warm_now)
+    Handler.warmer = warmer
     return Handler
+
+
+def warm_loop(handler, every: float, sleep=time.sleep) -> None:
+    """The guard's background warm-ups (see :class:`Warmer`)."""
+    tick = max(5.0, min(60.0, every / 4))
+    while True:
+        sleep(tick)
+        try:
+            handler.warm_now()
+        except Exception as e:                       # never take the guard down
+            print(f"warm-up failed: {e}", flush=True)
 
 
 def main() -> int:
     upstream = os.environ["GUARD_UPSTREAM"]
     port = int(os.environ.get("GUARD_PORT", "8094"))
+    warm_every = float(os.environ.get("GUARD_WARM_EVERY") or WARM_EVERY)
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(
         upstream, connect_timeout=float(os.environ.get("GUARD_CONNECT_TIMEOUT", "3")),
         wait=float(os.environ.get("GUARD_WAIT", str(WAIT))),
         slots=int(os.environ.get("GUARD_SLOTS", str(SLOTS))),
         max_queue_wait=float(os.environ.get("GUARD_MAX_QUEUE_WAIT", str(MAX_QUEUE_WAIT))),
         loop_ratio=float(os.environ.get("GUARD_LOOP_RATIO", str(LOOP_RATIO))),
-        windows=json.loads(os.environ.get("GUARD_LOAD") or "{}")))
+        windows=json.loads(os.environ.get("GUARD_LOAD") or "{}"), warm_every=warm_every))
     server.daemon_threads = True
+    if warm_every > 0:
+        threading.Thread(target=warm_loop, args=(server.RequestHandlerClass, warm_every), daemon=True).start()
     print(f"model guard: {port} -> {upstream}", flush=True)
     server.serve_forever()
     return 0

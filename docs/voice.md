@@ -120,5 +120,41 @@ returns the words to speak (Piper reads them out).
   agent carries on and keeps the answer in that conversation.
 - **The words are never logged:** only the agent, the device, the outcome and how long it took.
 
+### Why the first question was slow, and what keeps it fast
+
+Every speaker request starts with the same thing: Home's tools and instructions, about 24,000
+tokens. Reading those afresh takes LM Studio about 35 seconds on the current GPU (27 Nov: the first
+question took 40.3 s, 39.8 s of it in one model call for 23,982 tokens and a 42-token answer). Once
+it has read them, it holds them, and a later request that starts the same way skips straight to the
+new part: 0.1 s if nothing changed, about 1 s when only the end of the instructions did (a new
+day's date, the hourly brain index). The 18.7 s first question that evening was already held; its
+time went on two model calls (a tool, then the answer), not on reading. Follow-ups take 3 to 8 s.
+
+The voice instructions themselves do not get in the way: hermes adds them at the very end of the
+system message, after the tools and Home's own instructions, so they stay the same from one
+request to the next.
+
+So the model guard keeps the speaker's prompt warm (`gateway/model_guard.py`, `Warmer`). It
+remembers the latest house-speaker request's system message and tools (in memory only, never what
+was said; the nightly check at 04:30 is the first each day) and every 15 minutes, once nothing has
+used the model for a minute, sends them again with a one-character question and a one-token answer.
+When LM Studio still holds them that costs 0.1 to 1 s; when something else pushed them out, the
+35 s is paid then, while nobody waits, instead of when someone speaks. It is a bare model call: no
+agent turn, nothing in any conversation, and never a model load. A speaker request that arrives
+during a warm-up of its own prompt waits for it rather than read the same prompt a second time
+alongside.
+
+Measured 27 Nov against the real LM Studio, with a 21,800-token speaker prompt: the warm-up 33.3 s
+(cold), then the first question of a new conversation started answering in 1.3 s, against 34.1 s
+without it.
+
+- Each warm-up is a `"event": "warm"` line in `docker logs logos-model-guard` (`seconds`, and
+  `cold: true` when the prompt had to be read afresh); `/guard/health` counts them under `warm`.
+- On by default. `LOGOS_VOICE_WARM_EVERY` (seconds) changes the interval and `0` turns it off; it
+  is read by `scripts/logos-models up` (and the deploy), which recreates the guard with it.
+- Not done: warming when the wake word is heard. A person speaks for only 3 to 6 seconds before
+  the question arrives, against 35 s of reading, so it would save little once the prompt is kept
+  warm anyway.
+
 Plan, decisions and the next stories (wake word = the agent's name, voice prints, a voice per
 agent) are in the spec doc's Voice tab.
