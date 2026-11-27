@@ -158,7 +158,8 @@ MAX_QUEUE_WAIT = 300.0       # seconds; then it goes anyway (Bifrost gives up on
 REPLY_RESERVE = 8192         # tokens kept for the reply (thinking included) when the request sets no max
 BYTES_PER_TOKEN = 3.5        # a deliberately high estimate: JSON and tool schemas are dense
 CRON_MARK = b"You are running as a scheduled cron job"
-PERSON, SCHEDULED = 0, 1     # lower goes first
+SPEAKER, PERSON, SCHEDULED = -1, 0, 1     # lower goes first
+SPEAKER_MAX_WAIT = 5.0       # a house-speaker question waits at most this long, then runs alongside (GUARD_SPEAKER_MAX_WAIT)
 
 
 def estimate(body: bytes) -> int:
@@ -172,8 +173,11 @@ def estimate(body: bytes) -> int:
 
 
 def priority(body: bytes) -> int:
-    """A person's message goes before a scheduled job's."""
-    return SCHEDULED if CRON_MARK in body else PERSON
+    """Someone standing at the house speaker first (Greg, 27 Nov), then a person's message, then a
+    scheduled job's."""
+    if CRON_MARK in body:
+        return SCHEDULED
+    return SPEAKER if WARM_MARK.encode() in body else PERSON
 
 
 class Gate:
@@ -198,8 +202,10 @@ class Gate:
         window = int(self.window() or 0)
         return len(self.running) < self.slots and (not window or sum(self.running.values()) + tokens <= window)
 
-    def enter(self, tokens: int, prio: int = PERSON) -> tuple:
-        """Block until this request may run. Returns (ticket, seconds waited, forced)."""
+    def enter(self, tokens: int, prio: int = PERSON, max_wait: float = None) -> tuple:
+        """Block until this request may run. Returns (ticket, seconds waited, forced).
+        ``max_wait`` overrides the gate's own (a speaker question's is a few seconds)."""
+        limit = self.max_wait if max_wait is None else max_wait
         with self.cond:
             me = (prio, next(self.seq), tokens, self.clock())
             self.waiting.append(me)
@@ -207,11 +213,12 @@ class Gate:
             queued = False
             while True:
                 waited = self.clock() - me[3]
-                forced = waited >= self.max_wait
-                if self.waiting[0] is me and (self._fits(tokens) or forced):
+                forced = waited >= limit
+                if self.waiting[0] is me and (self._fits(tokens) or (forced and len(self.running) < self.slots)
+                                              or (forced and prio != SPEAKER)):
                     break
                 queued = True
-                self.cond.wait(timeout=max(0.05, min(5.0, self.max_wait - waited)))
+                self.cond.wait(timeout=max(0.05, min(5.0, limit - waited)))
             self.waiting.remove(me)
             self.running[me[1]] = tokens
             self.stats["served"] += 1
@@ -540,7 +547,8 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                  wait: float = WAIT, retry_every: float = RETRY_EVERY, sleep=time.sleep,
                  known_off: float = KNOWN_OFF, slots: int = SLOTS, max_queue_wait: float = MAX_QUEUE_WAIT,
                  log=print, loop_ratio: float = LOOP_RATIO, loop_window: int = LOOP_WINDOW, loop_every: int = LOOP_EVERY,
-                 windows: dict = None, warm_every: float = WARM_EVERY, warm_idle: float = WARM_IDLE):
+                 windows: dict = None, warm_every: float = WARM_EVERY, warm_idle: float = WARM_IDLE,
+                 speaker_wait: float = SPEAKER_MAX_WAIT):
     target = urllib.parse.urlsplit(upstream)
     host, port = target.hostname, target.port or 80
     loader = Loader(host, port, windows or {}, log=log)
@@ -684,10 +692,10 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 return self._forward(body)          # lookups, and "the model is off" answers, never queue
             options_for("")                          # keeps the window and slots fresh (every ten minutes)
             tokens, prio = estimate(body), priority(body)
-            self._who = "scheduled" if prio == SCHEDULED else "person"
+            self._who = {SCHEDULED: "scheduled", SPEAKER: "speaker"}.get(prio, "person")
             spoken = warmer.saw(body, self.headers.get("Authorization"), self.path)
             held = warmer.hold(spoken) if spoken else 0.0
-            ticket, waited, forced = gate.enter(tokens, prio)
+            ticket, waited, forced = gate.enter(tokens, prio, speaker_wait if prio == SPEAKER else None)
             began, alongside = time.monotonic(), len(gate.running) - 1
             record = {"speaker": True, **({"held_s": round(held, 1)} if held >= 0.1 else {})} if spoken else {}
             try:
@@ -701,7 +709,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 gate.leave(ticket)
                 warmer.ended()
                 log(json.dumps({"event": "chat", "at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                                "who": "scheduled" if prio == SCHEDULED else "person", "est_tokens": tokens,
+                                "who": {SCHEDULED: "scheduled", SPEAKER: "speaker"}.get(prio, "person"), "est_tokens": tokens,
                                 "waited_s": round(waited, 1), "forced": forced, "alongside": alongside,
                                 "seconds": round(time.monotonic() - began, 1), **record}), flush=True)
 
@@ -854,7 +862,8 @@ def main() -> int:
         slots=int(os.environ.get("GUARD_SLOTS", str(SLOTS))),
         max_queue_wait=float(os.environ.get("GUARD_MAX_QUEUE_WAIT", str(MAX_QUEUE_WAIT))),
         loop_ratio=float(os.environ.get("GUARD_LOOP_RATIO", str(LOOP_RATIO))),
-        windows=json.loads(os.environ.get("GUARD_LOAD") or "{}"), warm_every=warm_every))
+        windows=json.loads(os.environ.get("GUARD_LOAD") or "{}"), warm_every=warm_every,
+        speaker_wait=float(os.environ.get("GUARD_SPEAKER_MAX_WAIT", str(SPEAKER_MAX_WAIT)))))
     server.daemon_threads = True
     if warm_every > 0:
         threading.Thread(target=warm_loop, args=(server.RequestHandlerClass, warm_every), daemon=True).start()

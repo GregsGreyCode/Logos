@@ -342,6 +342,30 @@ def test_a_person_goes_before_scheduled_work():
     assert order == ["greg", "digest"]                             # arrived later, served first
 
 
+def test_the_house_speaker_goes_first_and_soon_runs_alongside_a_huge_request():
+    gate = model_guard.Gate(2, lambda: 96512)
+    huge, _, _ = gate.enter(118000)                                   # alone: nothing else fits beside it
+    began = time.monotonic()
+    ticket, waited, forced = gate.enter(24000, model_guard.SPEAKER, 0.3)
+    assert forced and 0.3 <= waited < 1.5 and time.monotonic() - began < 1.5
+    gate.leave(ticket)
+    gate.leave(huge)
+    # with both slots taken it still waits for a free one
+    gate.enter(10)
+    other, _, _ = gate.enter(10)
+    t, out = run_in_thread(gate.enter, 10, model_guard.SPEAKER, 0.1)
+    time.sleep(0.4)
+    assert "r" not in out
+    gate.leave(other)
+    t.join(2)
+    assert "r" in out
+
+
+def test_the_speaker_is_recognised_by_its_instructions():
+    assert model_guard.priority(b'{"messages":[{"role":"system","content":"x ' + model_guard.WARM_MARK.encode() + b'"}]}') == model_guard.SPEAKER
+    assert model_guard.priority(b'{"messages":[]}') == model_guard.PERSON
+
+
 def test_after_the_longest_wait_it_goes_anyway():
     gate = model_guard.Gate(1, lambda: 0, max_wait=0.3)
     gate.enter(10)
