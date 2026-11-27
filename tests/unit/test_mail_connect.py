@@ -11,11 +11,16 @@ from gateway import mail_connect as mc
 
 def test_files_are_private_and_keep_exclusions(tmp_path):
     env = {"XDG_CONFIG_HOME": str(tmp_path)}
-    p = mc.save_box(env, "greg", {"kind": "gmail", "address": "g@x.example", "app_password": "a" * 16, "exclude": ["bank.example"]})
+    box = mc.save_box(env, "greg", {"kind": "gmail", "address": "g@x.example", "app_password": "a" * 16,
+                                    "exclude": ["bank.example"]})
+    p = tmp_path / "logos" / "mail" / "greg" / f"{box['id']}.json"
     assert p.stat().st_mode & 0o777 == 0o600 and p.parent.stat().st_mode & 0o777 == 0o700
-    mc.save_box(env, "greg", {"kind": "gmail", "address": "g@x.example", "app_password": "b" * 16})
-    assert mc.load_box(env, "greg")["exclude"] == ["bank.example"]               # a new login keeps them
-    assert mc.remove_box(env, "greg") and mc.load_box(env, "greg") is None and not mc.remove_box(env, "greg")
+    again = mc.save_box(env, "greg", {"kind": "gmail", "address": "G@x.example", "app_password": "b" * 16})
+    assert again["id"] == box["id"]                                             # the same mailbox, a new login
+    (only,) = mc.boxes(env, "greg")
+    assert only["exclude"] == ["bank.example"] and only["app_password"] == "b" * 16   # a new login keeps them
+    assert mc.remove_box(env, "greg", box["id"]) and mc.boxes(env, "greg") == []
+    assert not mc.remove_box(env, "greg", box["id"]) and not mc.remove_box(env, "greg", "../../x")
 
 
 def test_outlook_app_id(tmp_path):
@@ -106,32 +111,66 @@ def call(make, method, path, body=None):
 def test_connect_gmail_then_status_never_returns_the_password(client):
     app, env, who, restarts = client
     assert call(app, "POST", "/m/gmail", {"address": "g@x.example", "app_password": "wrong"})[0] == 400
-    assert mc.load_box(env, "greg") is None and restarts == []
+    assert mc.boxes(env, "greg") == [] and restarts == []
     s, out = call(app, "POST", "/m/gmail", {"address": "g@x.example", "app_password": "abcdefghijklmnop"})
-    assert s == 200 and out == {"connected": True, "inbox": 42} and restarts == [("greg", False)]
+    bid = out["id"]
+    assert s == 200 and out == {"connected": True, "inbox": 42, "id": bid} and restarts == [(bid, False)]
     s, out = call(app, "GET", "/m")
-    assert out["mailbox"] == {"kind": "gmail", "address": "g@x.example", "exclude": []}
+    assert out["mailboxes"] == [{"id": bid, "kind": "gmail", "address": "g@x.example", "exclude": [], "health": None}]
     assert "abcdefghijklmnop" not in str(out)
 
 
 def test_each_person_only_their_own(client):
     app, env, who, _ = client
     call(app, "POST", "/m/gmail", {"address": "g@x.example", "app_password": "abcdefghijklmnop"})
+    bid = mc.boxes(env, "greg")[0]["id"]
     who["username"] = "bere"
-    assert call(app, "GET", "/m")[1]["mailbox"] is None
+    assert call(app, "GET", "/m")[1]["mailboxes"] == []
     assert call(app, "DELETE", "/m")[1] == {"disconnected": False}
-    assert mc.load_box(env, "greg") is not None
+    assert call(app, "DELETE", f"/m?box={bid}")[1] == {"disconnected": False}        # not hers
+    assert call(app, "POST", "/m/exclude", {"box": bid, "sender": "x.example"})[0] == 409
+    assert len(mc.boxes(env, "greg")) == 1
 
 
 def test_exclude_and_disconnect(client):
     app, env, _, restarts = client
     assert call(app, "POST", "/m/exclude", {"sender": "bank.example"})[0] == 409            # nothing connected
     call(app, "POST", "/m/gmail", {"address": "g@x.example", "app_password": "abcdefghijklmnop"})
+    bid = mc.boxes(env, "greg")[0]["id"]
     assert call(app, "POST", "/m/exclude", {"sender": "not a domain"})[0] == 400
-    assert call(app, "POST", "/m/exclude", {"sender": "Bank.Example"})[1] == {"exclude": ["bank.example"]}
-    assert call(app, "POST", "/m/exclude", {"sender": "bank.example", "remove": True})[1] == {"exclude": []}
+    assert call(app, "POST", "/m/exclude", {"sender": "Bank.Example"})[1] == {"exclude": ["bank.example"], "id": bid}
+    assert call(app, "POST", "/m/exclude", {"box": bid, "sender": "bank.example", "remove": True})[1] == {"exclude": [], "id": bid}
     assert call(app, "DELETE", "/m")[1] == {"disconnected": True}
-    assert mc.load_box(env, "greg") is None and restarts[-1] == ("greg", True)
+    assert mc.boxes(env, "greg") == [] and restarts[-1] == (bid, True)
+
+
+def test_several_mailboxes_each_with_its_own_private_senders(client):
+    """F43: a second mailbox is added next to the first, not instead of it."""
+    app, env, _, restarts = client
+    first = call(app, "POST", "/m/gmail", {"address": "g@x.example", "app_password": "abcdefghijklmnop"})[1]["id"]
+    second = call(app, "POST", "/m/gmail", {"address": "work@y.example", "app_password": "abcdefghijklmnop"})[1]["id"]
+    mc.save_box(env, "greg", {"kind": "outlook", "address": "g@hotmail.example", "client_id": "c", "refresh_token": "r"})
+    out = call(app, "GET", "/m")[1]
+    assert [b["address"] for b in out["mailboxes"]] == ["g@x.example", "work@y.example", "g@hotmail.example"]
+    assert call(app, "POST", "/m/exclude", {"sender": "bank.example"})[0] == 409        # which one?
+    call(app, "POST", "/m/exclude", {"box": second, "sender": "bank.example"})
+    by = {b["id"]: b for b in call(app, "GET", "/m")[1]["mailboxes"]}
+    assert by[second]["exclude"] == ["bank.example"] and by[first]["exclude"] == []
+    assert call(app, "DELETE", "/m")[1] == {"disconnected": False}                     # which one?
+    assert call(app, "DELETE", f"/m?box={first}")[1] == {"disconnected": True}
+    assert {b["address"] for b in mc.boxes(env, "greg")} == {"work@y.example", "g@hotmail.example"}
+    assert restarts[-1] == (first, True)
+
+
+def test_the_mailbox_from_before_f43_carries_over_without_reconnecting(client, tmp_path):
+    app, env, _, _ = client
+    old = tmp_path / "logos" / "mail" / "greg.json"
+    old.parent.mkdir(parents=True)
+    old.write_text('{"kind": "gmail", "address": "g@x.example", "app_password": "abcdefghijklmnop", "exclude": ["bank.example"]}')
+    (box,) = call(app, "GET", "/m")[1]["mailboxes"]
+    assert box["address"] == "g@x.example" and box["exclude"] == ["bank.example"] and not old.exists()
+    (kept,) = mc.boxes(env, "greg")
+    assert kept["carried_over"] is True and kept["app_password"] == "abcdefghijklmnop"
 
 
 def test_only_an_admin_sets_the_outlook_app(client):

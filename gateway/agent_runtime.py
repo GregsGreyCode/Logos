@@ -51,7 +51,7 @@ MEMORY_CHAR_LIMIT = 6000             # hermes default is 2,200; raised so the br
 RESET_PLUGIN = "hermes-session-reset-policy"
 # Logos' own hermes plugins (infra/agent-plugins/<name>/), copied into the home by `up`.
 #: The mail tools let through the sandbox rule (gateway/mail_service.py TOOL_NAMES).
-MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read")
+MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read", "mail_thread")
 #: The advisor tools let through the sandbox rule (gateway/advisor_service.py TOOL_NAMES).
 ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this

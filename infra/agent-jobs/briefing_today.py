@@ -58,7 +58,9 @@ def mail(e):
         result = out["result"]
         if result.get("isError"):
             return None
-        return json.loads(result["content"][0]["text"]).get("emails", [])
+        emails = json.loads(result["content"][0]["text"]).get("emails", [])
+        # E2: only what Logos thinks needs a reply ("maybe" ones are for the agent to ask about).
+        return [m for m in emails if m.get("suggestion", "reply") == "reply"]
     except Exception:
         return None
 

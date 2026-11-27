@@ -10,10 +10,14 @@ same thing from the server.
   scripts/logos-mail connect bere --gmail --address bere@gmail.example
       Asks for a Gmail app password without showing it, and checks it with a real sign-in.
   scripts/logos-mail exclude greg mybank.example        never copy mail from that domain or address
+  scripts/logos-mail exclude greg mybank.example --inbox greg@hotmail.example
+                                                         (with several mailboxes: say which one)
   scripts/logos-mail status                              who is connected, and the service's last refresh
 
-The login goes to ~/.config/logos/mail/<person>.json (mode 0600), never into git, a sandbox or a
-chat. Then `scripts/logos-agent up <agent>` (or a deploy) starts the mail service with it.
+A person may connect several mailboxes (F43): connecting another address adds one; connecting the
+same address again renews its login. Each login goes to ~/.config/logos/mail/<person>/<id>.json
+(mode 0600), never into git, a sandbox or a chat. Then `scripts/logos-agent up <agent>` (or a
+deploy) starts the mail service with them.
 """
 import argparse, getpass, imaplib, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path
@@ -60,10 +64,10 @@ def connect_outlook(person, address, client_id):
                                         headers={"Authorization": "Bearer " + tok["access_token"]})
             with urllib.request.urlopen(me, timeout=30) as r:
                 count = json.load(r).get("totalItemCount")
-            path = save(person, {"kind": "outlook", "address": address, "client_id": client_id,
-                                 "refresh_token": tok["refresh_token"]})
-            print(f"Connected: {count} emails in the Inbox. Saved to {path} (only you can read it).")
-            return
+            box = save(person, {"kind": "outlook", "address": address, "client_id": client_id,
+                                "refresh_token": tok["refresh_token"]})
+            print(f"Connected: {count} emails in the Inbox. Saved as mailbox {box['id']} (only you can read it).")
+            return box
         if tok.get("error") == "authorization_pending":
             continue
         if tok.get("error") == "slow_down":
@@ -84,8 +88,8 @@ def connect_gmail(person, address):
         imap.logout()
     except imaplib.IMAP4.error as e:
         sys.exit(f"Gmail refused it: {e}. Check the address, that 2-step verification is on, and make a new app password.")
-    path = save(person, {"kind": "gmail", "address": address, "app_password": password})
-    print(f"Connected: {data[0].decode()} emails in the Inbox. Saved to {path} (only you can read it).")
+    box = save(person, {"kind": "gmail", "address": address, "app_password": password})
+    print(f"Connected: {data[0].decode()} emails in the Inbox. Saved as mailbox {box['id']} (only you can read it).")
 
 
 def main():
@@ -101,6 +105,7 @@ def main():
     e = sub.add_parser("exclude")
     e.add_argument("person")
     e.add_argument("sender", help="a domain (mybank.example) or an address")
+    e.add_argument("--inbox", help="which mailbox (its address), when the person has several")
     sub.add_parser("status")
     args = ap.parse_args()
     if getattr(args, "person", None) and not NAME.match(args.person):
@@ -112,24 +117,30 @@ def main():
                 args.client_id = mail_connect.outlook_app(os.environ)      # the Logos app set in Settings › Email
             if not args.client_id:
                 sys.exit("--client-id: the Application (client) ID of the 'Logos mail' app registration")
-            connect_outlook(args.person, args.address, args.client_id)
-            rt = load_runtime()
-            mail_host.MailHost(rt).forget_token(args.person)
+            box = connect_outlook(args.person, args.address, args.client_id)
+            if box:
+                mail_host.MailHost(load_runtime()).forget_token(box["id"])
         else:
             connect_gmail(args.person, args.address)
         print("Now run: scripts/logos-agent up <their agent>   (or deploy) to start reading it.")
     elif args.cmd == "exclude":
-        path = mail_host.config_dir(os.environ) / f"{args.person}.json"
-        box = json.loads(path.read_text())
+        have = mail_host.boxes_of(os.environ, args.person)
+        if args.inbox:
+            have = [b for b in have if (b.get("address") or "").lower() == args.inbox.lower()]
+        if len(have) != 1:
+            sys.exit(f"{args.person} has {len(have)} matching mailboxes: say which with --inbox <address>")
+        box = have[0]
         box["exclude"] = sorted(set(box.get("exclude") or []) | {args.sender.lower()})
         save(args.person, box)
-        print(f"{args.person}: never copy mail from {', '.join(box['exclude'])}")
+        print(f"{args.person} ({box.get('address')}): never copy mail from {', '.join(box['exclude'])}")
     else:
         folder = mail_host.config_dir(os.environ)
-        for path in sorted(folder.glob("*.json")) if folder.exists() else []:
-            box = json.loads(path.read_text())
-            print(f"{path.stem}: {box.get('kind')} {box.get('address')}"
-                  + (f", excluding {', '.join(box['exclude'])}" if box.get("exclude") else ""))
+        people = sorted({p.stem for p in folder.glob("*.json") if p.name != "outlook-app.json"}
+                        | {p.name for p in folder.iterdir() if p.is_dir()}) if folder.exists() else []
+        for person in people:
+            for box in mail_host.boxes_of(os.environ, person):
+                print(f"{person} [{box['id']}]: {box.get('kind')} {box.get('address')}"
+                      + (f", excluding {', '.join(box['exclude'])}" if box.get("exclude") else ""))
         try:
             with urllib.request.urlopen(f"http://{mail_host.MailHost(load_runtime()).bind_address()}:{mail_host.PORT}/health",
                                         timeout=3) as r:

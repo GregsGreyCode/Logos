@@ -251,7 +251,7 @@ network_policies:
           - allow:
               method: tools/call
               tool:
-                any: [mail_new, mail_needs_reply, mail_search, mail_read]
+                any: [mail_new, mail_needs_reply, mail_search, mail_read, mail_thread]
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
