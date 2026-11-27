@@ -8,8 +8,8 @@ written there (the speaker's exchange is copied into the agent's chat: logos-spe
 - **Whose phone:** ``~/.config/logos/presence`` (not in git) maps a dashboard username to a Home
   Assistant tracker, one per line::
 
-      greg=device_tracker.greg_s_phone
-      bere=device_tracker.bere_s_phone
+      greg=device_tracker.greg_phone
+      bere=device_tracker.bere_phone
 
 - **Home** means the tracker's state is ``home`` (the Companion app's location or Wi-Fi report).
   Anything else, an unknown person, no mapping, or Home Assistant not answering counts as away:

@@ -6,7 +6,7 @@ import pytest
 from gateway import web_host as wh
 from gateway import web_service as ws
 
-NAMES = ["Béré", "Greg", "Vittorio", "Mum"]
+NAMES = ["Béré", "Greg", "Vittorio", "Mum", "examplehouse"]   # home-names.txt also holds the domain and tailnet name
 
 
 @pytest.fixture
@@ -38,8 +38,8 @@ def test_ordinary_searches_pass(query):
     ("birthday ideas for bere", "name"), ("BÉRÉ birthday", "name"), ("what does Vittorio like", "name"),
     ("Rose garden opening hours", "name"), ("call 07700 900123", "phone"), ("+44 7700 900123", "phone"),
     ("greg@example.org", "email"), ("cafes near BS1 4DJ", "postcode"), ("4111 1111 1111 1111", "card"),
-    ("192.0.2.226 admin page", "private network"), ("100.64.0.7", "private network"),
-    ("example.org", "own addresses"), ("@greg:example.org", "Matrix"),
+    ("192.168.0.10 admin page", "private network"), ("100.64.0.7", "private network"),
+    ("ai.home.examplehouse.org", "name"), ("logos.taila0b1c2.ts.net", "own addresses"), ("@greg:example.org", "Matrix"),
     ("sk-ant-abcdefghijklmnop", "key")])
 def test_private_details_are_refused(query, why):
     with pytest.raises(ws.Refused) as e:

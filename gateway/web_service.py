@@ -177,7 +177,7 @@ PATTERNS: List[Tuple[str, "re.Pattern[str]"]] = [
     ("a National Insurance number", re.compile(r"\b[A-CEGHJ-PR-TW-Z]{2} ?\d{2} ?\d{2} ?\d{2} ?[A-D]\b", re.I)),
     # Capitals only, as postcodes are written: "m2 1tb ssd" is a search for a drive, not a postcode.
     ("a postcode", re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]? ?\d[ABD-HJLNP-UW-Z]{2}\b")),
-    ("our own addresses", re.compile(r"example|\.ts\.net\b|tailnet", re.I)),
+    ("our own addresses", re.compile(r"\.ts\.net\b", re.I)),   # the house's domain and tailnet name are in home-names.txt
     ("a key or password", re.compile(r"\b(?:sk-[\w-]{10,}|ghp_\w{10,}|xox[bp]-[\w-]{10,}|AKIA[0-9A-Z]{16})\b")),
 ]
 

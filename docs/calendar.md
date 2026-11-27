@@ -98,7 +98,7 @@ After that, `scripts/logos-deploy` keeps the server up to date.
 1. Keep Tailscale on.
 2. Install DAVx5 (F-Droid or Play Store).
 3. In DAVx5, add an account with **Login with URL and user name**:
-   - URL: `https://logos-prod.tailnet.ts.net:8443/`
+   - URL: `https://logos.<tailnet>.ts.net:8443/`
    - your user name and password
 4. Tick the calendars to sync: your own and Household.
 5. They now appear in the phone's calendar app next to any other accounts.

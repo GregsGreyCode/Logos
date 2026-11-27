@@ -17,24 +17,24 @@ def home(tmp_path, monkeypatch):
 
 def test_trackers_come_from_the_presence_file(home):
     assert pr.trackers() == {}
-    (home / "presence").write_text("# whose phone\ngreg=device_tracker.greg_s_phone\nbere = person.bere\nbad=rm -rf\n")
-    assert pr.trackers() == {"greg": "device_tracker.greg_s_phone", "bere": "person.bere"}
+    (home / "presence").write_text("# whose phone\ngreg=device_tracker.greg_phone\nbere = person.bere\nbad=rm -rf\n")
+    assert pr.trackers() == {"greg": "device_tracker.greg_phone", "bere": "person.bere"}
 
 
 def test_home_only_when_the_tracker_says_home(home, monkeypatch):
-    (home / "presence").write_text("greg=device_tracker.greg_s_phone\n")
-    states = {"device_tracker.greg_s_phone": "home"}
+    (home / "presence").write_text("greg=device_tracker.greg_phone\n")
+    states = {"device_tracker.greg_phone": "home"}
     monkeypatch.setattr(pr, "_state", lambda entity, env: states[entity])
     assert asyncio.run(pr.at_home("greg")) is True
     pr._cache.clear()
-    states["device_tracker.greg_s_phone"] = "not_home"
+    states["device_tracker.greg_phone"] = "not_home"
     assert asyncio.run(pr.at_home("greg")) is False
     assert asyncio.run(pr.at_home("bere")) is False            # no tracker: away
     assert asyncio.run(pr.at_home(None)) is False               # nobody recognised: away
 
 
 def test_home_assistant_down_counts_as_away_and_is_cached(home, monkeypatch):
-    (home / "presence").write_text("greg=device_tracker.greg_s_phone\n")
+    (home / "presence").write_text("greg=device_tracker.greg_phone\n")
     calls = []
     def boom(entity, env):
         calls.append(entity)

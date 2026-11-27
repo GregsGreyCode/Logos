@@ -117,15 +117,15 @@ def test_unload_never_touches_the_agents_model():
 def test_each_servers_gpu_is_remembered(tmp_path):
     env = {"XDG_CONFIG_HOME": str(tmp_path)}
     assert ms.hardware(env) == {}
-    assert ms.set_hardware(env, "192.0.2.117:1234", "RTX 4080  Super", 16) == {"gpu": "RTX 4080 Super", "vram_gb": 16.0}
+    assert ms.set_hardware(env, "192.0.2.17:1234", "RTX 4080  Super", 16) == {"gpu": "RTX 4080 Super", "vram_gb": 16.0}
     ms.set_hardware(env, "10.0.0.9:1234", "Always-on box", 48)
-    assert set(ms.hardware(env)) == {"192.0.2.117:1234", "10.0.0.9:1234"}
+    assert set(ms.hardware(env)) == {"192.0.2.17:1234", "10.0.0.9:1234"}
     assert oct((tmp_path / "logos" / ms.SETTINGS_FILE).stat().st_mode & 0o777) == "0o600"
     ms.set_hardware(env, "10.0.0.9:1234", "", 0)                       # 0 forgets it
-    assert set(ms.hardware(env)) == {"192.0.2.117:1234"}
+    assert set(ms.hardware(env)) == {"192.0.2.17:1234"}
     with pytest.raises(ValueError):
         ms.set_hardware(env, "x:1", "gpu", 5000)
-    assert ms.server_key("http://192.0.2.117:1234/") == "192.0.2.117:1234"
+    assert ms.server_key("http://192.0.2.17:1234/") == "192.0.2.17:1234"
 
 
 def advice_of(rows):

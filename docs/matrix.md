@@ -8,7 +8,7 @@ Matrix is how people talk to their agents. Every message stays on our own machin
   - It is not reachable from the LAN or the internet.
 - **Federation is off.** The server never talks to any other Matrix server, and nothing ever looks up its name.
 - **Server name:** `example.org`. It is permanent and part of every ID (`@bere:example.org`). It does not have to resolve.
-- **Signing in:** people type the tailnet address into Element (prod: `logos-prod.tailnet.ts.net`). The server's `/.well-known/matrix/client` answers with that same address.
+- **Signing in:** people type the tailnet address into Element (prod: `logos.<tailnet>.ts.net`). The server's `/.well-known/matrix/client` answers with that same address.
 
 ## Settings
 
@@ -59,7 +59,7 @@ It answers only people in its `allowed_users`, and any room they invite it to wo
 ## Someone forgot their Matrix password
 
 ```
-ssh logos@192.0.2.226            # or, already on the server as yourself: sudo -iu logos
+ssh logos@<the Logos server>            # or, already on the server as yourself: sudo -iu logos
 cd ~/logos && scripts/logos-matrix reset-password bere
 ```
 

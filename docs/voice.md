@@ -419,7 +419,7 @@ comes before that line is read out, and the whole answer is copied to the chat (
 Shared household things (the lists, the lights, the household calendar) are not private.
 
 - **Whose phone:** `~/.config/logos/presence` (not in git), one `username=tracker` per line, for example
-  `greg=device_tracker.greg_s_phone`. The tracker must say `home` (the Home Assistant Companion app's
+  `greg=device_tracker.greg_phone`. The tracker must say `home` (the Home Assistant Companion app's
   location or Wi-Fi report).
 - **The person** is the one the voice print recognised. Nobody recognised, no tracker, a tracker that is
   not `home`, or Home Assistant not answering: away, the cautious answer.

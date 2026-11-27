@@ -35,7 +35,7 @@ def config_dir(env: Mapping[str, str]) -> Path:
 
 
 def server_key(base: str) -> str:
-    """'http://192.0.2.117:1234' -> '192.0.2.117:1234', how servers are named on the page."""
+    """'http://192.0.2.17:1234' -> '192.0.2.17:1234', how servers are named on the page."""
     return base.split("//", 1)[-1].rstrip("/")
 
 

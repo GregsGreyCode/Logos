@@ -10,7 +10,7 @@ from gateway import dashboard_api, model_server
 from gateway.agent_runtime import Completed
 
 QWEN = "qwen/qwen3.6-35b-a3b"
-PC, BOX = "http://192.0.2.117:1234", "http://10.0.0.9:1234"
+PC, BOX = "http://192.0.2.17:1234", "http://10.0.0.9:1234"
 DEFS = {
     "greg": {"model": {"provider": "lmstudio", "base_url": PC + "/v1", "default": QWEN, "context_length": 65536,
                        "load_context_length": 96512}},
@@ -92,8 +92,8 @@ def test_every_server_an_agent_uses_gets_its_own_block(api):
     code, body = go("GET", "/api/v2/models/local", role="user")
     assert code == 200 and body["can_change"] is False
     servers = {s["server"]: s for s in body["servers"]}
-    assert set(servers) == {"192.0.2.117:1234", "10.0.0.9:1234"}            # not the hidden agent's
-    assert servers["192.0.2.117:1234"]["up"] and servers["192.0.2.117:1234"]["loaded"][0]["key"] == QWEN
+    assert set(servers) == {"192.0.2.17:1234", "10.0.0.9:1234"}            # not the hidden agent's
+    assert servers["192.0.2.17:1234"]["up"] and servers["192.0.2.17:1234"]["loaded"][0]["key"] == QWEN
     assert not servers["10.0.0.9:1234"]["up"] and "did not answer" in servers["10.0.0.9:1234"]["error"]
     assert servers["10.0.0.9:1234"]["advice"]                                   # advice even when it is off
     assert body["queue"]["slots"] == 2 and body["speed"]["alone"]["replies"] == 1
@@ -101,23 +101,23 @@ def test_every_server_an_agent_uses_gets_its_own_block(api):
 
 def test_a_gpu_told_on_the_page_drives_the_advice(api):
     go, _ = api
-    assert go("POST", "/api/v2/models/local/hardware", {"server": "192.0.2.117:1234", "gpu": "RTX 4080 Super",
+    assert go("POST", "/api/v2/models/local/hardware", {"server": "192.0.2.17:1234", "gpu": "RTX 4080 Super",
                                                          "vram_gb": 16})[0] == 200
-    srv = next(s for s in go("GET", "/api/v2/models/local")[1]["servers"] if s["server"] == "192.0.2.117:1234")
+    srv = next(s for s in go("GET", "/api/v2/models/local")[1]["servers"] if s["server"] == "192.0.2.17:1234")
     assert srv["hardware"] == {"gpu": "RTX 4080 Super", "vram_gb": 16.0}
     assert {a["setting"]: a["value"] for a in srv["advice"]}["Force model expert weights onto CPU"] == "On"
-    go("POST", "/api/v2/models/local/hardware", {"server": "192.0.2.117:1234", "gpu": "New GPU", "vram_gb": 48})
-    srv = next(s for s in go("GET", "/api/v2/models/local")[1]["servers"] if s["server"] == "192.0.2.117:1234")
+    go("POST", "/api/v2/models/local/hardware", {"server": "192.0.2.17:1234", "gpu": "New GPU", "vram_gb": 48})
+    srv = next(s for s in go("GET", "/api/v2/models/local")[1]["servers"] if s["server"] == "192.0.2.17:1234")
     assert {a["setting"]: a["value"] for a in srv["advice"]}["Force model expert weights onto CPU"] == "Off"
 
 
 def test_changes_are_for_admins_and_known_servers_only(api):
     go, rt = api
-    assert go("POST", "/api/v2/models/local/reload", {"server": "192.0.2.117:1234"}, role="user")[0] == 403
+    assert go("POST", "/api/v2/models/local/reload", {"server": "192.0.2.17:1234"}, role="user")[0] == 403
     assert go("POST", "/api/v2/models/local/reload", {"server": "evil.example:80"})[1]["error"] == "unknown_server"
-    assert go("POST", "/api/v2/models/local/hardware", {"server": "192.0.2.117:1234", "vram_gb": 9999})[0] == 400
-    assert go("POST", "/api/v2/models/local/unload", {"server": "192.0.2.117:1234", "instance": QWEN})[0] == 400
-    code, body = go("POST", "/api/v2/models/local/reload", {"server": "192.0.2.117:1234"})
+    assert go("POST", "/api/v2/models/local/hardware", {"server": "192.0.2.17:1234", "vram_gb": 9999})[0] == 400
+    assert go("POST", "/api/v2/models/local/unload", {"server": "192.0.2.17:1234", "instance": QWEN})[0] == 400
+    code, body = go("POST", "/api/v2/models/local/reload", {"server": "192.0.2.17:1234"})
     assert code == 200 and body["config"]["context_length"] == 96512
     loads = [c for c in rt.runner.calls if c[0].endswith("/load")]
     assert loads[-1] == (PC + "/api/v1/models/load", {"model": QWEN, "context_length": 96512, "flash_attention": True,
