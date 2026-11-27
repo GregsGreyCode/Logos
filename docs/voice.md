@@ -107,7 +107,7 @@ Say the wake word to the Voice PE and Home answers out loud. Home Assistant turn
 into words (its Whisper add-on for now) and hands them to the `logos` conversation agent, a small
 Home Assistant integration kept in the private repo `logos-voice-pe`. It posts them to
 `POST /api/v2/voice/converse` (`gateway/voice_converse.py`), which runs the Household agent and
-returns the words to speak (Piper reads them out).
+returns the words to speak, read out in that agent's own voice (below).
 
 - **Token:** made on first start in `~/.config/logos/voice-converse.token` (0600). Paste it into
   the integration when adding it in Home Assistant. The path accepts nothing else.
@@ -120,5 +120,75 @@ returns the words to speak (Piper reads them out).
   agent carries on and keeps the answer in that conversation.
 - **The words are never logged:** only the agent, the device, the outcome and how long it took.
 
-Plan, decisions and the next stories (wake word = the agent's name, voice prints, a voice per
-agent) are in the spec doc's Voice tab.
+### Each agent in its own voice
+
+Home Assistant's Piper add-on has one voice per pipeline, but more than one agent will answer
+through the same speaker (Finn and Béré's agent, once the wake word picks the agent). So Logos
+reads the answers out itself: a second small service, `logos-tts`, runs Piper with twelve English
+voices and offers them to Home Assistant as a **Wyoming** text-to-speech service.
+
+```
+speaker -> Home Assistant -> /api/v2/voice/converse -> agent -> words
+                                     |  notes: these words, this agent's voice
+speaker <- Home Assistant <- logos-tts (Wyoming, Piper) <- "say these words"
+```
+
+- **How it knows who is speaking.** Home Assistant asks only "say these words" (with its
+  pipeline's voice). When `voice/converse` returns an answer it notes a hash of the words and the
+  agent's voice for two minutes (`gateway/speaker_voice.py`), in a file `logos-tts` reads
+  (`~/.local/state/logos/speaker/said.json`, hashes only). The same words arriving from Home
+  Assistant are read in that voice.
+- **Anything else** (Home Assistant's own announcements, a timer) is read in the voice the
+  pipeline names, so set the pipeline to Home's voice too.
+- **Choosing the voice.** Settings › Speaker lists your agents and the twelve voices, each with a
+  ▶ to hear a sample. For the Household agent either of you can change it. It applies from the
+  next answer. The choice is kept in the dashboard's database (beside the agents' colours); until
+  someone chooses, the agent's definition decides:
+
+  ```yaml
+  speaker_voice: en_GB-northern_english_male-medium   # agents/household.yaml (Home's, Greg's pick)
+  ```
+
+  An agent without `speaker_voice` and without a choice speaks in Home's voice.
+- **What it can do:** speak, and nothing else. Wyoming has no login, so anyone on the LAN who can
+  reach the port can make it say something; it can read nothing and reach nothing. The container
+  is read-only, has no capabilities, no DNS, 1 GB of memory at most, and holds no tokens.
+- **The words are never logged:** the log line has the voice, the agent, the length and the time.
+- **Cost:** a voice loads on first use (under a second) and is dropped after ten quiet minutes; at
+  most two are kept loaded, about 300 MB together. A short answer takes under half a second.
+- **Known limit:** Home Assistant keeps its own cache of spoken phrases by their words. Once two
+  agents answer, the same short answer ("Done.") from both may come back in the first one's
+  voice. Fine with Home alone; to look at when routing by wake word arrives.
+
+#### Turning it on
+
+1. On the Logos machine, `~/.config/logos/speaker` (not in the repo):
+
+   ```
+   TTS_BIND=192.0.2.20      # this machine's LAN address (0.0.0.0 for every address)
+   TTS_PORT=10200           # optional, Wyoming's usual port
+   ```
+
+2. `scripts/logos-agent up household`. The first time it builds the image `logos-tts:1` from
+   `infra/tts/Dockerfile` (a few minutes, about 1.9 GB on disk, most of it the voices) and starts
+   the container. Any agent with `speaker_voice:` starts it the same way; without the file it
+   says "speaker voices: off" and carries on.
+3. In Home Assistant: Settings › Devices & services › Add integration › **Wyoming Protocol**, host
+   = the Logos machine's address, port 10200. It shows up as "logos" with twelve voices.
+4. Settings › Voice assistants › the speaker's pipeline › Text-to-speech: choose **logos**, and as
+   its voice `en_GB-northern_english_male-medium` (used for Home Assistant's own words). The old
+   Piper add-on can stay for other pipelines or be removed.
+
+Check it from the Logos machine: Settings › Speaker › ▶ plays a sample (the dashboard asks
+`logos-tts` over Wyoming, like Home Assistant does), and `docker logs logos-tts` shows a line per
+answer, e.g. `en_GB-northern_english_male-medium for household: 42 characters in 0.3 s`.
+
+| Part | Version | Why |
+| --- | --- | --- |
+| `python` slim base image | pinned by digest | runs the server |
+| `piper-tts` | 1.8.0 | the speech engine Home Assistant's Piper add-on uses (GPL-3.0, on its own in the container) |
+| `wyoming` | 1.11.0 | the protocol Home Assistant speaks to voice services |
+| `onnxruntime` | 1.32.0 | what Piper runs on (the voice service's pin) |
+| `rhasspy/piper-voices` | fixed revision (12 Nov) | twelve English medium voices, fetched at build time only |
+
+Plan, decisions and the next stories (wake word = the agent's name, voice prints) are in the spec doc's Voice tab.

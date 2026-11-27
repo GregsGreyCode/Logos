@@ -755,6 +755,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _alert_text.register(app)
     from gateway import voice_converse as _voice_converse  # Voice V1: the house speaker, through Home Assistant
     _voice_converse.register(app)
+    from gateway import speaker_voice as _speaker_voice  # Voice V1.2: each agent in its own voice on the speaker
+    _speaker_voice.register(app)
     from gateway import widgets as _widgets             # F42: homelab widgets on Home
     _widgets.register(app)
     from gateway import metrics as _metrics             # F42: Prometheus /metrics, off until switched on

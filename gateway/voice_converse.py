@@ -42,6 +42,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from gateway import speaker_voice
+
 logger = logging.getLogger(__name__)
 
 PATH = "/api/v2/voice/converse"
@@ -250,6 +252,7 @@ async def handle_converse(request: "Any") -> "Any":
 
     def answer(outcome: str, words: str) -> "web.Response":
         said = spoken(words) or FAILED
+        speaker_voice.said(request.app, agent, said)   # read out in this agent's voice (V1.2)
         if measured:
             stats.observe(agent, measured["model"], measured["turn"], outcome, time.monotonic() - started)
         logger.info("voice: %s via %s: %s in %.1fs", agent, device[:12], outcome, time.monotonic() - started)

@@ -1139,6 +1139,17 @@ class AgentRuntime:
                     print("voice: started with the current agents")
             except (ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"voice: {e}")
+        th = _sibling("tts_host")
+        if th.uses_speaker(agent):
+            # The house speaker reads this agent's answers in its own voice (docs/voice.md).
+            try:
+                started = th.TtsHost(self).up()
+                if started is None:
+                    print("speaker voices: off (no ~/.config/logos/speaker, see docs/voice.md)")
+                elif started:
+                    print("speaker voices: started")
+            except (th.TtsError, TimeoutError) as e:
+                raise AgentRuntimeError(f"speaker voices: {e}")
         if ch.uses_calendar(agent):
             try:
                 if ch.CalendarHost(self).up():
