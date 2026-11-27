@@ -10,8 +10,9 @@ words here and speaks what comes back.
     {"text": "...", "language": "en", "device_id": "...", "conversation_id": "..."}
     -> {"speech": "...", "conversation_id": "...", "continue": true|false, "agent": "household"}
 
-- **Home answers (V1).** The Household agent, unless ``LOGOS_VOICE_AGENT`` names another.
-  Routing by wake word and voice print comes in VW.2 and VO.2.
+- **The agent called answers (VW.1).** The one whose name woke the speaker ("Hey Finn"), noted
+  by the wake word service (gateway/wake_host.py); a follow-up stays with it. Otherwise the
+  Household agent, unless ``LOGOS_VOICE_AGENT`` names another.
 - **One conversation per speaker per day.** A follow-up ("and tomorrow?") keeps the context.
 - **Spoken answers.** The agent is told the words will be read aloud: a few short sentences,
   no Markdown. Whatever Markdown slips through is taken out before speaking.
@@ -42,7 +43,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from gateway import speaker_voice, voice_id
+from gateway import speaker_voice, voice_id, wake_host
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,9 @@ async def handle_converse(request: "Any") -> "Any":
     if not text:
         raise web.HTTPBadRequest(text='{"error":"text is required"}', content_type="application/json")
 
-    agent = os.environ.get("LOGOS_VOICE_AGENT") or DEFAULT_AGENT
+    # The agent whose name woke the speaker (VW.1), else the one this conversation started with.
+    agent = wake_host.agent_for(str(body.get("conversation_id") or "")) \
+        or os.environ.get("LOGOS_VOICE_AGENT") or DEFAULT_AGENT
     session_id = session_for(agent, device)
     started = time.monotonic()
 

@@ -103,12 +103,12 @@ On the Agents screen each of your agents' marks has a small microphone: tap it, 
 
 ## The house speaker (Home Assistant Voice PE)
 
-Say the wake word to the Voice PE and Home answers out loud. Home Assistant turns the speech
-into words (its Whisper add-on, or Logos's own speech to text, which also tells who is speaking:
-below) and hands them to the `logos` conversation agent, a small
-Home Assistant integration kept in the private repo `logos-voice-pe`. It posts them to
-`POST /api/v2/voice/converse` (`gateway/voice_converse.py`), which runs the Household agent and
-returns the words to speak, read out in that agent's own voice (below).
+Say an agent's name to the Voice PE ("Hey Finn", "Hey Home") and that agent answers out loud
+(below: wake words). Home Assistant turns the speech into words (its Whisper add-on, or Logos's own
+speech to text, which also tells who is speaking: below) and hands them to the `logos` conversation
+agent, a small Home Assistant integration kept in the private repo `logos-voice-pe`. It posts them to
+`POST /api/v2/voice/converse` (`gateway/voice_converse.py`), which runs the agent that was called
+(Home when no name was heard) and returns the words to speak, read out in that agent's own voice (below).
 
 - **Token:** made on first start in `~/.config/logos/voice-converse.token` (0600). Paste it into
   the integration when adding it in Home Assistant. The path accepts nothing else.
@@ -233,9 +233,9 @@ speaker <- Home Assistant <- logos-tts (Wyoming, Piper) <- "say these words"
 - **The words are never logged:** the log line has the voice, the agent, the length and the time.
 - **Cost:** a voice loads on first use (under a second) and is dropped after ten quiet minutes; at
   most two are kept loaded, about 300 MB together. A short answer takes under half a second.
-- **Known limit:** Home Assistant keeps its own cache of spoken phrases by their words. Once two
-  agents answer, the same short answer ("Done.") from both may come back in the first one's
-  voice. Fine with Home alone; to look at when routing by wake word arrives.
+- **Known limit:** Home Assistant keeps its own cache of spoken phrases by their words. Now that
+  two agents answer (wake words, below), the same short answer ("Done.") from both may come back
+  in the first one's voice. Still to look at.
 
 #### Turning it on
 
@@ -395,5 +395,109 @@ Check it: `docker logs logos-stt` shows a line per command, e.g. `heard 3.6 s (3
 | `av`, `numpy` | 18.1.0, 2.3.4 | reading browser recordings |
 | `wyoming` | 1.11.0 | the protocol Home Assistant speaks |
 | LibriSpeech dev-clean | pinned by SHA-256 | 120 clips of 40 speakers: the reference voices |
+
+### Wake words: each agent's name (VW.1, 27 Nov)
+
+The speaker wakes to the agents' names and the name picks the agent. The names are not trained
+into anything: the speaker streams what it hears to Home Assistant, Home Assistant streams it to
+a third small service, `logos-wake`, and that listens for the names with an open-vocabulary
+keyword spotter (sherpa-onnx). Change a name and the speaker wakes to the new one at once.
+
+```
+speaker --(audio, all the time)--> Home Assistant --(Wyoming)--> logos-wake
+                                                                     | heard "Hey Finn": greg
+                                                                     v  (heard.json)
+speaker -> Home Assistant (Whisper) -> /api/v2/voice/converse -> Finn
+```
+
+- **The names** come from the agents' definitions:
+
+  ```yaml
+  speaker_name: Finn                    # agents/greg.yaml: "Hey Finn" and "Finn"
+  speaker_name: Home                    # agents/household.yaml
+  speaker_wake: [Hey Home]              # optional: exactly these phrases ({Hey Home: 0.1} sets a threshold)
+  ```
+
+  Without `speaker_wake`, a name gives "Hey <name>" (threshold 0.1) and the bare name (0.25,
+  stricter: one word is easier to say by accident). Home has only "Hey Home": "home" is too
+  common a word (it woke on ordinary speech, below). A higher threshold wakes less readily. A
+  phrase two agents claim wakes neither. Accents are dropped ("Béré" is "Bere").
+- **Following a change.** The names go into `~/.local/state/logos/wake/names.json` on every
+  `scripts/logos-agent up` and when the dashboard starts; `logos-wake` reads it again whenever it
+  changes (no restart). `docker logs logos-wake` lists the names it now listens for.
+- **Which agent.** Each detection is noted in `heard.json` (agent and phrase, kept a minute).
+  `voice/converse` takes the agent heard in the last 30 seconds, once; a follow-up in the same
+  Home Assistant conversation stays with it; otherwise Home (or `LOGOS_VOICE_AGENT`). Wyoming does
+  not say which speaker streamed the audio, so with two speakers spoken to within seconds of each
+  other the second could get the first one's agent. Finn answering only Greg is the voice-print
+  work (VO.2), not this.
+- **In Home Assistant** each name is its own wake word, plus "Any agent's name" (`logos_any`):
+  choose that one in the pipeline and every name wakes it.
+- **Nothing is kept.** The audio goes through the model and is dropped. The log line has the
+  phrase, the agent, the threshold and how far into the stream, e.g.
+  `heard 'Hey Finn' -> greg (threshold 0.1) at 7.31 s into the stream`. Never sound or words.
+- **What it can do:** say that it heard a name. Like `logos-tts` it is on the LAN without a login,
+  so anyone there can stream audio to it; it can reach nothing. Read-only container, no
+  capabilities, no DNS, one core and 512 MB at most. It runs as the Logos user (not 10000) so it
+  can write `heard.json` in a folder only that user owns.
+
+The speaker's own firmware cannot stream to a wake word service: the official Voice PE firmware
+always hears its wake word on the device ("Okay Nabu", "Hey Jarvis", "Hey Mycroft") and has no
+setting to change that. So the speaker needs a small custom build, kept in `logos-voice-pe`
+(`firmware/`): the official config, pinned, with only the wake word moved to Home Assistant.
+Building, flashing and going back to the official firmware are in that repo's README.
+
+#### Measured (27 Nov, this machine, Piper voices and LibriVox)
+
+Through the Wyoming protocol as Home Assistant speaks it (`scripts/wake-bench.py` in
+`logos-voice-pe`), with the shipped names and thresholds. Speech: the twelve Piper voices of
+`logos-tts` saying "Hey Finn, what time is it?", "Finn, turn the kitchen lights off." and "Hey
+Home, what's on tomorrow?", clean, in room noise at 10 dB SNR, and 20 dB quieter.
+
+| | clean | noise | quiet |
+| --- | --- | --- | --- |
+| "Hey Finn" | 10/12 | 8/12 | 10/12 |
+| "Finn" | 9/12 | 5/12 | 7/12 |
+| "Hey Home" | 10/12 | 8/12 | 9/12 |
+
+- **Misses** are mostly a few voices (Piper's `joe`, `alba`, `amy` miss most of them): synthetic
+  voices, so a real person at the speaker will differ either way. Lowering the threshold from
+  0.25 to 0.1 caught "Hey Home" more often (20 to 27 of 36) and changed nothing for "Finn"; a
+  stronger boost (2) lost more than it gained, and adding the spelling "Fin" only added false wakes.
+- **False wakes:** 2 in 27.6 minutes of ordinary speech (25 minutes of LibriVox readings, five
+  readers, plus Piper reading 60 everyday sentences full of "home", "fine", "Finland", "hey"):
+  "Hey Home" once in Joyce's *Eveline* and "Finn" once, about 4 an hour of continuous talk. The
+  bare "Home" woke 5 times in the same speech, which is why Home has only "Hey Home". A false wake
+  costs a question to Home or Finn that nobody asked; the speaker's light shows it.
+- **Latency:** the detection arrives 0.39 s (median; 0.65 s p90) after the end of the name, in
+  real time. Home Assistant keeps the audio from before the detection for speech-to-text, so the
+  question can follow the name without a pause (the words may then start with the name).
+- **Cost while it listens:** 3.4 % of one core (AMD Ryzen AI 9 HX 370) and 83 MB, streaming two
+  minutes of quiet room noise.
+
+#### Turning the wake words on
+
+1. Add to `~/.config/logos/speaker` on the Logos machine:
+
+   ```
+   WAKE_PORT=10400          # turns them on; listens on TTS_BIND (or WAKE_BIND)
+   ```
+
+2. `scripts/logos-agent up household`. The first time it builds `logos-wake:1` from
+   `infra/wake/Dockerfile` (a minute; 280 MB) and starts it.
+3. In Home Assistant: Settings › Devices & services › Add integration › **Wyoming Protocol**, host
+   = the Logos machine, port 10400. It shows up as "logos" with the names.
+4. Settings › Voice assistants › the speaker's pipeline › **Streaming wake word engine**: "logos",
+   wake word "Any agent's name".
+5. Flash the speaker with the `logos-voice-pe` firmware (its README). Until then nothing changes:
+   the official firmware keeps waking to "Okay Nabu", and those requests go to Home.
+
+| Part | Version | Why |
+| --- | --- | --- |
+| `python` slim base image | pinned by digest | runs the server |
+| `sherpa-onnx` | 2.0.1 | the keyword spotter (Apache-2.0) |
+| `sentencepiece` | 0.2.2 | spells a name in the model's word pieces |
+| `wyoming` | 1.11.0 | the protocol Home Assistant speaks to voice services |
+| `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01` | k2-fsa's release, SHA-256 checked | the English keyword model, fetched at build time only |
 
 Plan, decisions and the next stories (wake word = the agent's name, voice prints) are in the spec doc's Voice tab.

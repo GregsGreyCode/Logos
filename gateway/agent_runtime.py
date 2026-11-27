@@ -1158,6 +1158,15 @@ class AgentRuntime:
                     print("speech to text: started")
             except (sh.SttError, th.TtsError, TimeoutError) as e:
                 raise AgentRuntimeError(f"speech to text: {e}")
+        wk = _sibling("wake_host")
+        if th.uses_speaker(agent) or wk.uses_wake(agent):
+            # The house speaker wakes to the agents' names (docs/voice.md); names.json follows the yaml.
+            try:
+                started = wk.WakeHost(self).up()
+                if started:
+                    print("wake words: started")
+            except (wk.WakeError, TimeoutError) as e:
+                raise AgentRuntimeError(f"wake words: {e}")
         if ch.uses_calendar(agent):
             try:
                 if ch.CalendarHost(self).up():

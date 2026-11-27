@@ -759,6 +759,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _speaker_voice.register(app)
     from gateway import voice_id as _voice_id            # Voice VO.2: who is speaking; Settings › Your voice
     _voice_id.register(app)
+    from gateway import wake_host as _wake_host  # Voice VW.1: the speaker wakes to each agent's name
+    _wake_host.register(app)
     from gateway import widgets as _widgets             # F42: homelab widgets on Home
     _widgets.register(app)
     from gateway import metrics as _metrics             # F42: Prometheus /metrics, off until switched on
