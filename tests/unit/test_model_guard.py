@@ -294,6 +294,33 @@ def test_estimate_priority_and_usage():
     assert model_guard.usage(b"data: [DONE]") == {}
 
 
+def test_pictures_count_a_fixed_cost_not_their_base64_text():
+    # 27 Nov: two 720x1600 phone screenshots (~118,000 base64 characters each) made a ~42,000-token
+    # conversation look like 119,000 tokens, more than the loaded window.
+    picture = "data:image/jpeg;base64," + "A" * 118_357
+    text = "x" * 150_000
+    msgs = [{"role": "system", "content": text}]
+    for _ in range(2):
+        msgs.append({"role": "user", "content": [{"type": "text", "text": "look"},
+                                                  {"type": "image_url", "image_url": {"url": picture}}]})
+    body = json.dumps({"model": "m", "messages": msgs}).encode()
+    est = model_guard.estimate(body)
+    assert est < 60_000 < int(len(body) / model_guard.BYTES_PER_TOKEN)   # was ~120,000: over the 96,512 window
+    without = json.dumps({"model": "m", "messages": [
+        {"role": "system", "content": text},
+        *[{"role": "user", "content": [{"type": "text", "text": "look"}, {"type": "image_url", "image_url": {"url": ""}}]}] * 2,
+    ]}).encode()
+    assert est == int(len(without) / model_guard.BYTES_PER_TOKEN) + 2 * model_guard.IMAGE_TOKENS + model_guard.REPLY_RESERVE
+    # a picture given by address costs the same; other shapes of picture part are recognised too
+    linked = json.dumps({"model": "m", "messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": "https://example.invalid/a.jpg"},
+        {"type": "image", "source": {"type": "base64", "data": "B" * 50_000}}]}]}).encode()
+    assert model_guard.estimate(linked) < 3 * model_guard.IMAGE_TOKENS + model_guard.REPLY_RESERVE
+    # odd shapes never raise
+    for odd in (b'{"messages": [1, {"content": [2, {"type": "image_url"}]}]}', b'{"messages": null}', b"not json"):
+        assert model_guard.estimate(odd) > 0
+
+
 def test_the_gate_holds_to_its_slots():
     gate = model_guard.Gate(2, lambda: 0)
     a, _, _ = gate.enter(10)
