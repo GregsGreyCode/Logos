@@ -1,6 +1,8 @@
 """gateway/mail_host.py: the mail service's config comes from private files, never the command line."""
 import json
 
+import pytest
+
 from gateway import mail_host as mh
 
 
@@ -45,6 +47,7 @@ HOMES = {"logos-home-greg": "LOGOS_MAIL_TOKEN=tg\n", "logos-home-bere": "LOGOS_M
 
 
 def write_box(tmp_path, person, box):
+    """A login file as it was before F43 (one per person): it is moved on the first read."""
     d = tmp_path / "logos" / "mail"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{person}.json").write_text(json.dumps(box))
@@ -73,7 +76,10 @@ def test_up_passes_logins_on_stdin_and_locks_the_container_down(tmp_path):
     (config,) = [i for i in rt.inputs if i]
     cfg = json.loads(config)
     assert cfg["agents"] == {"bere": {"token": "tb", "person": "bere"}, "greg": {"token": "tg", "person": "greg"}}
-    assert list(cfg["mailboxes"]) == ["greg"] and cfg["mailboxes"]["greg"]["refresh_token"] == "SECRET-R"
+    (bid,) = cfg["mailboxes"]
+    box = cfg["mailboxes"][bid]
+    assert mh.BOX_ID.match(bid) and box["person"] == "greg" and box["refresh_token"] == "SECRET-R"
+    assert box["carried_over"] is True                                                  # migrated from greg.json
     (start,) = [c for c in rt.calls if c[:3] == ["docker", "run", "-d"]]
     for flag in ("--read-only", "--cap-drop", "ALL", "--user", "1000:1000", "--network", "logos-mail",
                  "172.17.0.1:8099:8099", "logos-mail:/data:ro", "logos-mail-state:/state"):
@@ -84,3 +90,28 @@ def test_up_passes_logins_on_stdin_and_locks_the_container_down(tmp_path):
 def test_who_uses_mail():
     assert mh.uses_mail({"mail": {"enabled": True, "person": "greg"}})
     assert not mh.uses_mail({"mail": {"enabled": True}}) and not mh.uses_mail({"role": "household"})
+
+
+def test_one_file_per_mailbox_and_the_old_file_moves_once(tmp_path):
+    env = write_box(tmp_path, "greg", {"kind": "outlook", "address": "g@hotmail.example", "client_id": "c",
+                                       "refresh_token": "r", "exclude": ["bank.example"]})
+    (old,) = mh.boxes_of(env, "greg")
+    assert old["carried_over"] and old["exclude"] == ["bank.example"] and old["added"]
+    assert not (tmp_path / "logos" / "mail" / "greg.json").exists()
+    assert mh.migrate(env, "greg") is None                                   # nothing left to move
+    new = mh.save_box(env, "greg", {"kind": "gmail", "address": "g@gmail.example", "app_password": "p" * 16})
+    assert new["id"] != old["id"] and "carried_over" not in new
+    assert [b["id"] for b in mh.boxes_of(env, "greg")] == [old["id"], new["id"]]          # oldest first
+    boxes = mh.mailboxes(env, ["greg", "bere"])
+    assert set(boxes) == {old["id"], new["id"]} and {b["person"] for b in boxes.values()} == {"greg"}
+    assert mh.remove_box(env, "greg", old["id"]) and list(mh.mailboxes(env, ["greg"])) == [new["id"]]
+
+
+def test_forget_token_takes_only_a_mailbox_id(tmp_path):
+    rt = FakeRuntime({"XDG_CONFIG_HOME": str(tmp_path)}, AGENTS, HOMES)
+    host = mh.MailHost(rt)
+    host.forget_token("0a1b2c3d")
+    assert "rm -f /s/outlook-0a1b2c3d.token" in rt.calls[-1][-1]
+    for bad in ("greg", "../x", "0a1b2c3d; rm -rf /"):
+        with pytest.raises(mh.MailError):
+            host.forget_token(bad)

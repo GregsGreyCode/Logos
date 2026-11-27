@@ -726,7 +726,7 @@ network_policies:
         ep = yaml.safe_load(r.policy_path("alpha", greg).read_text())["network_policies"]["mail"]["endpoints"][0]
         assert (ep["host"], ep["port"]) == ("172.17.0.1", 8099)
         assert ep["rules"][-1] == {"allow": {"method": "tools/call", "tool": {"any": [
-            "mail_new", "mail_needs_reply", "mail_search", "mail_read"]}}}           # read only: nothing that sends
+            "mail_new", "mail_needs_reply", "mail_search", "mail_read", "mail_thread"]}}}   # read only: nothing that sends
         assert "## Your person's email" in r.soul_text(greg)
 
     def test_house_only_when_the_definition_asks(self, repo):

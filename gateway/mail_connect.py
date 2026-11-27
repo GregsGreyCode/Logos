@@ -1,8 +1,10 @@
 """F40: connecting your own mailbox from Settings › Email, instead of scripts/logos-mail on the server.
 
-Each signed-in person connects only their own mailbox (their username is the mail ``person`` of their
-agent). The login goes where the script puts it, ~/.config/logos/mail/<person>.json (0600), and the
-mail service is restarted with it; nothing is ever sent back to the browser but the address.
+Each signed-in person connects only their own mailboxes (their username is the mail ``person`` of their
+agent), as many as they like, Gmail and Outlook mixed (F43). Each login goes where the script puts it,
+~/.config/logos/mail/<person>/<id>.json (0600), and the mail service is restarted with it; nothing is
+ever sent back to the browser but the address. Connecting a mailbox that is already there again
+(same kind and address) renews its login and keeps its private senders.
 
 * Gmail: an app password, checked with a real (read-only) sign-in before it is kept.
 * Outlook.com / Hotmail: Microsoft's device sign-in with ONE Logos app registration for the whole
@@ -22,7 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from aiohttp import web
 
@@ -48,34 +50,17 @@ def folder(env: Mapping[str, str]) -> Path:
     return mail_host.config_dir(env)
 
 
-def load_box(env: Mapping[str, str], person: str) -> Optional[dict]:
-    try:
-        return json.loads((folder(env) / f"{person}.json").read_text())
-    except (OSError, ValueError):
-        return None
+def boxes(env: Mapping[str, str], person: str) -> List[dict]:
+    """A person's mailboxes, oldest first (the file from before F43 is moved on the way)."""
+    return mail_host.boxes_of(env, person)
 
 
-def save_box(env: Mapping[str, str], person: str, box: dict) -> Path:
-    d = folder(env)
-    d.mkdir(parents=True, exist_ok=True)
-    os.chmod(d, 0o700)
-    path = d / f"{person}.json"
-    old = load_box(env, person) or {}
-    if old.get("exclude") and "exclude" not in box:
-        box["exclude"] = old["exclude"]
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(box, indent=1))
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
-    return path
+def save_box(env: Mapping[str, str], person: str, box: dict) -> dict:
+    return mail_host.save_box(env, person, box)
 
 
-def remove_box(env: Mapping[str, str], person: str) -> bool:
-    try:
-        (folder(env) / f"{person}.json").unlink()
-        return True
-    except FileNotFoundError:
-        return False
+def remove_box(env: Mapping[str, str], person: str, box_id: str) -> bool:
+    return mail_host.remove_box(env, person, box_id)
 
 
 def outlook_app(env: Mapping[str, str]) -> str:
@@ -212,23 +197,24 @@ def _agent_for(rt, person: str) -> Optional[str]:
     return None
 
 
-async def _restart(request: web.Request, person: str, fresh_login: bool) -> None:
+async def _restart(request: web.Request, box_id: Optional[str], fresh_login: bool) -> None:
     rt = _runtime(request)
     if rt is None:
         return
     host = mail_host.MailHost(rt)
-    if fresh_login:
-        await asyncio.to_thread(host.forget_token, person)
+    if fresh_login and box_id:
+        await asyncio.to_thread(host.forget_token, box_id)
     await asyncio.to_thread(host.up)
 
 
-def _health(rt, person: str) -> Optional[dict]:
+def _health(rt) -> Dict[str, dict]:
+    """How each mailbox is doing, by id, from the service (empty when it does not answer)."""
     try:
         host = mail_host.MailHost(rt)
         with urllib.request.urlopen(f"http://{host.bind_address()}:{mail_host.PORT}/health", timeout=3) as r:
-            return (json.load(r).get("mailboxes") or {}).get(person)
+            return json.load(r).get("mailboxes") or {}
     except Exception:
-        return None
+        return {}
 
 
 def _user(request):
@@ -237,19 +223,20 @@ def _user(request):
 
 
 async def handle_get(request: web.Request) -> web.Response:
-    """GET /api/v2/mail: your mailbox (address and kind only), what Logos can connect, and how it is doing."""
+    """GET /api/v2/mail: your mailboxes (id, kind, address, private senders and how each is doing),
+    and what Logos can connect."""
     user = _user(request)
     person, env, rt = user["username"], _env(request), _runtime(request)
-    box = load_box(env, person)
+    have = await asyncio.to_thread(boxes, env, person)
     agent = await asyncio.to_thread(_agent_for, rt, person)
     flow = (request.app.get("mail_flows") or {}).get(person)
+    health = await asyncio.to_thread(_health, rt) if have and rt is not None else {}
     out: Dict[str, Any] = {
         "agent": agent, "outlook_ready": bool(outlook_app(env)), "is_admin": user.get("role") == "admin",
-        "mailbox": {"kind": box.get("kind"), "address": box.get("address"), "exclude": box.get("exclude") or []} if box else None,
+        "mailboxes": [{"id": b["id"], "kind": b.get("kind"), "address": b.get("address"),
+                       "exclude": b.get("exclude") or [], "health": health.get(b["id"])} for b in have],
         "signin": {k: flow[k] for k in ("state", "code", "url", "expires", "error") if k in flow} if flow else None,
     }
-    if box and rt is not None:
-        out["health"] = await asyncio.to_thread(_health, rt, person)
     return web.json_response(out)
 
 
@@ -282,11 +269,11 @@ async def handle_gmail(request: web.Request) -> web.Response:
             count = await asyncio.to_thread(gmail_check, address, password)
         except Refused as e:
             return _refused(e)
-        await asyncio.to_thread(save_box, _env(request), person,
-                                {"kind": "gmail", "address": address, "app_password": password.replace(" ", "")})
-        await _restart(request, person, False)
-    logger.info("mail: %s connected Gmail", person)
-    return web.json_response({"connected": True, "inbox": count})
+        box = await asyncio.to_thread(save_box, _env(request), person,
+                                      {"kind": "gmail", "address": address, "app_password": password.replace(" ", "")})
+        await _restart(request, box["id"], False)
+    logger.info("mail: %s connected a Gmail mailbox", person)
+    return web.json_response({"connected": True, "inbox": count, "id": box["id"]})
 
 
 async def _outlook_flow(app: web.Application, request: web.Request, person: str, client_id: str, start: dict) -> None:
@@ -297,12 +284,12 @@ async def _outlook_flow(app: web.Application, request: web.Request, person: str,
             address = await asyncio.to_thread(outlook_address, tok["access_token"])
         except Exception:
             address = ""
-        await asyncio.to_thread(save_box, _env(request), person,
-                                {"kind": "outlook", "address": address or flow.get("address") or "",
-                                 "client_id": client_id, "refresh_token": tok["refresh_token"]})
-        await _restart(request, person, True)
-        flow.update(state="connected", address=address)
-        logger.info("mail: %s connected Outlook", person)
+        box = await asyncio.to_thread(save_box, _env(request), person,
+                                      {"kind": "outlook", "address": address or flow.get("address") or "",
+                                       "client_id": client_id, "refresh_token": tok["refresh_token"]})
+        await _restart(request, box["id"], True)
+        flow.update(state="connected", address=address, id=box["id"])
+        logger.info("mail: %s connected an Outlook mailbox", person)
     except Refused as e:
         flow.update(state="failed", error=str(e))
     except Exception as e:                                # pragma: no cover - shown, then logged
@@ -331,33 +318,45 @@ async def handle_outlook(request: web.Request) -> web.Response:
     return web.json_response({k: v for k, v in flows[person].items() if k != "task"})
 
 
+def _pick(env: Mapping[str, str], person: str, box_id: str) -> Optional[dict]:
+    """The mailbox the page means: by id, or the only one there is (a page from before F43 sends none)."""
+    have = boxes(env, person)
+    if box_id:
+        return next((b for b in have if b["id"] == box_id), None)
+    return have[0] if len(have) == 1 else None
+
+
 async def handle_disconnect(request: web.Request) -> web.Response:
-    """DELETE /api/v2/mail: forget your mailbox; your agent stops reading it."""
+    """DELETE /api/v2/mail?box=<id>: forget one of your mailboxes; your agent stops reading it and
+    its copy of that mail is removed."""
     person = _user(request)["username"]
-    removed = await asyncio.to_thread(remove_box, _env(request), person)
+    env = _env(request)
+    box = await asyncio.to_thread(_pick, env, person, request.query.get("box", ""))
+    removed = bool(box) and await asyncio.to_thread(remove_box, env, person, box["id"])
     if removed:
-        await _restart(request, person, True)
-        logger.info("mail: %s disconnected", person)
+        await _restart(request, box["id"], True)
+        logger.info("mail: %s disconnected a mailbox", person)
     (request.app.get("mail_flows") or {}).pop(person, None)
     return web.json_response({"disconnected": removed})
 
 
 async def handle_exclude(request: web.Request) -> web.Response:
-    """POST /api/v2/mail/exclude {sender, remove?}: never copy mail from a domain or address (or again do)."""
+    """POST /api/v2/mail/exclude {box, sender, remove?}: never copy mail from a domain or address into
+    that mailbox's copy (or again do). Each mailbox has its own list."""
     person = _user(request)["username"]
     env = _env(request)
     b = await _body(request)
     sender = str(b.get("sender") or "").strip().lower()
     if not SENDER.match(sender):
         return _refused(Refused("A domain (mybank.example) or an address (someone@mybank.example)."))
-    box = load_box(env, person)
+    box = await asyncio.to_thread(_pick, env, person, str(b.get("box") or ""))
     if not box:
-        return _refused(Refused("Connect a mailbox first."), 409)
+        return _refused(Refused("Connect a mailbox first." if not boxes(env, person) else "Which mailbox? Reload the page."), 409)
     have = set(box.get("exclude") or [])
     box["exclude"] = sorted(have - {sender} if b.get("remove") else have | {sender})
     await asyncio.to_thread(save_box, env, person, box)
-    await _restart(request, person, False)
-    return web.json_response({"exclude": box["exclude"]})
+    await _restart(request, box["id"], False)
+    return web.json_response({"exclude": box["exclude"], "id": box["id"]})
 
 
 async def handle_outlook_app(request: web.Request) -> web.Response:
