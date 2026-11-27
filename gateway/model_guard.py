@@ -405,6 +405,32 @@ def fix_reasoning(path: str, body: bytes, options_for) -> bytes:
     return json.dumps(req).encode()
 
 
+def quick_for_speaker(path: str, body: bytes) -> bytes:
+    """A house-speaker request answers without thinking (``reasoning_effort: "none"``).
+
+    Someone is standing at the speaker: 27 Nov the model thought for over three minutes about a
+    misheard "This is the list." while the speaker gave up after 45 s. The voice instructions already
+    ask for a short answer; this makes the model start it at once. Only the end of the request changes
+    (how the answer begins), so the instructions LM Studio holds (:class:`Warmer`) still match.
+    ``GUARD_SPEAKER_THINKING=1`` leaves speaker requests as hermes sent them."""
+    if os.environ.get("GUARD_SPEAKER_THINKING") == "1" or not path.split("?", 1)[0].endswith("/chat/completions"):
+        return body
+    if WARM_MARK.encode() not in body:
+        return body
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return body
+    msgs = req.get("messages") if isinstance(req, dict) else None
+    if not isinstance(msgs, list):
+        return body
+    head = itertools.takewhile(lambda m: isinstance(m, dict) and m.get("role") in ("system", "developer"), msgs)
+    if not any(WARM_MARK in str(m.get("content")) for m in head):
+        return body
+    req["reasoning_effort"] = "none"
+    return json.dumps(req).encode()
+
+
 # Qwen's advice against endless repetition in thinking mode. Without it the local model sometimes
 # repeats itself in its reasoning until hermes cuts the stream ("runaway repetition loop"): four
 # failed turns on 19-20 Nov, each after 5 to 11 minutes of silence.
@@ -647,7 +673,7 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                     return None                     # the caller gave up (see _health)
             body = self._body()
             if self.command == "POST":
-                body = add_presence_penalty(self.path, fix_reasoning(self.path, body, options_for))
+                body = add_presence_penalty(self.path, fix_reasoning(self.path, quick_for_speaker(self.path, body), options_for))
                 now = time.monotonic()
                 for k in [k for k, at in looped.items() if now - at > LOOP_MEMORY]:
                     looped.pop(k, None)

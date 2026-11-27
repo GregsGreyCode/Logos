@@ -216,3 +216,21 @@ def test_the_warm_up_interval_reaches_the_guard_container(monkeypatch):
     rt = Rt()
     mg.ModelGateway(rt).guard_up("http://192.0.2.5:1234/v1", "logos-agent:1")
     assert "GUARD_WARM_EVERY=0" in next(c for c in rt.calls if c[:3] == ["docker", "run", "-d"])
+
+
+def test_a_speaker_request_answers_without_thinking(monkeypatch):
+    from gateway import model_guard as mg
+    monkeypatch.delenv("GUARD_SPEAKER_THINKING", raising=False)
+    sys_msg = {"role": "system", "content": "Soul. This message was " + mg.WARM_MARK + " and ..."}
+    body = json.dumps({"model": "q", "reasoning_effort": "medium",
+                       "messages": [sys_msg, {"role": "user", "content": "hi"}]}).encode()
+    out = json.loads(mg.quick_for_speaker("/v1/chat/completions", body))
+    assert out["reasoning_effort"] == "none" and out["messages"] == [sys_msg, {"role": "user", "content": "hi"}]
+    # "none" survives fix_reasoning for an on/off model
+    assert json.loads(mg.fix_reasoning("/v1/chat/completions", json.dumps(out).encode(), lambda m: ["off", "on"]))["reasoning_effort"] == "none"
+    # the words in a user message are not enough; other paths and the switch leave it alone
+    other = json.dumps({"messages": [{"role": "system", "content": "x"}, {"role": "user", "content": mg.WARM_MARK}]}).encode()
+    assert mg.quick_for_speaker("/v1/chat/completions", other) == other
+    assert mg.quick_for_speaker("/v1/embeddings", body) == body
+    monkeypatch.setenv("GUARD_SPEAKER_THINKING", "1")
+    assert mg.quick_for_speaker("/v1/chat/completions", body) == body
