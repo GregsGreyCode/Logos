@@ -43,6 +43,12 @@ def _cal_events():
         E('standup', 'personal', 'Standup', f'{D(1)} 09:00', f'{D(1)} 09:15'),
         E('lunch', 'household', 'Lunch with Alex', f'{D(1)} 12:30', f'{D(1)} 14:00'),
         E('violin', 'bere', 'Violin lesson', f'{D(1)} 17:00', f'{D(1)} 18:00', read_only=True),
+        # Long words, places and notes (made up): the Day view shows them whole (Greg, 27 Nov).
+        E('parents', 'household', "Parents' evening at Hillside Primary: Year 3 reading progress and the spring trip to the science museum",
+          f'{D(1)} 18:30', f'{D(1)} 19:45', location='Hillside Primary School, Main Hall (use the side gate on Orchard Lane after 6 pm)',
+          notes='Bring the signed trip form and the reading record.\nAsk about the after-school chess club and whether there is still a place on Thursdays.\nParking is full by 6:15, so walk if it is dry.'),
+        E('boiler', 'personal', 'Boiler service: engineer arriving some time between eight and noon, please leave the side door unlocked',
+          f'{D(1)} 08:00', f'{D(1)} 12:00', notes='Reference BX-40417. Call the office if nobody has turned up by 11:30.'),
         E('deborah', 'bere', "Deborah's birthday", D(3), D(4), repeats=True, read_only=True),
         E('bath', 'household', 'Weekend in Bath', D(5), D(7), location='Bath'),
         E('yoga', 'personal', 'Yoga', f'{D(-2)} 18:00', f'{D(-2)} 19:00'),

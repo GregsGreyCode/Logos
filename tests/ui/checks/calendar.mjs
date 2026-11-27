@@ -41,7 +41,8 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
   const cells = await page.locator('.cal-month .cal-day').count();
   ok(cells === 35 || cells === 42 || cells === 28, `a month grid of whole weeks (${cells} days)`);
   ok(await page.locator(`.cal-day.today[data-day="${today}"][aria-current="date"]`).count() === 1, 'today is marked');
-  ok(calls.length === 1, `one call for the month (${calls.join(', ')})`);
+  ok(calls.filter((c) => c === calls[0]).length === 1, `one call for the month shown (${calls.join(', ')})`);
+  ok(calls.length === 3, `then the months either side, fetched ahead (${calls.length})`);
   const chips = await page.$$eval('.cal-legend .cal-chip', (els) => els.map((e) => e.textContent.trim()));
   ok(JSON.stringify(chips) === JSON.stringify(['Yours', 'Household', 'Béré']), `a switch per calendar, yours first: ${chips}`);
   ok(await page.locator('.cal-day.today .cal-dots .dot').count() >= 2, 'a phone month shows dots for the day\'s events');
@@ -109,9 +110,10 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
 
   // Earlier and later: a call per new range, kept after that.
   await page.goto(BASE + '#/calendar/month/' + today); await page.waitForTimeout(800);
-  const before = calls.length, t0 = await page.locator('.cal-title').textContent();
+  const before = calls.slice(), t0 = await page.locator('.cal-title').textContent();
   await page.locator('.cal-step[aria-label="Later"]').tap(); await page.waitForTimeout(500);
-  ok((await page.locator('.cal-title').textContent()) !== t0 && calls.length === before + 1, 'Later: the next month, one call');
+  const shown = calls.slice(before.length);
+  ok((await page.locator('.cal-title').textContent()) !== t0 && shown.length === 1 && !before.includes(shown[0]), `Later: the next month at once (fetched ahead), only the one after it asked for (${shown})`);
   await page.locator('.cal-step[aria-label="Earlier"]').tap(); await page.waitForTimeout(400);
   ok((await page.locator('.cal-title').textContent()) === t0, 'Earlier: back again');
   ok(errs.length === 0, `no page errors on the phone ${errs.join(' | ')}`);
@@ -143,7 +145,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
   await page.locator('.cal-views button', { hasText: 'Month' }).click(); await page.waitForTimeout(600);
   await page.screenshot({ path: `${OUT}/calendar-desk-light.png` });
   ok(await noSideScroll(page), 'nothing wider than the window');
-  ok(calls.length <= 4, `one call per range (${calls.length})`);
+  ok(new Set(calls).size === calls.length, `one call per range (${calls.length})`);
   ok(errs.length === 0, `no page errors on the desktop ${errs.join(' | ')}`);
   await ctx.close();
 }

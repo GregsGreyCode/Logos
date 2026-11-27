@@ -29,7 +29,7 @@ let cleanup = null;
 const NAMES = { home: 'Home', chat: 'Agents', brain: 'Brain', calendar: 'Calendar', noticeboard: 'Notifications', agents: 'Routines', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
 // The screens in the account panel: the initial, top right, lights up on them.
-const IN_ACCOUNT = ['advisor', 'models', 'people', 'settings', 'calendar'];   // on a phone the Calendar is in the panel too
+const IN_ACCOUNT = ['advisor', 'models', 'people', 'settings'];   // the Calendar is a phone tab (27 Nov), not in the panel
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },
@@ -137,7 +137,7 @@ async function route() {
   glow.place();
   // The top bar names the screen only when the tab bar does not: Home, Chat, Brain and Notices are
   // already lit up at the bottom; the screens under More are not (Greg, 21 Nov).
-  const tabbed = ['home', 'chat', 'brain', 'agents', 'noticeboard'].includes(name);
+  const tabbed = ['home', 'chat', 'brain', 'agents', 'noticeboard', 'calendar'].includes(name);
   // Inside one agent (its chat, brain or about): on a phone its own bar replaces the Logos bar.
   document.documentElement.classList.toggle('in-agent', (name === 'chat' && !!rest[0]) || name === 'brain' || (name === 'agents' && !!rest[0]));
   // The top bar's middle (Greg, 21-23 Nov): Home's date, and on the other two tabs their name, centred,
@@ -274,6 +274,7 @@ document.addEventListener('click', (e) => {
 });
 
 // Phone (Greg, 21 Nov; 22 Nov: smoother): swipe between Home, Agents and Notifications, the first three tabs.
+// (Not on to the Calendar, the fourth: there a swipe moves a month or a week.)
 // The screen follows the finger one to one (and only stretches a little past the first and last tab);
 // let go past about a third of the width, or with a flick, and it carries on off the screen while the
 // next slides in from the side you swiped towards; otherwise it springs back. The tab bar's highlight

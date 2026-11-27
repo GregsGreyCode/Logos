@@ -6,8 +6,8 @@
 // agent, "Ask your agent" puts the words in its chat instead.
 //   #/calendar                         this month
 //   #/calendar/<month|week|day|list>/<YYYY-MM-DD>[/<event id>]
-import { h, api, none, loading, icon, ICONS, reveal, focusIfKeyboard, ask } from './util.js';
-import { swr, forget, forgetWhere } from './cache.js';
+import { h, api, getJSON, none, loading, icon, ICONS, reveal, focusIfKeyboard, ask } from './util.js';
+import { swr, peek, keep, forget, forgetWhere } from './cache.js';
 import { draftFor } from './home.js';
 
 const MIN = 60000;
@@ -97,13 +97,26 @@ function whenLong(e) {
   if (days.length > 1) return `${dayWords(s)} ${timeOf(e.start)} to ${dayWords(parse(e.end))} ${timeOf(e.end)}`;
   return `${dayWords(s)}, ${whenShort(e)}`;
 }
-// A location that is a web address shows as a short link, never the whole address.
-function placeOf(loc) {
+// A location that is a web address shows as a short link, never the whole address (as words only inside
+// an event's own button, where a link cannot go: the event in full has it).
+function placeOf(loc, plain = false) {
   if (!loc) return null;
   const url = String(loc).match(/https?:\/\/\S+/);
   if (!url) return h('span', {}, loc);
   const rest = String(loc).replace(url[0], '').replace(/[\s,·-]+$/, '').trim();
-  return h('span', {}, rest ? `${rest} · ` : '', h('a', { href: url[0], target: '_blank', rel: 'noopener' }, /maps|goo\.gl/.test(url[0]) ? 'Map' : 'Link'));
+  const word = /maps|goo\.gl/.test(url[0]) ? 'Map' : 'Link';
+  if (plain) return h('span', {}, rest || word);
+  return h('span', {}, rest ? `${rest} · ` : '', h('a', { href: url[0], target: '_blank', rel: 'noopener' }, word));
+}
+
+// Each range asked for once at a time: what the screen shows and what it fetches ahead share one call.
+const inflight = new Map();
+function fetchRange(url) {
+  if (!inflight.has(url)) {
+    inflight.set(url, getJSON(url).then((d) => { if (d && !d.error) keep(url, d); return d; })
+      .finally(() => inflight.delete(url)));
+  }
+  return inflight.get(url);
 }
 
 export async function calendarView(root, rest, state) {
@@ -136,7 +149,7 @@ export async function calendarView(root, rest, state) {
     h('div', { class: 'cal-bar' },
       h('div', { class: 'cal-nav' }, prev, todayBtn, next, title),
       h('div', { class: 'cal-tools' }, goTo, tabs, addBtn)),
-    legend, note, body);
+    note, body);
   root.replaceChildren(page);
 
   const range = () => rangeOf(view, day);
@@ -172,18 +185,22 @@ export async function calendarView(root, rest, state) {
     }));
   }
 
-  // One event, as a line: its time, colour and title (and whose, where there is room).
-  const eventRow = (e, pal, dayIso, cls = 'cal-event') => {
+  // One event: its time, colour and title, whose, and (in the Day view, where there is room: Greg, 27 Nov) where and
+  // its notes. Every word shows: titles wrap, nothing is cut short.
+  const eventRow = (e, pal, dayIso, full = false) => {
     const p = pal[e.calendar] || { cls: '', colour: 'var(--muted)', name: e.who || e.calendar };
-    return h('button', { type: 'button', class: `${cls}${e.all_day ? ' all-day' : ''}${e.busy ? ' busy' : ''}`, style: `--cal:${p.colour}`,
+    return h('button', { type: 'button', class: `cal-event${full ? ' full' : ''}${e.all_day ? ' all-day' : ''}${e.busy ? ' busy' : ''}`, style: `--cal:${p.colour}`,
       'data-id': e.id || '', onclick: (ev) => { ev.stopPropagation(); details(e, ev.currentTarget); } },
     h('span', { class: 'cal-ev-time' }, whenShort(e, dayIso)),
     h('span', { class: `dot ${p.cls}`, 'aria-hidden': 'true' }),
-    h('span', { class: 'cal-ev-title' }, e.busy ? `Busy · ${e.who}` : e.title || '(no title)'),
-    h('span', { class: 'cal-ev-who' }, p.name));
+    h('span', { class: 'cal-ev-main' },
+      h('span', { class: 'cal-ev-title' }, e.busy ? `Busy · ${e.who}` : e.title || '(no title)'),
+      h('span', { class: 'cal-ev-who' }, p.name),
+      full && e.location ? h('span', { class: 'cal-ev-where' }, placeOf(e.location, true)) : null,
+      full && e.notes ? h('span', { class: 'cal-ev-notes' }, e.notes) : null));
   };
-  const dayList = (events, pal, dayIso, empty = 'Nothing on.') => (events && events.length
-    ? h('div', { class: 'cal-list' }, events.map((e) => eventRow(e, pal, dayIso))) : none(empty));
+  const dayList = (events, pal, dayIso, empty = 'Nothing on.', full = false) => (events && events.length
+    ? h('div', { class: 'cal-list' }, events.map((e) => eventRow(e, pal, dayIso, full))) : none(empty));
 
   function drawMonth(map, pal) {
     const [a, b] = range(), month = parse(day).getMonth();
@@ -211,7 +228,8 @@ export async function calendarView(root, rest, state) {
         h('a', { class: 'linkish small', href: `#/calendar/day/${selected}` }, 'Open day')),
       dayList(map.get(selected), pal, selected));
     swipe(grid);
-    return h('div', { class: 'cal-month-wrap' }, grid, side);
+    // The key under the month, above the day's list (Greg, 27 Nov).
+    return h('div', { class: 'cal-month-wrap' }, h('div', { class: 'cal-month-main' }, grid, legend), side);
   }
 
   function drawDays(days, map, pal, { skipEmpty = false, cls = 'cal-week' } = {}) {
@@ -247,14 +265,22 @@ export async function calendarView(root, rest, state) {
     drawLegend(pal);
     const [a, b] = range();
     const days = []; for (let d = a; d <= b; d = add(d, 1)) days.push(d);
+    // A redraw keeps the place: what had the focus has it again.
+    const had = document.activeElement && body.contains(document.activeElement)
+      ? (document.activeElement.dataset.day ? `[data-day="${document.activeElement.dataset.day}"]` : document.activeElement.dataset.id ? `[data-id="${CSS.escape(document.activeElement.dataset.id)}"]` : '') : '';
+    // The key goes under the calendar (Greg, 27 Nov): under the month grid, else under the days.
+    const keyed = (el) => h('div', { class: 'cal-keyed' }, el, legend);
     body.replaceChildren(view === 'month' ? drawMonth(map, pal)
-      : view === 'week' ? drawDays(days, map, pal)
-        : view === 'day' ? h('div', { class: 'cal-dayview card' }, dayList(map.get(day), pal, day, 'Nothing on this day.'))
-          : drawDays(days, map, pal, { skipEmpty: true, cls: 'cal-agenda' }));
+      : view === 'week' ? keyed(drawDays(days, map, pal))
+        : view === 'day' ? keyed(h('div', { class: 'cal-dayview card' }, dayList(map.get(day), pal, day, 'Nothing on this day.', true)))
+          : keyed(drawDays(days, map, pal, { skipEmpty: true, cls: 'cal-agenda' })));
     addBtn.hidden = false;
+    if (had) { const el = body.querySelector(had); if (el) el.focus({ preventScroll: true }); }
   }
 
-  // One call per range shown; the kept copy draws at once.
+  // Fast (Greg, 27 Nov): what this device kept draws at once; a fresh copy (when the kept one is older than five
+  // minutes, or there is none) replaces it in place only if something changed; with nothing kept, a light
+  // placeholder. Once drawn, the range before and after are fetched quietly, so Earlier and Later are instant.
   async function load(fresh = false) {
     keepAddress();
     const mine = ++asked, url = urlOf(range());
@@ -262,24 +288,46 @@ export async function calendarView(root, rest, state) {
     if (view !== 'month') selected = day;
     else if (selected < iso(range()[0]) || selected > iso(range()[1]) || parse(selected).getMonth() !== parse(day).getMonth()) selected = day;
     drawTitle();
-    let drawn = false;
-    await swr(url, 5 * MIN, (d) => {
+    const kept = peek(url);
+    if (kept) { data = kept.v; draw(); }
+    else if (!fresh || !data) {
+      data = null;
+      body.replaceChildren(h('div', { class: 'cal-wait' }, loading(view === 'month' ? 'card' : 'rows', view === 'month' ? 1 : 4)));
+    }
+    if (!kept || Date.now() - kept.t >= 5 * MIN) {
+      let d;
+      try { d = await fetchRange(url); } catch (e) { d = kept ? null : { error: 'calendar_unavailable' }; }
       if (!alive || mine !== asked) return;
-      const first = !data || drawn === false;
-      data = d; drawn = true; draw();
-      if (first) reveal(body.firstElementChild);
-    }, { error: 'calendar_unavailable' });
-    if (alive && mine === asked && openId) {        // opened at one event (from Home)
+      if (d && !(kept && JSON.stringify(d) === JSON.stringify(kept.v))) {
+        const wasWaiting = !data;
+        data = d; draw();
+        if (wasWaiting) reveal(body.firstElementChild);
+      }
+    }
+    if (!alive || mine !== asked) return;
+    if (openId && data) {        // opened at one event (from Home)
       const btn = body.querySelector(`[data-id="${CSS.escape(openId)}"]`);
       const e = [...(data.events || [])].find((x) => x.id === openId);
       openId = '';
       if (e) details(e, btn);
     }
+    if (data && !data.error) ahead();
+  }
+  // The ranges either side of the one shown, if this device has no fresh copy of them.
+  function ahead() {
+    for (const n of [1, -1]) {
+      const url = urlOf(rangeOf(view, stepped(n)));
+      const k = peek(url);
+      if (!k || Date.now() - k.t >= 5 * MIN) fetchRange(url).catch(() => { /* asked again when shown */ });
+    }
   }
 
-  const step = (n) => {
+  const stepped = (n) => {
     const d = parse(day);
-    day = iso(view === 'month' ? new Date(d.getFullYear(), d.getMonth() + n, 1) : add(d, n * (view === 'week' ? 7 : view === 'day' ? 1 : LIST_DAYS)));
+    return iso(view === 'month' ? new Date(d.getFullYear(), d.getMonth() + n, 1) : add(d, n * (view === 'week' ? 7 : view === 'day' ? 1 : LIST_DAYS)));
+  };
+  const step = (n) => {
+    day = stepped(n);
     if (view === 'month') selected = parse(today).getMonth() === parse(day).getMonth() && parse(today).getFullYear() === parse(day).getFullYear() ? today : day;
     load();
   };
