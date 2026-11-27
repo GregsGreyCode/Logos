@@ -716,6 +716,14 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .appearance-mode.choice { align-items: flex-start; min-height: 0; padding: 12px 14px; border-radius: var(--r-card); }
 .appearance-mode.choice input { margin-top: 2px; }
 .appearance-mode.choice strong { display: block; font-weight: 600; }
+/* Settings › House speaker: a voice per row, with its play button beside it */
+.voice-list { gap: 6px; }
+.voice-row { display: flex; align-items: center; gap: 8px; }
+.voice-row .appearance-mode.choice { flex: 1 1 auto; min-width: 0; padding: 10px 14px; }
+.voice-row .appearance-mode.choice .when { display: block; }
+.voice-play { flex: none; cursor: pointer; }
+.voice-play:hover { background: var(--chip); }
+.voice-play:disabled { opacity: 0.5; cursor: progress; }
 .block { display: block; }
 .settings-body .lead { margin: 0; }
 @media (max-width: 599px) {

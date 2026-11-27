@@ -16,6 +16,7 @@ const SECTIONS = [
   { id: 'appearance', name: 'Look', full: 'Look', icon: 'palette', group: 'You' },
   { id: 'notifications', name: 'Phone alerts', full: 'Phone alerts', icon: 'bell', group: 'You' },
   { id: 'email', name: 'Email', full: 'Email', icon: 'mail', group: 'You' },
+  { id: 'speaker', name: 'Speaker', full: 'House speaker', icon: 'speaker', group: 'You' },
   { id: 'tips', name: 'Tips', full: 'Tips', icon: 'bulb', group: 'You' },
   { id: 'matrix', name: 'Chats & devices', full: 'Chats & devices', icon: 'shield', group: 'This device' },
   { id: 'updates', name: 'Updates', full: 'Updates', icon: 'update', group: 'Logos', admin: true },
@@ -538,6 +539,69 @@ function email(body) {
   return () => { alive = false; clearTimeout(timer); };
 }
 
+// The house speaker (Voice V1.2): each agent answers in its own voice, chosen here by its people (for the
+// household agent, either of you). Every voice has a play button; the sample comes from the speaker's own Piper.
+function speaker(body) {
+  let alive = true, playing = null;
+  const player = new Audio();
+  const msg = h('p', { class: 'when', role: 'status' });
+  const box = h('div', { class: 'settings-body-inner' }, loading('rows', 3));
+  body.replaceChildren(h('section', { 'aria-label': 'House speaker' }, heading('House speaker'),
+    h('p', { class: 'when' }, 'When an agent answers through the speaker it uses the voice chosen here. The change applies from its next answer.'),
+    box, msg));
+  const urls = {};
+  const stop = () => { player.pause(); if (playing) { playing.replaceChildren(icon(ICONS.play)); playing.setAttribute('aria-label', playing.dataset.label); } playing = null; };
+  player.addEventListener('ended', stop);
+  async function play(btn, voice) {
+    if (playing === btn) { stop(); return; }
+    stop(); msg.textContent = '';
+    btn.disabled = true;
+    try {
+      if (!urls[voice]) {
+        const r = await api(`/api/v2/speaker/sample?voice=${encodeURIComponent(voice)}`);
+        if (!r.ok) { const d = await r.json().catch(() => ({})); msg.textContent = d.message || 'The sample could not be played just now.'; return; }
+        urls[voice] = URL.createObjectURL(await r.blob());
+      }
+      if (!alive) return;
+      player.src = urls[voice]; await player.play();
+      playing = btn; btn.replaceChildren(icon(ICONS.stop)); btn.setAttribute('aria-label', 'Stop the sample');
+    } catch (e) { msg.textContent = 'The sample could not be played just now.'; } finally { btn.disabled = false; }
+  }
+  function agentBlock(a, voices) {
+    const note = h('p', { class: 'when appearance-note', role: 'status' });
+    const list = h('div', { class: 'settings-choices voice-list', role: 'radiogroup', 'aria-label': `${a.display_name}: voice` },
+      voices.map((v) => {
+        const label = `Play a sample of ${v.name}`;
+        const btn = h('button', { type: 'button', class: 'icon-btn voice-play', 'aria-label': label, 'data-label': label, title: 'Play a sample',
+          onclick: () => play(btn, v.id) }, icon(ICONS.play));
+        return h('div', { class: 'voice-row' },
+          h('label', { class: 'appearance-mode choice' },
+            h('input', { type: 'radio', name: `voice-${a.name}`, value: v.id, checked: v.id === a.voice, onchange: async () => {
+              const r = await api(`/api/v2/agents/${a.name}/speaker-voice`, { method: 'PUT', body: { voice: v.id === a.default ? '' : v.id } }).catch(() => null);
+              note.textContent = r && r.ok ? `Saved: ${a.display_name} speaks as ${v.name} from its next answer.` : 'That could not be saved just now.';
+            } }),
+            h('span', {}, h('strong', {}, v.name), h('span', { class: 'when' }, `${v.accent} ${v.who}${v.id === a.default ? ' · its usual voice' : ''}`))),
+          btn);
+      }));
+    const where = a.speaks ? (a.shared ? 'Answers the speaker. Shared: either of you can change it' : 'Answers the speaker')
+      : 'Not on the speaker yet: this is the voice it will have';
+    const section = h('section', { 'aria-label': `${a.display_name}'s voice` },
+      h('h2', { class: 'label' }, a.display_name), h('p', { class: 'when' }, where), list, note);
+    if (a.speaks) return section;
+    // An agent not on the speaker yet: folded away behind one line, so Home's list is not lost below it.
+    const now = (voices.find((v) => v.id === a.voice) || {}).name || '';
+    return h('details', { class: 'colours-more' }, h('summary', {}, h('span', {}, a.display_name), h('span', { class: 'when' }, now)), section);
+  }
+  getJSON('/api/v2/speaker').then((d) => {
+    if (!alive) return;
+    const agents = d.agents || [];
+    if (!agents.length) { box.replaceChildren(h('p', { class: 'none' }, 'You have no agents yet.')); return; }
+    box.replaceChildren(...(d.on ? [] : [h('p', { class: 'none' }, 'The speaker voices are not switched on on this Logos yet. What you choose is kept for when they are.')]),
+      ...agents.map((a) => agentBlock(a, d.voices || [])));
+  }).catch(() => box.replaceChildren(h('p', { class: 'none' }, 'The voices could not be loaded just now.')));
+  return () => { alive = false; stop(); Object.values(urls).forEach((u) => URL.revokeObjectURL(u)); };
+}
+
 // What each row says it is set to now; a promise where it has to be asked for.
 function valueOf(id, state) {
   if (id === 'appearance') {
@@ -551,6 +615,10 @@ function valueOf(id, state) {
   if (id === 'email') return getJSON('/api/v2/mail').then((d) => (d.mailbox
     ? ({ gmail: 'Gmail', outlook: 'Outlook' }[d.mailbox.kind] || 'Connected') : 'Not connected'));
   if (id === 'metrics') return getJSON('/api/v2/metrics').then((d) => (d.enabled ? 'On' : 'Off'));
+  if (id === 'speaker') return getJSON('/api/v2/speaker').then((d) => {
+    const a = (d.agents || []).find((x) => x.speaks) || (d.agents || [])[0];
+    return a ? ((d.voices || []).find((v) => v.id === a.voice) || {}).name || '' : '';
+  });
   if (id === 'updates') return getJSON('/api/v2/updates?check=1').then((d) => {
     const n = ((d.plan || {}).commits || []).length;
     return n ? `${n} to install` : 'Up to date';
@@ -628,6 +696,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'tips') body.replaceChildren(...tips());
   else if (id === 'metrics') body.replaceChildren(...metricsPage());
   else if (id === 'email') done = email(body);
+  else if (id === 'speaker') done = speaker(body);
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   // Turning a foldable or resizing across the line: the other layout.
   const mq = matchMedia(WIDE);

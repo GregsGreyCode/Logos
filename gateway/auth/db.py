@@ -509,6 +509,16 @@ def _run_migrations() -> None:
                 updated_at INTEGER
             )
         """)
+        # Voice V1.2: each agent's voice on the house speaker, chosen in Settings by the people who
+        # may use that agent (a Piper voice id). Without a row, the definition's speaker_voice.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_voices (
+                name       TEXT PRIMARY KEY,
+                voice      TEXT NOT NULL,
+                set_by     TEXT,
+                updated_at INTEGER
+            )
+        """)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS schema_flags (
                 key        TEXT PRIMARY KEY,
@@ -1592,3 +1602,20 @@ def set_agent_colour(name: str, colour: str, set_by: str) -> None:
     with _conn() as conn:
         conn.execute("INSERT OR REPLACE INTO agent_colours (name, colour, set_by, updated_at) VALUES (?, ?, ?, ?)",
                      (name, colour, set_by, int(time.time() * 1000)))
+
+
+def get_agent_voices() -> dict:
+    """``{agent name: {"voice", "set_by"}}`` for every agent someone chose a speaker voice for (Voice V1.2)."""
+    with _conn() as conn:
+        return {r["name"]: {"voice": r["voice"], "set_by": r["set_by"]}
+                for r in conn.execute("SELECT name, voice, set_by FROM agent_voices")}
+
+
+def set_agent_voice(name: str, voice: str, set_by: str) -> None:
+    """``voice`` "" goes back to the one in the agent's definition."""
+    with _conn() as conn:
+        if not voice:
+            conn.execute("DELETE FROM agent_voices WHERE name = ?", (name,))
+            return
+        conn.execute("INSERT OR REPLACE INTO agent_voices (name, voice, set_by, updated_at) VALUES (?, ?, ?, ?)",
+                     (name, voice, set_by, int(time.time() * 1000)))

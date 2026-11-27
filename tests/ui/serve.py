@@ -22,6 +22,13 @@ FAKE = {
   '/api/v2/notifications': {'items': [], 'seen_until': 0},
   '/api/v2/agents/household/brain/page': {'text': '## Shopping list\n- [ ] pasta\n- [ ] lemon\n- [ ] something sweet\n## To-do\n- [ ] Drop off giveaway bag at charity shop\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n## Wedding\n- [ ] Select violin songs & reply to email\n- [ ] x\n- [ ] y\n- [ ] z\n- [ ] w\n- [ ] v\n'},
 }
+# Settings › House speaker: the real list of voices (gateway/tts.py is stdlib only), and a silent three-second sample.
+import importlib.util, io, wave
+_spec = importlib.util.spec_from_file_location('tts', os.path.join(REPO, 'gateway/tts.py')); TTS = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(TTS)
+FAKE['/api/v2/speaker'] = {'on': True, 'problem': '', 'voices': [{'id': i, 'name': n, 'accent': a, 'who': w} for i, (n, a, w) in TTS.VOICES.items()],
+  'agents': [{'name': 'household', 'display_name': 'Household agent', 'shared': True, 'speaks': True, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE, 'set_by': None},
+             {'name': 'greg', 'display_name': "Greg's agent", 'shared': False, 'speaks': False, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE, 'set_by': None}]}
+_b = io.BytesIO(); _w = wave.open(_b, 'wb'); _w.setframerate(22050); _w.setsampwidth(2); _w.setnchannels(1); _w.writeframes(b'\0\0' * 66150); _w.close(); SAMPLE = _b.getvalue()
 EXTRA = json.load(open(os.path.join(HERE, 'extra.json'))) if os.path.exists(os.path.join(HERE, 'extra.json')) else {}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -38,6 +45,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if p == "/ui/__fake-mx.js": return self.send(200, open(os.path.join(HERE, 'fake-mx.js'), 'rb').read(), 'text/javascript')
         # A check slows the API by leaving a file named slow here or in $OUT (run.sh's screenshot folder).
         if p.startswith('/api/') and any(os.path.exists(os.path.join(d, 'slow')) for d in (HERE, os.environ.get('OUT', HERE))): import time as _t; _t.sleep(1.2)
+        if p == '/api/v2/speaker/sample': return self.send(200, SAMPLE, 'audio/wav')
         if p in EXTRA: return self.send(200, json.dumps(EXTRA[p]).encode(), 'application/json')
         if p in FAKE: return self.send(200, json.dumps(FAKE[p]).encode(), 'application/json')
         if p.startswith('/api/'): return self.send(200, b'{}', 'application/json')
