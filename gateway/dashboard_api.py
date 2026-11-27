@@ -1902,6 +1902,9 @@ async def handle_notifications(request: web.Request) -> web.Response:
                           "title": "AI computer back on" if e["up"] else "AI computer off",
                           "text": "The agents answer again." if e["up"] else
                           ("Messages wait until it is back." if current else "It came back on.")})
+    # Someone at the house speaker who said they were you, with a voice that was not yours (impostor.py).
+    from gateway import impostor
+    items.extend(await asyncio.to_thread(impostor.notifications_for, user["username"], now))
     items.sort(key=lambda i: -i["ts"])
     seen = await asyncio.to_thread(_seen_until, user["id"])
     read = await asyncio.to_thread(_read_ids, user["id"])

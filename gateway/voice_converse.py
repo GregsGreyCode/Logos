@@ -43,7 +43,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from gateway import presence, speaker_voice, voice_id, wake_host
+from gateway import impostor, presence, speaker_voice, voice_id, wake_host
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,35 @@ def spoken(text: str) -> str:
         t = (cut[: end + 1] if end > MAX_SPOKEN // 2 else cut.rsplit(" ", 1)[0] + ".") + \
             " The rest is in the chat."
     return t
+
+
+def _people() -> dict:
+    """username -> display name of everyone who can sign in (whom a speaker could claim to be)."""
+    try:
+        import gateway.auth.db as auth_db
+        return {u["username"]: str(u.get("display_name") or u["username"].capitalize())
+                for u in auth_db.list_users(limit=100)[0] if u.get("username")}
+    except Exception:
+        return {}
+
+
+async def check_claim(app: Any, session_id: str, text: str, who: Any, agent: str,
+                      definition: Mapping[str, Any]) -> tuple:
+    """(username the speaker falsely claims to be, or None; the extra instruction for the agent)."""
+    people = await asyncio.to_thread(_people)
+    claim = impostor.claimed(text, people)
+    suspect = claim or impostor.suspect_for(app, session_id)
+    if not suspect:
+        return None, ""
+    prints = await asyncio.to_thread(voice_id.load_prints)
+    threshold = prints[suspect].threshold if suspect in prints else None
+    if impostor.verified(who, suspect, threshold):
+        return None, ""                                    # it clearly is them
+    if impostor.mark(app, session_id, suspect) and claim:
+        shown = str((definition or {}).get("display_name") or agent)
+        asyncio.ensure_future(impostor.alert(app, suspect, agent, shown))
+    name = people.get(suspect) or voice_id.display_name(suspect)
+    return suspect, impostor.rule(name, suspect in prints)
 
 
 def without_wake(text: str, agent: str, definition: Mapping[str, Any]) -> str:
@@ -291,6 +320,14 @@ async def handle_converse(request: "Any") -> "Any":
 
     # VO.2: who is speaking, from their voice (gateway/voice_id.py). A personal agent answers only its people.
     who = await voice_id.identify(request.app, text)
+    # Words that claim to be someone whose voice this clearly is not (gateway/impostor.py, Greg 27 Nov).
+    suspect, extra = await check_claim(request.app, session_id, text, who, agent, definition)
+    if suspect:
+        if who is not None and who.username == suspect:      # a borderline match does not count now
+            who = voice_id.Who(voice_id.vp.UNSURE, enrolled=who.enrolled)
+        owners = voice_id._owners(definition)
+        if owners is not None and definition.get("role") != "household" and suspect in owners:
+            return answer("refused", impostor.refusal(voice_id.display_name(suspect)))
     refused = voice_id.refusal(definition, who)
     if refused:
         return answer("refused", refused)
@@ -309,7 +346,7 @@ async def handle_converse(request: "Any") -> "Any":
                     turn="first" if await is_first(client, session_id) else "followup")
     # D2: private details out loud only while the speaker's own phone is home (gateway/presence.py).
     private_ok = await presence.at_home(who.username if who is not None and who.known else None)
-    instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), presence.rule(private_ok)) if p)
+    instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), presence.rule(private_ok), extra) if p)
     outcome, words = await collect(client, voice_id.tagged(without_wake(text, agent, definition), who),
                                    session_id=session_id, instructions=instructions)
     return answer(outcome, words)
