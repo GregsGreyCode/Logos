@@ -200,7 +200,7 @@ def repo(tmp_path):
     at_plugin.mkdir(parents=True)
     (at_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (at_plugin / "plugin.yaml").write_text("name: logos-alert-text\n")
-    for extra in ("logos-vault", "logos-voice-tag", "logos-speaker-chat"):
+    for extra in ("logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say"):
         d = tmp_path / "infra" / "agent-plugins" / extra
         d.mkdir(parents=True)
         (d / "__init__.py").write_text("def register(ctx):\n    pass\n")
@@ -617,6 +617,36 @@ network_policies:
         assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8097, ["172.17.0.1/32"])
         assert ep["rules"] == [{"allow": {"method": "GET", "path": "/weather"}}]
 
+    def test_speaking_up_on_the_speaker_only_for_agents_on_it(self, repo, monkeypatch):
+        # Voice V3.1: the token, the dashboard address and the one sandbox rule (gateway/speaker_say.py).
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_WEATHER + """
+  speaker_say:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8091
+        protocol: rest
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: POST, path: /api/v2/speaker/say}
+""")
+        r = rt(repo)
+        plain = r.load("alpha")
+        env = r.env_file(plain, "logos-home-alpha")
+        assert "LOGOS_SPEAKER_SAY_TOKEN" not in env and "LOGOS_SPEAKER_SAY_URL" not in env
+        assert "speaker_say" not in yaml.safe_load(r.policy_path("alpha", plain).read_text())["network_policies"]
+        on = {**plain, "speaker_name": "Finn"}
+        env = _env(r.env_file(on, "logos-home-alpha"))
+        from gateway import speaker_say
+        assert speaker_say.valid("alpha", env["LOGOS_SPEAKER_SAY_TOKEN"], r.env)
+        assert env["LOGOS_SPEAKER_SAY_URL"].endswith(":8091/api/v2/speaker/say") and env["LOGOS_AGENT_NAME"] == "alpha"
+        ep = yaml.safe_load(r.policy_path("alpha", on).read_text())["network_policies"]["speaker_say"]["endpoints"][0]
+        assert ep["port"] == 8091 and ep["rules"] == [{"allow": {"method": "POST", "path": "/api/v2/speaker/say"}}]
+        (repo / "souls/_shared/speaker.md").write_text("Use say_on_speaker.\n")
+        assert "say_on_speaker" in r.soul_text(on) and "say_on_speaker" not in r.soul_text(plain)
+
     POLICY_WEB = """
 version: 1
 network_policies:
@@ -915,7 +945,7 @@ network_policies:
         assert art.minutes_later("50 23 * * *") is None and art.minutes_later("*/5 7 * * *") is None
         assert art.minutes_later("55 6 * * 1-5") == "10 7 * * 1-5"
         own = {**agent, "briefing": {"weekdays": "30 6 * * 1-5"}}
-        assert art.briefing(own) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6"}
+        assert art.briefing(own) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6", "speaker": False}
 
     def test_daily_changes_jobs(self, repo):
         runner = FakeRunner()
@@ -999,7 +1029,7 @@ network_policies:
             "cron": {"wrap_response": False, "mirror_delivery": True},         # no header; agent sees its own jobs
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "memory": {"memory_char_limit": 6000},
-            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat"]},
+            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say"]},
             "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
@@ -1007,10 +1037,10 @@ network_policies:
         agent = r.load("alpha")
         agent["session_reset"] = {"mode": "daily", "at_hour": 3}
         cfg = art.yaml.safe_load(r.config_text("alpha", agent))
-        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "hermes-session-reset-policy"]}
+        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "hermes-session-reset-policy"]}
         assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
         agent["session_reset"] = {"mode": "none"}
-        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat"]}
+        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say"]}
 
     def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
         r = rt(repo)
@@ -1046,7 +1076,8 @@ network_policies:
             "plugins/logos-alert-text/__init__.py", "plugins/logos-alert-text/plugin.yaml",
             "plugins/logos-vault/__init__.py", "plugins/logos-vault/plugin.yaml",
             "plugins/logos-voice-tag/__init__.py", "plugins/logos-voice-tag/plugin.yaml",
-            "plugins/logos-speaker-chat/__init__.py", "plugins/logos-speaker-chat/plugin.yaml", "SOUL.md"]
+            "plugins/logos-speaker-chat/__init__.py", "plugins/logos-speaker-chat/plugin.yaml",
+            "plugins/logos-speaker-say/__init__.py", "plugins/logos-speaker-say/plugin.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out

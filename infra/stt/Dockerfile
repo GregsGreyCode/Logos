@@ -7,9 +7,10 @@
 #
 # Third-party parts:
 #   sherpa-onnx 2.0.1                  runs both models (Apache-2.0; it carries its own onnxruntime)
-#   NVIDIA Parakeet TDT 0.6B v2, int8  English speech to text (CC-BY-4.0), as packaged by sherpa-onnx:
-#                                      the model Home Assistant's Whisper add-on picks by default for
-#                                      English. Pinned by SHA-256.
+#   NVIDIA Parakeet TDT 0.6B v3, int8  speech to text in English, French and 23 other European languages
+#                                      (CC-BY-4.0), as packaged by sherpa-onnx: v2 (English only, the model
+#                                      Home Assistant's Whisper add-on picks by default) with French added
+#                                      (V3.4, for Béré). Pinned by SHA-256.
 #   3D-Speaker CAM++ (zh_en common advanced), from sherpa-onnx's model releases, pinned by SHA-256
 #                                      (the model the wake-word spike used)
 #   av 18.1.0, numpy 2.3.4             reading browser recordings (the voice service's av pin)
@@ -31,8 +32,8 @@ RUN python /build/fetch.py fetch "${LIBRISPEECH}" "${LIBRISPEECH_SHA256}" /build
 
 FROM base AS models
 COPY fetch.py /build/fetch.py
-ARG WORDS_MODEL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2
-ARG WORDS_MODEL_SHA256=6fc4426b54aa549a0019b8a75b8dea59164e71790a37ac56a045ad57f915f714
+ARG WORDS_MODEL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
+ARG WORDS_MODEL_SHA256=1495e91b59d7fc53ddca91f3431758ec99f8fa253fdb0e1e851be0f72b14b0f9
 ARG SPEAKER_MODEL=https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
 ARG SPEAKER_MODEL_SHA256=53cab20ba8f2eb2f6e2d89ecc18e88ef3222169b61b4419cbc13666744a4574b
 RUN python /build/fetch.py fetch "${WORDS_MODEL}" "${WORDS_MODEL_SHA256}" /build/words.tar.bz2 \
@@ -50,7 +51,7 @@ ENV STT_WORDS=/models/words \
     PYTHONUNBUFFERED=1
 
 LABEL org.opencontainers.image.title="logos-stt" \
-      org.opencontainers.image.description="Speech to text for the Logos house speaker, and who said it (Parakeet, CAM++, Wyoming)" \
+      org.opencontainers.image.description="Speech to text for the Logos house speaker, and who said it (Parakeet v3, CAM++, Wyoming)" \
       org.opencontainers.image.source="https://github.com/GregsGreyCode/Logos"
 
 USER 10000:10000

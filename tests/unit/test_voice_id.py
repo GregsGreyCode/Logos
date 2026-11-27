@@ -10,6 +10,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 import gateway.auth.db as auth_db
+from gateway import tts
 from gateway import voice_converse as vc
 from gateway import voice_id as vi
 from gateway import voiceprint as vp
@@ -198,7 +199,7 @@ def test_home_is_told_who_asked(db, heard, monkeypatch, tmp_path):
     heard["rows"] = [row("What's on today?", near(GREG, RNG))]
     links = Links({"name": "household", "role": "household", "owners": ["greg", "bere"], "model": {}})
     out = converse(links, "What's on today?", monkeypatch, tmp_path)
-    assert out["speech"] == "Done."
+    assert tts.unmark(out["speech"])[0] == "Done."
     text, kw = links.c.started[0]
     assert text == "[Speaker: Greg] What's on today?" and "The person speaking is Greg" in kw["instructions"]
 
@@ -209,11 +210,11 @@ def test_a_personal_agent_declines_someone_else_without_running(db, heard, monke
     heard["rows"] = [row("What's on today?", near(BERE, RNG))]
     links = Links({"name": "finn", "owners": ["greg"], "model": {}})
     out = converse(links, "What's on today?", monkeypatch, tmp_path, agent="finn")
-    assert "only answer Greg" in out["speech"] and out["agent"] == "finn"
+    assert "only answer Greg" in tts.unmark(out["speech"])[0] and out["agent"] == "finn"
     assert links.c.started == []                                          # the agent was never run
     heard["rows"] = [row("What's on today?", near(GREG, RNG))]
     out = converse(links, "What's on today?", monkeypatch, tmp_path, agent="finn")
-    assert out["speech"] == "Done." and links.c.started[0][0].startswith("[Speaker: Greg]")
+    assert tts.unmark(out["speech"])[0] == "Done." and links.c.started[0][0].startswith("[Speaker: Greg]")
 
 
 # ── Settings › Your voice ────────────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ from typing import Any, Callable, Dict, Mapping, Optional
 from gateway import tts_host
 
 CONTAINER = "logos-stt"
-IMAGE = "logos-stt:1"
+IMAGE = "logos-stt:2"                   # 2: Parakeet v3 (English and French)
 WYOMING_PORT = 10300
 HTTP_PORT = 8101
 RUN_AS = "10000:10000"

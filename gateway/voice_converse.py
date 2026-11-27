@@ -16,6 +16,9 @@ words here and speaks what comes back.
 - **One conversation per speaker per day.** A follow-up ("and tomorrow?") keeps the context.
 - **Spoken answers.** The agent is told the words will be read aloud: a few short sentences,
   no Markdown. Whatever Markdown slips through is taken out before speaking.
+- **In French or English (V3.4).** Whichever the person spoke (gateway/speech_lang.py; Home
+  Assistant's pipeline says English whatever is said): the agent is asked to answer in French when
+  the words were French, and a French answer is read by the agent's French voice.
 - **Follow-ups (V3.2).** When the answer ends in a question, ``continue`` is true and the speaker
   listens again without the wake word.
 - **It never leaves the speaker waiting long.** After ``WAIT_S`` the person hears that the answer
@@ -43,7 +46,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from gateway import impostor, presence, speaker_voice, voice_id, wake_host
+from gateway import impostor, presence, speaker_voice, speech_lang, voice_id, wake_host
 
 logger = logging.getLogger(__name__)
 
@@ -63,16 +66,25 @@ SLOW = "That's taking me a while. I'll put the answer in our chat."
 OFF = "My model is switched off right now. Try again in a few minutes."
 DOWN = "I can't reach my agent right now. Try again in a minute."
 FAILED = "Sorry, something went wrong while I was working that out."
+#: The same, for someone who spoke French.
+FRENCH = {
+    SLOW: "Ça me prend un moment. Je mettrai la réponse dans notre conversation.",
+    OFF: "Mon modèle est éteint pour le moment. Réessaie dans quelques minutes.",
+    DOWN: "Je n'arrive pas à joindre mon agent. Réessaie dans une minute.",
+    FAILED: "Désolé, quelque chose s'est mal passé.",
+}
 
 INSTRUCTIONS = (
     "This message was spoken aloud to the house speaker and your reply will be read out by a "
     "text-to-speech voice. Whoever is speaking has not been identified: it may be Greg, Béré "
-    "or a guest. Reply in plain spoken English, in one to three short sentences. Use no "
+    "or a guest. Reply in plain spoken words, in the language they spoke (English or French), in one "
+    "to three short sentences. Use no "
     "Markdown, lists, tables, emoji, links or code. Say numbers and times the way a person "
     "would. If the request needs long work or a long answer, do it, say in one sentence that "
     "the details are in the chat, and keep the spoken part short. If you need something from "
     "the person to go on, end with one short question. Answer promptly; don't deliberate at length."
 )
+IN_FRENCH = "They spoke French: reply in French."
 
 
 def _config_dir(env: Mapping[str, str]) -> Path:
@@ -298,13 +310,18 @@ async def handle_converse(request: "Any") -> "Any":
     stats: Stats = request.app["voice_stats"]
     measured: dict = {}
 
+    lang = speech_lang.detect(text)            # V3.4: Home Assistant's "language" is the pipeline's
+
     def answer(outcome: str, words: str) -> "web.Response":
         said = spoken(presence.spoken_part(words)) or FAILED
-        speaker_voice.said(request.app, agent, said)   # read out in this agent's voice (V1.2)
+        if lang == "fr":
+            said = FRENCH.get(said, said)
+        # Read out in this agent's voice (V1.2), marked for Home Assistant's phrase cache (V3.3).
+        speech = speaker_voice.said(request.app, agent, said)
         if measured:
             stats.observe(agent, measured["model"], measured["turn"], outcome, time.monotonic() - started)
-        logger.info("voice: %s via %s: %s in %.1fs", agent, device[:12], outcome, time.monotonic() - started)
-        return web.json_response({"speech": said, "conversation_id": session_id, "agent": agent,
+        logger.info("voice: %s via %s: %s in %.1fs (%s)", agent, device[:12], outcome, time.monotonic() - started, lang)
+        return web.json_response({"speech": speech, "conversation_id": session_id, "agent": agent,
                                   "continue": outcome == "ok" and expects_reply(said)})
 
     links = request.app.get("agent_links")
@@ -346,7 +363,8 @@ async def handle_converse(request: "Any") -> "Any":
                     turn="first" if await is_first(client, session_id) else "followup")
     # D2: private details out loud only while the speaker's own phone is home (gateway/presence.py).
     private_ok = await presence.at_home(who.username if who is not None and who.known else None)
-    instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), presence.rule(private_ok), extra) if p)
+    instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), presence.rule(private_ok), extra,
+                                        IN_FRENCH if lang == "fr" else "") if p)
     outcome, words = await collect(client, voice_id.tagged(without_wake(text, agent, definition), who),
                                    session_id=session_id, instructions=instructions)
     return answer(outcome, words)
