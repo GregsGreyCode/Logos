@@ -14,6 +14,8 @@ timezone: Europe/London
 noticeboard: true               # may exchange messages with the other agents (docs/noticeboard.md)
 voice: true                     # voice notes are turned into text by the voice service (docs/voice.md)
 speaker_voice: en_GB-northern_english_male-medium   # its voice on the house speaker; Settings can change it
+speaker_name: Home               # the house speaker wakes to "Hey Home" (docs/voice.md)
+speaker_wake: [Hey Home]         # not the bare name: "home" is too common a word
 calendar:                       # Household calendar in full; each person's busy times only (docs/calendar.md)
   enabled: true
   free_busy: {greg: Greg, bere: Béré}
