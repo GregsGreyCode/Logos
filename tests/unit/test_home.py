@@ -236,3 +236,167 @@ def test_tips_seen_is_a_list_of_known_screens():
     assert _pref_ok("tips_seen", []) and _pref_ok("tips_seen", ["home", "routines"])
     assert not _pref_ok("tips_seen", ["home", "home"]) and not _pref_ok("tips_seen", ["elsewhere"])
     assert not _pref_ok("tips_seen", "home")
+
+
+# ── The Calendar screen (Béré, 27 Nov) ─────────────────────────────────────────────────────────
+
+class _CalHost:
+    def __init__(self, rt): pass
+    def token_for(self, name): return "tok-agent"
+    def reader_token(self, name): return "tok-reader" if name in ("greg", "bere") else ""
+    def service_url(self): return "http://svc/mcp"
+
+
+def _cal_post(seen):
+    def post(url, body, token):
+        req = json.loads(body)
+        seen.append((token, req["params"]["name"], req["params"]["arguments"]))
+        if req["params"]["name"] == "list_events":
+            return tool({"events": [{"id": "household/a.ics", "calendar": "household", "title": "Bins", "start": "2026-11-30", "all_day": True}]})
+        return tool({"calendars": [{"name": "bere", "shows": "Béré"}, {"name": "household", "shows": "Household (shared by everyone)"},
+                                   {"name": "personal", "shows": "Your own calendar"}]})
+    return post
+
+
+def test_calendar_range_reads_with_the_persons_own_key_in_one_call(monkeypatch):
+    from gateway import calendar_host
+    monkeypatch.setattr(calendar_host, "CalendarHost", _CalHost)
+    monkeypatch.setattr(calendar_host, "uses_calendar", lambda d: True)
+    monkeypatch.setattr(home, "today_in", lambda tz, now=None: __import__("datetime").date(2026, 11, 27))
+    seen = []
+    out = home.calendar_range(object(), "greg", {}, "greg", "2026-10-26", "2026-12-06", post=_cal_post(seen))
+    assert seen[0] == ("tok-reader", "list_events", {"start": "2026-10-26", "end": "2026-12-06"})
+    assert [s[1] for s in seen] == ["list_events", "list_calendars"]
+    assert out["today"] == "2026-11-27" and out["start"] == "2026-10-26" and out["end"] == "2026-12-06"
+    assert out["events"][0]["title"] == "Bins" and out["busy"] == []
+    # yours first, then Household (its "(shared by everyone)" dropped), then the others
+    assert [(c["key"], c["name"]) for c in out["calendars"]] == [("personal", "Your own calendar"), ("household", "Household"), ("bere", "Béré")]
+
+
+def test_calendar_range_falls_back_to_what_the_agent_sees_and_says_when_there_is_none(monkeypatch):
+    from gateway import calendar_host
+    monkeypatch.setattr(calendar_host, "CalendarHost", _CalHost)
+    uses = {"v": True}
+    monkeypatch.setattr(calendar_host, "uses_calendar", lambda d: uses["v"])
+    seen = []
+    home.calendar_range(object(), "household", {}, "guest", "2026-11-01", "2026-11-30", post=_cal_post(seen))
+    assert seen[0][0] == "tok-agent"             # no calendar account of their own
+    uses["v"] = False
+    assert home.calendar_range(object(), "household", {}, "guest", "2026-11-01", "2026-11-30", post=_cal_post([])) == {"error": "no_calendar"}
+    down = home.calendar_range(object(), "greg", {}, "greg", "2026-11-01", "2026-11-30", post=lambda *a: (_ for _ in ()).throw(OSError("down")))
+    assert down["error"] == "calendar_unavailable"
+
+
+def test_calendar_range_refuses_odd_ranges_before_asking_anyone(monkeypatch):
+    from gateway import calendar_host
+    monkeypatch.setattr(calendar_host, "CalendarHost", _CalHost)
+    asked = []
+    for start, end in (("2026-11-30", "2026-11-01"), ("nope", "2026-11-01"), ("2026-01-01", "2026-12-31"), ("", "")):
+        assert home.calendar_range(object(), "greg", {}, "greg", start, end, post=lambda *a: asked.append(a)) == {"error": "bad_range"}
+    assert asked == []
+    assert home.parse_range("2026-11-01", "2026-11-01") and home.parse_range("2026-10-26", "2026-12-26")   # 62 days is fine
+
+
+def test_calendar_endpoint_answers_once_per_range_and_keeps_it_a_minute(monkeypatch):
+    import asyncio
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from gateway import dashboard_api as d
+    monkeypatch.setattr(d, "_user", lambda r: {"id": "u1", "username": "bere", "display_name": "Béré", "role": "user"})
+
+    async def visible(request, username):
+        return {"bere": {"owners": ["bere"], "definition": {"timezone": "Europe/Paris"}},
+                "household": {"owners": ["greg", "bere"], "definition": {}}}
+    monkeypatch.setattr(d, "_visible_agents", visible)
+    monkeypatch.setattr(d.agent_chat, "runtime_of", lambda backend: object())
+    calls = []
+
+    def fake_range(runtime, agent, definition, username, start, end):
+        calls.append((agent, username, start, end))
+        return {"start": start, "end": end, "today": "2026-11-27", "events": [], "busy": [], "calendars": []}
+    monkeypatch.setattr(home, "calendar_range", fake_range)
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/api/v2/calendar", d.handle_calendar)
+        async with TestClient(TestServer(app)) as c:
+            bad = await c.get("/api/v2/calendar?start=2026-12-01&end=2026-11-01")
+            first = await (await c.get("/api/v2/calendar?start=2026-10-26&end=2026-12-06")).json()
+            again = await (await c.get("/api/v2/calendar?start=2026-10-26&end=2026-12-06")).json()
+            week = await (await c.get("/api/v2/calendar?start=2026-11-23&end=2026-11-29")).json()
+            return bad.status, first, again, week
+    status, first, again, week = asyncio.run(run())
+    assert status == 400
+    assert first == again and first["agent"] == "bere"           # "Add" goes to her own agent
+    assert calls == [("bere", "bere", "2026-10-26", "2026-12-06"), ("bere", "bere", "2026-11-23", "2026-11-29")]
+    assert week["start"] == "2026-11-23"
+    assert first["can_change"] == []                             # her agent has no calendar of hers in this setup
+
+
+def test_changes_go_through_your_own_agent_with_your_own_calendar_only():
+    mine = {"owners": ["bere"], "definition": {"calendar": {"enabled": True, "person": "bere"}}}
+    shared = {"owners": ["greg", "bere"], "definition": {"calendar": {"enabled": True, "free_busy": {"bere": "Béré"}}}}
+    gregs = {"owners": ["greg"], "definition": {"calendar": {"enabled": True, "person": "greg"}}}
+    assert home.calendar_writer({"bere": mine, "household": shared, "greg": gregs}, "bere") == "bere"
+    assert home.calendar_writer({"household": shared, "greg": gregs}, "bere") is None      # never the shared one, nor Greg's
+    odd = {"owners": ["bere"], "definition": {"calendar": {"enabled": True, "person": "greg"}}}
+    assert home.calendar_writer({"x": odd}, "bere") is None                                   # her agent, but Greg's calendar
+
+
+def test_change_arguments_are_checked_before_anything_is_sent():
+    assert home.change_args("add", {"calendar": "household", "title": " Bins ", "start": "2026-11-30", "x": 1}) == \
+        {"calendar": "household", "title": "Bins", "start": "2026-11-30"}
+    assert home.change_args("update", {"id": "personal/a.ics", "title": "Dentist", "location": ""}) == \
+        {"id": "personal/a.ics", "title": "Dentist", "location": ""}
+    assert home.change_args("cancel", {"id": "household/a.ics", "title": "ignored"}) == {"id": "household/a.ics"}
+    for action, body in (("add", {"calendar": "bere", "title": "x", "start": "2026-11-30"}), ("add", {"calendar": "personal", "title": " "}),
+                         ("update", {"id": "bere/a.ics", "title": "mine now"}), ("cancel", {"id": "a.ics"}), ("delete_all", {})):
+        with pytest.raises(ValueError):
+            home.change_args(action, body)
+
+
+def test_a_change_uses_the_agents_key_and_passes_a_refusal_on_in_plain_words(monkeypatch):
+    from gateway import calendar_host
+    monkeypatch.setattr(calendar_host, "CalendarHost", _CalHost)
+    seen = []
+
+    def post(url, body, token):
+        req = json.loads(body)
+        seen.append((token, req["params"]["name"], req["params"]["arguments"]))
+        if req["params"]["name"] == "cancel_event":
+            return {"result": {"isError": True, "content": [{"type": "text", "text": "Not done: This is a repeating event."}]}}
+        return tool({"added": {"id": "personal/n.ics"}})
+    out = home.calendar_change(object(), "bere", "add", {"calendar": "personal", "title": "Yoga", "start": "2026-12-01 18:00"}, post=post)
+    assert out == {"added": {"id": "personal/n.ics"}} and seen[0][:2] == ("tok-agent", "add_event")
+    out = home.calendar_change(object(), "bere", "cancel", {"id": "personal/r.ics"}, post=post)
+    assert out == {"error": "refused", "message": "This is a repeating event."}
+
+
+def test_calendar_change_endpoint_refuses_without_your_own_agent_and_forgets_what_it_kept(monkeypatch):
+    import asyncio
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+    from gateway import dashboard_api as d
+    monkeypatch.setattr(d, "_user", lambda r: {"id": "u1", "username": "bere", "display_name": "Béré", "role": "user"})
+    agents = {"household": {"owners": ["greg", "bere"], "definition": {"calendar": {"enabled": True}}}}
+
+    async def visible(request, username):
+        return agents
+    monkeypatch.setattr(d, "_visible_agents", visible)
+    monkeypatch.setattr(d.agent_chat, "runtime_of", lambda backend: object())
+    done = []
+    monkeypatch.setattr(home, "calendar_change", lambda rt, agent, action, args: done.append((agent, action, args)) or {"added": {}})
+
+    async def run():
+        app = web.Application()
+        app.router.add_post("/api/v2/calendar/{action}", d.handle_calendar_change)
+        app["calendar_cache"] = {("greg", "a", "b"): (0, {})}
+        async with TestClient(TestServer(app)) as c:
+            none = await c.post("/api/v2/calendar/add", json={"calendar": "personal", "title": "Yoga", "start": "2026-12-01"})
+            agents["bere"] = {"owners": ["bere"], "definition": {"calendar": {"enabled": True, "person": "bere"}}}
+            bad = await c.post("/api/v2/calendar/add", json={"calendar": "greg", "title": "Yoga", "start": "2026-12-01"})
+            good = await c.post("/api/v2/calendar/add", json={"calendar": "personal", "title": "Yoga", "start": "2026-12-01"})
+            return none.status, bad.status, good.status, app["calendar_cache"]
+    s_none, s_bad, s_good, cache = asyncio.run(run())
+    assert (s_none, s_bad, s_good) == (403, 400, 200)
+    assert done == [("bere", "add", {"calendar": "personal", "title": "Yoga", "start": "2026-12-01"})] and cache == {}

@@ -10,11 +10,14 @@ import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
 import { unreadFromAgents } from './notify.js';
+import { monthWidget } from './calendar.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
 const ASK_KEY = 'logos-ask';           // Chat picks the question up from here and sends it
 const SEEN_KEY = 'logos-home-last';    // the last Home seen on this device, drawn at once while the new one loads
 
+// An event on Home opens the Calendar at its day, with it open (Greg, 27 Nov).
+const calHref = (e) => `#/calendar/day/${String(e.start || '').slice(0, 10)}${e.id ? `/${encodeURIComponent(e.id)}` : ''}`;
 // "2026-11-19 10:30" -> "10:30"; an all-day event shows "All day".
 const timeOf = (e) => (e.all_day ? 'All day' : String(e.start || '').slice(11, 16));
 
@@ -194,21 +197,23 @@ export async function homeView(root, rest, state) {
     // end. Today's that are over are dimmed.
     const now = new Date();
     const over = (e) => !e.all_day && String(e.start).startsWith(day) && new Date(String(e.end || e.start).replace(' ', 'T')) < now;
-    const row = (e) => h('div', { class: `home-row home-line${over(e) ? ' over' : ''}` },
+    const row = (e) => h('div', { class: `home-row home-line${over(e) ? ' over' : ''}`, role: 'link', tabindex: '0', 'data-href': calHref(e) },
       h('span', { class: 'home-time' }, timeOf(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, e.title),
       h('span', { class: 'home-meta' }, whose(e), place(e.location)));
     // One list, Today then Tomorrow (Greg, 22 Nov: no longer side by side, which left half the width
     // empty whenever one day had more on than the other).
-    const part = (label, list, empty) => [h('h3', { class: 'sub-label' }, label), ...(list.length ? list.map(row) : [none(empty)])];
+    const part = (label, list, empty, on) => [h('h3', { class: 'sub-label' }, h('span', { class: 'label-link', role: 'link', tabindex: '0', 'data-href': `#/calendar/day/${on}` }, label)),
+      ...(list.length ? list.map(row) : [none(empty)])];
+    const tomorrow = (() => { const t = new Date(`${day}T12:00:00`); t.setDate(t.getDate() + 1); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; })();
     todayBox.replaceChildren(h('div', { class: 'home-list home-agenda' },
-      ...part('Today', todays, 'Nothing today.'), ...part('Tomorrow', later.slice(0, 6), 'Nothing yet.')));
+      ...part('Today', todays, 'Nothing today.', day), ...part('Tomorrow', later.slice(0, 6), 'Nothing yet.', tomorrow)));
   }
 
 
   // ── Home is yours to arrange (Greg, 22 Nov): widgets in your order, dragged into place in Edit ──
-  const WIDGETS = { next: 'Next', weather: 'Weather', calendar: 'Calendar', messages: 'Messages', coming: 'Coming up', lights: 'Lights', lists: 'Lists' };
+  const WIDGETS = { next: 'Next', weather: 'Weather', calendar: 'Calendar', messages: 'Messages', coming: 'Coming up', lights: 'Lights', lists: 'Lists', month: 'Month' };
   // Everyone starts with Greg's own arrangement (23 Nov), then moves things as they like.
   const DEFAULT_WIDGETS = ['weather', 'calendar', 'messages', 'next', 'lists', 'lights', 'coming'];
   const chosen = () => {
@@ -314,7 +319,8 @@ export async function homeView(root, rest, state) {
 
   // Coming up: the next two weeks after tomorrow, one line each (all-day ones, like birthdays, too).
   const comingBox = h('div', { class: 'home-list home-agenda' }, loading('rows', 3));
-  const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up' }, h('h2', { class: 'label' }, 'Coming up'), comingBox);
+  const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up' },
+    h('h2', { class: 'label' }, h('a', { class: 'label-link', href: '#/calendar/list' }, 'Coming up')), comingBox);
   const showComing = () => swr('/api/v2/home/coming', 5 * MIN, drawComing, { error: 'x' });   // kept 5 minutes
   function drawComing(d) {
     if (!alive) return;
@@ -322,7 +328,7 @@ export async function homeView(root, rest, state) {
     const events = (d.events || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start))).slice(0, 8);
     const day = (e) => new Date(`${String(e.start).slice(0, 10)}T12:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric' });
     const whose = (e) => (e.calendar === 'personal' ? 'Yours' : String((d.calendars || {})[e.calendar] || e.calendar).replace(/\s*\(.*\)\s*$/, ''));
-    comingBox.replaceChildren(...(events.length ? events.map((e) => h('div', { class: 'home-row home-line' },
+    comingBox.replaceChildren(...(events.length ? events.map((e) => h('div', { class: 'home-row home-line', role: 'link', tabindex: '0', 'data-href': calHref(e) },
       h('span', { class: 'home-time' }, day(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, `${e.all_day ? '' : `${String(e.start).slice(11, 16)} `}${e.title}`),
@@ -350,7 +356,8 @@ export async function homeView(root, rest, state) {
   // ── Edit: drag a widget by its handle (finger or mouse), ✕ takes it off, Add puts one back ──────
   const nextSec = h('section', { class: 'home-next-sec', 'aria-label': 'Next' }, nextUp);
   const calSec = h('section', { 'aria-label': 'Calendar', class: 'home-cal' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox);
-  const SECS = { next: nextSec, weather: weatherSec, calendar: calSec, messages: msgSec, coming: comingSec, lights: lightsSec, lists: listsSec };
+  const month = monthWidget();            // the Calendar's own widget (calendar.js)
+  const SECS = { next: nextSec, weather: weatherSec, calendar: calSec, messages: msgSec, coming: comingSec, lights: lightsSec, lists: listsSec, month: month.sec };
   for (const [id, el] of Object.entries(SECS)) { el.dataset.widget = id; el.classList.add('home-widget'); }
   const board = h('div', { class: 'home-widgets' });
   // A wide screen (Greg, 23 Nov): two columns that each pack up on their own, still in your order
@@ -510,7 +517,7 @@ export async function homeView(root, rest, state) {
   const editBtn = h('button', { type: 'button', class: 'home-edit-link', 'aria-label': 'Arrange Home', title: 'Arrange Home',
     onclick: () => setEditing(!editing) }, icon(ICONS.pencil));
   const SHOW = { next: () => showNext(data && data.today), weather: () => showWeather(), messages: () => showMessages(), coming: () => showComing(),
-    lights: () => showLights(), lists: () => showLists(), calendar: () => {} };
+    lights: () => showLights(), lists: () => showLists(), calendar: () => {}, month: () => month.show(state && state.me && state.me.username) };
 
   function applyWidgets() {
     const order = chosen();
@@ -614,6 +621,16 @@ export async function homeView(root, rest, state) {
     if (!v) for (const el of board.querySelectorAll('.home-place')) el.remove();
     decorate(); drawTray();
   }
+  // The calendar lines open the Calendar (Greg, 27 Nov). They are not links, so a long press on one still starts Edit;
+  // while arranging, a tap does nothing.
+  const follow = (e) => {
+    const el = e.target.closest('[data-href]');
+    if (!el || e.target.closest('a') || board.classList.contains('editing')) return;
+    if (e.type === 'keydown' && e.key !== 'Enter') return;
+    location.hash = el.dataset.href;
+  };
+  board.addEventListener('click', follow);
+  board.addEventListener('keydown', follow);
   // A long press on a widget also starts Edit (as a phone's home screen does).
   let pressT = null;
   board.addEventListener('pointerdown', (e) => {
@@ -784,18 +801,29 @@ export async function homeView(root, rest, state) {
 export function handOver(agent, text, voice) {
   try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent, text, voice: voice && voice.seconds > 0 ? voice : null })); } catch (e) { /* sent below anyway */ }
 }
+// Words put in the agent's message box, not sent: the person finishes them (the Calendar's "Ask your agent", 27 Nov).
+export function draftFor(agent, text) {
+  try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent, text, draft: true })); } catch (e) { /* nothing then */ }
+}
+export function takeDraft(agent) {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');
+    if (v && v.draft && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return v.text; }
+  } catch (e) { /* nothing waiting */ }
+  return null;
+}
 // The same, with the voice message's length and shape when it was spoken: {text, voice}.
 export function takeAskFull(agent) {
   try {
     const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');
-    if (v && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return { text: v.text, voice: v.voice || null }; }
+    if (v && !v.draft && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return { text: v.text, voice: v.voice || null }; }
   } catch (e) { /* nothing waiting */ }
   return null;
 }
 export function takeAsk(agent) {
   try {
     const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');
-    if (v && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return v.text; }
+    if (v && !v.draft && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return v.text; }
   } catch (e) { /* nothing waiting */ }
   return null;
 }

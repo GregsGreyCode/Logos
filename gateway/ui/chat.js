@@ -4,7 +4,7 @@ import { getPref, setPref } from './prefs.js';
 import * as mx from './mx.js';
 import { matrixChat } from './chat-mx.js';
 import { voidView } from './agents-void.js';
-import { takeAsk } from './home.js';
+import { takeAsk, takeDraft } from './home.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
 
@@ -632,6 +632,8 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   if (chatArg && conversations) await openConversation(conversations);
   // A question asked on Home: send it now, in this new conversation.
   const asked = !chatArg || !conversations.some((x) => x.chat_id === chatId) ? takeAsk(agent.name) : null;
+  const drafted = takeDraft(agent.name);
+  if (drafted) { input.value = drafted; input.focus(); }
   if (asked && agent.running) { sendMessage(asked); return () => { alive = false; stopRecording(); working('chat', false); document.removeEventListener('keydown', onKey); }; }
   // A reply was still on its way when this page was last open: show the message and wait for it.
   const pending = getPending(agent.name);

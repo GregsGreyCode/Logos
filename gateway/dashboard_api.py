@@ -145,7 +145,7 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 # Home's widgets, each person's own choice (Greg, 22 Nov); the calendar is always there.
-WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming")
+WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming", "month")
 # Widgets that come in more than one size, each person's own choice in Edit (Greg, 23 Nov: his To-do compact,
 # Béré's full). The first is the default.
 WIDGET_SIZES = {"lists": ("compact", "full")}
@@ -1989,6 +1989,61 @@ async def handle_home_coming(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
+CALENDAR_CACHE_SECONDS = 60
+
+
+async def handle_calendar(request: web.Request) -> web.Response:
+    """GET /api/v2/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD — the Calendar screen (Béré, 27 Nov): every event in
+    that range (both days included, at most 62 days) in the calendars this person may read, as Home reads them.
+    One call per month or week shown; each answer is kept a minute per person and range."""
+    from gateway import home
+    user = _user(request)
+    start, end = request.query.get("start", ""), request.query.get("end", "")
+    if not home.parse_range(start, end):
+        return web.json_response({"error": "bad_range"}, status=400)
+    agents = await _visible_agents(request, user["username"])
+    name = home.own_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_calendar"})
+    cache = request.app.setdefault("calendar_cache", {})
+    key, now = (user["username"], start, end), time.time()
+    if key in cache and now - cache[key][0] < CALENDAR_CACHE_SECONDS:
+        return web.json_response(cache[key][1])
+    out = await asyncio.to_thread(home.calendar_range, runtime, name, agents[name]["definition"], user["username"], start, end)
+    # whose chat "Ask your agent" opens, and which calendars this screen may change (through that person's own agent)
+    out = {**out, "agent": name, "can_change": list(home.CHANGEABLE) if home.calendar_writer(agents, user["username"]) else []}
+    if not out.get("error"):
+        for k in [k for k, v in cache.items() if now - v[0] >= CALENDAR_CACHE_SECONDS]:
+            cache.pop(k, None)
+        cache[key] = (now, out)
+    return web.json_response(out)
+
+
+async def handle_calendar_change(request: web.Request) -> web.Response:
+    """POST /api/v2/calendar/{action} (add, update, cancel) — a change made on the Calendar screen, through the
+    person's own agent, with exactly its rights (their calendar and Household; never a repeating event)."""
+    from gateway import home
+    user = _user(request)
+    action = request.match_info["action"]
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    try:
+        args = home.change_args(action, body if isinstance(body, dict) else {})
+    except ValueError as e:
+        return web.json_response({"error": "refused", "message": str(e)}, status=400)
+    agents = await _visible_agents(request, user["username"])
+    name = home.calendar_writer(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_calendar", "message": "Only your own agent can change your calendar, and you have none with one."}, status=403)
+    out = await asyncio.to_thread(home.calendar_change, runtime, name, action, args)
+    request.app.setdefault("calendar_cache", {}).clear()           # everyone's next look is fresh (Household is shared)
+    return web.json_response(out, status=200 if not out.get("error") else 409 if out["error"] == "refused" else 503)
+
+
 async def handle_home_lights(request: web.Request) -> web.Response:
     """GET /api/v2/home/lights — rooms and how many lights are on; POST {targets, on} switches them.
     Through the house service as the household agent (or your own), with its limits."""
@@ -2100,6 +2155,8 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/activity", handle_activity)
     app.router.add_get("/api/v2/home", handle_home)
     app.router.add_get("/api/v2/home/coming", handle_home_coming)
+    app.router.add_get("/api/v2/calendar", handle_calendar)
+    app.router.add_post("/api/v2/calendar/{action}", require_csrf(handle_calendar_change))
     app.router.add_get("/api/v2/home/lights", handle_home_lights)
     app.router.add_post("/api/v2/home/lights", require_csrf(handle_home_lights))
     app.router.add_get("/api/v2/home/lists", handle_home_lists)
