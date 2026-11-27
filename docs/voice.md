@@ -100,3 +100,25 @@ Browsers only allow the microphone on an `https://` address (or `localhost`), so
 explains itself and does nothing on a plain `http://` address.
 
 On the Agents screen each of your agents' marks has a small microphone: tap it, speak, tap ■, and that agent's chat opens with the voice message sent. Holding a mark only lifts it, to move it (it used to also record, with a swipe up to send and down to cancel: too easy to get wrong).
+
+## The house speaker (Home Assistant Voice PE)
+
+Say the wake word to the Voice PE and Home answers out loud. Home Assistant turns the speech
+into words (its Whisper add-on for now) and hands them to the `logos` conversation agent, a small
+Home Assistant integration kept in the private repo `logos-voice-pe`. It posts them to
+`POST /api/v2/voice/converse` (`gateway/voice_converse.py`), which runs the Household agent and
+returns the words to speak (Piper reads them out).
+
+- **Token:** made on first start in `~/.config/logos/voice-converse.token` (0600). Paste it into
+  the integration when adding it in Home Assistant. The path accepts nothing else.
+- **Spoken answers:** the agent is told the reply will be read aloud (a few short sentences);
+  Markdown, links and emoji are taken out before speaking.
+- **One conversation per speaker per day**, so follow-ups keep their context.
+- **Follow-ups:** an answer that ends in a question makes the speaker listen again without the
+  wake word.
+- **Never a long wait:** after 45 seconds the speaker says the answer will be in the chat; the
+  agent carries on and keeps the answer in that conversation.
+- **The words are never logged:** only the agent, the device, the outcome and how long it took.
+
+Plan, decisions and the next stories (wake word = the agent's name, voice prints, a voice per
+agent) are in the spec doc's Voice tab.

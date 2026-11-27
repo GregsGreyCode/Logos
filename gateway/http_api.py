@@ -753,6 +753,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app["activity"] = _activity.Activity(_hermes_home)
     from gateway import alert_text as _alert_text       # what an agent said, for its phone alert
     _alert_text.register(app)
+    from gateway import voice_converse as _voice_converse  # Voice V1: the house speaker, through Home Assistant
+    _voice_converse.register(app)
     from gateway import widgets as _widgets             # F42: homelab widgets on Home
     _widgets.register(app)
     from gateway import metrics as _metrics             # F42: Prometheus /metrics, off until switched on
