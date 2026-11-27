@@ -57,6 +57,31 @@ Element X at 07:00 on weekdays and 09:00 at weekends. See `docs/briefing.md`.
 
 Every call is logged in `docker logs logos-calendar-service`: the agent, the action and the event id, never the event details. Every change is also in Radicale's git history, as "Changes by logos-service".
 
+## The Calendar screen in the dashboard
+
+Béré asked for it on 27 Nov, and Greg made it a full app the same day. It is in the side menu on a desktop; on a phone it is in the account panel (your initial, top right), and Home's calendar widgets open it.
+
+- **Views:** Month (the default), Week, Day and List (the next four weeks, only the days with something on).
+  - On a phone the month shows dots, and the day you tap is listed under it. A swipe moves a month or a week.
+  - On a desktop the month shows the events by name, and the day you pick sits beside it.
+- **Calendars:** each has its colour and a switch: yours, Household, then everyone else's. The switches are remembered on that device.
+- **An event:** tap it to see all of it (when, calendar, where, notes, whether it repeats).
+- **Who sees what:** exactly what Home shows. It reads with your own read-only key, so you see your calendar, Household and the other people's. Someone without a calendar account sees what their agent sees: busy times show as "Busy".
+- **Adding, changing, cancelling:** these go through your own agent. That is an agent that is yours alone and has `calendar: {person: <you>}`. It has the same rights as when you ask it in chat:
+  - only your calendar and Household
+  - never someone else's (their events say so)
+  - never a repeating event (change those on the phone)
+  - The calendar service checks all of this again. Changes show in Radicale's history as the service's.
+  - With no such agent, **Add** opens your agent's chat with "Add an event on …:" typed in, ready to finish.
+- **Home:**
+  - The **Month** widget (Edit → + Month) shows this month small, with today's events under it.
+  - Tapping a line in Today or Coming up opens the Calendar at that day, with the event open. Tapping a heading opens that day or the list.
+- **API:**
+  - `GET /api/v2/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD` covers both days, at most 62. It returns `events`, `busy`, `calendars` (`key`, `name`), `today`, `agent` and `can_change`.
+  - `POST /api/v2/calendar/add|update|cancel` makes a change.
+  - The dashboard keeps each answer for a minute, and the page keeps it for five, so moving between months costs one call per new range. A change clears both.
+- Code: `gateway/home.py` (`calendar_range`, `calendar_change`), `gateway/ui/calendar.js`, `gateway/ui/calendar.css`. Screen check: `tests/ui/checks/calendar.mjs`.
+
 ## Setting it up on a machine
 
 ```

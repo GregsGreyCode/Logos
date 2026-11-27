@@ -1337,6 +1337,11 @@ form.recording > :not(.rec-bar) { display: none !important; }
   .nav-foot .who { display: none; }
   .nav-foot .logout-btn { font-size: 11px; }
 }
+/* With Calendar in the menu (27 Nov) the narrow menu is a little taller: on a short window its items close up, so
+   the whole menu still fits without scrolling. */
+@media (min-width: 600px) and (max-width: 1099px) and (max-height: 860px) {
+  .nav-links a { min-height: 54px; padding: 5px 2px !important; gap: 3px; }
+}
 
 /* A conversation, and Brain and About, read at a comfortable width on a wide screen. */
 @media (min-width: 600px) {

@@ -27,6 +27,12 @@ export function forget(key) {
   try { localStorage.removeItem(PREFIX + key); } catch (e) { /* fine */ }
 }
 
+// Every kept answer whose address starts with prefix (the Calendar after a change: each month and week it kept).
+export function forgetWhere(prefix) {
+  for (const k of [...mem.keys()]) if (k.startsWith(prefix)) mem.delete(k);
+  try { for (const k of Object.keys(localStorage)) if (k.startsWith(PREFIX + prefix)) localStorage.removeItem(k); } catch (e) { /* fine */ }
+}
+
 export function clearAll() {
   mem.clear();
   try { for (const k of Object.keys(localStorage)) if (k.startsWith(PREFIX) && k !== PREFIX + 'owner') localStorage.removeItem(k); } catch (e) { /* fine */ }

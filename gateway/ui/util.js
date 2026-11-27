@@ -39,6 +39,7 @@ export const ICONS = {
   doc: ['M5 4h10l4 4v12H5z', 'M9 12h6M9 16h6'],
   bell: ['M6 9a6 6 0 0 1 12 0c0 6 2 7 2 7H4s2-1 2-7', 'M10 20a2 2 0 0 0 4 0'],
   clock: ['M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18', 'M12 7v5l3 2'],
+  calendar: ['M4 6h16v14H4z', 'M4 10h16', 'M8 3v5M16 3v5'],
   pencil: ['M4 20h4L19 9l-4-4L4 16z', 'M13.5 6.5l4 4'],
   plus: ['M12 5v14', 'M5 12h14'],
   check: ['M5 12l5 5 9-10'],

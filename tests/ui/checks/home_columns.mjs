@@ -5,7 +5,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
-const boxes = await page.$$eval('.home-widgets > .home-widget:not([hidden])', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: e.dataset.widget, x: Math.round(r.left), top: Math.round(r.top), bottom: Math.round(r.bottom) }; }));
+const boxes = await page.$$eval('.home-widgets > .home-widget:not([hidden]):not(.off)', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return { w: e.dataset.widget, x: Math.round(r.left), top: Math.round(r.top), bottom: Math.round(r.bottom) }; }));
 const cols = {}; for (const b of boxes) (cols[b.x] ||= []).push(b);
 let maxGap = 0;
 for (const list of Object.values(cols)) { list.sort((a, b) => a.top - b.top); for (let i = 1; i < list.length; i++) maxGap = Math.max(maxGap, list[i].top - list[i - 1].bottom); }

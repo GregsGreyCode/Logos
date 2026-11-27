@@ -14,6 +14,7 @@
 <!-- M1: the encryption module the Matrix files load, Logos's own pinned copy (story M0) -->
 <script type="importmap">{"imports":{"@matrix-org/matrix-sdk-crypto-wasm":"/ui/vendor/matrix/crypto/index.mjs"}}</script>
 <link rel="stylesheet" href="/ui/app.css">
+<link rel="stylesheet" href="/ui/calendar.css">
 <link rel="stylesheet" href="/ui/looks/glass.css">
 <link rel="stylesheet" href="/ui/looks/hud.css">
 <link rel="stylesheet" href="/ui/looks/warm.css">
@@ -50,6 +51,7 @@ try {
            they do on their own. What only whoever manages Logos uses sits under Manage. -->
       <a href="#/chat" data-view="chat" data-icon="agents"><span class="nav-label">Agents</span></a>
       <a href="#/noticeboard" data-view="noticeboard" data-icon="bell"><span class="nav-label">Notifications</span><span class="badge nb-badge" hidden></span></a>
+      <a href="#/calendar" data-view="calendar" data-icon="calendar"><span class="nav-label">Calendar</span></a>
       <a href="#/brain" data-view="brain" data-icon="doc"><span class="nav-label">Brain</span></a>
       <a href="#/agents" data-view="agents" data-icon="clock"><span class="nav-label">Routines</span></a>
       <a href="#/settings" data-view="settings" data-icon="gear"><span class="nav-label">Settings</span></a>
@@ -85,6 +87,7 @@ try {
     <a hidden class="sheet-row admin-only" href="#/advisor" data-view="advisor" data-icon="shield">Claude Advisor</a>
     <a hidden class="sheet-row admin-only" href="#/models" data-view="models" data-icon="chip">Models</a>
     <a hidden class="sheet-row admin-only" href="#/people" data-view="people" data-icon="people">People</a>
+    <a class="sheet-row" href="#/calendar" data-view="calendar" data-icon="calendar">Calendar</a>
     <a class="sheet-row" href="#/settings" data-view="settings" data-icon="gear">Settings</a>
     <button type="button" class="sheet-row logout-btn danger-text" data-icon="logout">Sign out</button>
   </div>
