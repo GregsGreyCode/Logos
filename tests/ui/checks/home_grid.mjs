@@ -21,7 +21,7 @@ r = G.compact([A('a', 0, 0, 6, 10), A('n', null, 0, 6, 8)]);
 ok(free(r) && r.find((i) => i.id === 'n').x === 6 && r.find((i) => i.id === 'n').y === 0, 'a new widget takes the first free spot (the empty column)');
 r = G.compact([A('a', 9, 0, 6, 10)]);
 ok(r[0].x === 6, 'a widget too far right is pulled back inside the 12 columns');
-ok(G.defaultWidth(1400) === 6 && G.defaultWidth(1920) === 4 && G.defaultWidth(2560) === 3 && G.minWidth('weather') === 4 && G.minWidth('sign') === 3, 'default and minimum widths');
+ok(G.defaultWidth(1400) === 6 && G.defaultWidth(1920) === 4 && G.defaultWidth(2560) === 3 && G.minCols('weather', 'full', 1100) >= G.minCols('weather', 'full', 2400) && G.minCols('nothing', 'full', 1100) >= 1, 'default widths; a minimum is fewer columns on a wider board');
 ok(same(G.readingOrder({ a: { x: 6, y: 0 }, b: { x: 0, y: 0 }, c: { x: 0, y: 30 } }, ['c', 'a', 'b']), ['b', 'a', 'c']), 'the phone order follows the layout, down then across');
 ok(same(G.clean({ a: { x: 1, y: 2, w: 3, h: 4, junk: 1 }, b: { x: 'x' } }, ['a', 'b', 'z']), { a: { x: 1, y: 2, w: 3, h: 4 } }), 'only plain numbers are kept');
 
@@ -73,7 +73,8 @@ ok(saved.lists.h === 0, 'double-clicking the grip fits the widget to its content
 // the narrowest it can be
 const g2 = await page.locator('.grip-layer .widget-grip[data-widget="weather"]').boundingBox();
 await page.mouse.move(g2.x + 14, g2.y + 14); await page.mouse.down(); await page.mouse.move(g2.x - 300, g2.y + 14, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(600);
-ok(saved.weather.w >= 4, `a widget will not shrink past its minimum width (${saved.weather.w} columns)`);
+{ const ww = (await page.locator('.home-widget[data-widget="weather"]').boundingBox()).width;
+  ok(ww >= G.MIN.weather.full[0] - 1, `a widget will not shrink past its minimum width (${saved.weather.w} columns, ${Math.round(ww)} px, at least ${G.MIN.weather.full[0]})`); }
 
 // a reload keeps it
 await page.locator('.home-edit-link').click(); await page.waitForTimeout(400);

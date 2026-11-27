@@ -187,6 +187,33 @@ def test_widget_and_place_preferences_are_checked():
     assert not d._pref_ok("weather_place", {"name": "x", "lat": 1, "lon": 2, "extra": 1})
 
 
+def test_weather_has_a_list_of_places_in_your_order():
+    import asyncio
+    from gateway import dashboard_api as d
+    b, p = {"name": "Brighton", "lat": 50.83, "lon": -0.14}, {"name": "Paris", "lat": 48.85, "lon": 2.35}
+    assert d._pref_ok("weather_places", [b, p]) and d._pref_ok("weather_places", [])
+    assert not d._pref_ok("weather_places", [b, dict(b)])                   # the same place twice
+    assert not d._pref_ok("weather_places", [b, None]) and not d._pref_ok("weather_places", b)
+    assert not d._pref_ok("weather_places", [{"name": f"P{i}", "lat": i, "lon": i} for i in range(d.MAX_WEATHER_PLACES + 1)])
+    # the one place chosen before there could be more still shows; the list wins once there is one, even empty
+    assert d.weather_places_of({"weather_place": b}) == [b]
+    assert d.weather_places_of({"weather_place": b, "weather_places": [p, b]}) == [p, b]
+    assert d.weather_places_of({"weather_place": b, "weather_places": []}) == []
+    asked = []
+
+    def fetch(lat, lon):
+        asked.append((lat, lon))
+        if lat > 50:
+            raise OSError("no answer")
+        return {"now": {"temp": 3}, "today": {}, "tomorrow": {}}
+    cache = {}
+    out = asyncio.run(d.weather_for([p, b], cache, fetch=fetch))
+    assert [o["place"] for o in out] == ["Paris", "Brighton"]                 # in your order
+    assert out[0]["now"]["temp"] == 3 and out[1]["error"] == "weather_unavailable"  # one that fails does not hide the others
+    asyncio.run(d.weather_for([p], cache, fetch=fetch))
+    assert asked.count((48.85, 2.35)) == 1                                    # kept 20 minutes
+
+
 def test_notifications_are_read_one_by_one_and_kept_through_other_settings(monkeypatch):
     from gateway import dashboard_api as d
     store = {}

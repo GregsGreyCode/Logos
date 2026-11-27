@@ -69,3 +69,59 @@ household agent keeps (refreshed every 15 minutes) shows instead, to read only. 
 ## Arranging Home on a phone
 
 While you arrange Home, the bar at the bottom (where Ask is) becomes one big **Done**, always in view.
+
+## Arranging Home on a desktop (F49)
+
+On a wide screen (1100 px and up) Home is a 12-column grid. In Edit (the pencil): drag a widget by its handle to anywhere,
+resize it by its corner (double-click the corner: as tall as its content again), and the others make room and pack upward.
+The layout is each person's own (`widget_grid`); the phone's order follows it, reading down then across. A phone keeps its
+single column, in that order.
+
+- **Compact or Full, every widget** (24 Nov): each widget's bar in Edit has **Compact / Full**, each person's own
+  (`widget_sizes`, `{widget: "compact" | "full"}`), on a phone too. A widget nobody chose for looks as it always did: Lists
+  Compact, every other one Full. What Compact leaves out:
+
+  | Widget | Compact |
+  |---|---|
+  | Next | the word "Next"; "40 min" instead of "in 40 min" |
+  | Weather | a line a place: now, the town, tomorrow's high |
+  | Calendar | today only, what is still to come, without whose and where |
+  | Messages | who and when, not the message's first words |
+  | Coming up | the next three, without whose |
+  | Lights | smaller pills with the room's name only (the fill still shows how bright) |
+  | Lists | a tile per list (Full: every thing, with a box to tick it off) |
+  | Services | four at most, problems first, no times for the ones that are up |
+  | Servers | a line a server: CPU, memory and disk as numbers, no bars |
+  | Proxmox | a row a guest, running or stopped, without CPU and memory |
+  | Backups | "fine", or when it ran for one that is not |
+  | Ad blocking | the ring and the share blocked, without the counts and the top blocked |
+  | Now playing | what and where, a line each, without the poster, bar and times |
+  | Downloads | the first three, without bars and what is coming this week |
+  | Bookmarks | the names as a row of links, without the tiles |
+  | Energy | using now and today, without the cost; the UPS only when it is on battery |
+  | Network | down and up only |
+  | Cameras | the first two snapshots, without the note |
+  | Agents today | each agent and how many messages today |
+
+  The Las Vegas sign lives in the title band, not on the board, and has no sizes.
+- **Each widget's own minimum size**, Compact and Full, in pixels (`MIN` in `gateway/ui/home-grid.js`), turned into
+  columns for the board's width (a minimum is more columns on a small screen). Measured, not guessed: the screen check
+  `tests/ui/checks/widget_minimums.mjs` draws every widget with real-looking content at widths from 160 to 640 px and keeps
+  the narrowest from which nothing more spills out, is cut off or wraps onto more lines than with room; the height shows
+  what the widget is for at that width (all of a fixed-shape widget, the first rows of a list). The check fails when a
+  widget no longer fits its own minimum; `MEASURE=1 node tests/ui/checks/widget_minimums.mjs out` (with `serve.py`
+  running) prints a new table. A widget is never smaller than its minimum: not by its corner, not by Alt+arrows, and a
+  place saved before (or a Compact widget turned Full) grows to it.
+- **Weather in more than one place** (24 Nov): Edit › **Places** lists your places in order, each with ↑ ↓ ✕, and finds
+  another by name (up to 8; `weather_places`, a list of `{name, lat, lon}`). Weather shows a row a place, each with its
+  own now, today and tomorrow, in that order. Someone who chose one town before keeps it, as the first. `GET
+  /api/v2/weather` answers `{"places": [...]}` in your order (one that cannot be read says so; the others still show),
+  with the first place's numbers at the top as well. Only each town's position, rounded to about a kilometre, goes to
+  Open-Meteo, and each place is kept 20 minutes whoever asks.
+- **While dragging or resizing**: a dashed ghost where the widget will land, the 12 columns faintly, and a guide line
+  wherever one of its edges lines up with another widget's (or the board's edge).
+- **Tidy up** (beside Reset layout, desktop only): everything packed neatly in the same order. The board is cut into equal
+  tracks (the screen's usual widget width: 6 columns on a laptop, 4 on 1920, 3 on a very wide screen), each widget is made
+  a whole number of tracks wide (the nearest to its width, never under its minimum), then, in order, goes to the highest
+  free spot that still comes after the one before it. Heights you set are kept.
+- **Agents today**: each agent opens its chat (`#/chat/<agent>`), by tap, click or Enter; not while arranging.
