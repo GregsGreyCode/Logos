@@ -1,0 +1,11 @@
+name: logos-speaker-say
+label: Logos agents speak up on the house speaker
+kind: standalone
+version: 1.0.0
+description: >
+  The agent can say something out loud on the house speaker without being asked (tool say_on_speaker):
+  a reminder that is due, the morning briefing. Logos decides whether it is said (quiet hours, private
+  details only while that person's phone is home, short, not too often); otherwise it goes in the chat.
+author: Logos
+provides_tools:
+  - say_on_speaker

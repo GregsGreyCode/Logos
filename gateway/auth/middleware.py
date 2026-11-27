@@ -37,6 +37,8 @@ _PUBLIC_PATHS = frozenset({
     "/api/v2/voice/converse",  # the house speaker (Home Assistant); checks its own token (gateway/voice_converse.py)
     "/api/v2/alert-text",  # an agent's first words for a phone alert; checks the agent's own token
                            # (gateway/alert_text.py), and the sandbox may reach only this path
+    "/api/v2/speaker/say",  # an agent speaking up on the house speaker; checks the agent's own token
+                            # (gateway/speaker_say.py), and the sandbox may reach only this path
     # "/ws/worker" removed — Plan A refactor (TASKS.md #24) deleted the
     # reverse-connection WebSocket endpoint. Workers are now subprocess-
     # per-sandbox, launched via `openshell sandbox exec` from the host

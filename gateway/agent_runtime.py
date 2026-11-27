@@ -57,7 +57,7 @@ ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_mor
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time",
                  "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag",
-                 "logos-speaker-chat")
+                 "logos-speaker-chat", "logos-speaker-say")
 MANAGED_JOBS = ("brain-commit", "brain-index", "vault-digest", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
@@ -107,7 +107,27 @@ def briefing(agent: Mapping[str, Any]) -> Mapping[str, Any]:
     person = ((agent.get("calendar") or {}).get("person"))
     if not cfg.get("enabled", bool(person)) or delivery(agent) == "local" or agent.get("role") == "household":
         return {}
-    return {"weekdays": cfg.get("weekdays", "0 7 * * 1-5"), "weekends": cfg.get("weekends", "0 9 * * 0,6")}
+    return {"weekdays": cfg.get("weekdays", "0 7 * * 1-5"), "weekends": cfg.get("weekends", "0 9 * * 0,6"),
+            "speaker": bool(cfg.get("speaker")) and _sibling("speaker_say").speaks(agent)}
+
+
+#: Voice V3.1: ``briefing: {speaker: true}`` also says a short version on the house speaker.
+BRIEFING_SPOKEN = """
+
+Also, after writing the briefing, call `say_on_speaker` once with a spoken version for the house speaker:
+at most two short sentences, starting with your person's name: the weather and their first event
+("Good morning Greg. Rain until noon; the dentist is at half past four."). Set `private: true` and
+`person: {person}`. If it is not said, carry on: the written briefing above is what matters.
+"""
+
+
+def briefing_prompt(jobs_dir: Path, agent: Mapping[str, Any]) -> str:
+    """The briefing's instructions, with the spoken version when ``briefing.speaker`` is on."""
+    text = logos_job(Path(jobs_dir) / "morning_briefing.md")
+    if briefing(agent).get("speaker"):
+        person = str((agent.get("calendar") or {}).get("person") or "")
+        text = text.rstrip() + "\n" + BRIEFING_SPOKEN.replace("{person}", person)
+    return text
 
 
 def changes_jobs(agent: Mapping[str, Any]) -> list:
@@ -567,6 +587,8 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/vault.md").read_text()       # files people send are kept (F47)
         if _sibling("voice_host").uses_voice(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/voice.md").read_text()
+        if _sibling("speaker_say").speaks(agent) and (self.repo / "souls/_shared/speaker.md").exists():
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/speaker.md").read_text()   # V3.1
         if _sibling("calendar_host").uses_calendar(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/calendar.md").read_text()
         if _sibling("web_host").uses_web(agent):
@@ -651,6 +673,10 @@ class AgentRuntime:
         host = _sibling("matrix_host").MatrixHost(self).bind_address()
         return f"http://{host}:{os.environ.get('LOGOS_PORT') or '8091'}{_sibling('alert_text').PATH}"
 
+    def speaker_say_url(self) -> str:
+        """Where an agent asks Logos to say something on the house speaker: the dashboard, like the alerts."""
+        return self.alert_url().replace(_sibling("alert_text").PATH, _sibling("speaker_say").PATH)
+
     def env_file(self, agent: Mapping[str, Any], home: str) -> str:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
         cur = dict(l.split("=", 1) for l in self.get(home, ".env").splitlines()
@@ -669,6 +695,16 @@ class AgentRuntime:
         else:
             for k in (at.TOKEN_ENV, at.URL_ENV, "LOGOS_AGENT_NAME"):
                 cur.pop(k, None)
+        ss = _sibling("speaker_say")
+        if ss.speaks(agent):
+            # Voice V3.1: it may speak up on the house speaker (gateway/speaker_say.py). Worked out from
+            # its name, like the alert token, so it is the same on every `up`.
+            cur[ss.TOKEN_ENV] = ss.token_for(agent["name"], key=at.key(self.env))
+            cur[ss.URL_ENV] = self.speaker_say_url()
+            cur["LOGOS_AGENT_NAME"] = agent["name"]
+        else:
+            cur.pop(ss.TOKEN_ENV, None)
+            cur.pop(ss.URL_ENV, None)
         cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
         cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
         mg = _sibling("model_gateway")
@@ -778,7 +814,7 @@ class AgentRuntime:
         if brief:
             # Story C4: the day ahead, sent in the morning. The script puts today's weather and events
             # into the prompt; a morning missed while the machine was off is skipped, never sent late.
-            prompt = logos_job(self.jobs_dir / "morning_briefing.md")
+            prompt = briefing_prompt(self.jobs_dir, agent)
             for job, when in (("morning-briefing", brief["weekdays"]), ("morning-briefing-weekend", brief["weekends"])):
                 self.sbx(name, f'{HERMES} cron create --name {job} --script briefing_today.py '
                                f'--workdir /opt/data/brain --timezone {tz} --catch-up off '
@@ -986,6 +1022,11 @@ class AgentRuntime:
         else:
             rules.pop("matrix", None)
             rules.pop("alerts", None)
+        ss = _sibling("speaker_say")
+        if ss.speaks(agent) and "speaker_say" in rules:   # speaking up on the house speaker: that one path only
+            point("speaker_say", self.speaker_say_url(), rest_rules=[("POST", ss.PATH)])
+        else:
+            rules.pop("speaker_say", None)
         vh = _sibling("voice_host")
         if vh.uses_voice(agent):
             point("voice", vh.VoiceHost(self).base_url(), rest_rules=[("POST", "/v1/audio/transcriptions")])

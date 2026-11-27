@@ -283,5 +283,19 @@ network_policies:
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 
+  speaker_say:                     # saying something on the house speaker (gateway/speaker_say.py, Voice
+                                   # V3.1). The dashboard, one path, POST only. Filled in for agents that
+                                   # speak on the speaker, removed for the others.
+    endpoints:
+      - host: 192.0.2.1
+        port: 8091
+        protocol: rest
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: POST, path: /api/v2/speaker/say}
+    binaries:
+      - path: /opt/hermes/tools/python-*/bin/python3*
+
   # api.anthropic.com is NOT listed here. It comes from the provider profile in
   # infra/openshell/providers/anthropic.yaml, which also binds the API key to that host.

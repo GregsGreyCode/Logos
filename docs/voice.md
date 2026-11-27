@@ -202,7 +202,7 @@ the chat.
 Home Assistant's Piper add-on has one voice per pipeline, but more than one agent will answer
 through the same speaker (Finn and Béré's agent, once the wake word picks the agent). So Logos
 reads the answers out itself: a second small service, `logos-tts`, runs Piper with twelve English
-voices and offers them to Home Assistant as a **Wyoming** text-to-speech service.
+and four French voices and offers them to Home Assistant as a **Wyoming** text-to-speech service.
 
 ```
 speaker -> Home Assistant -> /api/v2/voice/converse -> agent -> words
@@ -211,16 +211,29 @@ speaker <- Home Assistant <- logos-tts (Wyoming, Piper) <- "say these words"
 ```
 
 - **How it knows who is speaking.** Home Assistant asks only "say these words" (with its
-  pipeline's voice). When `voice/converse` returns an answer it notes a hash of the words and the
-  agent's voice for two minutes (`gateway/speaker_voice.py`), in a file `logos-tts` reads
-  (`~/.local/state/logos/speaker/said.json`, hashes only). The same words arriving from Home
-  Assistant are read in that voice.
+  pipeline's voice). So `voice/converse` puts an invisible mark in front of every answer it hands
+  back (`gateway/speaker_voice.py`, `tts.mark`, 27 Nov): three zero-width characters between two
+  invisible separators, which spell the voice. `logos-tts` reads the voice from the mark and takes
+  the mark off before Piper reads the words, so nothing changes in what is heard.
+- **Why a mark: Home Assistant's phrase cache.** Home Assistant keeps the audio of every phrase it
+  had spoken, under a key made from the exact words (SHA-1 of the text, with the language, the
+  pipeline's voice and the engine). Before the mark, once Home had said "Done.", Finn's "Done." came
+  back from that cache in Home's voice. With the mark, Finn's "Done." and Home's "Done." are two
+  different texts to Home Assistant, so two cache entries, each in its own voice. The mark names the
+  voice, not the agent, so choosing another voice in Settings also gives new entries. Checked in Home
+  Assistant 2026.11's own code: the answer goes unchanged from the conversation agent to the cache key
+  and to the Wyoming request (no trimming of these characters: they are not whitespace), and an
+  announcement (below) goes the same way.
+- **The fallback.** It also still notes a hash of the words and the voice for two minutes, in a file
+  `logos-tts` reads (`~/.local/state/logos/speaker/said.json`, hashes only), and the same words
+  arriving without a mark are read in that voice (the hash ignores the mark).
 - **Anything else** (Home Assistant's own announcements, a timer) is read in the voice the
   pipeline names, so set the pipeline to Home's voice too.
-- **Choosing the voice.** Settings › Speaker lists your agents and the twelve voices, each with a
-  ▶ to hear a sample. For the Household agent either of you can change it. It applies from the
-  next answer. The choice is kept in the dashboard's database (beside the agents' colours); until
-  someone chooses, the agent's definition decides:
+- **Choosing the voice.** Settings › Speaker lists your agents and the twelve English voices, each
+  with a ▶ to hear a sample, and under **In French** the four French ones (below). For the Household
+  agent either of you can change it. It applies from the next answer. The choice is kept in the
+  dashboard's database (beside the agents' colours); until someone chooses, the agent's definition
+  decides:
 
   ```yaml
   speaker_voice: en_GB-northern_english_male-medium   # agents/household.yaml (Home's, Greg's pick)
@@ -233,9 +246,9 @@ speaker <- Home Assistant <- logos-tts (Wyoming, Piper) <- "say these words"
 - **The words are never logged:** the log line has the voice, the agent, the length and the time.
 - **Cost:** a voice loads on first use (under a second) and is dropped after ten quiet minutes; at
   most two are kept loaded, about 300 MB together. A short answer takes under half a second.
-- **Known limit:** Home Assistant keeps its own cache of spoken phrases by their words. Now that
-  two agents answer (wake words, below), the same short answer ("Done.") from both may come back
-  in the first one's voice. Still to look at.
+- **Measured 27 Nov** against the built container, over Wyoming as Home Assistant asks: "Done."
+  marked with Home's voice gave the very same audio as "Done." unmarked (Piper was handed the same
+  5 characters); marked with Finn's voice it came in Alan's; each French voice answered its own mark.
 
 #### Turning it on
 
@@ -246,12 +259,12 @@ speaker <- Home Assistant <- logos-tts (Wyoming, Piper) <- "say these words"
    TTS_PORT=10200           # optional, Wyoming's usual port
    ```
 
-2. `scripts/logos-agent up household`. The first time it builds the image `logos-tts:1` from
-   `infra/tts/Dockerfile` (a few minutes, about 1.9 GB on disk, most of it the voices) and starts
+2. `scripts/logos-agent up household`. The first time it builds the image `logos-tts:2` from
+   `infra/tts/Dockerfile` (a few minutes, about 2.1 GB on disk, most of it the voices) and starts
    the container. Any agent with `speaker_voice:` starts it the same way; without the file it
    says "speaker voices: off" and carries on.
 3. In Home Assistant: Settings › Devices & services › Add integration › **Wyoming Protocol**, host
-   = the Logos machine's address, port 10200. It shows up as "logos" with twelve voices.
+   = the Logos machine's address, port 10200. It shows up as "logos" with its voices.
 4. Settings › Voice assistants › the speaker's pipeline › Text-to-speech: choose **logos**, and as
    its voice `en_GB-northern_english_male-medium` (used for Home Assistant's own words). The old
    Piper add-on can stay for other pipelines or be removed.
@@ -266,7 +279,7 @@ answer, e.g. `en_GB-northern_english_male-medium for household: 42 characters in
 | `piper-tts` | 1.8.0 | the speech engine Home Assistant's Piper add-on uses (GPL-3.0, on its own in the container) |
 | `wyoming` | 1.11.0 | the protocol Home Assistant speaks to voice services |
 | `onnxruntime` | 1.32.0 | what Piper runs on (the voice service's pin) |
-| `rhasspy/piper-voices` | fixed revision (12 Nov) | twelve English medium voices, fetched at build time only |
+| `rhasspy/piper-voices` | fixed revision (12 Nov) | twelve English and three French medium voice models (UPMC has two speakers), fetched at build time only |
 
 ### Who is speaking (voice prints, VO.1 and VO.2)
 
@@ -281,7 +294,8 @@ speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of
 
 - **The audio has to reach Logos,** so Logos offers its own speech to text to Home Assistant, as a
   Wyoming service like the speaker voices: `logos-stt`. It turns the speech into words (NVIDIA's
-  Parakeet, English: the model Home Assistant's Whisper add-on itself picks by default) and, from
+  Parakeet TDT 0.6B v3: English and French, below; v2, English only, is the model Home Assistant's
+  Whisper add-on itself picks by default) and, from
   the same audio, works out a voice embedding (192 numbers, the CAM++ model from 3D-Speaker). It
   keeps the embedding in memory for two minutes under a hash of the words. When the words arrive
   at `voice/converse`, the dashboard asks for that embedding and compares it with the voice prints
@@ -291,7 +305,7 @@ speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of
   commands of about 4.5 s, from the end of speech to the words: logos-stt 0.3 s (1.1% of words
   wrong); Home Assistant's Whisper add-on container with its default model (the same Parakeet)
   0.25 s (1.1%), with Whisper small 1.1 s (3.6%), base 0.7 s (4.7%), tiny 0.3 s (9.6%). The extra
-  50 ms is the voice embedding. It holds about 900 MB of memory.
+  50 ms is the voice embedding. It holds about 900 MB of memory. (That was v2; v3 is as quick, below.)
 - **Three answers:** that person (`known`), `not sure` (too short, too close to call, or just under
   the strictness), or `someone else`. Only `known` names anyone. Home is told who it is in its
   spoken-answer instructions ("The person speaking is Greg …"), and the words reach it as
@@ -374,7 +388,7 @@ test it with Settings › Your voice.
    STT_PORT=10300           # Logos speech to text for Home Assistant (Wyoming's usual port)
    ```
 
-2. `scripts/logos-agent up household`. The first time it builds `logos-stt:1` from
+2. `scripts/logos-agent up household`. The first time it builds `logos-stt:2` from
    `infra/stt/Dockerfile` (a few minutes, about 1.7 GB on disk; it fetches the models and 340 MB of
    LibriSpeech to pick the reference voices from) and starts the container.
 3. In Home Assistant: Settings › Devices & services › Add integration › **Wyoming Protocol**, host =
@@ -390,7 +404,7 @@ Check it: `docker logs logos-stt` shows a line per command, e.g. `heard 3.6 s (3
 | --- | --- | --- |
 | `python` base image | pinned by digest | the voice service's |
 | `sherpa-onnx` | 2.0.1 | runs both models |
-| Parakeet TDT 0.6B v2 (int8) | pinned by SHA-256 | English speech to text, as Home Assistant's add-on uses |
+| Parakeet TDT 0.6B v3 (int8) | pinned by SHA-256 | speech to text in English and French (and 23 other European languages) |
 | 3D-Speaker CAM++ (zh_en common advanced) | pinned by SHA-256 | voice embeddings (the spike's model) |
 | `av`, `numpy` | 18.1.0, 2.3.4 | reading browser recordings |
 | `wyoming` | 1.11.0 | the protocol Home Assistant speaks |
@@ -430,6 +444,112 @@ claim a person who lives here ("It's Greg, read me my email", "Greg here", "I'm 
 - **Tells the person**, once per conversation: an urgent item in Logos's Notifications and a phone alert
   ("Someone at the house speaker said they were you"). It never says what was asked. Kept a month in
   `~/.logos/speaker-alerts.json` (owner-only).
+
+### Agents speak up (V3.1, 27 Nov)
+
+An agent can say something out loud on the speaker without being asked: a reminder that is due, or
+the morning briefing. Home Assistant has the service for it, `assist_satellite.announce` on the
+speaker: it plays the chime and reads the words through the pipeline's text-to-speech, which is
+`logos-tts`, so the words are marked with the agent's voice first (above) and it is heard in its own
+voice, in French when the words are French.
+
+```
+agent: say_on_speaker("Greg, time to call the plumber.")
+  -> POST /api/v2/speaker/say (the dashboard: its checks)
+  -> Home Assistant assist_satellite.announce (Logos's own non-admin account)
+  -> logos-tts (the agent's voice, from the mark) -> speaker
+```
+
+- **The tool:** `say_on_speaker` (`text`, `private`, `person`, `chime`), from the agent plugin
+  `infra/agent-plugins/logos-speaker-say`. Only agents that speak on the speaker have it
+  (`speaker_voice` or `speaker_name` in the definition; `speaker_say: false` takes it away). The
+  sandbox may reach one path for it, `POST /api/v2/speaker/say` on the dashboard (policy rule
+  `speaker_say`), signed with the agent's own token (worked out from its name under the alert key).
+- **When it is not said,** the tool's answer says why and tells the agent to put it in the chat
+  instead (`gateway/speaker_say.py`):
+  - **quiet hours:** 22:00 to 08:00 by default, in the agent's time zone (`QUIET_HOURS` below);
+  - **private, and that person's phone is not home** (the D2 rule above). The agent says when it is
+    private (someone's own calendar, email, messages, notes). A personal agent's private things are
+    its person's; the household agent has to say whose (`person`), else it is not said;
+  - **long:** at most 240 characters, about 15 seconds;
+  - **too often:** at most 4 an hour and 12 a day per agent, and never within a minute of the last
+    announcement;
+  - no speaker set for announcements, or Home Assistant refusing.
+- **Always the chat as well.** The speaker is extra: the agent sends its usual message too
+  (`souls/_shared/speaker.md`, added to the instructions of agents on the speaker).
+- **Reminders.** When the person wants a reminder said at home (their own, or one another agent asked
+  for through the noticeboard and they accepted), the agent writes the scheduled job's instructions to
+  call `say_on_speaker` and send the chat message.
+- **The morning briefing** can be spoken too, in two short sentences after the written one:
+  `briefing: {speaker: true}` in the agent's definition (`agents/greg.yaml`). It is private (the
+  person's calendar), so it is said only while their phone is home, and the default briefing times
+  (07:00 on weekdays) are inside the default quiet hours: set `QUIET_HOURS=22:00-07:00` or a later
+  briefing for it to be heard.
+- **Logged:** the agent, the outcome (`spoken`, `quiet_hours`, `private_away`, `rate_limited`, ...)
+  and the length. Never the words.
+- **Why not through the house service:** that one answers the agents' own tool calls and allow-lists
+  what they may touch. Here Logos itself, after its checks, makes one fixed call to one entity, with
+  the same non-admin account the house service and the phone check use; the agent never names a
+  service or an entity.
+
+#### Turning it on
+
+1. Add the speaker's entity to `~/.config/logos/speaker` on the Logos machine (Home Assistant:
+   Settings › Devices & services › the Voice PE › its "Assist satellite" entity):
+
+   ```
+   ANNOUNCE_ENTITY=assist_satellite.home_assistant_voice_xxxxxx_assist_satellite
+   QUIET_HOURS=22:00-08:00          # optional; "off" for none
+   ```
+
+2. `scripts/logos-agent up household` and `scripts/logos-agent up greg` (any agent on the speaker):
+   it gets the tool, the token and the sandbox rule. The dashboard reads the file on each request:
+   no restart.
+3. Home Assistant needs nothing new: the Logos user may call services, and the pipeline's
+   text-to-speech is already `logos-tts`. Try it from the chat: "say on the speaker that dinner is
+   ready".
+
+### In French for Béré (V3.4, 27 Nov)
+
+Béré can speak French to the speaker and is answered in French; English works as before. One
+pipeline, still set to English in Home Assistant.
+
+- **Hearing it:** `logos-stt` now runs Parakeet TDT 0.6B **v3** (sherpa-onnx's int8 export, pinned by
+  SHA-256), which writes down English or French, whichever is spoken, without being told.
+- **Which language:** Home Assistant says "en" whatever was said, so the words decide
+  (`gateway/speech_lang.py`: a count of the commonest short words of each language, accents as a
+  tie-break; English when unclear). `voice/converse` then tells the agent "They spoke French: reply
+  in French." (only then: the English instructions stay as they were, so the warm prompt holds), and
+  the speaker's own lines (the answer will be in the chat, the model is off) are in French too.
+- **Reading it:** a French answer is read by the agent's French voice. Settings › Speaker › **In
+  French** chooses it per agent (four Piper voices: Siwis and Jessica, women; Tom and Pierre, men);
+  until someone chooses, `speaker_voice_fr:` in the definition, else Tom for an agent with a man's
+  voice and Siwis for a woman's. Kept in the same table as the English choice (`agent_voices.voice_fr`).
+- **Wake words** stay the agents' English names ("Hey Home", "Hey Finn").
+
+Measured 27 Nov on this dev machine, from the end of speech to the words, the same clips through both
+models (4 threads):
+
+| | v2 (before) | v3 (now) |
+| --- | --- | --- |
+| 30 LibriSpeech commands, English, about 4.5 s | 2.1% of words wrong, 0.23 s | 1.3%, 0.24 s |
+| 18 English commands, three Piper voices | 2.6%, 0.12 s | 0.9%, 0.13 s |
+| 30 FLEURS sentences, French (real people), about 9 s | 89% (it is English only), 0.40 s | 7.6%, 0.39 s |
+| 48 French commands, four Piper voices | 82%, 0.14 s | 6.6%, 0.14 s |
+
+Most French "mistakes" are spelling ("18h" for "dix-huit heures", "éteint" for "éteins"); the one
+that matters, "du LED" for "du lait" in one Piper voice, is a synthetic voice's. Loading takes
+1.2 s; the container holds about 950 MB loaded. The language check put all 278 of those sentences (questions
+and answers) on the right side, plus short ones ("Oui.", "Done.", "C'est fait.").
+
+Through the built container over Wyoming: "Quelle heure est-il?", "Rappelle-moi d'appeler ma mère à
+18h." and "Turn on the kitchen lights." came back in 0.13 to 0.28 s.
+
+#### Turning it on
+
+`scripts/logos-agent up household` builds `logos-stt:2` and `logos-tts:2` (new models and voices,
+about 10 minutes) and restarts both containers. Nothing changes in Home Assistant: the pipeline stays
+English; logos-stt now also lists French.
 
 ### Wake words: each agent's name (VW.1, 27 Nov)
 

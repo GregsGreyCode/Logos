@@ -227,7 +227,7 @@ def test_choices_are_kept_and_laid_over_the_definition(tmp_path):
     assert ar.load_routines(env) == {"bere": {"briefing": {"weekdays": "30 6 * * 1-5"}, "digest": {"enabled": False}}}
     agent = {"briefing": {"weekends": "0 9 * * 0,6"}, "calendar": {"person": "bere"}, "matrix": {"enabled": True}}
     ar.merge(agent, {k: v for k, v in ar.load_routines(env)["bere"].items() if k in ar.ROUTINE_KEYS})
-    assert ar.briefing(agent) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6"}
+    assert ar.briefing(agent) == {"weekdays": "30 6 * * 1-5", "weekends": "0 9 * * 0,6", "speaker": False}
     assert agent["digest"] == {"enabled": False}
 
 
