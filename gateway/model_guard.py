@@ -162,14 +162,41 @@ SPEAKER, PERSON, SCHEDULED = -1, 0, 1     # lower goes first
 SPEAKER_MAX_WAIT = 5.0       # a house-speaker question waits at most this long, then runs alongside (GUARD_SPEAKER_MAX_WAIT)
 
 
+# A picture costs the model a fixed number of tokens, whatever the size of its base64 text. On 27 Nov
+# two phone screenshots (720x1600, ~118,000 base64 characters each) made a conversation of under 50,000
+# tokens look like 119,000, over the 96,512 window, so the queue took it for one that could never
+# share the model. hermes measured qwen3.6 at 709 to 1,372 tokens a picture; this is kept above that.
+IMAGE_TOKENS = 1600
+IMAGE_PARTS = ("image_url", "input_image", "image")
+
+
+def _pictures(req: dict) -> tuple:
+    """(how many pictures the request's messages carry, the bytes their inline data takes)."""
+    count = size = 0
+    for msg in req.get("messages") or ():
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for part in content if isinstance(content, list) else ():
+            if not isinstance(part, dict) or part.get("type") not in IMAGE_PARTS:
+                continue
+            count += 1
+            url = part.get("image_url")
+            url = url.get("url") if isinstance(url, dict) else url
+            for data in (url, part.get("source", {}).get("data") if isinstance(part.get("source"), dict) else None):
+                if isinstance(data, str):
+                    size += len(data)
+    return count, size
+
+
 def estimate(body: bytes) -> int:
-    """Tokens a chat request may take in the shared window: its prompt plus room for the reply."""
+    """Tokens a chat request may take in the shared window: its prompt plus room for the reply.
+    Pictures count :data:`IMAGE_TOKENS` each, not their base64 text."""
     try:
         req = json.loads(body)
         reply = int(req.get("max_tokens") or req.get("max_completion_tokens") or REPLY_RESERVE)
+        count, size = _pictures(req)
     except (ValueError, TypeError, AttributeError):
-        reply = REPLY_RESERVE
-    return int(len(body) / BYTES_PER_TOKEN) + min(reply, REPLY_RESERVE)
+        reply, count, size = REPLY_RESERVE, 0, 0
+    return int(max(0, len(body) - size) / BYTES_PER_TOKEN) + count * IMAGE_TOKENS + min(reply, REPLY_RESERVE)
 
 
 def priority(body: bytes) -> int:
