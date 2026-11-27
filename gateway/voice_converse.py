@@ -42,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from gateway import speaker_voice
+from gateway import speaker_voice, voice_id
 
 logger = logging.getLogger(__name__)
 
@@ -197,12 +197,13 @@ async def is_first(client: Any, session_id: str) -> bool:
         return False
 
 
-async def collect(client: Any, text: str, *, session_id: str, wait: float = WAIT_S) -> tuple[str, str]:
+async def collect(client: Any, text: str, *, session_id: str, wait: float = WAIT_S,
+                  instructions: str = INSTRUCTIONS) -> tuple[str, str]:
     """Run one turn and return (outcome, words). Outcome: ok, slow, failed, down."""
     from gateway.hermes_client import HermesError
 
     try:
-        run_id = await client.start_run(text, session_id=session_id, instructions=INSTRUCTIONS)
+        run_id = await client.start_run(text, session_id=session_id, instructions=instructions)
     except HermesError as e:
         logger.warning("voice: could not start a run: %s", e)
         return "down", DOWN
@@ -270,6 +271,12 @@ async def handle_converse(request: "Any") -> "Any":
         logger.warning("voice: %s unreachable: %s", agent, e)
         return answer("down", DOWN)
 
+    # VO.2: who is speaking, from their voice (gateway/voice_id.py). A personal agent answers only its people.
+    who = await voice_id.identify(request.app, text)
+    refused = voice_id.refusal(definition, who)
+    if refused:
+        return answer("refused", refused)
+
     # A local model that was unloaded is loaded first, as for the web chat.
     try:
         async for payload in agent_chat.wake_model(
@@ -282,7 +289,8 @@ async def handle_converse(request: "Any") -> "Any":
 
     measured.update(model=model_of(definition),
                     turn="first" if await is_first(client, session_id) else "followup")
-    outcome, words = await collect(client, text, session_id=session_id)
+    outcome, words = await collect(client, voice_id.tagged(text, who), session_id=session_id,
+                                   instructions=voice_id.instructions(INSTRUCTIONS, who))
     return answer(outcome, words)
 
 

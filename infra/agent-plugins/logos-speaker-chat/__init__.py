@@ -14,8 +14,9 @@ so it is end-to-end encrypted like any of its replies:
 
     The dentist at ten, then nothing until the evening.
 
-- **It is the agent's message**, not the person's: the words heard are quoted inside it. Who spoke is
-  not known yet (voice prints come later), so it says only that it was the house speaker.
+- **It is the agent's message**, not the person's: the words heard are quoted inside it. When Logos
+  recognised the voice (voice prints, gateway/voice_id.py) the words arrive as ``[Speaker: Greg] ...``
+  and the post says "🔊 Greg at the house speaker:"; otherwise only that it was the house speaker.
 - **The full answer**, not the shortened spoken one, with ``org.logos.speaker`` ({heard, late}) in the
   message for the Logos chat to show it as a speaker exchange. Element X shows the text.
 - **A notice when it was answered out loud** (``m.notice``: a record, which does not count as unread
@@ -49,6 +50,7 @@ MAX_ANSWER = 20000          # well inside a Matrix event (64 KB)
 KEEP_S = 3600
 
 _SAFE = re.compile(r"[^A-Za-z0-9_-]")
+_TAG = re.compile(r"^\[Speaker: ([^\]\n]{1,60})\]\s*")
 _started: dict = {}         # turn_id -> monotonic start
 _lock = threading.Lock()
 
@@ -79,11 +81,22 @@ def heard_of(text) -> str:
     return " ".join(str(text or "").split())[:MAX_HEARD]
 
 
-def content_for(heard: str, answer: str, late: bool, to_html=None) -> dict:
+def speaker_of(text) -> tuple:
+    """``(who, words)``: the name Logos recognised by voice ("" when it did not) and the words alone."""
+    t = str(text or "")
+    m = _TAG.match(t)
+    return (m.group(1).strip(), t[m.end():]) if m else ("", t)
+
+
+def header_for(who: str) -> str:
+    return f"🔊 {who} at the house speaker:" if who else HEADER
+
+
+def content_for(heard: str, answer: str, late: bool, to_html=None, who: str = "") -> dict:
     """The Matrix message: the words heard, quoted, then the answer."""
     heard = heard_of(heard)
     answer = str(answer or "").strip()[:MAX_ANSWER]
-    body = f"{HEADER}\n> “{heard}”\n\n{answer}"
+    body = f"{header_for(who)}\n> “{heard}”\n\n{answer}"
     answer_html = ""
     if to_html is not None:
         try:
@@ -92,17 +105,19 @@ def content_for(heard: str, answer: str, late: bool, to_html=None) -> dict:
             answer_html = ""
     if not answer_html:
         answer_html = "<p>" + html.escape(answer).replace("\n", "<br>") + "</p>"
-    formatted = (f"<p>🔊 <em>Heard at the house speaker:</em></p>"
+    said = f"{html.escape(who)} at the house speaker:" if who else "Heard at the house speaker:"
+    formatted = (f"<p>🔊 <em>{said}</em></p>"
                  f"<blockquote>“{html.escape(heard)}”</blockquote>{answer_html}")
     return {"msgtype": "m.text" if late else "m.notice", "body": body,
             "format": "org.matrix.custom.html", "formatted_body": formatted,
-            KEY: {"heard": heard, "late": bool(late)}}
+            KEY: {"heard": heard, "late": bool(late), **({"who": who} if who else {})}}
 
 
-def mirror_text(heard: str, answer: str) -> str:
+def mirror_text(heard: str, answer: str, who: str = "") -> str:
     """What the chat conversation is told (as a note in the people's turn, like a scheduled message)."""
-    return ("[Logos: this was said to you through the house speaker a moment ago; who said it is not "
-            f"known. It is also posted in this chat.] Heard: “{heard_of(heard)}” You answered: "
+    said = f"{who} said it (recognised by voice)" if who else "who said it is not known"
+    return (f"[Logos: this was said to you through the house speaker a moment ago; {said}. "
+            f"It is also posted in this chat.] Heard: “{heard_of(heard)}” You answered: "
             f"“{' '.join(str(answer or '').split())[:4000]}”")
 
 
@@ -147,18 +162,18 @@ def room_session(runner, room: str):
     return None
 
 
-def _mirror(runner, room: str, heard: str, answer: str) -> None:
+def _mirror(runner, room: str, heard: str, answer: str, who: str = "") -> None:
     try:
         from gateway.mirror import mirror_to_session
         sid = room_session(runner, room)
-        ok = bool(sid) and mirror_to_session("matrix", room, mirror_text(heard, answer), source_label="logos-speaker-chat",
+        ok = bool(sid) and mirror_to_session("matrix", room, mirror_text(heard, answer, who), source_label="logos-speaker-chat",
                                              role="user", session_id=sid)
         logger.info("speaker chat: %s", "the chat conversation was told" if ok else "no chat conversation to tell yet")
     except Exception as e:
         logger.info("speaker chat: could not tell the chat conversation (%s)", type(e).__name__)
 
 
-def post(heard: str, answer: str, late: bool, conf=None, runner=None) -> bool:
+def post(heard: str, answer: str, late: bool, conf=None, runner=None, who: str = "") -> bool:
     """Hand the post to the gateway's loop; never waits for it."""
     conf = conf or settings()
     room = conf.get(ROOM_ENV, "")
@@ -171,7 +186,7 @@ def post(heard: str, answer: str, late: bool, conf=None, runner=None) -> bool:
     if adapter is None or loop is None or not loop.is_running():
         logger.info("speaker chat: Matrix is not connected; not posted")
         return False
-    content = content_for(heard, answer, late, getattr(adapter, "_markdown_to_html", None))
+    content = content_for(heard, answer, late, getattr(adapter, "_markdown_to_html", None), who)
     fut = asyncio.run_coroutine_threadsafe(_send(adapter, room, content), loop)
 
     def done(f):
@@ -180,7 +195,7 @@ def post(heard: str, answer: str, late: bool, conf=None, runner=None) -> bool:
             logger.warning("speaker chat: the post failed (%s)", type(e).__name__)
             return
         logger.info("speaker chat: posted in the home room%s", " (late answer)" if late else "")
-        threading.Thread(target=_mirror, args=(runner, room, heard, answer), daemon=True, name="logos-speaker-mirror").start()
+        threading.Thread(target=_mirror, args=(runner, room, heard, answer, who), daemon=True, name="logos-speaker-mirror").start()
 
     fut.add_done_callback(done)
     return True
@@ -204,13 +219,14 @@ def finished(session_id=None, turn_id=None, user_message=None, assistant_respons
     with _lock:
         t0 = _started.pop(turn_id, None)
     answer = assistant_response if isinstance(assistant_response, str) else ""
-    heard = heard_of(user_message if isinstance(user_message, str) else "")
+    who, words = speaker_of(user_message if isinstance(user_message, str) else "")
+    heard = heard_of(words)
     if not heard or not answer.strip():
         logger.info("speaker chat: nothing to post (no %s)", "words" if not heard else "answer")
         return None
     late = t0 is not None and time.monotonic() - t0 >= SPEAKER_WAIT_S
     try:
-        post(heard, answer, late, conf)
+        post(heard, answer, late, conf, who=who)
     except Exception as e:                              # never the turn's problem
         logger.warning("speaker chat: not posted (%s)", type(e).__name__)
     return None

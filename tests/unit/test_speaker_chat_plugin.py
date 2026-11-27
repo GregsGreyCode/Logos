@@ -185,3 +185,27 @@ def test_no_room_conversation_yet_means_no_mirror(monkeypatch, tmp_path, mirrore
     assert m.room_session(types.SimpleNamespace(), "!r") is None
     m._mirror(types.SimpleNamespace(), "!r", "hi", "hello")
     assert mirrored == []
+
+
+def test_who_spoke_is_named_when_logos_recognised_the_voice(monkeypatch, tmp_path, mirrored):
+    m = load(monkeypatch, tmp_path)
+    assert m.speaker_of("[Speaker: Béré] Add milk") == ("Béré", "Add milk")
+    assert m.speaker_of("Add milk") == ("", "Add milk")
+    assert m.speaker_of("[Speaker: ] x")[0] == ""
+    c = m.content_for("Add milk", "Done.", False, who="Béré")
+    assert c["body"].startswith("🔊 Béré at the house speaker:\n> “Add milk”")
+    assert c["org.logos.speaker"] == {"heard": "Add milk", "late": False, "who": "Béré"}
+    assert "Béré at the house speaker:" in c["formatted_body"]
+    assert "Béré said it" in m.mirror_text("Add milk", "Done.", "Béré")
+    assert "who said it is not known" in m.mirror_text("Add milk", "Done.")
+    adapter = MatrixAdapter()
+    runner = Runner(adapter)
+    monkeypatch.setattr(m, "_runner", lambda: runner)
+    try:
+        m.finished(session_id="voice-household-sat-20261127", turn_id="t9",
+                   user_message="[Speaker: Greg] What's on today?", assistant_response="Nothing much.")
+        runner.drain()
+    finally:
+        runner.stop()
+    (_, content), = adapter.sent
+    assert content["org.logos.speaker"]["heard"] == "What's on today?" and content["org.logos.speaker"]["who"] == "Greg"

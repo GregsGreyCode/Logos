@@ -1151,6 +1151,13 @@ class AgentRuntime:
                     print("speaker voices: started")
             except (th.TtsError, TimeoutError) as e:
                 raise AgentRuntimeError(f"speaker voices: {e}")
+            # And hears it: speech to text for Home Assistant, with who said it (VO.1; off without STT_PORT).
+            sh = _sibling("stt_host")
+            try:
+                if sh.SttHost(self).up():
+                    print("speech to text: started")
+            except (sh.SttError, th.TtsError, TimeoutError) as e:
+                raise AgentRuntimeError(f"speech to text: {e}")
         if ch.uses_calendar(agent):
             try:
                 if ch.CalendarHost(self).up():

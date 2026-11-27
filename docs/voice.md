@@ -104,7 +104,8 @@ On the Agents screen each of your agents' marks has a small microphone: tap it, 
 ## The house speaker (Home Assistant Voice PE)
 
 Say the wake word to the Voice PE and Home answers out loud. Home Assistant turns the speech
-into words (its Whisper add-on for now) and hands them to the `logos` conversation agent, a small
+into words (its Whisper add-on, or Logos's own speech to text, which also tells who is speaking:
+below) and hands them to the `logos` conversation agent, a small
 Home Assistant integration kept in the private repo `logos-voice-pe`. It posts them to
 `POST /api/v2/voice/converse` (`gateway/voice_converse.py`), which runs the Household agent and
 returns the words to speak, read out in that agent's own voice (below).
@@ -169,7 +170,8 @@ its scheduled messages go; for Home, the room Greg and Béré share), in Element
 - **The agent posts it**, through its own Matrix client, so it is end-to-end encrypted like its other
   replies (agent plugin `infra/agent-plugins/logos-speaker-chat`, run as the speaker turn finishes).
   The words heard are quoted inside the agent's message: they are never shown as something a person
-  typed. Who spoke is not known yet (voice prints come later), so it says only "the house speaker".
+  typed. When Logos recognised the voice (below) it says who: "🔊 Greg at the house speaker:";
+  otherwise only "the house speaker".
 - **The full answer**, not the shortened one that was read out.
 - **Answered out loud:** a notice (`m.notice`), a record that does not count as unread and that agents
   do not answer. **Too late for the speaker** (it said "I'll put the answer in our chat"): a normal
@@ -265,5 +267,133 @@ answer, e.g. `en_GB-northern_english_male-medium for household: 42 characters in
 | `wyoming` | 1.11.0 | the protocol Home Assistant speaks to voice services |
 | `onnxruntime` | 1.32.0 | what Piper runs on (the voice service's pin) |
 | `rhasspy/piper-voices` | fixed revision (12 Nov) | twelve English medium voices, fetched at build time only |
+
+### Who is speaking (voice prints, VO.1 and VO.2)
+
+Logos can tell who is speaking at the speaker from their voice. Home then answers for that person
+("what's on today?" is their day, "add milk" is from them), and a personal agent (Greg's Finn, later
+Béré's) answers only its own person and politely says no to anyone else.
+
+```
+speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of the voice (kept 2 min)
+                          -> /api/v2/voice/converse -> "whose voice said these words?" -> agent
+```
+
+- **The audio has to reach Logos,** so Logos offers its own speech to text to Home Assistant, as a
+  Wyoming service like the speaker voices: `logos-stt`. It turns the speech into words (NVIDIA's
+  Parakeet, English: the model Home Assistant's Whisper add-on itself picks by default) and, from
+  the same audio, works out a voice embedding (192 numbers, the CAM++ model from 3D-Speaker). It
+  keeps the embedding in memory for two minutes under a hash of the words. When the words arrive
+  at `voice/converse`, the dashboard asks for that embedding and compares it with the voice prints
+  (`gateway/voice_id.py`). Words Home Assistant changed on the way are matched to the one command
+  heard in the last 20 seconds, if there is only one.
+- **As quick as Home Assistant's own.** Measured 27 Nov on this dev machine, 30 LibriSpeech
+  commands of about 4.5 s, from the end of speech to the words: logos-stt 0.3 s (1.1% of words
+  wrong); Home Assistant's Whisper add-on container with its default model (the same Parakeet)
+  0.25 s (1.1%), with Whisper small 1.1 s (3.6%), base 0.7 s (4.7%), tiny 0.3 s (9.6%). The extra
+  50 ms is the voice embedding. It holds about 900 MB of memory.
+- **Three answers:** that person (`known`), `not sure` (too short, too close to call, or just under
+  the strictness), or `someone else`. Only `known` names anyone. Home is told who it is in its
+  spoken-answer instructions ("The person speaking is Greg …"), and the words reach it as
+  `[Speaker: Greg] what's on today?` (which the chat post uses).
+  Only the end of the instructions changes with who is speaking, so the warm prompt (above) still
+  holds: about a second more when the speaker changes.
+- **A personal agent** answers only when its own person was recognised. Anyone else hears "Sorry, I
+  only answer Greg. Home can help you."; a voice it is not sure of hears "… Could you say it again?";
+  and while its person has no voice print, "… I don't know their voice yet". The agent is not run.
+  Home (and any agent for everyone) answers anyone; when nobody has a voice print, nothing changes.
+- **A voice print is a strong hint, not a lock.** A recording of someone's voice can fool it.
+  Anything private stays behind the phone-on-the-home-network rule (a later story), not behind the
+  voice.
+
+#### Your voice (Settings)
+
+Settings › **Your voice**: read the words on the screen for about twelve seconds, tap ■, and the
+voice print is made. It says how good the recording was (seconds of speech, how clean) and how good
+the print is: your own samples' scores, how close the 40 reference voices come, and the strictness
+it set. Then:
+
+- **Test: me** and **Test: someone else** (hand the phone over): each says the score and whether it
+  was recognised. Someone else heard makes it stricter if they came close.
+- **Recording again** adds to the print (another room or distance helps).
+- **At the house speaker:** ask the speaker something, then **Check what it heard**: the last two
+  minutes, each scored against your print only. If it did not recognise you, **That was me** adds it
+  (not if it sounds more like someone else who has a print). The speaker's microphone sounds
+  different from a phone's, so this matters (measured below).
+- **Delete my voice print.**
+
+Each person sees and manages only their own. The browser's own noise suppression is switched off
+for this recording, so the voice is heard as it is.
+
+#### How it decides (ported from the wake-word spike)
+
+- A print is several samples: the recording's speech cut into pieces about as long as a spoken
+  command (3 s), plus the whole. A new voice's score is the average of its likeness to the centre
+  of your samples and to your three closest ones.
+- **The strictness** sits just above the closest other voice: 40 people from LibriSpeech (three
+  clips each, in the image) with a margin, and anyone you let it hear in "Test: someone else".
+  Never looser than 0.5. The spike put it halfway between the others and your own scores; here you
+  enrol on a phone and are heard through the speaker, which scores you lower, and halfway refused
+  too many (below).
+- **It learns:** a clear match at the speaker (well above the strictness, two seconds or more,
+  clean) is added to your print; the newest ten are kept beside the enrolment.
+- Two people both above their strictness and less than 0.08 apart: not sure.
+
+Measured 27 Nov on this dev machine with 40 LibriSpeech speakers who are not among the reference
+voices (enrolled from 13 s of reading; tested on 3-second commands; 3,120 tries by others each way):
+
+| | own commands recognised | others wrongly accepted |
+| --- | --- | --- |
+| same kind of microphone | 96% | 0 of 3,120 |
+| speaker-like (band-limited, echo, room noise) | 71% | 0 of 3,120 |
+| speaker-like, after two "That was me" | 91% | 1 of 3,120 |
+| Piper voices (synthetic, 36 clips × 40 prints) | | 0 of 1,440 |
+
+In a household of two, a guest's command was taken for one of them once in 1,520 tries (after
+learning); the rest were "someone else" or "not sure". Real people at the real speaker will differ:
+test it with Settings › Your voice.
+
+#### What is kept, and what is not
+
+- **Voice prints:** the embeddings and their strictness, in the dashboard's database
+  (`voice_prints`), one row per person. Never audio.
+- **`logos-stt`:** the last two minutes of embeddings, in memory, under hashes of the words. The
+  audio is transcribed in memory and dropped; a recording from Settings goes to a temporary file
+  and is deleted at once. Its log line has the length, the seconds of speech and the time taken.
+- **The dashboard's log:** the answer (`known`, `not_sure`, `someone_else`), the person and the
+  score. Never the words.
+- **Two doors:** Wyoming on the LAN (speech in, words out; no tokens behind it), and a small HTTP
+  door for the dashboard on 127.0.0.1 only, with its own token (`~/.config/logos/stt.token`). The
+  container is read-only, has no capabilities and no DNS, and holds no voice prints.
+
+#### Turning it on
+
+1. Add to `~/.config/logos/speaker` (beside `TTS_BIND`):
+
+   ```
+   STT_PORT=10300           # Logos speech to text for Home Assistant (Wyoming's usual port)
+   ```
+
+2. `scripts/logos-agent up household`. The first time it builds `logos-stt:1` from
+   `infra/stt/Dockerfile` (a few minutes, about 1.7 GB on disk; it fetches the models and 340 MB of
+   LibriSpeech to pick the reference voices from) and starts the container.
+3. In Home Assistant: Settings › Devices & services › Add integration › **Wyoming Protocol**, host =
+   the Logos machine's address, port 10300. It shows up as "logos" (speech to text).
+4. Settings › Voice assistants › the speaker's pipeline › Speech-to-text: choose **logos**.
+5. Each person: Logos › Settings › Your voice, record, test, then ask the speaker something and
+   check it there.
+
+Check it: `docker logs logos-stt` shows a line per command, e.g. `heard 3.6 s (3.3 s of speech) in
+0.3 s`, and the dashboard's log `voice id: known greg (score 0.71)`.
+
+| Part | Version | Why |
+| --- | --- | --- |
+| `python` base image | pinned by digest | the voice service's |
+| `sherpa-onnx` | 2.0.1 | runs both models |
+| Parakeet TDT 0.6B v2 (int8) | pinned by SHA-256 | English speech to text, as Home Assistant's add-on uses |
+| 3D-Speaker CAM++ (zh_en common advanced) | pinned by SHA-256 | voice embeddings (the spike's model) |
+| `av`, `numpy` | 18.1.0, 2.3.4 | reading browser recordings |
+| `wyoming` | 1.11.0 | the protocol Home Assistant speaks |
+| LibriSpeech dev-clean | pinned by SHA-256 | 120 clips of 40 speakers: the reference voices |
 
 Plan, decisions and the next stories (wake word = the agent's name, voice prints) are in the spec doc's Voice tab.
