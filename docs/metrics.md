@@ -53,11 +53,20 @@ Off, or without the right token, `/metrics` answers 404 as if it were not there.
 | `logos_noticeboard_open_requests{agent}` | requests waiting on the agent's person |
 | `logos_model_up` | 1 when the AI computer answers (absent with no local model) |
 | `logos_widget_needs{widget}` | 1 when a Home widget's last check needs someone |
+| `logos_voice_turn_seconds{agent,model,turn,outcome}` | histogram: how long a question through the house speaker took. `turn` is `first` (the day's first, which reads the agent's whole instructions) or `followup`; `outcome` is `ok`, `slow` (answer promised in the chat), `failed` or `down`. Since the dashboard last started |
+| `logos_voice_probe_seconds{agent,model,turn,outcome}`, `logos_voice_probe_timestamp_seconds` | the nightly fixed check (04:30, `LOGOS_VOICE_PROBE_AT`, `off` to stop): the same two questions every night, fresh and follow-up, so a faster GPU or model shows as a step in the line |
 
 The jobs and the brain are read the same way (a helper container with no network and the volume mounted read-only: the agent's own Python for the job history, which it opens immutable, and alpine/git for the brain), and kept five minutes. The vault numbers are counted by a short helper container with no network that mounts the agent's volume read-only; the count is kept five minutes (`gateway/vault_stats.py`), so a frequent scrape costs nothing. Only counts and sizes: never a file name or what is in it.
 
 **Never:** a message, a person's name, a room, a key. Agent names only as labels (`greg`, not "Greg's
 agent"). The widget numbers come from each widget's last copy: `/metrics` never calls a service itself.
+
+### Watching the speaker get faster (Grafana)
+
+- The nightly check, the cleanest line: `logos_voice_probe_seconds{turn="first"}` and `{turn="followup"}`.
+- Real questions, typical time: `histogram_quantile(0.5, sum by (le, turn) (rate(logos_voice_turn_seconds_bucket{outcome="ok"}[1d])))`
+  (0.9 for the slow ones).
+- Split by `model` to compare models after a swap.
 
 ## Where the numbers come from
 

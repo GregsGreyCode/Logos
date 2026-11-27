@@ -245,6 +245,9 @@ async def handle_metrics(request: web.Request) -> web.Response:
             guard = None                                      # no guard (or it is down): no model queue numbers
     extra = await gather_extra(request.app, runtime, rows)
     body = render(rows, model, needs, dashboard_api.version(), vaults, guard, extra)
+    voice = request.app.get("voice_stats")                    # the house speaker's answer times (voice_converse)
+    if voice is not None:
+        body += voice.render()
     return web.Response(text=body, content_type="text/plain", charset="utf-8", headers={"Cache-Control": "no-store"})
 
 

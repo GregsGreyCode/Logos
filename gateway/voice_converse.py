@@ -22,6 +22,12 @@ words here and speaks what comes back.
 - **One token for the speaker**, made on first start in ``~/.config/logos/voice-converse.token``
   (0600). Home Assistant holds a copy. Nothing else can use this path.
 - **The words are never logged**: only the agent, the device, how long it took and the outcome.
+- **How fast it answers is measured** (``/metrics``, Greg 27 Nov: to watch it improve with a better
+  GPU). Every spoken turn goes into ``logos_voice_turn_seconds`` (agent, model, first turn of the day
+  or a follow-up, outcome). A fixed check asks the same two questions every night at
+  ``LOGOS_VOICE_PROBE_AT`` (default 04:30; ``off`` turns it off), one in a fresh conversation and one
+  follow-up, so the numbers stay comparable whatever people asked that day:
+  ``logos_voice_probe_seconds``.
 """
 from __future__ import annotations
 
@@ -44,6 +50,11 @@ DEFAULT_AGENT = "household"
 WAIT_S = 45.0          # Home Assistant waits; a person standing at a speaker should not wait longer
 MAX_TEXT = 2000        # one spoken request; anything longer is not speech
 MAX_SPOKEN = 700       # about 45 seconds read aloud
+
+BUCKETS = (2, 4, 6, 8, 10, 15, 20, 30, 45, 60)
+PROBE = ("What day is it today?", "And what time is it?")   # never change: the point is comparability
+PROBE_AT_ENV = "LOGOS_VOICE_PROBE_AT"
+PROBE_AT = "04:30"
 
 SLOW = "That's taking me a while. I'll put the answer in our chat."
 OFF = "My model is switched off right now. Try again in a few minutes."
@@ -128,6 +139,62 @@ def expects_reply(text: str) -> bool:
     return text.rstrip().rstrip('"\'”’)').endswith("?")
 
 
+class Stats:
+    """Turn times in memory, as a Prometheus histogram (reset on restart, which Prometheus expects)."""
+
+    def __init__(self) -> None:
+        self.turns: dict = {}   # (agent, model, turn, outcome) -> [bucket counts..., sum, count]
+        self.probe: dict = {}   # (agent, model, turn) -> (seconds, outcome, timestamp)
+
+    def observe(self, agent: str, model: str, turn: str, outcome: str, seconds: float) -> None:
+        row = self.turns.setdefault((agent, model, turn, outcome), [0] * len(BUCKETS) + [0.0, 0])
+        for i, b in enumerate(BUCKETS):
+            if seconds <= b:
+                row[i] += 1
+        row[-2] += seconds
+        row[-1] += 1
+
+    def render(self) -> str:
+        from gateway.metrics import esc
+        out: list[str] = []
+        if self.turns:
+            out += ["# HELP logos_voice_turn_seconds How long a question through the house speaker took to answer.",
+                    "# TYPE logos_voice_turn_seconds histogram"]
+            for (agent, model, turn, outcome), row in sorted(self.turns.items()):
+                lab = f'agent="{esc(agent)}",model="{esc(model)}",turn="{turn}",outcome="{outcome}"'
+                for i, b in enumerate(BUCKETS):
+                    out.append(f'logos_voice_turn_seconds_bucket{{{lab},le="{b}"}} {row[i]}')
+                out.append(f'logos_voice_turn_seconds_bucket{{{lab},le="+Inf"}} {row[-1]}')
+                out.append(f"logos_voice_turn_seconds_sum{{{lab}}} {row[-2]:.3f}")
+                out.append(f"logos_voice_turn_seconds_count{{{lab}}} {row[-1]}")
+        if self.probe:
+            out += ["# HELP logos_voice_probe_seconds The nightly fixed check: the same questions, fresh (first) and follow-up.",
+                    "# TYPE logos_voice_probe_seconds gauge"]
+            for (agent, model, turn), (sec, outcome, _) in sorted(self.probe.items()):
+                out.append(f'logos_voice_probe_seconds{{agent="{esc(agent)}",model="{esc(model)}",turn="{turn}",outcome="{outcome}"}} {sec:.3f}')
+            out += ["# HELP logos_voice_probe_timestamp_seconds When the nightly check last ran.",
+                    "# TYPE logos_voice_probe_timestamp_seconds gauge"]
+            for (agent, model, turn), (_, _, at) in sorted(self.probe.items()):
+                out.append(f'logos_voice_probe_timestamp_seconds{{agent="{esc(agent)}",model="{esc(model)}",turn="{turn}"}} {int(at)}')
+        return "\n".join(out) + ("\n" if out else "")
+
+
+def model_of(definition: Mapping[str, Any]) -> str:
+    return str(((definition or {}).get("model") or {}).get("default") or "unknown")
+
+
+async def is_first(client: Any, session_id: str) -> bool:
+    """No such session yet: this turn pays for reading the agent's whole instructions."""
+    from gateway.hermes_client import HermesNotFoundError
+    try:
+        await client.get_session(session_id)
+        return False
+    except HermesNotFoundError:
+        return True
+    except Exception:
+        return False
+
+
 async def collect(client: Any, text: str, *, session_id: str, wait: float = WAIT_S) -> tuple[str, str]:
     """Run one turn and return (outcome, words). Outcome: ok, slow, failed, down."""
     from gateway.hermes_client import HermesError
@@ -178,8 +245,13 @@ async def handle_converse(request: "Any") -> "Any":
     session_id = session_for(agent, device)
     started = time.monotonic()
 
+    stats: Stats = request.app["voice_stats"]
+    measured: dict = {}
+
     def answer(outcome: str, words: str) -> "web.Response":
         said = spoken(words) or FAILED
+        if measured:
+            stats.observe(agent, measured["model"], measured["turn"], outcome, time.monotonic() - started)
         logger.info("voice: %s via %s: %s in %.1fs", agent, device[:12], outcome, time.monotonic() - started)
         return web.json_response({"speech": said, "conversation_id": session_id, "agent": agent,
                                   "continue": outcome == "ok" and expects_reply(said)})
@@ -205,10 +277,88 @@ async def handle_converse(request: "Any") -> "Any":
     except Exception as e:
         logger.warning("voice: waking the model failed: %s", e)
 
+    measured.update(model=model_of(definition),
+                    turn="first" if await is_first(client, session_id) else "followup")
     outcome, words = await collect(client, text, session_id=session_id)
     return answer(outcome, words)
 
 
+def probe_time(env: Optional[Mapping[str, str]] = None) -> Optional[tuple[int, int]]:
+    raw = (env if env is not None else os.environ).get(PROBE_AT_ENV, PROBE_AT).strip().lower()
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
+    if not m or int(m[1]) > 23 or int(m[2]) > 59:
+        return None
+    return int(m[1]), int(m[2])
+
+
+def seconds_until(at: tuple[int, int], now: datetime) -> float:
+    target = now.replace(hour=at[0], minute=at[1], second=0, microsecond=0)
+    if target <= now:
+        from datetime import timedelta
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+async def run_probe(app: "Any", agent: Optional[str] = None) -> None:
+    """Ask the fixed questions in a fresh conversation and record both times."""
+    agent = agent or os.environ.get("LOGOS_VOICE_AGENT") or DEFAULT_AGENT
+    links = app.get("agent_links")
+    if links is None:
+        return
+    try:
+        definition = await asyncio.to_thread(links.runtime.load, agent)
+        await links.health(agent)
+        client = await links.client(agent)
+    except Exception as e:
+        logger.info("voice probe: %s not reachable, skipped: %s", agent, e)
+        return
+    from gateway import agent_chat
+    try:
+        async for payload in agent_chat.wake_model(definition.get("model") or {}, links.runtime.runner.http,
+                                                   backup=await asyncio.to_thread(agent_chat.has_backup, definition)):
+            if payload.get("error_type") == agent_chat.MODEL_OFF:
+                logger.info("voice probe: the model server is off, skipped")
+                return
+    except Exception:
+        pass
+    model = model_of(definition)
+    session_id = f"voice-probe-{_SAFE.sub('-', agent)}-{datetime.now():%Y%m%d-%H%M%S}"
+    for turn, question in zip(("first", "followup"), PROBE):
+        t0 = time.monotonic()
+        outcome, _ = await collect(client, question, session_id=session_id, wait=180.0)
+        sec = time.monotonic() - t0
+        app["voice_stats"].probe[(agent, model, turn)] = (sec, outcome, time.time())
+        logger.info("voice probe: %s %s %s in %.1fs", agent, turn, outcome, sec)
+        if outcome != "ok":
+            return
+
+
+async def _probe_loop(app: "Any") -> None:
+    at = probe_time()
+    if at is None:
+        return
+    while True:
+        await asyncio.sleep(seconds_until(at, datetime.now()))
+        try:
+            await run_probe(app)
+        except Exception as e:  # never take the dashboard down
+            logger.warning("voice probe failed: %s", e)
+        await asyncio.sleep(61)
+
+
+async def _start_probe(app: "Any") -> None:
+    app["voice_probe_task"] = asyncio.ensure_future(_probe_loop(app))
+
+
+async def _stop_probe(app: "Any") -> None:
+    task = app.get("voice_probe_task")
+    if task:
+        task.cancel()
+
+
 def register(app: "Any") -> None:
     token()  # made now, so it can be copied into Home Assistant before the first request
+    app["voice_stats"] = Stats()
     app.router.add_post(PATH, handle_converse)
+    app.on_startup.append(_start_probe)
+    app.on_cleanup.append(_stop_probe)

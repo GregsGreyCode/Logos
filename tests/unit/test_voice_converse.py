@@ -143,3 +143,56 @@ def test_an_agent_that_is_down_is_spoken_about_not_raised(home):
         return a
     status, out = _post(app, {"Authorization": f"Bearer {vc.token()}"}, {"text": "hi"})
     assert status == 200 and out["speech"] == vc.DOWN and out["continue"] is False
+
+
+# ── how fast it answers (/metrics) ──────────────────────────────────────────────────────────
+
+def test_turn_times_are_a_prometheus_histogram():
+    st = vc.Stats()
+    st.observe("household", "qwen3.6", "first", "ok", 40.2)
+    st.observe("household", "qwen3.6", "followup", "ok", 7.7)
+    st.observe("household", "qwen3.6", "followup", "ok", 8.1)
+    text = st.render()
+    lab = 'agent="household",model="qwen3.6",turn="followup",outcome="ok"'
+    assert "# TYPE logos_voice_turn_seconds histogram" in text
+    assert f'logos_voice_turn_seconds_bucket{{{lab},le="6"}} 0' in text
+    assert f'logos_voice_turn_seconds_bucket{{{lab},le="10"}} 2' in text
+    assert f'logos_voice_turn_seconds_bucket{{{lab},le="+Inf"}} 2' in text
+    assert f"logos_voice_turn_seconds_count{{{lab}}} 2" in text
+    assert f"logos_voice_turn_seconds_sum{{{lab}}} 15.800" in text
+    assert vc.Stats().render() == ""
+
+
+def test_the_nightly_check_time():
+    assert vc.probe_time({}) == (4, 30)
+    assert vc.probe_time({vc.PROBE_AT_ENV: "off"}) is None
+    assert vc.probe_time({vc.PROBE_AT_ENV: "23:05"}) == (23, 5)
+    assert vc.probe_time({vc.PROBE_AT_ENV: "25:00"}) is None
+    assert vc.seconds_until((4, 30), datetime(2026, 11, 27, 4, 0)) == 1800
+    assert vc.seconds_until((4, 30), datetime(2026, 11, 27, 5, 0)) == 23.5 * 3600
+
+
+def test_the_nightly_check_asks_the_same_two_questions_in_a_fresh_conversation(home):
+    c = FakeClient([ev("run_completed", "Friday.")])
+    app = {"agent_links": FakeLinks(c), "voice_stats": vc.Stats()}
+    asyncio.run(vc.run_probe(app))
+    assert [t for t, _ in c.started] == list(vc.PROBE)
+    sessions = {kw["session_id"] for _, kw in c.started}
+    assert len(sessions) == 1 and next(iter(sessions)).startswith("voice-probe-household-")
+    assert set(app["voice_stats"].probe) == {("household", "unknown", "first"), ("household", "unknown", "followup")}
+    assert "logos_voice_probe_seconds{" in app["voice_stats"].render()
+
+
+def test_a_spoken_turn_is_measured(home):
+    links = FakeLinks(FakeClient([ev("run_completed", "Done.")]))
+    seen = {}
+
+    def app():
+        a = web.Application()
+        a["agent_links"] = links
+        vc.register(a)
+        seen["stats"] = a["voice_stats"]
+        return a
+    assert _post(app, {"Authorization": f"Bearer {vc.token()}"}, {"text": "hi", "device_id": "pe1"})[0] == 200
+    (key, row), = seen["stats"].turns.items()
+    assert key[0] == "household" and key[3] == "ok" and row[-1] == 1
