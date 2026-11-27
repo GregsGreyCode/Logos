@@ -906,7 +906,7 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .mx-react { font: inherit; font-size: var(--t-sm); cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
 .mx-react.mine { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
 .mx-turn .msg { position: relative; }
-.mx-react-open { position: absolute; top: -10px; width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 1px solid var(--line);
+.mx-react-open { position: absolute; top: 4px; width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 1px solid var(--line);
   background: var(--surface); color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s; }
 .mx-turn.agent .mx-react-open { right: -32px; }
 .mx-turn.me .mx-react-open { left: -32px; }
