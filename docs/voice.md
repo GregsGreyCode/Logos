@@ -396,6 +396,26 @@ Check it: `docker logs logos-stt` shows a line per command, e.g. `heard 3.6 s (3
 | `wyoming` | 1.11.0 | the protocol Home Assistant speaks |
 | LibriSpeech dev-clean | pinned by SHA-256 | 120 clips of 40 speakers: the reference voices |
 
+### Private things out loud only when your phone is home (D2, 27 Nov)
+
+Greg's decision: an agent says someone's private details out loud (their own email, personal calendar,
+messages, private notes) only while that person's phone is on the home network. Otherwise the speaker
+says the details are in the chat, and the agent writes them there after a `Details:` line: only what
+comes before that line is read out, and the whole answer is copied to the chat (logos-speaker-chat).
+Shared household things (the lists, the lights, the household calendar) are not private.
+
+- **Whose phone:** `~/.config/logos/presence` (not in git), one `username=tracker` per line, for example
+  `greg=device_tracker.greg_s_phone`. The tracker must say `home` (the Home Assistant Companion app's
+  location or Wi-Fi report).
+- **The person** is the one the voice print recognised. Nobody recognised, no tracker, a tracker that is
+  not `home`, or Home Assistant not answering: away, the cautious answer.
+- Checked through Logos's own Home Assistant account, at most every 30 s per person
+  (`gateway/presence.py`). Only "home" or "away" is logged.
+
+The words sent to the agent lose the name that woke the speaker ("Hey Finn, what's on?" becomes
+"what's on?"): Home Assistant keeps the audio from just before the wake word, so the name is often
+heard as well.
+
 ### Wake words: each agent's name (VW.1, 27 Nov)
 
 The speaker wakes to the agents' names and the name picks the agent. The names are not trained

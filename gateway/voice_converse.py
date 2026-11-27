@@ -43,7 +43,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
-from gateway import speaker_voice, voice_id, wake_host
+from gateway import presence, speaker_voice, voice_id, wake_host
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,21 @@ def spoken(text: str) -> str:
         t = (cut[: end + 1] if end > MAX_SPOKEN // 2 else cut.rsplit(" ", 1)[0] + ".") + \
             " The rest is in the chat."
     return t
+
+
+def without_wake(text: str, agent: str, definition: Mapping[str, Any]) -> str:
+    """The words without the name that woke the speaker ("Hey Finn, what's on?" -> "what's on?").
+    Home Assistant keeps the audio from just before the wake word, so the name is often heard too."""
+    try:
+        phrases = sorted((p["phrase"] for p in wake_host.phrases_of(agent, definition or {})), key=len, reverse=True)
+    except Exception:
+        return text
+    for phrase in phrases:
+        words = r"\W+".join(re.escape(w) for w in phrase.split())
+        cut = re.sub(rf"^\W*{words}\b[\s,.!?:;-]*", "", text, count=1, flags=re.I)
+        if cut != text:
+            return cut if cut.strip() else text
+    return text
 
 
 def expects_reply(text: str) -> bool:
@@ -255,7 +270,7 @@ async def handle_converse(request: "Any") -> "Any":
     measured: dict = {}
 
     def answer(outcome: str, words: str) -> "web.Response":
-        said = spoken(words) or FAILED
+        said = spoken(presence.spoken_part(words)) or FAILED
         speaker_voice.said(request.app, agent, said)   # read out in this agent's voice (V1.2)
         if measured:
             stats.observe(agent, measured["model"], measured["turn"], outcome, time.monotonic() - started)
@@ -292,8 +307,11 @@ async def handle_converse(request: "Any") -> "Any":
 
     measured.update(model=model_of(definition),
                     turn="first" if await is_first(client, session_id) else "followup")
-    outcome, words = await collect(client, voice_id.tagged(text, who), session_id=session_id,
-                                   instructions=voice_id.instructions(INSTRUCTIONS, who))
+    # D2: private details out loud only while the speaker's own phone is home (gateway/presence.py).
+    private_ok = await presence.at_home(who.username if who is not None and who.known else None)
+    instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), presence.rule(private_ok)) if p)
+    outcome, words = await collect(client, voice_id.tagged(without_wake(text, agent, definition), who),
+                                   session_id=session_id, instructions=instructions)
     return answer(outcome, words)
 
 
