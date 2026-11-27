@@ -146,9 +146,11 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 # Home's widgets, each person's own choice (Greg, 22 Nov); the calendar is always there.
 WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming", "month")
-# Widgets that come in more than one size, each person's own choice in Edit (Greg, 23 Nov: his To-do compact,
-# Béré's full). The first is the default.
-WIDGET_SIZES = {"lists": ("compact", "full")}
+# Every widget comes in two sizes, each person's own choice in Edit (Greg, 23 Nov: his To-do compact, Béré's full;
+# 24 Nov: "every widget gets a Compact and a Full version"). Each widget decides what Compact leaves out.
+SIZE_NAMES = ("compact", "full")
+# Weather (Greg, 24 Nov): more than one place, in the order you keep them.
+MAX_WEATHER_PLACES = 8
 # F41: the screens whose first-visit tips someone has seen (gateway/ui/tips.js)
 TIP_SCREENS = ("home", "agents", "chat", "notifications", "routines")
 
@@ -173,8 +175,13 @@ def _pref_ok(key: str, value: Any) -> bool:
         return isinstance(value, list) and len(value) == len(set(value)) and all(t in TIP_SCREENS for t in value)
     if key == "weather_place":
         return _place_ok(value)
+    if key == "weather_places":
+        return (isinstance(value, list) and len(value) <= MAX_WEATHER_PLACES and all(p is not None and _place_ok(p) for p in value)
+                and len({(round(float(p["lat"]), 2), round(float(p["lon"]), 2)) for p in value}) == len(value))
     if key == "widget_sizes":
-        return isinstance(value, dict) and all(w in WIDGET_SIZES and v in WIDGET_SIZES[w] for w, v in value.items())
+        from gateway.widgets import KINDS
+        return (isinstance(value, dict) and len(value) <= 40
+                and all((w in WIDGETS or w in KINDS) and v in SIZE_NAMES for w, v in value.items()))
     if key == "widget_grid":
         # F49: the desktop Home layout: {widget: {x, y, w, h}} on a 12-column grid (h 0: as tall as its content)
         from gateway.widgets import KINDS
@@ -270,7 +277,8 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
         return web.json_response({"error": "bad_prefs", "allowed": {**{k: list(v) for k, v in PREFS.items()},
                                                                    **{k: "#rrggbb" for k in COLOUR_PREFS},
                                                                    "widgets": list(WIDGETS), "tips_seen": list(TIP_SCREENS), "weather_place": "{name, lat, lon}",
-                                                                   "widget_sizes": {w: list(v) for w, v in WIDGET_SIZES.items()}}},
+                                                                   "weather_places": f"[{{name, lat, lon}}], up to {MAX_WEATHER_PLACES}",
+                                                                   "widget_sizes": {"<widget>": list(SIZE_NAMES)}}},
                                  status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
     seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not settings
@@ -2106,23 +2114,44 @@ async def handle_home_lists_tick(request: web.Request) -> web.Response:
     return web.json_response(out, status=200 if out.get("ok") else 409)
 
 
-async def handle_weather(request: web.Request) -> web.Response:
-    """GET /api/v2/weather — today and tomorrow where you chose (Settings: weather_place)."""
+def weather_places_of(prefs: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """The places Home's Weather shows, in your order: ``weather_places``, else the one ``weather_place`` chosen before."""
+    if isinstance(prefs.get("weather_places"), list):
+        return list(prefs["weather_places"])
+    return [prefs["weather_place"]] if prefs.get("weather_place") else []
+
+
+async def weather_for(places: List[Mapping[str, Any]], cache: Dict[Any, Any], fetch=None) -> List[Dict[str, Any]]:
+    """Each place's now, today and tomorrow (``{"place", "lat", "lon", ...}``, or ``{"place", "error"}``), asked at once."""
     from gateway import home
+    fetch = fetch or home.weather
+
+    async def one(place: Mapping[str, Any]) -> Dict[str, Any]:
+        key = (round(float(place["lat"]), 2), round(float(place["lon"]), 2))
+        base = {"place": place["name"], "lat": key[0], "lon": key[1]}
+        if key in cache and time.time() - cache[key][0] < WEATHER_CACHE_SECONDS:
+            return {**cache[key][1], **base}
+        try:
+            out = await asyncio.to_thread(fetch, *key)
+        except Exception:
+            return {**base, "error": "weather_unavailable"}
+        cache[key] = (time.time(), out)
+        return {**out, **base}
+    return list(await asyncio.gather(*(one(p) for p in places)))
+
+
+async def handle_weather(request: web.Request) -> web.Response:
+    """GET /api/v2/weather — today and tomorrow in each place you chose (``weather_places``), in your order.
+
+    ``{"places": [...]}``, with the first place's numbers also at the top (as before there was more than one)."""
     user = _user(request)
-    place = (await asyncio.to_thread(prefs_of, user["id"])).get("weather_place")
-    if not place:
-        return web.json_response({"error": "no_place"})
-    key = (round(float(place["lat"]), 2), round(float(place["lon"]), 2))
-    cache = request.app.setdefault("weather_cache", {})
-    if key in cache and time.time() - cache[key][0] < WEATHER_CACHE_SECONDS:
-        return web.json_response({**cache[key][1], "place": place["name"]})
-    try:
-        out = await asyncio.to_thread(home.weather, *key)
-    except Exception:
-        return web.json_response({"error": "weather_unavailable", "place": place["name"]})
-    cache[key] = (time.time(), out)
-    return web.json_response({**out, "place": place["name"]})
+    places = weather_places_of(await asyncio.to_thread(prefs_of, user["id"]))
+    if not places:
+        return web.json_response({"error": "no_place", "places": []})
+    out = await weather_for(places, request.app.setdefault("weather_cache", {}))
+    first = out[0]
+    top = {"error": "weather_unavailable", "place": first["place"]} if first.get("error") else first
+    return web.json_response({**top, "places": out})
 
 
 async def handle_weather_places(request: web.Request) -> web.Response:

@@ -5,8 +5,40 @@
 // no holes. Only a wide screen (1100 px and up) uses it; a phone keeps the ordered list. The layout is each person's own,
 // kept with their login (the "widget_grid" pref); the order of the widgets (the phone's) follows it, reading down then across.
 export const COLS = 12, ROWU = 8, GAPX = 24, GAPV = 22;
-export const MIN_W = { next: 3, weather: 4, calendar: 4, messages: 3, coming: 3, lights: 3, lists: 3 };
-export const MIN_H = 12;               // rows (96 px): a fixed height is never smaller than this
+// The smallest each widget may be made, Compact and Full, in pixels: [width, height] (F49 stage 2, Greg 24 Nov: "correct
+// each widget's minimum size so it makes sense for what it shows"). Measured, not guessed: tests/ui/checks/widget_minimums.mjs
+// draws every widget with real-looking content at every width and keeps the narrowest at which nothing is cut off, spills
+// over or is squeezed onto more lines than it needs, and the height that shows what the widget is for there (all of it
+// for a fixed-shape widget like Network; the heading and the first two rows for a list like Coming up). The check
+// fails when a widget no longer fits its minimum, so a change to a widget's look comes with a new measurement.
+// The edit bar (handle, name, Compact/Full, ✕) wraps on a narrow widget, so it does not count.
+// MIN_TABLE_START (measured 27 Nov 2026: what makes each smaller is in widget_minimums.mjs's MEASURE=1 output)
+export const MIN = {
+  next: { compact: [160, 120], full: [160, 120] },          // "15:00 Dinner with Alex · 40 min", on two lines at its narrowest
+  weather: { compact: [270, 40], full: [270, 104] },        // one place's row; narrower cuts the town's name (compact) or wraps tomorrow (full)
+  calendar: { compact: [200, 64], full: [270, 104] },       // Today and its first event (full: and whose); narrower cuts the titles
+  messages: { compact: [330, 72], full: [330, 96] },        // two messages; narrower cuts a group's name ("Household Group · Household agent")
+  coming: { compact: [200, 112], full: [280, 112] },        // two events; narrower cuts their titles
+  lights: { compact: [160, 96], full: [160, 120] },         // one row of rooms: a pill a row at its narrowest
+  lists: { compact: [170, 120], full: [260, 192] },         // one list's tile or card; narrower spills its card
+  services: { compact: [280, 112], full: [280, 112] },      // two services; narrower cuts the names
+  servers: { compact: [270, 72], full: [300, 144] },        // one server; full: its three meters
+  proxmox: { compact: [220, 136], full: [380, 96] },        // two guests: rows (compact), or cards two by two (full)
+  backups: { compact: [260, 112], full: [260, 112] },       // two backups
+  adblock: { compact: [160, 128], full: [240, 160] },       // the ring and its words; full: and the top blocked
+  playing: { compact: [270, 72], full: [210, 160] },        // one thing playing: a line (compact), or poster, bar and times (full)
+  downloads: { compact: [270, 96], full: [270, 120] },      // two downloads
+  bookmarks: { compact: [160, 64], full: [160, 72] },       // the first row of links
+  energy: { compact: [190, 120], full: [190, 256] },        // using now and today; full: and the UPS
+  network: { compact: [220, 96], full: [330, 128] },        // down and up; full: and ping, side by side
+  cameras: { compact: [380, 152], full: [380, 152] },       // a snapshot with its label, two side by side
+  agents: { compact: [180, 184], full: [200, 224] },        // two agents and how they are doing today
+};
+// MIN_TABLE_END
+const MIN_ANY = { compact: [200, 96], full: [240, 96] };         // a widget not measured yet
+export const MIN_H = 6;                // rows: never shorter than this, whatever the table says
+const sizeKey = (size) => (size === 'compact' ? 'compact' : 'full');
+export const minPx = (id, size) => (MIN[id] || MIN_ANY)[sizeKey(size)];
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const hits = (p, it, x, y) => x < p.x + p.w && x + it.w > p.x && y < p.y + p.h && y + it.h > p.y;
@@ -56,7 +88,62 @@ export function compact(items, movingId = null) {
 
 // A starting width for a widget with no saved place: two columns on a normal desktop, three or four on a very wide one.
 export const defaultWidth = (screenWidth) => (screenWidth >= 2300 ? 3 : screenWidth >= 1500 ? 4 : 6);   // by the screen: four columns, three, or two
-export const minWidth = (id) => MIN_W[id] || 3;
+// The fewest columns a widget may span on a board this wide (a pixel minimum is more columns on a small screen), and the
+// fewest rows.
+export const minCols = (id, size, boardWidth) => {
+  const m = metrics(boardWidth || 1100);
+  return clamp(Math.ceil((minPx(id, size)[0] + GAPX) / m.stepX - 1e-6), 1, COLS);
+};
+export const minRows = (id, size) => Math.max(MIN_H, rowsFor(minPx(id, size)[1]));
+// A place made to respect its minimum: wider or taller if it is less (a fixed height only; 0 stays "as tall as its content").
+export function atLeast(c, id, size, boardWidth) {
+  const w = Math.max(c.w, minCols(id, size, boardWidth));
+  return { ...c, w, x: clamp(c.x, 0, COLS - w), h: c.h ? Math.max(c.h, minRows(id, size)) : 0 };
+}
+
+// Tidy up (Greg, 24 Nov): everything packed neatly, in the same order (reading down, then across). The board is cut into
+// equal tracks (`track` columns each: the screen's usual widget width, as Reset gives), each widget is made a whole number
+// of tracks wide (the nearest to its width, never under its minimum), so every edge lines up with the ones above and below.
+// Then, in order, each goes to the highest free spot on a track (leftmost on a tie) that still comes after the one before
+// it, so the order reads the same; nothing is left hanging over a gap (Home packs widgets upward, and a tidied Home is
+// already packed). Heights are kept. items: [{id, w, h, min}] in reading order (h in rows, measured for one as tall as its
+// content; min: its fewest columns). Returns [{id, x, y, w}].
+export function tidy(items, track = 6) {
+  const placed = [];
+  let prev = null;
+  for (const it of items) {
+    const need = Math.max(it.min || 1, 1);
+    const tracks = clamp(Math.max(Math.round(it.w / track), Math.ceil(need / track)), 1, Math.floor(COLS / track));
+    const w = Math.min(COLS, Math.max(tracks * track, Math.min(need, COLS)));
+    let best = null, latest = null;
+    for (let x = 0; x + w <= COLS; x += track) {
+      const cand = { ...it, x, w };
+      const y = dropY(placed, cand, x);
+      const after = !prev || y > prev.y || (y === prev.y && x > prev.x);
+      if (after && (!best || y < best.y || (y === best.y && x < best.x))) best = { ...cand, y };
+      if (!latest || y > latest.y) latest = { ...cand, y };
+    }
+    const spot = best || latest;                       // none after the one before: as far down as it can go
+    placed.push(spot);
+    prev = spot;
+  }
+  return placed.map(({ id, x, y, w }) => ({ id, x, y, w }));
+}
+
+// Snap guides while a widget is moved or resized: the column edges and rows where its edges line up with another
+// widget's. Returns {cols: [column edge 0..12], rows: [row]}.
+export function guides(items, mover) {
+  const cols = new Set(), rows = new Set();
+  const left = mover.x, right = mover.x + mover.w, top = mover.y, bottom = mover.y + mover.h;
+  for (const o of items) {
+    if (o.id === mover.id) continue;
+    for (const e of [o.x, o.x + o.w]) if (e === left || e === right) cols.add(e);
+    for (const e of [o.y, o.y + o.h]) if (e === top || e === bottom) rows.add(e);
+  }
+  if (left === 0) cols.add(0);
+  if (right === COLS) cols.add(COLS);
+  return { cols: [...cols].sort((a, b) => a - b), rows: [...rows].sort((a, b) => a - b) };
+}
 
 // The grid's geometry for a board of this width.
 export function metrics(boardWidth) {
