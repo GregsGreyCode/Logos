@@ -231,13 +231,25 @@ class Outlook:
     def fetch(self, folder: str, since: datetime, known: Iterable[str] = (),
               until: Optional[datetime] = None) -> List[dict]:
         """The newest messages (at most MAX) from ``since``, and before ``until`` when given."""
+        try:
+            return self._fetch(folder, since, until)
+        except Refused as e:
+            # The sending headers (E2) are a nice-to-have: if Microsoft will not list them, carry on without.
+            if "(400)" not in str(e) or not self.headers:
+                raise
+            self.headers = False
+            return self._fetch(folder, since, until)
+
+    headers = True                         # ask Graph for internetMessageHeaders (List-Unsubscribe, ...)
+
+    def _fetch(self, folder: str, since: datetime, until: Optional[datetime]) -> List[dict]:
         name = {"inbox": "inbox", "sent": "sentitems"}[folder]
         field = "receivedDateTime" if folder == "inbox" else "sentDateTime"
         where = f"{field} ge {iso(since)}" + (f" and {field} lt {iso(until)}" if until else "")
         q = urllib.parse.urlencode({
             "$top": "50", "$orderby": f"{field} desc", "$filter": where,
             "$select": f"id,conversationId,{field},from,toRecipients,ccRecipients,subject,bodyPreview,body,isRead,"
-                       "hasAttachments,inferenceClassification,internetMessageHeaders"})
+                       "hasAttachments,inferenceClassification" + (",internetMessageHeaders" if self.headers else "")})
         url, out = f"{GRAPH}/me/mailFolders('{name}')/messages?{q}", []
         while url and len(out) < self.MAX:
             data = self.get(url)
@@ -421,6 +433,8 @@ SMALLTALK = re.compile(
     r"comment allez-vous|tu vas bien|vous allez bien)\b[^?]{0,30}\?*\W*$", re.I)
 THANKS = re.compile(r"\b(thanks|thank you|thx|cheers|merci|sounds good|perfect|parfait|great|super|noted|got it|"
                     r"bien re[çc]u|top|nickel|g[ée]nial|see you|à bient[ôo]t|a bientot)\b", re.I)
+FYI = re.compile(r"^\W*((hi|hello|hey|bonjour|salut)\b[^\n]{0,40}\n+)?\W*(fyi|for your information|just so you know|"
+                 r"heads[ -]up|pour (info|information)|pour ton info|pour votre info)\b", re.I)
 UNSUB_TEXT = re.compile(r"unsubscribe|d[ée]sabonner|d[ée]sinscri|manage (your )?(e-?mail )?preferences|"
                         r"g[ée]rer (vos|mes) pr[ée]f[ée]rences|opt[ -]out", re.I)
 SUBJECT_PREFIX = re.compile(r"^\s*((re|fw|fwd|tr|aw|wg|r[ée]f)\s*(\[\d+\])?\s*:\s*)+", re.I)
@@ -535,7 +549,7 @@ def reply_facts(msg: Mapping[str, Any], own: Iterable[str], sent: List[Mapping[s
     replied = any((s.get("date") or "") > (msg.get("date") or "") for s in in_thread)
     took_part = bool(in_thread)
     age = _age_days(msg.get("date") or "", at)
-    closing = bool(not asks and len(text) < 200 and THANKS.search(text))
+    closing = bool(not asks and (len(text) < 200 and THANKS.search(text) or FYI.match(text)))
     knows = bool(written or took_part)
 
     def decide() -> Tuple[str, str]:
@@ -552,13 +566,16 @@ def reply_facts(msg: Mapping[str, Any], own: Iterable[str], sent: List[Mapping[s
                 return "maybe", "looks automatic, but it asks something and your person has written to this address"
             return "no", "an automatic notification"
         if closing:
-            return "no", "it only thanks or confirms: nothing to answer"
+            return "no", "it only thanks, confirms or informs: nothing to answer"
         if age > STALE_DAYS:
             return ("maybe", "it asks something, but it is over a month old: it may be settled") if asks \
                 else ("no", "over a month old, with no question")
         if kind == "mailing list" or you_are.startswith("not named"):
-            return ("maybe", "sent to a list (or your person was in Bcc), but it asks something") if asks \
-                else ("no", "sent to a list (or your person was in Bcc), with no question for them")
+            # A list's "please return the form" is a task for everyone, not a question to answer.
+            if any(a.endswith("?") for a in asks):
+                return "maybe", "sent to a list (or your person was in Bcc), but it asks a question"
+            return "no", ("sent to a list (or your person was in Bcc): nothing to answer"
+                          + (" (it asks everyone to do something: mention it if it matters)" if asks else ""))
         if asks:
             if you_are == "cc":
                 return "maybe", "it asks something, but your person is only in CC"
@@ -586,7 +603,7 @@ THREAD_BUDGET = 12000             # characters of a conversation handed over in 
 THREAD_PART = 3000                # most of one message
 THREAD_SHORT = 300                # an older message when the conversation is long
 DRAFT_NOTE = ("Logos never sends email. If your person wants a reply, write the draft in the chat for them to "
-              "copy into their own mail app (souls/_shared/mail.md, Drafting replies).")
+              "copy into their own mail app.")
 
 
 def view(row: dict, inbox: str = "", body: bool = False) -> dict:

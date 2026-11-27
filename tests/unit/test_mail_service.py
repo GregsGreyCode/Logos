@@ -400,3 +400,26 @@ def test_mail_thread_is_the_conversation_in_order_with_who_said_what(tmp_path):
     assert "long_conversation" not in out
     with pytest.raises(ms.Refused):
         s.mail_thread("greg", "nope")
+
+
+def test_outlook_reads_cc_and_sending_headers_and_carries_on_without_headers():
+    msg = {"id": "AAA", "conversationId": "c1", "receivedDateTime": ago(hours=1),
+           "from": {"emailAddress": {"name": "Shop", "address": "hello@shop.example"}},
+           "toRecipients": [{"emailAddress": {"address": "greg@hotmail.example"}}],
+           "ccRecipients": [{"emailAddress": {"address": "bere@gmail.example"}}], "subject": "Sale",
+           "bodyPreview": "x", "body": {"content": "x"}, "isRead": True, "hasAttachments": False,
+           "inferenceClassification": "focused",
+           "internetMessageHeaders": [{"name": "List-Unsubscribe", "value": "<mailto:u@shop.example>"}]}
+    http = FakeHTTP([{"value": [msg]}])
+    (r,) = ms.Outlook({"client_id": "cid"}, lambda: "R1", lambda t: None, http=http).fetch("inbox", NOW - timedelta(days=1))
+    assert r["cc_addrs"] == "bere@gmail.example" and r["headers"] == {"unsubscribe": 1} and r["automated"]
+    assert "internetMessageHeaders" in ms.urllib.parse.unquote(http.calls[1][1])
+
+    class Picky(FakeHTTP):
+        def __call__(self, method, url, headers, body=None):
+            if "internetMessageHeaders" in ms.urllib.parse.unquote(url):
+                self.calls.append((method, url, headers, body))
+                return 400, b"{}"
+            return super().__call__(method, url, headers, body)
+    box = ms.Outlook({"client_id": "cid"}, lambda: "R1", lambda t: None, http=Picky([{"value": [msg]}]))
+    assert [x["id"] for x in box.fetch("inbox", NOW - timedelta(days=1))] == ["o:AAA"] and box.headers is False

@@ -2,7 +2,7 @@
 """Run the Logos evals against the throwaway `bench` agent and print a scorecard.
 
 Usage:
-  scripts/logos-eval [--keep] [--only writes|brain|noticeboard|judgement]
+  scripts/logos-eval [--keep] [--only writes|brain|noticeboard|judgement|mail]
 
 It recreates `bench` with empty volumes (unless --keep), then runs three suites:
 
@@ -10,6 +10,9 @@ It recreates `bench` with empty volumes (unless --keep), then runs three suites:
   brain        does it file what it is told, recall it later, update instead of duplicate
   noticeboard  does it follow the noticeboard rules: never answer another agent on its own,
                never leak a private fact, only schedule a reminder its person accepted
+  mail         (only with --only mail) does it tell which emails need a reply, read the conversation
+               first, and draft a good reply (evals/mail_replies/; made-up mailboxes, the bench model
+               called directly, no sandbox)
 
 Nothing here touches the real agents, their brains or Telegram. Results are also written to
 evals/results/<timestamp>.json. See evals/README.md for what each check means.
@@ -172,22 +175,35 @@ def suite_noticeboard(rt):
     return checks
 
 
+def suite_mail(rt):
+    """E2: drafting replies, against made-up mailboxes (evals/mail_replies/run.py), with the bench model."""
+    spec = importlib.util.spec_from_file_location("logos_mail_eval", REPO / "evals" / "mail_replies" / "run.py")
+    run = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(run)
+    m = rt.load(BENCH)["model"]
+    results = run.run_all(run.openai_model(m["base_url"], m["default"]))
+    return [{"check": c["check"], "ok": c["ok"], "detail": c["detail"][:110]} for r in results for c in r["checks"]]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--keep", action="store_true", help="reuse the running bench agent instead of recreating it")
-    ap.add_argument("--only", choices=["writes", "brain", "noticeboard", "judgement"])
+    ap.add_argument("--only", choices=["writes", "brain", "noticeboard", "judgement", "mail"])
     args = ap.parse_args()
     rt = load("agent_runtime").AgentRuntime(REPO)
     model = rt.load(BENCH)["model"]["default"]
-    if not args.keep:
+    sandboxed = args.only != "mail"                  # the mail suite needs no bench sandbox
+    if sandboxed and not args.keep:
         print("recreating the bench agent with empty volumes ...", flush=True)
         fresh_bench()
-    upload(REPO / "evals" / "lib" / "ask.py", "/tmp/ask")
+    if sandboxed:
+        upload(REPO / "evals" / "lib" / "ask.py", "/tmp/ask")
     suites = {"writes": lambda: suite_script("agent_writes"), "brain": lambda: suite_script("brain_checks"),
-              "noticeboard": lambda: suite_noticeboard(rt), "judgement": lambda: suite_script("judgement_checks")}
+              "noticeboard": lambda: suite_noticeboard(rt), "judgement": lambda: suite_script("judgement_checks"),
+              "mail": lambda: suite_mail(rt)}
     results, started = {}, time.time()
     for name, fn in suites.items():
-        if args.only and args.only != name:
+        if (args.only and args.only != name) or (not args.only and name == "mail"):
             continue
         print(f"running {name} ...", flush=True)
         t = time.time()
