@@ -8,6 +8,7 @@ import { getPref, setPref } from './prefs.js';
 import { reset as resetTips } from './tips.js';
 import { updatesView } from './updates.js';
 import * as push from './push.js';
+import { createRecorder } from './voice.js';
 
 // F45 (Greg, 23 Nov: "more inspired by Element X's settings"): a list, not a row of tabs. Grouped,
 // each row with its icon and what it is set to now; on a phone a row opens its page (with a back
@@ -17,6 +18,7 @@ const SECTIONS = [
   { id: 'notifications', name: 'Phone alerts', full: 'Phone alerts', icon: 'bell', group: 'You' },
   { id: 'email', name: 'Email', full: 'Email', icon: 'mail', group: 'You' },
   { id: 'speaker', name: 'Speaker', full: 'House speaker', icon: 'speaker', group: 'You' },
+  { id: 'voice', name: 'Your voice', full: 'Your voice', icon: 'mic', group: 'You' },
   { id: 'tips', name: 'Tips', full: 'Tips', icon: 'bulb', group: 'You' },
   { id: 'matrix', name: 'Chats & devices', full: 'Chats & devices', icon: 'shield', group: 'This device' },
   { id: 'updates', name: 'Updates', full: 'Updates', icon: 'update', group: 'Logos', admin: true },
@@ -602,6 +604,121 @@ function speaker(body) {
   return () => { alive = false; stop(); Object.values(urls).forEach((u) => URL.revokeObjectURL(u)); };
 }
 
+// Your voice (Voice VO.2): about twelve seconds of reading makes a voice print, so the house speaker can tell who
+// is speaking (Home answers for you; your own agent answers only you). Then test it (you, and someone else), check it
+// against what the speaker itself heard, or delete it. Logos keeps numbers describing the voice, never the recording.
+function yourVoice(body) {
+  let alive = true, mode = 'enrol', add = false;
+  const status = h('p', { class: 'when', role: 'status' });
+  const intro = h('div', {}, loading('rows', 2));
+  const printBox = h('div', { class: 'settings-body-inner voiceprint-now' });
+  const testBox = h('section', { 'aria-label': 'Test it', hidden: true });
+  const speakerBox = h('section', { 'aria-label': 'At the house speaker', hidden: true });
+  const deleteBox = h('section', { 'aria-label': 'Delete your voice print', hidden: true });
+  const testNote = h('p', { class: 'when appearance-note', role: 'status' });
+  const heardList = h('div', { class: 'settings-choices voiceprint-heard' });
+  const prompt = h('blockquote', { class: 'voiceprint-prompt' });
+  const what = h('p', { class: 'when' });
+  const rec = createRecorder({ agent: '', raw: true, maxSeconds: 15, say: (t) => { status.replaceChildren(t || ''); },
+    onWords: () => {}, onAudio: (blob) => upload(blob) });
+  const label = (t) => { rec.mic.setAttribute('aria-label', t); rec.mic.title = t; };
+  body.replaceChildren(
+    h('section', { 'aria-label': 'Your voice' }, heading('Your voice'), intro, printBox),
+    h('section', { 'aria-label': 'Record' }, heading('Record'), what, prompt,
+      h('form', { class: 'voiceprint-form', onsubmit: (e) => e.preventDefault() }, rec.mic, rec.bar), status),
+    testBox, speakerBox, deleteBox);
+  const quality = (q) => (q ? `I heard ${Number(q.speech || 0).toFixed(1)} s of speech${q.clipped ? ', too loud' : ''}, ${Number(q.snr || 0) >= 15 ? 'clean' : 'a little noisy'} (${Math.round(q.snr || 0)} dB).` : '');
+  function showPrint(d) {
+    const s = d.summary;
+    testBox.hidden = speakerBox.hidden = deleteBox.hidden = !s;
+    if (!s) {
+      printBox.replaceChildren(h('p', { class: 'none' }, 'No voice print yet.'));
+      what.textContent = `Tap the microphone and read this aloud (about ${d.seconds || 12} seconds), then tap ■. A quiet room is best.`;
+      add = false; label('Record my voice');
+      return;
+    }
+    const own = s.own ? `Your own samples score ${s.own[0].toFixed(2)} to ${s.own[1].toFixed(2)}.` : '';
+    const others = s.others ? ` ${s.others} other voices score at most ${Number(s.others_top).toFixed(2)}.` : '';
+    printBox.replaceChildren(
+      h('p', {}, h('strong', {}, 'Your voice print is set up. '), `${s.samples} samples${s.learned ? `, ${s.learned} learned at the speaker` : ''}.`),
+      h('p', { class: 'when' }, `${own}${others} It needs ${s.threshold.toFixed(2)} to recognise you${s.tested_others ? ` (raised by ${s.tested_others} other voice${s.tested_others === 1 ? '' : 's'} you let it hear)` : ''}.`));
+    what.textContent = 'Recording again adds to your voice print: a different room or distance helps.';
+    add = true; label('Record more of my voice');
+  }
+  async function load() {
+    const d = await getJSON('/api/v2/voiceprint').catch(() => null);
+    if (!alive) return;
+    if (!d) { intro.replaceChildren(h('p', { class: 'none' }, 'Your voice could not be loaded just now.')); return; }
+    intro.replaceChildren(
+      h('p', { class: 'when' }, 'Logos can tell who is speaking at the house speaker from their voice: Home then answers for you ("what\'s on today?" is your day), and your own agent answers only you.'),
+      h('p', { class: 'when' }, 'Logos keeps numbers that describe your voice (a voice print), never the recording. Only you can see, change or delete yours. It is a strong hint, not a lock: a recording of your voice could fool it.'),
+      ...(d.on ? [] : [h('p', { class: 'none' }, 'Speech to text for the house speaker is not switched on on this Logos yet.')]));
+    prompt.textContent = d.prompt || '';
+    showPrint(d);
+  }
+  async function upload(blob) {
+    const m = mode;
+    const out = m === 'enrol' ? status : testNote;
+    out.textContent = 'Working out your voice…';
+    rec.mic.disabled = true;
+    const q = m === 'enrol' ? `step=enrol${add ? '&add=1' : ''}` : `step=${m}`;
+    try {
+      const r = await api(`/api/v2/voiceprint?${q}`, { method: 'POST', raw: blob, headers: { 'Content-Type': blob.type || 'audio/webm' } });
+      const d = await r.json().catch(() => ({}));
+      if (!alive) return;
+      if (!r.ok) { out.textContent = d.message || 'That did not work. Try again.'; return; }
+      if (!d.ok) { out.textContent = `${quality(d.quality)} ${d.problem || ''}`; return; }
+      if (m === 'enrol') { status.textContent = `${quality(d.quality)} Saved.`; showPrint({ summary: d.summary }); return; }
+      const need = `needs ${d.threshold.toFixed(2)}`;
+      testNote.textContent = m === 'me'
+        ? `You scored ${d.score.toFixed(2)} (${need}): ${d.recognised ? 'recognised.' : 'not recognised. Try again, or record more of your voice.'}`
+        : `They scored ${d.score.toFixed(2)} (${need}): ${d.recognised ? 'wrongly taken for you. It is now stricter: test yourself again.' : 'refused, as it should be.'}`;
+      showPrint({ summary: d.summary });
+    } catch (e) { out.textContent = 'That did not work. Try again.'; } finally { rec.mic.disabled = false; mode = 'enrol'; }
+  }
+  // Testing uses the same microphone: the next recording is scored instead of added.
+  const testWith = (m, text) => { mode = m; testNote.textContent = text; rec.start(); };
+  testBox.replaceChildren(heading('Test it'),
+    h('p', { class: 'when' }, 'Say anything for five seconds or so, then tap ■.'),
+    h('div', { class: 'row' },
+      h('button', { type: 'button', class: 'btn quiet', onclick: () => testWith('me', 'Listening for you…') }, 'Test: me'),
+      h('button', { type: 'button', class: 'btn quiet', onclick: () => testWith('other', 'Hand it over: someone else, say anything…') }, 'Test: someone else')),
+    testNote);
+  async function heard() {
+    heardList.replaceChildren(loading('rows', 1));
+    const d = await getJSON('/api/v2/voiceprint/heard').catch(() => ({ heard: [] }));
+    if (!alive) return;
+    const rows = d.heard || [];
+    if (!rows.length) { heardList.replaceChildren(h('p', { class: 'none' }, d.problem || 'Nothing heard at the speaker in the last two minutes.')); return; }
+    heardList.replaceChildren(...rows.map((r) => {
+      const note = h('span', { class: 'when' });
+      const btn = h('button', { type: 'button', class: 'btn quiet', onclick: async () => {
+        btn.disabled = true;
+        const res = await api(`/api/v2/voiceprint/heard/${r.id}`, { method: 'POST' }).catch(() => null);
+        const got = res ? await res.json().catch(() => ({})) : {};
+        note.textContent = res && res.ok ? ' Learned: it will know you better at the speaker.' : ` ${got.message || 'That could not be added.'}`;
+        if (res && res.ok) showPrint({ summary: got.summary });
+      } }, 'That was me');
+      return h('div', { class: 'voice-row voiceprint-heard-row' },
+        h('span', {}, h('strong', {}, `${r.ago} s ago`), h('span', { class: 'when' },
+          ` · scored ${r.score.toFixed(2)} · ${r.recognised ? 'recognised as you' : 'not recognised'}`), note),
+        r.recognised ? '' : btn);
+    }));
+  }
+  speakerBox.replaceChildren(heading('At the house speaker'),
+    h('p', { class: 'when' }, 'The speaker\'s microphone sounds different from this one. Ask the speaker something, then check here: if it did not recognise you, "That was me" teaches it.'),
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: heard }, 'Check what it heard')), heardList);
+  deleteBox.replaceChildren(heading('Delete'),
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn danger', onclick: async () => {
+      if (!await ask({ title: 'Delete your voice print?', text: 'The house speaker will no longer recognise you. You can record it again at any time.', yes: 'Delete', danger: true })) return;
+      const r = await api('/api/v2/voiceprint', { method: 'DELETE' }).catch(() => null);
+      status.textContent = r && r.ok ? 'Your voice print was deleted.' : 'It could not be deleted just now.';
+      if (r && r.ok) { testNote.textContent = ''; heardList.replaceChildren(); showPrint({ summary: null }); }
+    } }, 'Delete my voice print')));
+  load();
+  return () => { alive = false; rec.destroy(); };
+}
+
 // What each row says it is set to now; a promise where it has to be asked for.
 function valueOf(id, state) {
   if (id === 'appearance') {
@@ -619,6 +736,7 @@ function valueOf(id, state) {
     const a = (d.agents || []).find((x) => x.speaks) || (d.agents || [])[0];
     return a ? ((d.voices || []).find((v) => v.id === a.voice) || {}).name || '' : '';
   });
+  if (id === 'voice') return getJSON('/api/v2/voiceprint').then((d) => (d.enrolled ? 'Set up' : 'Not set up'));
   if (id === 'updates') return getJSON('/api/v2/updates?check=1').then((d) => {
     const n = ((d.plan || {}).commits || []).length;
     return n ? `${n} to install` : 'Up to date';
@@ -697,6 +815,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'metrics') body.replaceChildren(...metricsPage());
   else if (id === 'email') done = email(body);
   else if (id === 'speaker') done = speaker(body);
+  else if (id === 'voice') done = yourVoice(body);
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   // Turning a foldable or resizing across the line: the other layout.
   const mq = matchMedia(WIDE);

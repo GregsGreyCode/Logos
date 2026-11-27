@@ -457,7 +457,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       // Who spoke is not known, so it is the agent's message quoting them, never shown as someone's own.
       const sp = content['org.logos.speaker'], all = String(content.body || ''), cut = all.indexOf('\n\n');
       body = [h('div', { class: 'mx-speaker' }, h('span', { class: 'mx-voice-mic', 'aria-hidden': 'true' }, icon(ICONS.mic)),
-        h('div', {}, h('span', { class: 'mx-speaker-label' }, sp.late ? 'Heard at the house speaker · answered here' : 'Heard at the house speaker'),
+        h('div', {}, h('span', { class: 'mx-speaker-label' }, `${typeof sp.who === 'string' && sp.who ? `${sp.who} at the house speaker` : 'Heard at the house speaker'}${sp.late ? ' · answered here' : ''}`),
           h('q', { class: 'mx-speaker-heard' }, sp.heard))),
       ...markdown(cut >= 0 ? all.slice(cut + 2) : all)];
     } else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));

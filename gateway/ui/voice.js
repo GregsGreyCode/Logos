@@ -46,7 +46,9 @@ export function voiceBar(v, extra = '') {
 // onWords(text, {seconds, wave}): the words are ready. onBusy(true|false): working on it.
 // onTranscribing({seconds, wave}): the recording has gone to be turned into words (a placeholder can show);
 // onSettled(): that is over (words delivered, or it failed). onRecording(true|false): the microphone is on or off.
-export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}, onTranscribing = () => {}, onSettled = () => {}, onRecording = () => {}, maxSeconds = MAX_RECORD_S }) {
+// onAudio(blob, seconds): instead of turning it into words, hand the recording over (Settings › Your voice), with the
+// browser's own clean-up switched off (raw: true) so the voice is heard as it is.
+export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}, onTranscribing = () => {}, onSettled = () => {}, onRecording = () => {}, maxSeconds = MAX_RECORD_S, onAudio = null, raw = false }) {
   const agent = () => (typeof agentOf === 'function' ? agentOf() : agentOf);       // a name, or something that gives it
   let rec = null, destroyed = false, busy = false, last = null;      // last: the recording kept for "Try again"
   const canvas = h('canvas', { class: 'rec-wave', 'aria-hidden': 'true' });
@@ -84,7 +86,8 @@ export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}
       say(window.isSecureContext ? 'This browser cannot record audio.' : 'The microphone only works on the https address.'); return;
     }
     let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); } catch (e) {
+    const audio = raw ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : { echoCancellation: true, noiseSuppression: true };
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio }); } catch (e) {
       say('The microphone is blocked. Allow it for this site in the browser, then try again.'); return;
     }
     if (destroyed) { stream.getTracks().forEach((t) => t.stop()); return; }
@@ -102,7 +105,9 @@ export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}
       if (discarded || destroyed) { if (!destroyed) say(''); return; }
       const seconds = Math.round((Date.now() - started) / 100) / 10;
       if (!chunks.length || seconds < 0.8) { say('That was too short: tap the microphone, say it, then tap ■.'); return; }
-      send(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }), seconds, { wave: shapeOf(levels) });
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      if (onAudio) { onAudio(blob, seconds); return; }
+      send(blob, seconds, { wave: shapeOf(levels) });
     });
     // A phone's screen going dark would stop a long recording: ask it to stay on (where the browser lets us).
     try { if (navigator.wakeLock) lock = await navigator.wakeLock.request('screen'); } catch (e) { /* fine */ }
@@ -124,7 +129,7 @@ export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}
     const tick = () => {
       const s = Math.floor((Date.now() - started) / 1000);
       time.textContent = clock(s);
-      if (s >= maxSeconds) { say(`That is the ${Math.round(maxSeconds / 60)}-minute limit: sending what was recorded.`); finish(); }
+      if (s >= maxSeconds) { if (!onAudio) say(`That is the ${Math.round(maxSeconds / 60)}-minute limit: sending what was recorded.`); finish(); }
     };
     tick(); rec = { recorder, started, timer: setInterval(tick, 500), discard: () => { discarded = true; } };
   }

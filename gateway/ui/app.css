@@ -721,6 +721,11 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .voice-row { display: flex; align-items: center; gap: 8px; }
 .voice-row .appearance-mode.choice { flex: 1 1 auto; min-width: 0; padding: 10px 14px; }
 .voice-row .appearance-mode.choice .when { display: block; }
+/* Settings › Your voice (VO.2): the words to read, and the recorder under them */
+.voiceprint-prompt { margin: 8px 0 12px; padding: 12px 14px; border-left: 3px solid var(--accent); border-radius: 8px; background: var(--surface); line-height: 1.5; }
+.voiceprint-form { display: flex; align-items: center; gap: 12px; min-height: 48px; }
+.voiceprint-heard-row { justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.voiceprint-heard-row > span { min-width: 0; }
 .voice-play { flex: none; cursor: pointer; }
 .voice-play:hover { background: var(--chip); }
 .voice-play:disabled { opacity: 0.5; cursor: progress; }

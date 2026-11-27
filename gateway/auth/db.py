@@ -519,6 +519,15 @@ def _run_migrations() -> None:
                 updated_at INTEGER
             )
         """)
+        # Voice VO.2: each person's voice print (speaker embeddings and their strictness, never audio),
+        # made in Settings › Your voice and managed only by that person (gateway/voice_id.py).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS voice_prints (
+                username   TEXT PRIMARY KEY,
+                print      TEXT NOT NULL,
+                updated_at INTEGER
+            )
+        """)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS schema_flags (
                 key        TEXT PRIMARY KEY,
@@ -1619,3 +1628,25 @@ def set_agent_voice(name: str, voice: str, set_by: str) -> None:
             return
         conn.execute("INSERT OR REPLACE INTO agent_voices (name, voice, set_by, updated_at) VALUES (?, ?, ?, ?)",
                      (name, voice, set_by, int(time.time() * 1000)))
+
+
+def get_voice_prints() -> dict:
+    """``{username: print (dict)}`` for everyone who has made a voice print (Voice VO.2)."""
+    with _conn() as conn:
+        out = {}
+        for r in conn.execute("SELECT username, print FROM voice_prints"):
+            try:
+                out[r["username"]] = json.loads(r["print"])
+            except ValueError:
+                continue
+        return out
+
+
+def set_voice_print(username: str, data: Optional[dict]) -> None:
+    """``data`` None deletes it."""
+    with _conn() as conn:
+        if data is None:
+            conn.execute("DELETE FROM voice_prints WHERE username = ?", (username,))
+            return
+        conn.execute("INSERT OR REPLACE INTO voice_prints (username, print, updated_at) VALUES (?, ?, ?)",
+                     (username, json.dumps(data), int(time.time() * 1000)))
