@@ -169,20 +169,20 @@ def test_weather_sends_only_rounded_coordinates():
         return {"current": {"temperature_2m": 9.4, "weather_code": 61, "is_day": 0},
                 "daily": {"weather_code": [61, 3], "temperature_2m_max": [11, 12], "temperature_2m_min": [4, 6],
                           "precipitation_probability_max": [80, 20]}}
-    out = home.weather(50.82345, -0.13789, get=get)
-    assert "latitude=50.82" in asked[0] and "longitude=-0.14" in asked[0] and "50.823" not in asked[0]
+    out = home.weather(51.52345, -1.03789, get=get)
+    assert "latitude=51.52" in asked[0] and "longitude=-1.04" in asked[0] and "51.523" not in asked[0]
     assert out == {"now": {"temp": 9.4, "code": 61, "day": False}, "today": {"code": 61, "high": 11, "low": 4, "rain": 80},
                    "tomorrow": {"code": 3, "high": 12, "low": 6, "rain": 20}}
-    found = home.places("Brighton", get=lambda url: {"results": [{"name": "Brighton", "admin1": "England", "country": "United Kingdom",
-                                                                  "latitude": 50.82838, "longitude": -0.13947}]})
-    assert found == [{"name": "Brighton, England, United Kingdom", "lat": 50.83, "lon": -0.14}]
+    found = home.places("Exampleton", get=lambda url: {"results": [{"name": "Exampleton", "admin1": "England", "country": "United Kingdom",
+                                                                  "latitude": 51.50238, "longitude": -0.99947}]})
+    assert found == [{"name": "Exampleton, England, United Kingdom", "lat": 51.5, "lon": -1.0}]
 
 
 def test_widget_and_place_preferences_are_checked():
     from gateway import dashboard_api as d
     assert d._pref_ok("widgets", ["next", "weather"]) and d._pref_ok("widgets", [])
     assert not d._pref_ok("widgets", ["next", "next"]) and not d._pref_ok("widgets", ["tiles"]) and not d._pref_ok("widgets", "next")
-    assert d._pref_ok("weather_place", {"name": "Brighton", "lat": 50.83, "lon": -0.14}) and d._pref_ok("weather_place", None)
+    assert d._pref_ok("weather_place", {"name": "Exampleton", "lat": 51.5, "lon": -1.0}) and d._pref_ok("weather_place", None)
     assert not d._pref_ok("weather_place", {"name": "x", "lat": 91, "lon": 0})
     assert not d._pref_ok("weather_place", {"name": "x", "lat": 1, "lon": 2, "extra": 1})
 
@@ -190,7 +190,7 @@ def test_widget_and_place_preferences_are_checked():
 def test_weather_has_a_list_of_places_in_your_order():
     import asyncio
     from gateway import dashboard_api as d
-    b, p = {"name": "Brighton", "lat": 50.83, "lon": -0.14}, {"name": "Paris", "lat": 48.85, "lon": 2.35}
+    b, p = {"name": "Exampleton", "lat": 51.5, "lon": -1.0}, {"name": "Testburg", "lat": 40.0, "lon": 10.0}
     assert d._pref_ok("weather_places", [b, p]) and d._pref_ok("weather_places", [])
     assert not d._pref_ok("weather_places", [b, dict(b)])                   # the same place twice
     assert not d._pref_ok("weather_places", [b, None]) and not d._pref_ok("weather_places", b)
@@ -208,10 +208,10 @@ def test_weather_has_a_list_of_places_in_your_order():
         return {"now": {"temp": 3}, "today": {}, "tomorrow": {}}
     cache = {}
     out = asyncio.run(d.weather_for([p, b], cache, fetch=fetch))
-    assert [o["place"] for o in out] == ["Paris", "Brighton"]                 # in your order
+    assert [o["place"] for o in out] == ["Testburg", "Exampleton"]                 # in your order
     assert out[0]["now"]["temp"] == 3 and out[1]["error"] == "weather_unavailable"  # one that fails does not hide the others
     asyncio.run(d.weather_for([p], cache, fetch=fetch))
-    assert asked.count((48.85, 2.35)) == 1                                    # kept 20 minutes
+    assert asked.count((40.0, 10.0)) == 1                                    # kept 20 minutes
 
 
 def test_notifications_are_read_one_by_one_and_kept_through_other_settings(monkeypatch):

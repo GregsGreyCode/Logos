@@ -41,12 +41,12 @@ export const DATA = {
 };
 const day = (code, high, low, rain) => ({ code, high, low, rain });
 export const PLACES = [
-  { name: 'Brighton, England, United Kingdom', lat: 50.83, lon: -0.14 },
-  { name: 'Paris, Île-de-France, France', lat: 48.85, lon: 2.35 },
-  { name: 'Abidjan, Abidjan, Ivory Coast', lat: 5.36, lon: -4.01 },
+  { name: 'Exampleton, England, United Kingdom', lat: 51.5, lon: -1.0 },
+  { name: 'Testburg, Somewhere, Countryland', lat: 40.0, lon: 10.0 },
+  { name: 'Sampleville, Elsewhere, Farland', lat: 10.0, lon: -10.0 },
 ];
-const SKY = { 'Brighton, England, United Kingdom': [9.4, 61, day(61, 11, 4, 80), day(2, 12, 6, 20)],
-  'Paris, Île-de-France, France': [6.1, 3, day(3, 8, 2, 0), day(0, 9, 1, 0)], 'Abidjan, Abidjan, Ivory Coast': [29.2, 2, day(80, 31, 24, 60), day(95, 30, 24, 70)] };
+const SKY = { 'Exampleton, England, United Kingdom': [9.4, 61, day(61, 11, 4, 80), day(2, 12, 6, 20)],
+  'Testburg, Somewhere, Countryland': [6.1, 3, day(3, 8, 2, 0), day(0, 9, 1, 0)], 'Sampleville, Elsewhere, Farland': [29.2, 2, day(80, 31, 24, 60), day(95, 30, 24, 70)] };
 // What GET /api/v2/weather answers for these places, in this order (the server's shape: the first at the top too).
 export function weatherFor(places) {
   const out = places.map((p) => { const [t, c, today, tomorrow] = SKY[p.name] || [12, 1, day(1, 14, 8, 0), day(1, 14, 8, 0)];

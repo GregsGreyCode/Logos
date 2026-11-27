@@ -708,6 +708,7 @@ JOB_LABELS = {
     "consolidate": "Tidy the brain (nightly)",
     "brain-commit": "Save brain history",
     "brain-index": "Refresh the list of pages it knows",
+    "vault-digest": "Write notes on the files you sent",
     "noticeboard-check": "Check messages from the other agents",
     "noticeboard-urgent": "Watch for urgent messages",
     "weekly-digest": "Sunday summary of the week",
@@ -2155,7 +2156,7 @@ async def handle_weather(request: web.Request) -> web.Response:
 
 
 async def handle_weather_places(request: web.Request) -> web.Response:
-    """GET /api/v2/weather/places?q=Brighton — places to pick from (name, rounded lat/lon)."""
+    """GET /api/v2/weather/places?q=Exampleton — places to pick from (name, rounded lat/lon)."""
     from gateway import home
     _user(request)
     q = (request.query.get("q") or "").strip()

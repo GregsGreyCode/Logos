@@ -42,25 +42,25 @@ for (const [vw, vh, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
 
   // ── (3) Weather: two places, in the order kept ──
   const names = async () => page.$$eval('.home-weather-place .home-weather-name', (els) => els.map((e) => e.textContent.trim()));
-  ok((await names()).join('|') === 'Brighton|Paris', `${n}: Weather shows each place, in your order (${(await names()).join(', ')})`);
+  ok((await names()).join('|') === 'Exampleton|Testburg', `${n}: Weather shows each place, in your order (${(await names()).join(', ')})`);
   ok(await page.locator('.home-weather-place').nth(1).locator('.when').filter({ hasText: 'Tomorrow' }).count() === 1, `${n}: each with its own tomorrow`);
 
   // ── (1) every widget has Compact / Full ──
   await edit(page);
   const bars = await page.$$eval('.home-widgets > .home-widget:not(.off)', (els) => els.map((e) => [e.dataset.widget, !!e.querySelector(':scope > .widget-bar .widget-size')]));
   ok(bars.length >= 7 && bars.every(([, has]) => has), `${n}: every widget has Compact / Full in Edit (${bars.filter(([, x]) => !x).map(([id]) => id).join(', ') || 'all'})`);
-  // Places: add a third (found by name), move it to the top, take Paris off
+  // Places: add a third (found by name), move it to the top, take Testburg off
   await page.locator('[data-widget="weather"] .widget-bar').getByRole('button', { name: 'Places' }).click(); await page.waitForTimeout(300);
   const ed = page.locator('.home-places-edit');
   ok(await ed.locator('.home-place-row').count() === 2, `${n}: Places lists your two places`);
-  await ed.locator('input[type=search]').fill('Abidjan'); await ed.getByRole('button', { name: 'Find' }).click(); await page.waitForTimeout(300);
-  await ed.getByRole('button', { name: /Abidjan/ }).click(); await page.waitForTimeout(500);
-  ok(st.prefs.weather_places.map((p) => p.name.split(',')[0]).join('|') === 'Brighton|Paris|Abidjan', `${n}: a place found by name is added at the end and kept`);
-  await ed.getByRole('button', { name: 'Move Abidjan up' }).click(); await page.waitForTimeout(200);
-  await ed.getByRole('button', { name: 'Move Abidjan up' }).click(); await page.waitForTimeout(200);
-  await ed.getByRole('button', { name: 'Take Paris off' }).click(); await page.waitForTimeout(600);
-  ok(st.prefs.weather_places.map((p) => p.name.split(',')[0]).join('|') === 'Abidjan|Brighton', `${n}: moved to the top and one taken off: kept in that order (${st.prefs.weather_places.map((p) => p.name.split(',')[0])})`);
-  ok((await names()).join('|') === 'Abidjan|Brighton', `${n}: and Weather shows them so at once`);
+  await ed.locator('input[type=search]').fill('Sampleville'); await ed.getByRole('button', { name: 'Find' }).click(); await page.waitForTimeout(300);
+  await ed.getByRole('button', { name: /Sampleville/ }).click(); await page.waitForTimeout(500);
+  ok(st.prefs.weather_places.map((p) => p.name.split(',')[0]).join('|') === 'Exampleton|Testburg|Sampleville', `${n}: a place found by name is added at the end and kept`);
+  await ed.getByRole('button', { name: 'Move Sampleville up' }).click(); await page.waitForTimeout(200);
+  await ed.getByRole('button', { name: 'Move Sampleville up' }).click(); await page.waitForTimeout(200);
+  await ed.getByRole('button', { name: 'Take Testburg off' }).click(); await page.waitForTimeout(600);
+  ok(st.prefs.weather_places.map((p) => p.name.split(',')[0]).join('|') === 'Sampleville|Exampleton', `${n}: moved to the top and one taken off: kept in that order (${st.prefs.weather_places.map((p) => p.name.split(',')[0])})`);
+  ok((await names()).join('|') === 'Sampleville|Exampleton', `${n}: and Weather shows them so at once`);
   await page.screenshot({ path: `${OUT}/stage2-places-${n}.png`, fullPage: !mob ? false : true });
 
   // Compact: Weather a line a place, Lights names only, Network down and up, Agents counts

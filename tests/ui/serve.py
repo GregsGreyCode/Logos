@@ -56,6 +56,13 @@ def calendar_range(q):
             'calendars': [{'key': 'personal', 'name': 'Your own calendar', 'busy_only': False}, {'key': 'household', 'name': 'Household', 'busy_only': False},
                           {'key': 'bere', 'name': 'Béré', 'busy_only': False}]}
 EXTRA = json.load(open(os.path.join(HERE, 'extra.json'))) if os.path.exists(os.path.join(HERE, 'extra.json')) else {}
+# The daily question's next run is always tomorrow at 10:00, whatever day the checks run (a fixed date
+# turned into "next Monday" once it had passed, and the routines check failed).
+for _job in (EXTRA.get('/api/v2/agents/greg/status') or {}).get('jobs', []):
+    if _job.get('name') == 'daily-question':
+        import datetime as _dt
+        _t = _dt.datetime.now(_dt.timezone.utc).date() + _dt.timedelta(days=1)
+        _job['next_run'] = f'{_t.isoformat()}T10:00:00+00:00'
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body, ctype):
