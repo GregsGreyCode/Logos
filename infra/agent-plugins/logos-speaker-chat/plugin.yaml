@@ -1,0 +1,10 @@
+name: logos-speaker-chat
+label: Logos house speaker exchanges in the agent's chat
+kind: standalone
+version: 1.0.0
+description: >
+  What was said to the agent through the house speaker, and its answer, are posted in the agent's main
+  Matrix room (its home room), marked as heard at the house speaker, so the people see it in Element X
+  and the Logos chat. The agent's chat conversation is told about it too, so it can follow up there.
+author: Logos
+provides_hooks: [pre_llm_call, post_llm_call]

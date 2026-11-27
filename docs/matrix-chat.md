@@ -75,6 +75,13 @@ already exist.
   when its owner adds it, and in a group it still answers only its owner. People see the invitation
   at the top of their Conversations, with Join and Decline.
 
+## The house speaker in the chat (V1.3, 27 Nov 2026)
+
+What is said to an agent through the house speaker, and its answer, are posted in the agent's main room
+by the agent itself (`logos-speaker-chat`): a notice with the words heard quoted, or a normal message
+when the answer came too late for the speaker. The Logos chat shows it as a speaker exchange
+(`org.logos.speaker`). Details in docs/voice.md, "The house speaker".
+
 ## Voice notes, images and files (22 Nov 2026)
 
 Logos plays, shows and sends them itself, so Element X is not needed for them (`gateway/ui/media.js`).

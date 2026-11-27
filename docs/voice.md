@@ -117,8 +117,47 @@ returns the words to speak (Piper reads them out).
 - **Follow-ups:** an answer that ends in a question makes the speaker listen again without the
   wake word.
 - **Never a long wait:** after 45 seconds the speaker says the answer will be in the chat; the
-  agent carries on and keeps the answer in that conversation.
+  agent carries on and posts the answer there when it is ready (below).
 - **The words are never logged:** only the agent, the device, the outcome and how long it took.
+
+### In the chat (V1.3, 27 Nov)
+
+Every exchange at the speaker also shows in the agent's chat: its main Matrix room (`home_room`, where
+its scheduled messages go; for Home, the room Greg and Béré share), in Element X and in the Logos chat.
+
+    🔊 Heard at the house speaker:
+    > “What's on tomorrow?”
+
+    The dentist at ten, then nothing until the evening.
+
+- **The agent posts it**, through its own Matrix client, so it is end-to-end encrypted like its other
+  replies (agent plugin `infra/agent-plugins/logos-speaker-chat`, run as the speaker turn finishes).
+  The words heard are quoted inside the agent's message: they are never shown as something a person
+  typed. Who spoke is not known yet (voice prints come later), so it says only "the house speaker".
+- **The full answer**, not the shortened one that was read out.
+- **Answered out loud:** a notice (`m.notice`), a record that does not count as unread and that agents
+  do not answer. **Too late for the speaker** (it said "I'll put the answer in our chat"): a normal
+  message, so it is noticed. The message carries `org.logos.speaker` (`{heard, late}`).
+- **The chat conversation is told** (hermes's delivery mirror, into the room's own conversation, not
+  one of its threads), so "what did I just ask the speaker?" can be answered in the chat. It goes into
+  the room's current conversation: after the daily fresh start (03:00), until someone writes in the
+  chat, that is still the day before's, so the note may not carry over. The speaker's
+  own conversation stays separate (one per speaker per day): the chat is not read out to the room.
+- **In the Logos chat** it shows as the agent's message with a microphone, "Heard at the house
+  speaker" ("· answered here" when it came too late) and the words in italics, the answer underneath.
+  Only an agent's message is shown that way. Element X shows the plain text above.
+- Not posted: the nightly timing check (`voice-probe-…`), a turn with no answer, and agents without a
+  `home_room`. Nothing here is logged but that it was posted.
+- The phone alert works as for any agent message: Logos's own alerts show the first words
+  (`logos-alert-text`), so whoever has alerts on sees "🔊 Heard at the house speaker: …".
+
+Why this way: the speaker turn runs through hermes's HTTP API, which cannot post in Matrix, and Logos
+cannot write into an encrypted room as the agent (only the agent's own device holds its keys; a second
+device would show as unverified). The plugin runs in the same hermes process as the agent's Matrix
+client, so it posts as the agent's verified device. Running the speaker turn inside the Matrix
+conversation itself was ruled out: hermes guards a gateway conversation against a second writer, a
+speaker question could not wait behind a chat turn, and the spoken-answer instructions would leak into
+the chat.
 
 Plan, decisions and the next stories (wake word = the agent's name, voice prints, a voice per
 agent) are in the spec doc's Voice tab.
