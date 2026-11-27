@@ -447,6 +447,14 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     else if (mine && content['org.logos.voice'] && content['org.logos.voice'].seconds > 0) {
       // A voice message: its shape and length, the transcript underneath.
       body = [voiceBar(content['org.logos.voice']), h('div', { class: 'mx-voice-words' }, String(content.body || ''))];
+    } else if (fromAgent && content['org.logos.speaker'] && typeof content['org.logos.speaker'].heard === 'string') {
+      // Said through the house speaker (V1.3, logos-speaker-chat): the words heard, then the agent's answer.
+      // Who spoke is not known, so it is the agent's message quoting them, never shown as someone's own.
+      const sp = content['org.logos.speaker'], all = String(content.body || ''), cut = all.indexOf('\n\n');
+      body = [h('div', { class: 'mx-speaker' }, h('span', { class: 'mx-voice-mic', 'aria-hidden': 'true' }, icon(ICONS.mic)),
+        h('div', {}, h('span', { class: 'mx-speaker-label' }, sp.late ? 'Heard at the house speaker · answered here' : 'Heard at the house speaker'),
+          h('q', { class: 'mx-speaker-heard' }, sp.heard))),
+      ...markdown(cut >= 0 ? all.slice(cut + 2) : all)];
     } else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));
     const rx = [...(reactions.get(ev.getId()) || [])];
     const seen = mine && rx.some(([k, r]) => ACK.has(k) && r.n > (r.mine ? 1 : 0));

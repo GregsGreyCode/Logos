@@ -2413,6 +2413,11 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .mx-voice-time { flex: none; font: 500 var(--t-xs) var(--font-body); font-variant-numeric: tabular-nums; opacity: .85; }
 .mx-voice-words { font-size: var(--t-md); line-height: 1.45; overflow-wrap: anywhere; }
 .mx-voice-words.wait { opacity: .7; font-style: italic; }
+/* Said through the house speaker (V1.3): the words heard above the agent's answer. */
+.mx-speaker { display: flex; align-items: flex-start; gap: 10px; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+.mx-speaker .mx-voice-mic { background: var(--line); }
+.mx-speaker-label { display: block; font-size: var(--t-xs); font-weight: 600; color: var(--muted); }
+.mx-speaker-heard { display: block; font-style: italic; line-height: 1.45; overflow-wrap: anywhere; }
 .mx-turn.voicing .mx-voice-wave i { animation: voice-wait 1.4s ease-in-out infinite; }
 .mx-turn.voicing .mx-voice-wave i:nth-child(3n) { animation-delay: .25s; }
 .mx-turn.voicing .mx-voice-wave i:nth-child(3n+1) { animation-delay: .5s; }
