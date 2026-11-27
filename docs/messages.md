@@ -53,7 +53,7 @@ An emoji reaction on an agent's message reaches the agent (`infra/agent-plugins/
   fetches that message from Matrix, decrypts it with its own keys, and answers it as if you had
   just sent it. Only the person who wrote it can do this, and only for text.
 
-`/emojis` (or `/reactions`) in a chat lists these, answered without the model. It is the one
+`/emojis` (or `/emoji`, `/reactions`) in a chat lists these, answered without the model. It is the one
 message that has emoji in its text.
 
 Only messages sent after 22 Nov are known; a reaction on an older one, or one taken away, is not
