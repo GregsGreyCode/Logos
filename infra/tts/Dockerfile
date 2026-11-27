@@ -9,18 +9,20 @@
 #                            (GPL-3.0; it runs on its own in this container, Logos does not link it)
 #   wyoming 1.11.0           the protocol Home Assistant speaks to voice services (MIT)
 #   onnxruntime 1.32.0       what Piper runs on (the same pin as the voice service)
-#   rhasspy/piper-voices     twelve English "medium" voices, fetched at build time at a fixed revision
+#   rhasspy/piper-voices     twelve English and three French "medium" voice models (UPMC has two
+#                            speakers), fetched at build time at a fixed revision
 # The running container never downloads anything.
 
 FROM python@sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b
 
 RUN pip install --no-cache-dir piper-tts==1.8.0 wyoming==1.11.0 onnxruntime==1.32.0 pathvalidate==3.3.1
 
-# Keep this list the same as VOICES in gateway/tts.py (tests/unit/test_tts.py checks it).
+# Keep this list the same as tts.model_files() in gateway/tts.py (tests/unit/test_tts.py checks it).
 ARG VOICES_REVISION=2f358b6a560e3a913ebf509b2f3344f20b367f94
 ARG VOICES="en_GB-alan-medium en_GB-alba-medium en_GB-cori-medium en_GB-jenny_dioco-medium \
 en_GB-northern_english_male-medium en_US-amy-medium en_US-hfc_female-medium en_US-hfc_male-medium \
-en_US-joe-medium en_US-kristin-medium en_US-lessac-medium en_US-ryan-medium"
+en_US-joe-medium en_US-kristin-medium en_US-lessac-medium en_US-ryan-medium \
+fr_FR-siwis-medium fr_FR-tom-medium fr_FR-upmc-medium"
 RUN mkdir -p /voices && cd /voices && for v in ${VOICES}; do \
       lang="${v%%-*}"; rest="${v#*-}"; name="${rest%-*}"; quality="${rest##*-}"; \
       for ext in onnx onnx.json; do \

@@ -147,7 +147,7 @@ def test_up_puts_wyoming_on_the_lan_and_the_dashboards_door_on_loopback(tmp_path
     run = " ".join(next(a for a in rt.argvs if a[:2] == ["docker", "run"]))
     for part in ("--read-only", "--cap-drop ALL", "no-new-privileges", "--dns 127.0.0.1", "--user 10000:10000",
                  "-p 192.0.2.20:10300:10300", f"-p 127.0.0.1:{stt_host.HTTP_PORT}:{stt_host.HTTP_PORT}",
-                 "stt.py:/app/stt.py:ro", "voiceprint.py:/app/voiceprint.py:ro", "--memory 2g", "logos-stt:1"):
+                 "stt.py:/app/stt.py:ro", "voiceprint.py:/app/voiceprint.py:ro", "--memory 2g", "logos-stt:2"):
         assert part in run, part
     assert f"STT_TOKEN={stt_host.token(env)}" in run
     assert f"192.0.2.20:{stt_host.HTTP_PORT}" not in run                     # the token's door is never on the LAN

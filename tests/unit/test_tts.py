@@ -22,7 +22,7 @@ HOME = "en_GB-northern_english_male-medium"
 def test_the_image_has_exactly_the_voices_offered():
     text = (REPO / "infra/tts/Dockerfile").read_text()
     listed = re.search(r'ARG VOICES="([^"]+)"', text).group(1).replace("\\\n", " ").split()
-    assert listed == list(tts.VOICES)
+    assert listed == tts.model_files()
     assert re.search(r"VOICES_REVISION=[0-9a-f]{40}\b", text)          # a fixed revision
     assert re.search(r"^FROM python@sha256:[0-9a-f]{64}$", text, re.M)   # a pinned base
     assert "piper-tts==" in text and "wyoming==" in text
@@ -64,6 +64,57 @@ def test_read_state_survives_a_missing_or_broken_file(tmp_path):
     assert tts.read_state(str(tmp_path / "none.json")) == {}
     (tmp_path / "bad.json").write_text("{")
     assert tts.read_state(str(tmp_path / "bad.json")) == {}
+
+
+# ── The invisible mark (V3.3) ───────────────────────────────────────────────
+
+def test_every_voice_has_a_fixed_mark_and_it_survives_a_round_trip():
+    assert set(tts.VOICES) <= set(tts.CODES) and len(set(tts.CODES)) == len(tts.CODES)
+    # append-only: the first twelve keep the numbers they had when marks were first handed out
+    assert tts.CODES[:12] == tuple(v for v in tts.VOICES if v.startswith("en_"))
+    for vid in tts.VOICES:
+        marked = tts.mark("Done.", vid)
+        assert marked.endswith("Done.") and marked != "Done."
+        assert tts.unmark(marked) == ("Done.", vid)
+    assert tts.mark("Done.", "nope") == "Done." and tts.unmark("Done.") == ("Done.", None)
+
+
+def test_the_mark_is_invisible_to_what_home_assistant_does_with_text():
+    marked = tts.mark("Done.", "en_US-ryan-medium")
+    assert marked.strip() == marked and len(marked.split()) == 1      # not whitespace to Python
+    assert all(not c.isspace() for c in marked)
+    assert tts.key(marked) == tts.key("Done.")                         # the hash fallback ignores it
+    assert tts.unmark(" ".join(marked.split()))[1] == "en_US-ryan-medium"
+
+
+def test_two_agents_saying_the_same_words_are_two_entries_in_home_assistants_cache():
+    """Home Assistant's phrase cache key (homeassistant/components/tts, 2026.11): sha1 of the message,
+    the language, a hash of the options (the pipeline's voice) and the engine."""
+    import hashlib
+
+    def ha_key(message, language="en", options="-", engine="tts.logos"):
+        return f"{hashlib.sha1(bytes(message, 'utf-8')).hexdigest()}_{language}_{options}_{engine}".lower()
+    finn, home = tts.mark("Done.", "en_GB-alan-medium"), tts.mark("Done.", HOME)
+    assert ha_key(finn) != ha_key(home) and ha_key(finn) == ha_key(tts.mark("Done.", "en_GB-alan-medium"))
+
+
+def test_a_mark_wins_over_the_hash_and_over_the_pipelines_voice():
+    # Home said "Done." a moment ago; Finn's "Done." arrives marked with his voice.
+    state = {"default": HOME, "said": [
+        {"key": tts.key("Done."), "agent": "household", "voice": HOME, "until": 1000},
+        {"key": tts.key("Done."), "agent": "greg", "voice": "en_GB-alan-medium", "until": 1000}]}
+    assert tts.choose(tts.mark("Done.", HOME), "en_US-amy-medium", state, now=999) == (HOME, "household")
+    assert tts.choose(tts.mark("Done.", "en_GB-alan-medium"), None, state, now=999) == ("en_GB-alan-medium", "greg")
+    # long after the hash rows are gone, the mark alone still says the voice
+    assert tts.choose(tts.mark("Done.", "fr_FR-tom-medium"), None, {}, now=5000) == ("fr_FR-tom-medium", "an agent")
+
+
+def test_the_upmc_voices_are_one_model_with_two_speakers():
+    assert tts.model_of("fr_FR-upmc_pierre-medium") == ("fr_FR-upmc-medium", 1)
+    assert tts.model_of("fr_FR-upmc_jessica-medium") == ("fr_FR-upmc-medium", 0)
+    assert tts.model_of(HOME) == (HOME, None)
+    assert tts.model_files().count("fr_FR-upmc-medium") == 1
+    assert tts.language("fr_FR-tom-medium") == "fr" and tts.language(HOME) == "en"
 
 
 # ── tts_host ────────────────────────────────────────────────────────────────
@@ -190,7 +241,32 @@ def test_said_writes_hashes_not_words_where_the_speaker_is_set_up(gw):
 def test_said_never_breaks_the_answer(gw, monkeypatch):
     app, env, _, _ = gw
     monkeypatch.setattr(sv, "voice_of", lambda *a: 1 / 0)
-    sv.said(app, "household", "Hello", env)                      # logged, not raised
+    assert sv.said(app, "household", "Hello", env) == "Hello"    # logged, not raised; unmarked
+
+
+def test_said_hands_back_the_words_marked_with_the_voice(gw):
+    app, env, choices, _ = gw
+    assert tts.unmark(sv.said(app, "finn", "Done.", env)) == ("Done.", "en_US-ryan-medium")
+    assert tts.unmark(sv.said(app, "household", "Done.", env)) == ("Done.", HOME)
+
+
+def test_french_words_take_the_agents_french_voice(gw):
+    app, env, choices, _ = gw
+    # no choice: a French voice like the English one (Ryan is a man: Tom)
+    assert tts.unmark(sv.said(app, "finn", "C'est fait, la lumière est éteinte.", env))[1] == "fr_FR-tom-medium"
+    assert sv.voice_of(app, "finn") == "en_US-ryan-medium"
+    choices["finn"] = {"voice": "en_GB-alba-medium", "voice_fr": None}
+    sv._cache.clear()
+    assert sv.voice_of(app, "finn", "fr") == "fr_FR-siwis-medium"   # Alba is a woman: Siwis
+    choices["finn"] = {"voice": None, "voice_fr": "fr_FR-upmc_jessica-medium"}
+    sv._cache.clear()
+    assert sv.voice_of(app, "finn", "fr") == "fr_FR-upmc_jessica-medium"
+    assert sv.voice_of(app, "finn", "en") == "en_US-ryan-medium"
+    # speaker_voice_fr in the definition, and a French id is never taken as the English voice
+    app["sandbox_backend"].runtime.defs["bare"] = {"speaker_voice": "fr_FR-tom-medium",
+                                                   "speaker_voice_fr": "fr_FR-upmc_pierre-medium"}
+    sv._cache.clear()
+    assert (sv.voice_of(app, "bare"), sv.voice_of(app, "bare", "fr")) == (HOME, "fr_FR-upmc_pierre-medium")
 
 
 def test_said_forgets_old_answers(gw, monkeypatch):
@@ -207,7 +283,8 @@ def test_said_forgets_old_answers(gw, monkeypatch):
 def test_voice_converse_hands_every_answer_over(monkeypatch):
     from gateway import voice_converse
     source = Path(voice_converse.__file__).read_text()
-    assert "speaker_voice.said(request.app, agent, said)" in source
+    assert "speech = speaker_voice.said(request.app, agent, said)" in source
+    assert '"speech": speech' in source
 
 
 # ── the Wyoming client for samples, against a stand-in server ───────────────
@@ -270,7 +347,7 @@ def api(monkeypatch, gw):
     monkeypatch.setattr(d, "_user", lambda r: user)
     monkeypatch.setattr(d, "_visible_agents", visible)
     monkeypatch.setattr(d, "_agent_or_404", agent_or_404)
-    monkeypatch.setattr(auth_db, "set_agent_voice", lambda n, v, by: stored.append((n, v, by)), raising=False)
+    monkeypatch.setattr(auth_db, "set_agent_voice", lambda n, v, by, *lang: stored.append((n, v, by, *lang)), raising=False)
     monkeypatch.setattr(sv, "_settings", lambda: (None, ""))
 
     async def run(steps):
@@ -307,6 +384,26 @@ def test_only_the_agents_people_may_choose_and_only_known_voices(api):
         return ok.status, (await back.json())["voice"], bad.status, other.status
     assert asyncio.run(run(steps)) == (200, HOME, 400, 404)
     assert stored == [("household", "en_GB-alba-medium", "greg"), ("household", "", "greg")]
+
+
+def test_a_french_voice_is_chosen_beside_the_english_one(api):
+    run, stored, choices = api
+    choices["household"] = {"voice": None, "voice_fr": "fr_FR-upmc_pierre-medium", "set_by": "bere"}
+
+    async def steps(c):
+        listed = await (await c.get("/api/v2/speaker")).json()
+        ok = await c.put("/api/v2/agents/greg/speaker-voice", json={"voice_fr": "fr_FR-siwis-medium"})
+        english_as_french = await c.put("/api/v2/agents/greg/speaker-voice", json={"voice_fr": "en_GB-alba-medium"})
+        french_as_english = await c.put("/api/v2/agents/greg/speaker-voice", json={"voice": "fr_FR-tom-medium"})
+        return listed, ok.status, (await ok.json()), english_as_french.status, french_as_english.status
+    listed, ok, body, bad1, bad2 = asyncio.run(run(steps))
+    home, greg = listed["agents"]
+    assert (home["voice"], home["voice_fr"], home["default_fr"], home["set_by"]) == \
+        (HOME, "fr_FR-upmc_pierre-medium", "fr_FR-tom-medium", "bere")
+    assert greg["voice_fr"] == "fr_FR-tom-medium"           # Northern English is a man's voice: Tom
+    assert {v["lang"] for v in listed["voices"]} == {"en", "fr"}
+    assert (ok, body["voice_fr"], bad1, bad2) == (200, "fr_FR-siwis-medium", 400, 400)
+    assert stored == [("greg", "fr_FR-siwis-medium", "greg", "fr")]
 
 
 def test_a_sample_says_when_the_speaker_is_off(api):

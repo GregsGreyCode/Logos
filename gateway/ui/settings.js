@@ -543,6 +543,7 @@ function email(body) {
 
 // The house speaker (Voice V1.2): each agent answers in its own voice, chosen here by its people (for the
 // household agent, either of you). Every voice has a play button; the sample comes from the speaker's own Piper.
+// V3.4: and a French voice for each agent, used when it answers in French (Béré speaks French to the speaker).
 function speaker(body) {
   let alive = true, playing = null;
   const player = new Audio();
@@ -569,26 +570,35 @@ function speaker(body) {
       playing = btn; btn.replaceChildren(icon(ICONS.stop)); btn.setAttribute('aria-label', 'Stop the sample');
     } catch (e) { msg.textContent = 'The sample could not be played just now.'; } finally { btn.disabled = false; }
   }
-  function agentBlock(a, voices) {
-    const note = h('p', { class: 'when appearance-note', role: 'status' });
-    const list = h('div', { class: 'settings-choices voice-list', role: 'radiogroup', 'aria-label': `${a.display_name}: voice` },
+  function choiceList(a, voices, fr, note) {
+    const key = fr ? 'voice_fr' : 'voice', usual = fr ? a.default_fr : a.default;
+    return h('div', { class: 'settings-choices voice-list', role: 'radiogroup', 'aria-label': `${a.display_name}: ${fr ? 'French voice' : 'voice'}` },
       voices.map((v) => {
         const label = `Play a sample of ${v.name}`;
         const btn = h('button', { type: 'button', class: 'icon-btn voice-play', 'aria-label': label, 'data-label': label, title: 'Play a sample',
           onclick: () => play(btn, v.id) }, icon(ICONS.play));
         return h('div', { class: 'voice-row' },
           h('label', { class: 'appearance-mode choice' },
-            h('input', { type: 'radio', name: `voice-${a.name}`, value: v.id, checked: v.id === a.voice, onchange: async () => {
-              const r = await api(`/api/v2/agents/${a.name}/speaker-voice`, { method: 'PUT', body: { voice: v.id === a.default ? '' : v.id } }).catch(() => null);
-              note.textContent = r && r.ok ? `Saved: ${a.display_name} speaks as ${v.name} from its next answer.` : 'That could not be saved just now.';
+            h('input', { type: 'radio', name: `${fr ? 'voice-fr' : 'voice'}-${a.name}`, value: v.id, checked: v.id === a[key], onchange: async () => {
+              const r = await api(`/api/v2/agents/${a.name}/speaker-voice`, { method: 'PUT', body: { [key]: v.id === usual ? '' : v.id } }).catch(() => null);
+              note.textContent = r && r.ok ? `Saved: ${a.display_name} speaks${fr ? ' French' : ''} as ${v.name} from its next answer.` : 'That could not be saved just now.';
             } }),
-            h('span', {}, h('strong', {}, v.name), h('span', { class: 'when' }, `${v.accent} ${v.who}${v.id === a.default ? ' · its usual voice' : ''}`))),
+            h('span', {}, h('strong', {}, v.name), h('span', { class: 'when' }, `${v.accent} ${v.who}${v.id === usual ? ' · its usual voice' : ''}`))),
           btn);
       }));
+  }
+  function agentBlock(a, voices) {
+    const note = h('p', { class: 'when appearance-note', role: 'status' });
+    const english = voices.filter((v) => (v.lang || 'en') === 'en'), french = voices.filter((v) => v.lang === 'fr');
+    const list = choiceList(a, english, false, note);
+    const frNote = h('p', { class: 'when appearance-note', role: 'status' });
+    const frBlock = french.length ? [h('h3', { class: 'label voice-lang' }, 'In French'),
+      h('p', { class: 'when' }, 'When it answers in French (to someone who spoke French to it).'),
+      choiceList(a, french, true, frNote), frNote] : [];
     const where = a.speaks ? (a.shared ? 'Answers the speaker. Shared: either of you can change it' : 'Answers the speaker')
       : 'Not on the speaker yet: this is the voice it will have';
     const section = h('section', { 'aria-label': `${a.display_name}'s voice` },
-      h('h2', { class: 'label' }, a.display_name), h('p', { class: 'when' }, where), list, note);
+      h('h2', { class: 'label' }, a.display_name), h('p', { class: 'when' }, where), list, note, ...frBlock);
     if (a.speaks) return section;
     // An agent not on the speaker yet: folded away behind one line, so Home's list is not lost below it.
     const now = (voices.find((v) => v.id === a.voice) || {}).name || '';

@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional
 
 CONTAINER = "logos-tts"
-IMAGE = "logos-tts:1"                   # built locally from infra/tts on first use
+IMAGE = "logos-tts:2"                   # built locally from infra/tts on first use; 2: French voices
 PORT = 10200                            # inside the container, and the default outside
 RUN_AS = "10000:10000"
 MEMORY = "1g"                           # two voices loaded use about 300 MB; a ceiling, not a reservation

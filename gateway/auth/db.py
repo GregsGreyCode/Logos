@@ -519,6 +519,11 @@ def _run_migrations() -> None:
                 updated_at INTEGER
             )
         """)
+        # V3.4: its French voice, for answers in French ("" in voice = the definition's English one).
+        try:
+            conn.execute("ALTER TABLE agent_voices ADD COLUMN voice_fr TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         # Voice VO.2: each person's voice print (speaker embeddings and their strictness, never audio),
         # made in Settings › Your voice and managed only by that person (gateway/voice_id.py).
         conn.execute("""
@@ -1614,20 +1619,23 @@ def set_agent_colour(name: str, colour: str, set_by: str) -> None:
 
 
 def get_agent_voices() -> dict:
-    """``{agent name: {"voice", "set_by"}}`` for every agent someone chose a speaker voice for (Voice V1.2)."""
+    """``{agent name: {"voice", "voice_fr", "set_by"}}`` for every agent someone chose a speaker voice
+    for (Voice V1.2; French V3.4). "" or None: the definition's."""
     with _conn() as conn:
-        return {r["name"]: {"voice": r["voice"], "set_by": r["set_by"]}
-                for r in conn.execute("SELECT name, voice, set_by FROM agent_voices")}
+        return {r["name"]: {"voice": r["voice"] or None, "voice_fr": r["voice_fr"] or None, "set_by": r["set_by"]}
+                for r in conn.execute("SELECT name, voice, voice_fr, set_by FROM agent_voices")}
 
 
-def set_agent_voice(name: str, voice: str, set_by: str) -> None:
-    """``voice`` "" goes back to the one in the agent's definition."""
+def set_agent_voice(name: str, voice: str, set_by: str, lang: str = "en") -> None:
+    """The agent's voice for ``lang`` ("en" or "fr"); ``voice`` "" goes back to the definition's."""
+    column = "voice_fr" if lang == "fr" else "voice"
     with _conn() as conn:
-        if not voice:
-            conn.execute("DELETE FROM agent_voices WHERE name = ?", (name,))
-            return
-        conn.execute("INSERT OR REPLACE INTO agent_voices (name, voice, set_by, updated_at) VALUES (?, ?, ?, ?)",
-                     (name, voice, set_by, int(time.time() * 1000)))
+        conn.execute("INSERT OR IGNORE INTO agent_voices (name, voice, voice_fr, set_by, updated_at) VALUES (?, '', '', ?, ?)",
+                     (name, set_by, int(time.time() * 1000)))
+        conn.execute(f"UPDATE agent_voices SET {column} = ?, set_by = ?, updated_at = ? WHERE name = ?",
+                     (voice or "", set_by, int(time.time() * 1000), name))
+        conn.execute("DELETE FROM agent_voices WHERE name = ? AND COALESCE(voice, '') = '' AND COALESCE(voice_fr, '') = ''",
+                     (name,))
 
 
 def get_voice_prints() -> dict:
