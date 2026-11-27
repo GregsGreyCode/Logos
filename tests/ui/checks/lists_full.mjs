@@ -26,7 +26,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   await page.route('**/api/v2/me', async (r) => { const res = await r.fetch(); const me = await res.json();
     me.prefs.widgets = ['lists', 'weather']; me.prefs.widgets_v2 = true; if (saved) me.prefs.widget_sizes = saved; await r.fulfill({ json: me }); });
   await page.route('**/api/v2/agents/household/brain/page*', (r) => r.fulfill({ json: { path: 'lists.md', title: 'Shared lists', text: TEXT } }));
-  await page.route('**/api/v2/me/prefs', (r) => { if (r.request().method() === 'PUT') { put = r.request().postDataJSON(); return r.fulfill({ json: { prefs: put } }); } return r.continue(); });
+  await page.route('**/api/v2/me/prefs', (r) => { if (r.request().method() === 'PUT') { put = { ...(put || {}), ...r.request().postDataJSON() }; return r.fulfill({ json: { prefs: put } }); } return r.continue(); });
   await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
 
   ok(await page.locator('.home-lists-row .home-list-card:not(.full)').count() === 2 && await page.locator('.home-list-card.full').count() === 0,
@@ -38,7 +38,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   await pencil.evaluate((b) => b.click()); await page.waitForTimeout(400);
   const bar = page.locator('section[data-widget="lists"] .widget-size');
   ok(await bar.count() === 1 && await bar.locator('button.on').textContent() === 'Compact', `${n}: Edit has Compact / Full on Lists, Compact chosen`);
-  ok(await page.locator('section[data-widget="weather"] .widget-size').count() === 0, `${n}: and only on a widget that has sizes`);
+  ok(await page.locator('section[data-widget="weather"] .widget-size button.on').textContent() === 'Full', `${n}: every widget has the switch now (24 Nov); Weather starts Full, as it always looked`);
   await bar.getByRole('button', { name: 'Full' }).click(); await page.waitForTimeout(600);
   ok(put && put.widget_sizes && put.widget_sizes.lists === 'full', `${n}: choosing Full is kept with your login`);
   ok(await page.locator('.home-list-card.full').count() === 2, `${n}: and the lists redraw as cards at once`);

@@ -145,10 +145,12 @@ _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 # Home's widgets, each person's own choice (Greg, 22 Nov); the calendar is always there.
-WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming")
-# Widgets that come in more than one size, each person's own choice in Edit (Greg, 23 Nov: his To-do compact,
-# Béré's full). The first is the default.
-WIDGET_SIZES = {"lists": ("compact", "full")}
+WIDGETS = ("next", "calendar", "messages", "lists", "lights", "weather", "coming", "month")
+# Every widget comes in two sizes, each person's own choice in Edit (Greg, 23 Nov: his To-do compact, Béré's full;
+# 24 Nov: "every widget gets a Compact and a Full version"). Each widget decides what Compact leaves out.
+SIZE_NAMES = ("compact", "full")
+# Weather (Greg, 24 Nov): more than one place, in the order you keep them.
+MAX_WEATHER_PLACES = 8
 # F41: the screens whose first-visit tips someone has seen (gateway/ui/tips.js)
 TIP_SCREENS = ("home", "agents", "chat", "notifications", "routines")
 
@@ -173,8 +175,13 @@ def _pref_ok(key: str, value: Any) -> bool:
         return isinstance(value, list) and len(value) == len(set(value)) and all(t in TIP_SCREENS for t in value)
     if key == "weather_place":
         return _place_ok(value)
+    if key == "weather_places":
+        return (isinstance(value, list) and len(value) <= MAX_WEATHER_PLACES and all(p is not None and _place_ok(p) for p in value)
+                and len({(round(float(p["lat"]), 2), round(float(p["lon"]), 2)) for p in value}) == len(value))
     if key == "widget_sizes":
-        return isinstance(value, dict) and all(w in WIDGET_SIZES and v in WIDGET_SIZES[w] for w, v in value.items())
+        from gateway.widgets import KINDS
+        return (isinstance(value, dict) and len(value) <= 40
+                and all((w in WIDGETS or w in KINDS) and v in SIZE_NAMES for w, v in value.items()))
     if key == "widget_grid":
         # F49: the desktop Home layout: {widget: {x, y, w, h}} on a 12-column grid (h 0: as tall as its content)
         from gateway.widgets import KINDS
@@ -270,7 +277,8 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
         return web.json_response({"error": "bad_prefs", "allowed": {**{k: list(v) for k, v in PREFS.items()},
                                                                    **{k: "#rrggbb" for k in COLOUR_PREFS},
                                                                    "widgets": list(WIDGETS), "tips_seen": list(TIP_SCREENS), "weather_place": "{name, lat, lon}",
-                                                                   "widget_sizes": {w: list(v) for w, v in WIDGET_SIZES.items()}}},
+                                                                   "weather_places": f"[{{name, lat, lon}}], up to {MAX_WEATHER_PLACES}",
+                                                                   "widget_sizes": {"<widget>": list(SIZE_NAMES)}}},
                                  status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
     seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not settings
@@ -1964,6 +1972,61 @@ async def handle_home_coming(request: web.Request) -> web.Response:
     return web.json_response(out)
 
 
+CALENDAR_CACHE_SECONDS = 60
+
+
+async def handle_calendar(request: web.Request) -> web.Response:
+    """GET /api/v2/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD — the Calendar screen (Béré, 27 Nov): every event in
+    that range (both days included, at most 62 days) in the calendars this person may read, as Home reads them.
+    One call per month or week shown; each answer is kept a minute per person and range."""
+    from gateway import home
+    user = _user(request)
+    start, end = request.query.get("start", ""), request.query.get("end", "")
+    if not home.parse_range(start, end):
+        return web.json_response({"error": "bad_range"}, status=400)
+    agents = await _visible_agents(request, user["username"])
+    name = home.own_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_calendar"})
+    cache = request.app.setdefault("calendar_cache", {})
+    key, now = (user["username"], start, end), time.time()
+    if key in cache and now - cache[key][0] < CALENDAR_CACHE_SECONDS:
+        return web.json_response(cache[key][1])
+    out = await asyncio.to_thread(home.calendar_range, runtime, name, agents[name]["definition"], user["username"], start, end)
+    # whose chat "Ask your agent" opens, and which calendars this screen may change (through that person's own agent)
+    out = {**out, "agent": name, "can_change": list(home.CHANGEABLE) if home.calendar_writer(agents, user["username"]) else []}
+    if not out.get("error"):
+        for k in [k for k, v in cache.items() if now - v[0] >= CALENDAR_CACHE_SECONDS]:
+            cache.pop(k, None)
+        cache[key] = (now, out)
+    return web.json_response(out)
+
+
+async def handle_calendar_change(request: web.Request) -> web.Response:
+    """POST /api/v2/calendar/{action} (add, update, cancel) — a change made on the Calendar screen, through the
+    person's own agent, with exactly its rights (their calendar and Household; never a repeating event)."""
+    from gateway import home
+    user = _user(request)
+    action = request.match_info["action"]
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    try:
+        args = home.change_args(action, body if isinstance(body, dict) else {})
+    except ValueError as e:
+        return web.json_response({"error": "refused", "message": str(e)}, status=400)
+    agents = await _visible_agents(request, user["username"])
+    name = home.calendar_writer(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_calendar", "message": "Only your own agent can change your calendar, and you have none with one."}, status=403)
+    out = await asyncio.to_thread(home.calendar_change, runtime, name, action, args)
+    request.app.setdefault("calendar_cache", {}).clear()           # everyone's next look is fresh (Household is shared)
+    return web.json_response(out, status=200 if not out.get("error") else 409 if out["error"] == "refused" else 503)
+
+
 async def handle_home_lights(request: web.Request) -> web.Response:
     """GET /api/v2/home/lights — rooms and how many lights are on; POST {targets, on} switches them.
     Through the house service as the household agent (or your own), with its limits."""
@@ -2026,23 +2089,44 @@ async def handle_home_lists_tick(request: web.Request) -> web.Response:
     return web.json_response(out, status=200 if out.get("ok") else 409)
 
 
-async def handle_weather(request: web.Request) -> web.Response:
-    """GET /api/v2/weather — today and tomorrow where you chose (Settings: weather_place)."""
+def weather_places_of(prefs: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """The places Home's Weather shows, in your order: ``weather_places``, else the one ``weather_place`` chosen before."""
+    if isinstance(prefs.get("weather_places"), list):
+        return list(prefs["weather_places"])
+    return [prefs["weather_place"]] if prefs.get("weather_place") else []
+
+
+async def weather_for(places: List[Mapping[str, Any]], cache: Dict[Any, Any], fetch=None) -> List[Dict[str, Any]]:
+    """Each place's now, today and tomorrow (``{"place", "lat", "lon", ...}``, or ``{"place", "error"}``), asked at once."""
     from gateway import home
+    fetch = fetch or home.weather
+
+    async def one(place: Mapping[str, Any]) -> Dict[str, Any]:
+        key = (round(float(place["lat"]), 2), round(float(place["lon"]), 2))
+        base = {"place": place["name"], "lat": key[0], "lon": key[1]}
+        if key in cache and time.time() - cache[key][0] < WEATHER_CACHE_SECONDS:
+            return {**cache[key][1], **base}
+        try:
+            out = await asyncio.to_thread(fetch, *key)
+        except Exception:
+            return {**base, "error": "weather_unavailable"}
+        cache[key] = (time.time(), out)
+        return {**out, **base}
+    return list(await asyncio.gather(*(one(p) for p in places)))
+
+
+async def handle_weather(request: web.Request) -> web.Response:
+    """GET /api/v2/weather — today and tomorrow in each place you chose (``weather_places``), in your order.
+
+    ``{"places": [...]}``, with the first place's numbers also at the top (as before there was more than one)."""
     user = _user(request)
-    place = (await asyncio.to_thread(prefs_of, user["id"])).get("weather_place")
-    if not place:
-        return web.json_response({"error": "no_place"})
-    key = (round(float(place["lat"]), 2), round(float(place["lon"]), 2))
-    cache = request.app.setdefault("weather_cache", {})
-    if key in cache and time.time() - cache[key][0] < WEATHER_CACHE_SECONDS:
-        return web.json_response({**cache[key][1], "place": place["name"]})
-    try:
-        out = await asyncio.to_thread(home.weather, *key)
-    except Exception:
-        return web.json_response({"error": "weather_unavailable", "place": place["name"]})
-    cache[key] = (time.time(), out)
-    return web.json_response({**out, "place": place["name"]})
+    places = weather_places_of(await asyncio.to_thread(prefs_of, user["id"]))
+    if not places:
+        return web.json_response({"error": "no_place", "places": []})
+    out = await weather_for(places, request.app.setdefault("weather_cache", {}))
+    first = out[0]
+    top = {"error": "weather_unavailable", "place": first["place"]} if first.get("error") else first
+    return web.json_response({**top, "places": out})
 
 
 async def handle_weather_places(request: web.Request) -> web.Response:
@@ -2074,6 +2158,8 @@ def register(app: web.Application) -> None:
     app.router.add_get("/api/v2/activity", handle_activity)
     app.router.add_get("/api/v2/home", handle_home)
     app.router.add_get("/api/v2/home/coming", handle_home_coming)
+    app.router.add_get("/api/v2/calendar", handle_calendar)
+    app.router.add_post("/api/v2/calendar/{action}", require_csrf(handle_calendar_change))
     app.router.add_get("/api/v2/home/lights", handle_home_lights)
     app.router.add_post("/api/v2/home/lights", require_csrf(handle_home_lights))
     app.router.add_get("/api/v2/home/lists", handle_home_lists)

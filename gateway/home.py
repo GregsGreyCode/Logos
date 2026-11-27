@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -98,6 +99,111 @@ def calendar_coming(runtime: Any, agent: str, definition: Mapping[str, Any], use
         return {"error": "calendar_unavailable", "message": str(e)[:200]}
     return {"date": day.isoformat(), "events": out.get("events") or [],
             "calendars": {c["name"]: c.get("shows") or c["name"] for c in cals.get("calendars") or []}}
+
+
+# ── The Calendar screen (Béré, 27 Nov): a month or a week at a glance, read the same way as Home ──
+
+RANGE_MAX_DAYS = 62                 # a month grid is six weeks at most; the service allows 92
+
+
+def parse_range(start: str, end: str) -> Optional[tuple]:
+    """``(first, last)`` dates (both included) from ``YYYY-MM-DD`` strings, or None if they are not a sensible range."""
+    try:
+        a, b = dt.date.fromisoformat(str(start)), dt.date.fromisoformat(str(end or start))
+    except ValueError:
+        return None
+    if b < a or (b - a).days + 1 > RANGE_MAX_DAYS:
+        return None
+    return a, b
+
+
+def calendar_order(key: str) -> tuple:
+    """Your own first, then Household, then everyone else's by name."""
+    return ({"personal": 0, "household": 1}.get(key, 2), key)
+
+
+def calendar_range(runtime: Any, agent: str, definition: Mapping[str, Any], username: str, start: str, end: str,
+                   post=None) -> Dict[str, Any]:
+    """Every event from ``start`` to ``end`` (dates, both included) in the calendars this person may read:
+    ``{"start", "end", "today", "events", "busy", "calendars": [{"key", "name", "busy_only"}]}`` or ``{"error"}``.
+
+    Exactly what Home reads: the person's own read-only key (their calendar, Household and the other people's),
+    else what their agent sees. Nothing here can change an event."""
+    from gateway import calendar_host
+    span = parse_range(start, end)
+    if not span:
+        return {"error": "bad_range"}
+    host = calendar_host.CalendarHost(runtime)
+    token = host.reader_token(username) if username else ""
+    if not token and calendar_host.uses_calendar(definition):
+        token = host.token_for(agent)
+    if not token:
+        return {"error": "no_calendar"}
+    post = post or _post
+    try:
+        out = rpc_result(post(host.service_url(), _call("list_events", {
+            "start": span[0].isoformat(), "end": span[1].isoformat()}), token))
+        cals = rpc_result(post(host.service_url(), _call("list_calendars", {}), token))
+    except Exception as e:
+        return {"error": "calendar_unavailable", "message": str(e)[:200]}
+    listed = []
+    for c in cals.get("calendars") or []:
+        key = str(c.get("name") or "")
+        if key:
+            listed.append({"key": key, "name": re.sub(r"\s*\(.*\)\s*$", "", str(c.get("shows") or key)),
+                           "busy_only": str(c.get("access") or "").startswith("busy")})
+    listed.sort(key=lambda c: calendar_order(c["key"]))
+    return {"start": span[0].isoformat(), "end": span[1].isoformat(),
+            "today": today_in(str(definition.get("timezone") or "UTC")).isoformat(),
+            "events": out.get("events") or [], "busy": out.get("busy") or [], "calendars": listed}
+
+
+# Adding, changing and cancelling from the Calendar screen (Greg, 27 Nov). The reader key changes nothing, so a
+# change goes through the person's own agent (one that is theirs alone and whose calendar is theirs): the same
+# rights their agent has when asked in chat, checked again by the calendar service (their own calendar and
+# Household only; never someone else's; never a repeating event).
+CHANGEABLE = ("personal", "household")
+CHANGE_TOOLS = {"add": "add_event", "update": "update_event", "cancel": "cancel_event"}
+CHANGE_FIELDS = {"add": ("calendar", "title", "start", "end", "location", "notes"),
+                 "update": ("id", "title", "start", "end", "location", "notes"), "cancel": ("id",)}
+
+
+def calendar_writer(agents: Mapping[str, Mapping[str, Any]], username: str) -> Optional[str]:
+    """The agent a person's calendar changes go through: theirs alone, with their own calendar; else None."""
+    for name, info in sorted(agents.items()):
+        cal = (info.get("definition") or {}).get("calendar") or {}
+        if (info.get("owners") or []) == [username] and cal.get("enabled") and cal.get("person") == username:
+            return name
+    return None
+
+
+def change_args(action: str, body: Mapping[str, Any]) -> Dict[str, str]:
+    """The arguments for one change, checked; raises ValueError in plain words."""
+    if action not in CHANGE_TOOLS:
+        raise ValueError("Unknown change.")
+    args = {k: str(body[k]).strip()[:1000] for k in CHANGE_FIELDS[action] if body.get(k) is not None}
+    if action == "add" and args.get("calendar") not in CHANGEABLE:
+        raise ValueError("Events can be added to your own calendar or Household.")
+    if action == "add" and not args.get("title"):
+        raise ValueError("An event needs a title.")
+    if action != "add" and args.get("id", "").partition("/")[0] not in CHANGEABLE:
+        raise ValueError("Only events in your own calendar or Household can be changed here.")
+    return args
+
+
+def calendar_change(runtime: Any, agent: str, action: str, args: Mapping[str, Any], post=None) -> Dict[str, Any]:
+    """Do one change with the agent's key: what the service answered, or ``{"error", "message"}``."""
+    from gateway import calendar_host
+    host = calendar_host.CalendarHost(runtime)
+    token = host.token_for(agent)
+    if not token:
+        return {"error": "no_calendar", "message": "Your agent has no calendar."}
+    try:
+        return rpc_result((post or _post)(host.service_url(), _call(CHANGE_TOOLS[action], args), token))
+    except ValueError as e:                        # the service said no: its words, without "Not done: "
+        return {"error": "refused", "message": re.sub(r"^Not done:\s*", "", str(e))[:300]}
+    except Exception:
+        return {"error": "calendar_unavailable", "message": "The calendar could not be reached just now."}
 
 
 # ── Lights (Greg, 22 Nov): Home's Lights widget, through the house service as the household agent ──

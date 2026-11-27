@@ -8,6 +8,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from gateway import tts
 from gateway import voice_converse as vc
 from gateway.hermes_client import HermesHTTPError
 
@@ -127,7 +128,8 @@ def test_the_endpoint_answers_only_the_speakers_token(home):
     assert _post(app, auth, {"text": "  "})[0] == 400
     status, out = _post(app, auth, {"text": "turn the lights on", "device_id": "pe1"})
     assert status == 200
-    assert out["speech"] == "Which room?" and out["continue"] is True and out["agent"] == "household"
+    assert tts.unmark(out["speech"]) == ("Which room?", "en_GB-northern_english_male-medium")   # marked (V3.3)
+    assert out["continue"] is True and out["agent"] == "household"
     assert out["conversation_id"].startswith("voice-household-pe1-")
     assert links.asked == ["household"]
 
@@ -142,7 +144,42 @@ def test_an_agent_that_is_down_is_spoken_about_not_raised(home):
         vc.register(a)
         return a
     status, out = _post(app, {"Authorization": f"Bearer {vc.token()}"}, {"text": "hi"})
-    assert status == 200 and out["speech"] == vc.DOWN and out["continue"] is False
+    assert status == 200 and tts.unmark(out["speech"])[0] == vc.DOWN and out["continue"] is False
+
+
+def test_french_is_answered_in_french_in_a_french_voice(home):
+    """V3.4: Béré speaks French; Home Assistant still says the pipeline's "en"."""
+    links = FakeLinks(FakeClient([ev("run_completed", "C'est fait, la cuisine est allumée.")]))
+
+    def app():
+        a = web.Application()
+        a["agent_links"] = links
+        vc.register(a)
+        return a
+    status, out = _post(app, {"Authorization": f"Bearer {vc.token()}"},
+                        {"text": "Allume la lumière de la cuisine", "language": "en"})
+    assert status == 200
+    words, voice = tts.unmark(out["speech"])
+    assert words == "C'est fait, la cuisine est allumée." and voice == "fr_FR-tom-medium"
+    assert links._client.started[0][1]["instructions"].endswith(vc.IN_FRENCH)
+
+
+def test_english_keeps_the_instructions_as_they_were(home):
+    links = FakeLinks(FakeClient([ev("run_completed", "Done.")]))
+
+    def app():
+        a = web.Application()
+        a["agent_links"] = links
+        vc.register(a)
+        return a
+    _post(app, {"Authorization": f"Bearer {vc.token()}"}, {"text": "turn the kitchen lights on"})
+    assert vc.IN_FRENCH not in links._client.started[0][1]["instructions"]
+
+
+def test_the_speakers_own_lines_have_french_versions():
+    assert set(vc.FRENCH) == {vc.SLOW, vc.OFF, vc.DOWN, vc.FAILED}
+    from gateway import speech_lang
+    assert all(speech_lang.detect(t) == "fr" for t in vc.FRENCH.values())
 
 
 # ── how fast it answers (/metrics) ──────────────────────────────────────────────────────────

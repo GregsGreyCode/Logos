@@ -14,7 +14,7 @@ answer told the agent nothing. With this plugin a reaction on one of the agent's
 - 🔁 on the person's **own** message sends it again (Greg, 23 Nov: a question whose answer failed
   when the model was unloaded). The message is fetched from Matrix and decrypted with the agent's
   keys, and answered as if just sent. Only its sender can do this, and only for text;
-- answers ``/emojis`` (or ``/reactions``) with that list, without the model.
+- answers ``/emojis`` (or ``/emoji``, ``/reactions``) with that list, without the model.
 
 Only messages the agent sent since this plugin was installed are known: Matrix sends are now
 recorded in hermes's own sent-message index (``rich_sent_store``, which Telegram already uses),
@@ -321,7 +321,7 @@ def _help(raw_args: str = "", **_) -> str:
 
 def register(ctx):
     ctx.register_hook("pre_llm_call", _note_for_next_turn)
-    for name in ("emojis", "reactions"):
+    for name in ("emojis", "emoji", "reactions"):   # /emoji too (Greg, 27 Nov: easier to type)
         ctx.register_command(name, handler=_help, description="What reacting with an emoji does")
     cls = _find_adapter_class()
     if cls is not None:

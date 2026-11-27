@@ -4,16 +4,22 @@ Home Assistant reads an agent's answer aloud by asking the speaker voices contai
 (gateway/tts.py) to say the words. That request names no agent, so this module tells the
 container who said what:
 
-- **Who said it.** :func:`said` is called by ``voice_converse`` with every answer it returns. It
-  keeps, in memory for two minutes, a hash of the words and the voice of the agent that said them,
-  and writes them to the one file the container reads (``said.json``, gateway/tts_host.py). Hashes
-  only: the words are not written anywhere.
+- **Who said it.** :func:`said` is called by ``voice_converse`` with every answer it returns (and by
+  ``speaker_say`` with every announcement). It returns the words with an invisible mark in front
+  that names the voice (``tts.mark``, V3.3): Home Assistant caches spoken phrases by their exact
+  text, so the mark keeps one agent's "Done." from coming back in another's voice, and the container
+  reads the voice straight from it. As a fallback it also keeps, in memory for two minutes, a hash
+  of the words and the voice, written to the one file the container reads (``said.json``,
+  gateway/tts_host.py). Hashes only: the words are not written anywhere.
+- **Which language.** Words in French (gateway/speech_lang.py) are read by the agent's French voice
+  (V3.4): the one chosen in Settings, else ``speaker_voice_fr:``, else Tom for an agent with a man's
+  voice and Siwis for a woman's.
 - **Which voice.** The one the agent's person chose in Settings › House speaker (any of the agent's
   owners; for Home either of you), else ``speaker_voice:`` in ``agents/<name>.yaml``, else Home's
   voice (``tts.DEFAULT_VOICE``). The choice is kept with the agents' colours (table ``agent_voices``).
 
     GET  /api/v2/speaker                       the voices and your agents' choices
-    PUT  /api/v2/agents/<name>/speaker-voice   {"voice": id} ("" = back to the definition's)
+    PUT  /api/v2/agents/<name>/speaker-voice   {"voice": id} or {"voice_fr": id} ("" = back to the definition's)
     GET  /api/v2/speaker/sample?voice=<id>     a short sample, as WAV, for the play buttons
 
 The samples are asked for over Wyoming like Home Assistant does, with a few lines of stdlib here
@@ -30,7 +36,7 @@ import time
 import wave
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from gateway import tts, tts_host
+from gateway import speech_lang, tts, tts_host
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +52,26 @@ _cache: Dict[str, Tuple[str, float]] = {}
 _samples: Dict[str, bytes] = {}
 
 
+def english(vid: Any) -> bool:
+    return vid in tts.VOICES and tts.language(vid) == "en"
+
+
+def french(vid: Any) -> bool:
+    return vid in tts.VOICES and tts.language(vid) == "fr"
+
+
 def default_of(definition: Mapping[str, Any]) -> str:
     voice = (definition or {}).get("speaker_voice")
-    return voice if voice in tts.VOICES else tts.DEFAULT_VOICE
+    return voice if english(voice) else tts.DEFAULT_VOICE
+
+
+def default_fr_of(definition: Mapping[str, Any], english_voice: Optional[str] = None) -> str:
+    """``speaker_voice_fr:``, else a French voice like its English one (a man's or a woman's)."""
+    voice = (definition or {}).get("speaker_voice_fr")
+    if french(voice):
+        return voice
+    who = tts.VOICES.get(english_voice or default_of(definition), ("", "", "man"))[2]
+    return tts.DEFAULT_FRENCH.get(who, tts.DEFAULT_FRENCH["man"])
 
 
 def _choices() -> Dict[str, dict]:
@@ -69,14 +92,28 @@ def _definition(app: Mapping, agent: str) -> Mapping[str, Any]:
         return {}
 
 
-def voice_of(app: Mapping, agent: str) -> str:
-    hit = _cache.get(agent)
+def voice_of(app: Mapping, agent: str, lang: str = "en") -> str:
+    """The agent's voice for ``lang`` ("en", or "fr" for answers in French)."""
+    hit = _cache.get(f"{agent}:{lang}")
     if hit and time.monotonic() - hit[1] < CACHE_S:
         return hit[0]
-    chosen = (_choices().get(agent) or {}).get("voice")
-    voice = chosen if chosen in tts.VOICES else default_of(_definition(app, agent))
-    _cache[agent] = (voice, time.monotonic())
+    row = _choices().get(agent) or {}
+    definition = None
+    voice = row.get("voice")
+    if not english(voice):
+        definition = _definition(app, agent)
+        voice = default_of(definition)
+    if lang == "fr":
+        chosen = row.get("voice_fr")
+        voice = chosen if french(chosen) else default_fr_of(
+            definition if definition is not None else _definition(app, agent), voice)
+    _cache[f"{agent}:{lang}"] = (voice, time.monotonic())
     return voice
+
+
+def _forget(agent: str) -> None:
+    for k in [k for k in _cache if k.split(":", 1)[0] in (agent, _home_agent())]:
+        _cache.pop(k, None)
 
 
 def _home_agent() -> str:
@@ -96,16 +133,24 @@ def write(app: Mapping, env: Optional[Mapping[str, str]] = None) -> bool:
     return True
 
 
-def said(app: Mapping, agent: str, text: str, env: Optional[Mapping[str, str]] = None) -> None:
-    """``voice_converse`` returned ``text`` as ``agent``'s answer: when Home Assistant asks for those
-    words, use that agent's voice. Never raises: the answer matters more than its voice."""
+def said(app: Mapping, agent: str, text: str, env: Optional[Mapping[str, str]] = None) -> str:
+    """``agent`` is about to have ``text`` read out: the words to hand Home Assistant, with the
+    invisible mark of the agent's voice in front (in French when the words are French). Also noted
+    by hash for a container that meets the words without their mark. Never raises: the answer
+    matters more than its voice (the words come back unmarked)."""
     try:
+        voice = voice_of(app, agent, speech_lang.detect(text))
         now = time.time()
         _said[:] = [r for r in _said if r["until"] >= now][-(MAX_SAID - 1):]
-        _said.append({"key": tts.key(text), "agent": agent, "voice": voice_of(app, agent), "until": now + TTL_S})
-        write(app, env)
+        _said.append({"key": tts.key(text), "agent": agent, "voice": voice, "until": now + TTL_S})
     except Exception as e:
         logger.warning("speaker voice: could not note who answered: %s", e)
+        return text
+    try:
+        write(app, env)
+    except Exception as e:
+        logger.warning("speaker voice: could not write %s: %s", tts_host.STATE_FILE, e)
+    return tts.mark(text, voice)
 
 
 # ── Samples: a tiny Wyoming client ───────────────────────────────────────────────────────────
@@ -164,12 +209,13 @@ def _settings() -> Tuple[Optional[dict], str]:
 # ── The dashboard ───────────────────────────────────────────────────────────────────────────
 
 def voice_list() -> List[dict]:
-    return [{"id": vid, "name": name, "accent": accent, "who": who} for vid, (name, accent, who) in tts.VOICES.items()]
+    return [{"id": vid, "name": name, "accent": accent, "who": who, "lang": tts.language(vid)}
+            for vid, (name, accent, who) in tts.VOICES.items()]
 
 
 async def handle_speaker(request: "Any") -> "Any":
     """GET /api/v2/speaker -> {"on", "voices": [...], "agents": [{name, display_name, shared, speaks,
-    voice, default, set_by}]}: the agents this person may use."""
+    voice, default, voice_fr, default_fr, set_by}]}: the agents this person may use."""
     from aiohttp import web
     from gateway import dashboard_api as d
     user = d._user(request)
@@ -182,11 +228,15 @@ async def handle_speaker(request: "Any") -> "Any":
         definition = info["definition"]
         chosen = (choices.get(name) or {})
         default = default_of(definition)
+        voice = chosen.get("voice") if english(chosen.get("voice")) else default
+        default_fr = default_fr_of(definition, voice)
         out.append({"name": name, "display_name": str(definition.get("display_name") or name),
                     "shared": info["owners"] is None or len(info["owners"]) > 1,
                     "speaks": name == home or tts_host.uses_speaker(definition),
-                    "voice": chosen.get("voice") if chosen.get("voice") in tts.VOICES else default,
-                    "default": default, "set_by": chosen.get("set_by") if chosen.get("voice") in tts.VOICES else None})
+                    "voice": voice, "default": default,
+                    "voice_fr": chosen.get("voice_fr") if french(chosen.get("voice_fr")) else default_fr,
+                    "default_fr": default_fr,
+                    "set_by": chosen.get("set_by") if english(chosen.get("voice")) or french(chosen.get("voice_fr")) else None})
     return web.json_response({"on": conf is not None, "problem": problem, "voices": voice_list(), "agents": out})
 
 
@@ -200,12 +250,18 @@ async def handle_agent_voice(request: "Any") -> "Any":
         body = await request.json()
     except Exception:
         body = {}
-    voice = str((body or {}).get("voice") or "")
-    if voice and voice not in tts.VOICES:
+    body = body if isinstance(body, dict) else {}
+    lang = "fr" if "voice_fr" in body else "en"
+    voice = str(body.get("voice_fr" if lang == "fr" else "voice") or "")
+    if voice and not (french(voice) if lang == "fr" else english(voice)):
         return web.json_response({"error": "unknown_voice"}, status=400)
-    await asyncio.to_thread(auth_db.set_agent_voice, name, voice, user["username"])
-    _cache.pop(name, None)
-    _cache.pop(_home_agent(), None)
+    if lang == "fr":
+        await asyncio.to_thread(auth_db.set_agent_voice, name, voice, user["username"], "fr")
+    else:
+        await asyncio.to_thread(auth_db.set_agent_voice, name, voice, user["username"])
+    _forget(name)
+    if lang == "fr":
+        return web.json_response({"name": name, "voice_fr": voice or default_fr_of(info["definition"])})
     return web.json_response({"name": name, "voice": voice or default_of(info["definition"])})
 
 

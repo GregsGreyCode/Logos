@@ -9,7 +9,7 @@ FAKE = {
   '/api/v2/me': {'username': 'greg', 'display_name': 'Greg', 'role': 'admin', 'matrix_id': '@greg:test', 'look': 'default', 'prefs': {'widgets': ['weather', 'next', 'messages', 'coming', 'lights', 'lists'], 'tips_seen': ['home', 'agents', 'chat', 'notifications', 'routines']}, 'agent_colours': {'greg': '#6d74ff', 'household': '#5fd49a', 'bere': '#a35bd6'}, 'version': {'commit': 'abc1234', 'date': 1795392000}},
   '/api/v2/home': {'me': 'greg', 'agent': {'name': 'greg', 'display_name': "Greg's agent"}, 'model_up': True, 'model_off_since': None, 'brain_changes': [],
     'today': {'date': d, 'busy': [], 'calendars': {'bere': 'Béré', 'household': 'Household'}, 'events': [
-      {'start': f'{d} 15:00', 'title': 'Call Maman', 'calendar': 'bere'},
+      {'id': 'bere/call-maman.ics', 'start': f'{d} 15:00', 'end': f'{d} 15:30', 'title': 'Call Maman', 'calendar': 'bere', 'read_only': True},
       {'start': (datetime.datetime.now() + datetime.timedelta(minutes=40)).strftime('%Y-%m-%d %H:%M'), 'title': 'Dinner with Alex', 'calendar': 'household'},
       {'start': f'{t} 21:00', 'title': 'Alex Bday', 'calendar': 'bere', 'location': 'https://maps.app.goo.gl/abc'},
       {'start': f'{t} 21:00', 'title': 'Alex bday party', 'calendar': 'bere'},
@@ -25,9 +25,11 @@ FAKE = {
 # Settings › House speaker: the real list of voices (gateway/tts.py is stdlib only), and a silent three-second sample.
 import importlib.util, io, wave
 _spec = importlib.util.spec_from_file_location('tts', os.path.join(REPO, 'gateway/tts.py')); TTS = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(TTS)
-FAKE['/api/v2/speaker'] = {'on': True, 'problem': '', 'voices': [{'id': i, 'name': n, 'accent': a, 'who': w} for i, (n, a, w) in TTS.VOICES.items()],
-  'agents': [{'name': 'household', 'display_name': 'Household agent', 'shared': True, 'speaks': True, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE, 'set_by': None},
-             {'name': 'greg', 'display_name': "Greg's agent", 'shared': False, 'speaks': False, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE, 'set_by': None}]}
+FAKE['/api/v2/speaker'] = {'on': True, 'problem': '', 'voices': [{'id': i, 'name': n, 'accent': a, 'who': w, 'lang': TTS.language(i)} for i, (n, a, w) in TTS.VOICES.items()],
+  'agents': [{'name': 'household', 'display_name': 'Household agent', 'shared': True, 'speaks': True, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE,
+              'voice_fr': 'fr_FR-tom-medium', 'default_fr': 'fr_FR-tom-medium', 'set_by': None},
+             {'name': 'greg', 'display_name': "Greg's agent", 'shared': False, 'speaks': False, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE,
+              'voice_fr': 'fr_FR-tom-medium', 'default_fr': 'fr_FR-tom-medium', 'set_by': None}]}
 _b = io.BytesIO(); _w = wave.open(_b, 'wb'); _w.setframerate(22050); _w.setsampwidth(2); _w.setnchannels(1); _w.writeframes(b'\0\0' * 66150); _w.close(); SAMPLE = _b.getvalue()
 # People (F38): an admin's view with someone invited and someone removed, one person's page, the admin actions.
 import time as _time
@@ -64,6 +66,30 @@ PEOPLE_POST = {'/api/v2/people': (201, {'username': 'ella', 'token': 'TESTTOKEN-
                                             'min_password': 10, 'chat_id': '@ella:test', 'calendar': True}),
                '/auth/invite/accept': (200, {'ok': True, 'username': 'ella', 'steps': [{'id': 'account', 'label': 'Account', 'state': 'ok', 'detail': 'Signed in for the first time'},
                                                                                      {'id': 'chat', 'label': 'Chat account (Element X)', 'state': 'ok', 'detail': '@ella:test'}]})}
+# The Calendar screen (27 Nov): events around today, so every range asked for has something in it.
+def _cal_events():
+    D = lambda n: (today + datetime.timedelta(days=n)).isoformat()
+    E = lambda i, cal, title, start, end, **kw: {'id': f'{cal}/{i}.ics', 'calendar': cal, 'title': title, 'start': start, 'end': end,
+                                               'all_day': len(start) == 10, 'location': '', 'notes': '', 'repeats': False, **kw}
+    return [
+        E('call-maman', 'bere', 'Call Maman', f'{d} 15:00', f'{d} 15:30', read_only=True),
+        E('bins', 'household', 'Rubbish bins', D(0), D(1), repeats=True, notes='Green bin this week.'),
+        E('dentist', 'personal', 'Dentist', f'{D(1)} 10:30', f'{D(1)} 11:15', location='12 High Street https://maps.app.goo.gl/abc', notes='Bring the form.'),
+        E('standup', 'personal', 'Standup', f'{D(1)} 09:00', f'{D(1)} 09:15'),
+        E('lunch', 'household', 'Lunch with Alex', f'{D(1)} 12:30', f'{D(1)} 14:00'),
+        E('violin', 'bere', 'Violin lesson', f'{D(1)} 17:00', f'{D(1)} 18:00', read_only=True),
+        E('deborah', 'bere', "Deborah's birthday", D(3), D(4), repeats=True, read_only=True),
+        E('bath', 'household', 'Weekend in Bath', D(5), D(7), location='Bath'),
+        E('yoga', 'personal', 'Yoga', f'{D(-2)} 18:00', f'{D(-2)} 19:00'),
+        E('dinner', 'personal', 'Team dinner', f'{D(9)} 19:30', f'{D(9)} 22:00'),
+        E('flight', 'bere', 'Flight to Lyon', f'{D(12)} 07:10', f'{D(12)} 09:55', read_only=True),
+    ]
+def calendar_range(q):
+    a, b = q.get('start', [d])[0], q.get('end', [d])[0]
+    ev = [e for e in _cal_events() if e['start'][:10] <= b and (e['end'] or e['start'])[:10] >= a]
+    return {'start': a, 'end': b, 'today': d, 'agent': 'greg', 'can_change': ['personal', 'household'], 'busy': [], 'events': ev,
+            'calendars': [{'key': 'personal', 'name': 'Your own calendar', 'busy_only': False}, {'key': 'household', 'name': 'Household', 'busy_only': False},
+                          {'key': 'bere', 'name': 'Béré', 'busy_only': False}]}
 EXTRA = json.load(open(os.path.join(HERE, 'extra.json'))) if os.path.exists(os.path.join(HERE, 'extra.json')) else {}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -84,6 +110,9 @@ class H(http.server.BaseHTTPRequestHandler):
         if p == '/invite': return self.send(200, open(os.path.join(REPO, 'gateway/html/invite.html'), 'rb').read(), 'text/html')
         if p == '/api/v2/people': return self.send(200, json.dumps({**EXTRA.get(p, {'people': [], 'agents': []}), **PEOPLE_ADMIN}).encode(), 'application/json')
         if p in PEOPLE: return self.send(200, json.dumps(PEOPLE[p]).encode(), 'application/json')
+        if p == '/api/v2/calendar':
+            import urllib.parse as _u
+            return self.send(200, json.dumps(calendar_range(_u.parse_qs(self.path.partition('?')[2]))).encode(), 'application/json')
         if p in EXTRA: return self.send(200, json.dumps(EXTRA[p]).encode(), 'application/json')
         if p in FAKE: return self.send(200, json.dumps(FAKE[p]).encode(), 'application/json')
         if p.startswith('/api/'): return self.send(200, b'{}', 'application/json')

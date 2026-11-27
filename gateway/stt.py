@@ -2,8 +2,8 @@
 
 Home Assistant sends what the speaker heard after the wake word to this server over the Wyoming
 protocol (Settings > Devices & services > Wyoming Protocol, like the speaker voices in
-gateway/tts.py) and gets the words back (Parakeet, English: the model Home Assistant's own Whisper
-add-on picks by default, so it is as quick). From the same audio it works out a voice embedding
+gateway/tts.py) and gets the words back (Parakeet TDT 0.6B v3: English and French, whichever is
+spoken, as quick as v2, the English-only model Home Assistant's own Whisper add-on picks by default). From the same audio it works out a voice embedding
 (CAM++, sherpa-onnx) and keeps it in memory for two minutes under a hash of the words. When the
 words then arrive at ``POST /api/v2/voice/converse``, the dashboard asks for that embedding and
 compares it with the voice prints it holds (gateway/voice_id.py). The prints never come here.
@@ -77,8 +77,8 @@ def authorised(token: str, header: str) -> bool:
 
 
 class Ears:
-    """The two models, loaded at start and kept (the speaker should not wait for them): Parakeet for the
-    words (NVIDIA's English speech-to-text, the one Home Assistant's own add-on now picks by default) and
+    """The two models, loaded at start and kept (the speaker should not wait for them): Parakeet v3 for the
+    words (NVIDIA's speech-to-text, English and French without being told which) and
     CAM++ for the voice. Both run on sherpa-onnx."""
 
     def __init__(self, words_dir: str, speaker_model: str, cohort_dir: str, threads: int = 4):
@@ -198,8 +198,8 @@ def info_event():
     return Info(asr=[AsrProgram(name="logos", description="Logos: speech to text, and who said it",
                                 attribution=Attribution(name="Logos", url="https://github.com/GregsGreyCode/Logos"),
                                 installed=True, version="1",
-                                models=[AsrModel(name="parakeet-tdt-0.6b-v2", description="Parakeet TDT 0.6B v2 (English)", attribution=nvidia,
-                                                 installed=True, version=None, languages=["en"])])]).event()
+                                models=[AsrModel(name="parakeet-tdt-0.6b-v3", description="Parakeet TDT 0.6B v3 (English, French)",
+                                                 attribution=nvidia, installed=True, version=None, languages=["en", "fr"])])]).event()
 
 
 def make_handler(ears: Ears, heard: Heard):
@@ -226,7 +226,7 @@ def make_handler(ears: Ears, heard: Heard):
                 await self.write_event(Pong().event())
                 return True
             if Transcribe.is_type(event.type):
-                return True                               # English only; nothing to set up
+                return True                               # the model hears the language itself
             if AudioStart.is_type(event.type):
                 s = AudioStart.from_event(event)
                 self.pcm, self.fmt = bytearray(), (s.rate, s.width, s.channels)

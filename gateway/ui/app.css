@@ -1337,6 +1337,11 @@ form.recording > :not(.rec-bar) { display: none !important; }
   .nav-foot .who { display: none; }
   .nav-foot .logout-btn { font-size: 11px; }
 }
+/* With Calendar in the menu (27 Nov) the narrow menu is a little taller: on a short window its items close up, so
+   the whole menu still fits without scrolling. */
+@media (min-width: 600px) and (max-width: 1099px) and (max-height: 860px) {
+  .nav-links a { min-height: 54px; padding: 5px 2px !important; gap: 3px; }
+}
 
 /* A conversation, and Brain and About, read at a comfortable width on a wide screen. */
 @media (min-width: 600px) {
@@ -1583,7 +1588,7 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .feed.needs { margin-top: 8px; }
 
 /* Home: the household's lists (Greg, 21 Nov), one small card each. */
-.home-lists-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.home-lists-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
 .home-list-card { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px 14px; border-radius: var(--r-card);
   background: var(--surface); border: 1px solid var(--line); color: var(--ink); text-decoration: none; }
 .home-list-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -1945,6 +1950,9 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .mail-add input { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);
   background: transparent; color: var(--ink); font: inherit; }
 .mail-foot { border-top: 1px solid var(--line); padding-top: 10px; display: flex; justify-content: flex-end; }
+.mail-list { display: grid; gap: 12px; }
+.mail-more { margin-top: 12px; width: 100%; }
+@media (min-width: 720px) { .mail-more { width: auto; } }
 
 /* The side menu's count (Greg, 23 Nov): the same round counter as the phone's tab bar, at the row's end. */
 .nav-links .nb-badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; display: inline-grid;
@@ -2659,3 +2667,59 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
 .page.person-page > header.set-head { display: flex; margin: -8px 0 6px -10px; }
 .person-state { max-width: none; }
 .audit-row { flex-direction: row; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+/* F49 stage 2 (Greg, 24 Nov). Every widget Compact or Full: what each Compact leaves out. */
+.home-agenda.compact .home-meta { display: none; }
+.home-lights.compact { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 6px; }
+.home-lights.compact .home-light { min-height: 40px; padding: 8px 10px; justify-content: center; }
+.home-lights.compact .home-light > .when { display: none; }
+.home-lights.compact .home-light-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-marks.compact { display: flex; flex-wrap: wrap; gap: 6px; }
+.w-mark-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border-radius: 999px; color: var(--ink); text-decoration: none; }
+.w-mark-chip:hover { color: var(--accent-text); }
+/* Agents today: each agent opens its chat (Greg, 27 Nov). */
+a.w-agent { color: var(--ink); text-decoration: none; border-radius: var(--r-ctl); margin: -4px; padding: 4px; }
+a.w-agent:hover .w-agent-words strong { color: var(--accent-text); }
+a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.w-agents.compact { gap: 8px; }
+.w-agents.compact .w-mark { width: 28px; height: 28px; }
+
+/* Weather: a row a place, in your order. */
+.home-weather.many, .home-weather:has(> .home-weather-place) { flex-direction: column; align-items: stretch; gap: 0; padding: 4px 14px; }
+.home-weather-place { display: flex; align-items: center; gap: 14px; padding: 8px 0; min-width: 0; }
+.home-weather-place + .home-weather-place { border-top: 1px solid var(--line); }
+.home-weather-place.compact { gap: 10px; padding: 6px 0; }
+.home-weather-place.compact .home-weather-now strong, .home-weather-place.compact .home-weather-icon { font-size: 20px; }
+.home-weather-place.compact .home-weather-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-weather-place.compact .home-weather-tomorrow { flex: none; white-space: nowrap; }
+.home-weather-place.failed { color: var(--muted); }
+.home-weather-name { font-weight: 600; }
+.home-place-first { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.home-places-edit { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); margin: 0 0 10px; }
+.home-places-edit > .label { margin: 0; }
+.home-place-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.home-place-row { display: flex; align-items: center; gap: 4px; min-height: 40px; border-bottom: 1px solid var(--line); }
+.home-place-row:last-child { border-bottom: 0; }
+.home-place-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); }
+.place-btn { flex: none; min-width: 36px; min-height: 36px; border: 0; border-radius: 999px; background: transparent; color: var(--ink); font-size: 15px; cursor: pointer; }
+.place-btn:hover:not(:disabled) { background: var(--chip); }
+.place-btn:disabled { opacity: .3; cursor: default; }
+.place-btn.remove { color: var(--muted); }
+.place-btn.remove:hover { color: var(--bad); }
+
+/* The edit bar wraps on a narrow widget instead of spilling out of it. */
+.widget-bar { flex-wrap: wrap; row-gap: 4px; }
+.widget-bar .widget-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Desktop arranging: a ghost outline where the widget lands, the 12 columns faintly, and guides where edges line up; Tidy up. */
+@media (min-width: 1100px) {
+  .guide-layer { position: absolute; inset: 0; pointer-events: none; z-index: 19; }
+  .guide-layer > * { position: absolute; pointer-events: none; }
+  .grid-col { background: color-mix(in srgb, var(--accent) 5%, transparent); border-radius: 4px; }
+  .grid-ghost { border: 2px dashed var(--accent); border-radius: var(--r-card); background: color-mix(in srgb, var(--accent) 10%, transparent); box-sizing: border-box; }
+  .snap-guide.v { width: 2px; background: var(--accent); opacity: .7; }
+  .snap-guide.h { height: 2px; background: var(--accent); opacity: .7; }
+  .home-grid-tools { display: inline-flex; align-items: center; gap: 12px; margin-left: auto; }
+  .home-grid-tools .home-reset { margin-left: 0; }
+}
+@media (max-width: 1099px) { .guide-layer { display: none; } }

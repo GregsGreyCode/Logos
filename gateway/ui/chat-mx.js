@@ -12,7 +12,7 @@ import * as mx from './mx.js';
 import { clearRoom } from './push.js';
 import { voiceNote, imageThumb, fileCard, prepareFile, sendPrepared, fileSize } from './media.js';
 import { stepsView } from './chat.js';
-import { takeAskFull } from './home.js';
+import { takeAskFull, takeDraft } from './home.js';
 import { createRecorder, voiceBar } from './voice.js';
 import { markBar, agentBar } from './agents-void.js';
 import { getPref } from './prefs.js';
@@ -847,6 +847,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   draw(true);
   const asked = group ? null : takeAskFull(agent.name);       // a question asked on Home (spoken or typed)
   if (asked) sendText(asked.text, asked.voice);
+  const drafted = group ? null : takeDraft(agent.name);       // words to finish, from the Calendar
+  if (drafted) { input.value = drafted; grow(); input.focus(); input.setSelectionRange(drafted.length, drafted.length); }
   voice.resume();                                              // words from a recording made before a reload
   focusIfKeyboard(input);
   return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };

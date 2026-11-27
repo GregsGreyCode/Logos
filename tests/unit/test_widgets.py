@@ -470,7 +470,9 @@ def test_a_widget_may_be_chosen_compact_or_full_by_each_person():
     from gateway import dashboard_api as d
     assert d._pref_ok("widget_sizes", {"lists": "full"}) and d._pref_ok("widget_sizes", {})
     assert not d._pref_ok("widget_sizes", {"lists": "huge"})          # a size it does not have
-    assert not d._pref_ok("widget_sizes", {"weather": "full"})        # a widget with no sizes
+    # every widget has both (Greg, 24 Nov), the homelab ones too; never a widget that does not exist
+    assert d._pref_ok("widget_sizes", {"weather": "compact", "lights": "full", "services": "compact", "agents": "full"})
+    assert not d._pref_ok("widget_sizes", {"tiles": "full"})
     assert not d._pref_ok("widget_sizes", "full")
 
 

@@ -6,7 +6,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 for (const [w, hgt, cols] of [[1440, 900, 2], [1920, 1080, 3], [2560, 1440, 4]]) {
   const page = await browser.newPage({ viewport: { width: w, height: hgt } });
   await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2200);
-  const xs = new Set(await page.$$eval('.home-widgets > .home-widget:not([hidden])', (els) => els.map((e) => Math.round(e.getBoundingClientRect().left))));
+  const xs = new Set(await page.$$eval('.home-widgets > .home-widget:not([hidden]):not(.off)', (els) => els.map((e) => Math.round(e.getBoundingClientRect().left))));
   ok(xs.size === cols, `${w}: Home in ${cols} columns (${xs.size})`);
   for (const hash of ['#/home', '#/chat', '#/noticeboard', '#/agents/greg', '#/settings', '#/chat/greg']) {
     await page.goto('http://127.0.0.1:8779/' + hash); await page.waitForTimeout(1200);

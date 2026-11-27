@@ -7,7 +7,13 @@ which agent answered. The dashboard knows: when ``POST /api/v2/voice/converse`` 
 it notes a hash of the words and the voice that agent's person chose (gateway/speaker_voice.py) in
 a small file this container can read. So:
 
-- **Words an agent has just said** (within two minutes): that agent's voice.
+- **Marked words** (the usual case, V3.3): the dashboard puts an invisible mark at the start of
+  every answer it hands Home Assistant (:func:`mark`): a few zero-width characters that spell the
+  voice. They make the same words from two agents different words to Home Assistant's phrase
+  cache (its key is a SHA-1 of the exact text), and they name the voice directly. They are taken
+  off before Piper reads the words.
+- **Words an agent has just said** (within two minutes) without a mark (Home Assistant took it
+  off, or an older dashboard): that agent's voice, found by a hash of the words.
 - **Anything else** (Home Assistant's own announcements, a sample from Settings): the voice the
   request names, when it is one of ours, else Home's.
 
@@ -37,7 +43,8 @@ KEEP_LOADED = 2
 IDLE_S = 600
 
 # The English "medium" voices Home Assistant's Piper add-on offers, apart from those with many
-# speakers in one model. id -> (name, accent, who). Keep in step with infra/tts/Dockerfile.
+# speakers in one model, and four French ones (V3.4, for Béré; UPMC is one model with two speakers).
+# id -> (name, accent, who). Keep the model files in step with infra/tts/Dockerfile.
 VOICES = {
     "en_GB-alan-medium": ("Alan", "British", "man"),
     "en_GB-alba-medium": ("Alba", "Scottish", "woman"),
@@ -51,8 +58,74 @@ VOICES = {
     "en_US-kristin-medium": ("Kristin", "American", "woman"),
     "en_US-lessac-medium": ("Lessac", "American", "woman"),
     "en_US-ryan-medium": ("Ryan", "American", "man"),
+    "fr_FR-siwis-medium": ("Siwis", "French", "woman"),
+    "fr_FR-tom-medium": ("Tom", "French", "man"),
+    "fr_FR-upmc_jessica-medium": ("Jessica", "French", "woman"),
+    "fr_FR-upmc_pierre-medium": ("Pierre", "French", "man"),
 }
 DEFAULT_VOICE = "en_GB-northern_english_male-medium"     # Home's, chosen by Greg in Home Assistant
+#: voice id -> (model file, speaker) where they differ (one Piper model with two speakers).
+MODELS = {"fr_FR-upmc_jessica-medium": ("fr_FR-upmc-medium", 0), "fr_FR-upmc_pierre-medium": ("fr_FR-upmc-medium", 1)}
+#: The French voice an agent has until someone chooses one: a man's for a man's voice, else a woman's.
+DEFAULT_FRENCH = {"man": "fr_FR-tom-medium", "woman": "fr_FR-siwis-medium"}
+
+
+def language(vid: str) -> str:
+    """"en" or "fr", from the voice id."""
+    return str(vid or "").split("_", 1)[0]
+
+
+def model_of(vid: str) -> Tuple[str, Optional[int]]:
+    """(model file without .onnx, speaker number or None)."""
+    return MODELS.get(vid, (vid, None))
+
+
+def model_files() -> list:
+    """The Piper models the image must hold, in order, once each."""
+    out: list = []
+    for vid in VOICES:
+        m = model_of(vid)[0]
+        if m not in out:
+            out.append(m)
+    return out
+
+
+# ── The invisible mark (V3.3) ────────────────────────────────────────────────────────────────
+# Home Assistant caches spoken audio by its exact words, so "Done." said by Finn came back in Home's
+# voice once Home had said it. A mark at the start, made of zero-width characters, makes each
+# voice's words different to that cache without changing what is heard, and names the voice.
+# Python's str.strip() and split() leave these characters alone (they are not whitespace), and Home
+# Assistant hands the answer to the text-to-speech service as it is (its 2026.11 source: the cache
+# key is sha1(message), and the Wyoming service is sent Synthesize(text=message)).
+#: Append-only: a voice keeps its number for ever, so a mark in Home Assistant's cache stays right.
+CODES = ("en_GB-alan-medium", "en_GB-alba-medium", "en_GB-cori-medium", "en_GB-jenny_dioco-medium",
+         "en_GB-northern_english_male-medium", "en_US-amy-medium", "en_US-hfc_female-medium",
+         "en_US-hfc_male-medium", "en_US-joe-medium", "en_US-kristin-medium", "en_US-lessac-medium",
+         "en_US-ryan-medium", "fr_FR-siwis-medium", "fr_FR-tom-medium", "fr_FR-upmc_jessica-medium",
+         "fr_FR-upmc_pierre-medium")
+FRAME = "⁣"                                 # INVISIBLE SEPARATOR, before and after the digits
+DIGITS = "​‌‍⁠"              # zero width space, non-joiner, joiner, word joiner
+_MARK = re.compile(f"{FRAME}([{DIGITS}]{{3}}){FRAME}")
+_INVISIBLE = re.compile(f"[{FRAME}{DIGITS}﻿]")
+
+
+def mark(text: str, vid: str) -> str:
+    """``text`` with the invisible mark of voice ``vid`` in front (unchanged for an unknown voice)."""
+    if vid not in CODES:
+        return str(text or "")
+    n = CODES.index(vid)
+    return FRAME + "".join(DIGITS[(n >> s) & 3] for s in (4, 2, 0)) + FRAME + str(text or "")
+
+
+def unmark(text: str) -> Tuple[str, Optional[str]]:
+    """(the words without any invisible characters, the voice the mark names or None)."""
+    text = str(text or "")
+    vid = None
+    m = _MARK.search(text)
+    if m:
+        n = sum(DIGITS.index(c) << s for c, s in zip(m.group(1), (4, 2, 0)))
+        vid = CODES[n] if n < len(CODES) and CODES[n] in VOICES else None
+    return _INVISIBLE.sub("", text), vid
 
 
 def key(text: str) -> str:
@@ -65,7 +138,13 @@ def choose(text: str, requested: Optional[str], state: Mapping, now: Optional[fl
     """(voice, agent) for these words. ``state`` is what the dashboard wrote: ``{"default": voice,
     "said": [{"key", "agent", "voice", "until"}]}``; ``agent`` is None when no agent said them."""
     now = time.time() if now is None else now
+    text, marked = unmark(text)
     k = key(text)
+    if marked:
+        for row in reversed(list(state.get("said") or [])):     # only to name the agent in the log
+            if isinstance(row, Mapping) and row.get("key") == k and row.get("voice") == marked:
+                return marked, str(row.get("agent") or "") or None
+        return marked, "an agent"
     for row in reversed(list(state.get("said") or [])):
         if isinstance(row, Mapping) and row.get("key") == k and float(row.get("until") or 0) >= now \
                 and row.get("voice") in VOICES:
@@ -117,7 +196,7 @@ class Voices:
             if vid not in self._loaded:
                 from piper import PiperVoice
                 started = time.monotonic()
-                voice = PiperVoice.load(os.path.join(self.folder, vid + ".onnx"))
+                voice = PiperVoice.load(os.path.join(self.folder, model_of(vid)[0] + ".onnx"))
                 while len(self._loaded) >= self.keep:
                     del self._loaded[min(self._loaded, key=lambda v: self._loaded[v][1])]
                 self._loaded[vid] = [voice, 0.0]
@@ -160,10 +239,16 @@ def make_handler(voices: Voices, state_path: str, lock):
             syn = Synthesize.from_event(event)
             text = " ".join(str(syn.text or "").split())[:MAX_TEXT]
             vid, agent = choose(text, syn.voice.name if syn.voice else None, read_state(state_path))
+            text = unmark(text)[0].strip()       # Piper never sees the mark
             started = time.monotonic()
             async with lock:                     # one at a time
                 voice = await asyncio.to_thread(voices.get, vid)
-                chunks = iter(voice.synthesize(text or "."))   # a generator: the work happens in next()
+                config = None
+                if model_of(vid)[1] is not None:
+                    from piper import SynthesisConfig
+                    config = SynthesisConfig(speaker_id=model_of(vid)[1])
+                # A generator: the work happens in next().
+                chunks = iter(voice.synthesize(text or ".", syn_config=config))
                 first = True
                 while True:
                     chunk = await asyncio.to_thread(next, chunks, None)

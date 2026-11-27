@@ -396,9 +396,11 @@ function notifications(state) {
 
 // F40 Email (Greg, 23 Nov): connect your own mailbox here, no server commands. Gmail with an app password
 // (links straight to Google's pages); Outlook.com with Microsoft's sign-in code, through the one Logos app
-// that whoever manages Logos adds once (walked through below). Only your own mailbox; read only.
+// that whoever manages Logos adds once (walked through below). Only your own mailboxes; read only.
+// F43 (27 Nov): several mailboxes, Gmail and Outlook mixed: one card each, and "Add another mailbox".
 function email(body) {
-  let alive = true, timer = null, openPrivate = false;
+  let alive = true, timer = null, adding = false;
+  const openPrivate = new Set();            // the mailboxes whose private senders are unfolded
   const box = h('div', { class: 'mail-box' }, loading('rows', 2));
   const msg = h('p', { class: 'when', role: 'status' });
   body.replaceChildren(h('section', { 'aria-label': 'Email' }, heading('Email'),
@@ -410,54 +412,67 @@ function email(body) {
 
   async function load(keepOpen = false) {
     clearTimeout(timer);
-    if (!keepOpen) openPrivate = false;
+    if (!keepOpen) openPrivate.clear();
     let d;
     try { d = await getJSON('/api/v2/mail'); } catch (e) { box.replaceChildren(h('p', { class: 'none' }, 'Email settings could not be loaded just now.')); return; }
     if (!alive) return;
     if (!d.agent) { box.replaceChildren(h('p', { class: 'none' }, 'Your agent is not set up to read email yet. Ask whoever manages Logos to turn it on.')); return; }
     if (d.signin && d.signin.state === 'waiting') return showCode(d);
-    if (d.mailbox) return connected(d);
-    choose(d);
+    const boxes = d.mailboxes || [];
+    if (boxes.length && !adding) return connected(d, boxes);
+    choose(d, boxes.length > 0);
   }
+  const back = () => { adding = false; load(); };
 
   // The service's ISO time, as everywhere else: today the time alone, else the day and time.
   const checked = (iso) => { const t = Date.parse(iso); return Number.isFinite(t) ? when(t / 1000).toLowerCase() : String(iso); };
-  function connected(d) {
-    const m = d.mailbox, hl = d.health;
+  function card(m, many) {
+    const hl = m.health;
     const state = !hl ? 'Starting to read it…' : hl.error ? `The last refresh failed: ${hl.error}` : hl.synced ? `Up to date, checked ${checked(hl.synced)}` : 'Copying your recent mail…';
-    const sender = h('input', { type: 'text', placeholder: 'mybank.example', 'aria-label': 'A sender to keep private', autocomplete: 'off',
-      autocapitalize: 'none', spellcheck: 'false' });
+    const sender = h('input', { type: 'text', placeholder: 'mybank.example', 'aria-label': `A sender to keep private in ${m.address || 'this mailbox'}`,
+      autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false' });
     const exclude = async (s, remove = false) => {
-      const r = await api('/api/v2/mail/exclude', { method: 'POST', body: { sender: s, remove } });
+      const r = await api('/api/v2/mail/exclude', { method: 'POST', body: { box: m.id, sender: s, remove } });
       msg.textContent = r.ok ? '' : await errOf(r); if (r.ok) load(true);
     };
     // The mailbox and everything about it in one card (Greg, 23 Nov: the senders list below it looked
     // bizarre): who it is and how it is doing, private senders folded away, and Disconnect at its foot.
+    // Private senders are kept per mailbox.
     const n = m.exclude.length;
-    const priv = h('details', { class: 'mail-private', open: openPrivate },
+    const priv = h('details', { class: 'mail-private', open: openPrivate.has(m.id) },
       h('summary', {}, h('span', {}, 'Private senders'), h('span', { class: 'when' }, n ? `${n} kept out` : 'None')),
-      h('p', { class: 'when' }, 'Your agent never sees email from these: a bank or a doctor, say. A whole domain or one address.'),
+      h('p', { class: 'when' }, `Your agent never sees email from these${many ? ' in this mailbox' : ''}: a bank or a doctor, say. A whole domain or one address.`),
       n ? h('div', { class: 'mail-chips' }, m.exclude.map((s) => h('span', { class: 'mail-chip' }, s,
         h('button', { type: 'button', 'aria-label': `Let your agent read mail from ${s} again`, onclick: () => exclude(s, true) }, '✕')))) : '',
       h('form', { class: 'mail-add', onsubmit: (e) => { e.preventDefault(); if (sender.value.trim()) exclude(sender.value.trim()); } },
         sender, h('button', { type: 'submit', class: 'btn quiet small' }, 'Add')));
-    priv.addEventListener('toggle', () => { openPrivate = priv.open; });
-    box.replaceChildren(h('div', { class: 'card mail-card' },
+    priv.addEventListener('toggle', () => { if (priv.open) openPrivate.add(m.id); else openPrivate.delete(m.id); });
+    const name = m.address || 'Your mailbox';
+    return h('div', { class: 'card mail-card', 'data-box': m.id },
       h('div', { class: 'mail-who' }, h('span', { class: `status ${hl && hl.error ? 'down' : 'up'}`, 'aria-hidden': 'true' }),
-        h('div', {}, h('strong', {}, m.address || 'Your mailbox'), h('p', { class: 'when' }, `${m.kind === 'gmail' ? 'Gmail' : 'Outlook.com'} · ${state}`))),
+        h('div', {}, h('strong', {}, name), h('p', { class: 'when' }, `${m.kind === 'gmail' ? 'Gmail' : 'Outlook.com'} · ${state}`))),
       priv,
-      h('div', { class: 'mail-foot' }, h('button', { type: 'button', class: 'linkish danger-text', onclick: async () => {
-        if (!await ask({ title: 'Disconnect your email?', text: 'Your agent stops reading it, and Logos forgets the login. Its copy of your mail is removed.', yes: 'Disconnect', danger: true })) return;
-        const r = await api('/api/v2/mail', { method: 'DELETE' }); msg.textContent = r.ok ? 'Disconnected.' : await errOf(r); load();
-      } }, 'Disconnect'))));
+      h('div', { class: 'mail-foot' }, h('button', { type: 'button', class: 'linkish danger-text', 'aria-label': `Disconnect ${name}`, onclick: async () => {
+        if (!await ask({ title: many ? `Disconnect ${name}?` : 'Disconnect your email?',
+          text: 'Your agent stops reading it, and Logos forgets the login. Its copy of this mail is removed.', yes: 'Disconnect', danger: true })) return;
+        const r = await api(`/api/v2/mail?box=${encodeURIComponent(m.id)}`, { method: 'DELETE' }); msg.textContent = r.ok ? 'Disconnected.' : await errOf(r); load();
+      } }, 'Disconnect')));
   }
 
-  function choose(d) {
+  function connected(d, boxes) {
+    const many = boxes.length > 1;
+    box.replaceChildren(h('div', { class: 'mail-list' }, ...boxes.map((m) => card(m, many))),
+      h('button', { type: 'button', class: 'btn quiet mail-more', onclick: () => { adding = true; msg.textContent = ''; choose(d, true); } },
+        '+ Add another mailbox'));
+  }
+
+  function choose(d, more = false) {
     const pick = (kind) => (kind === 'gmail' ? gmail() : outlook(d));
-    box.replaceChildren(h('p', {}, 'Which email do you use?'),
+    box.replaceChildren(h('p', {}, more ? 'Which email is the other mailbox?' : 'Which email do you use?'),
       h('div', { class: 'row mail-choose' },
         h('button', { type: 'button', class: 'btn quiet', onclick: () => pick('gmail') }, 'Gmail'),
-        h('button', { type: 'button', class: 'btn quiet', onclick: () => pick('outlook') }, 'Outlook.com / Hotmail')));
+        h('button', { type: 'button', class: 'btn quiet', onclick: () => pick('outlook') }, 'Outlook.com / Hotmail')),
+      more ? h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: back }, 'Back')) : '');
   }
 
   function gmail() {
@@ -473,7 +488,7 @@ function email(body) {
           const r = await api('/api/v2/mail/gmail', { method: 'POST', body: { address: addr.value.trim(), app_password: pw.value } });
           go.disabled = false;
           if (!r.ok) { msg.textContent = await errOf(r); return; }
-          const out = await r.json(); pw.value = '';
+          const out = await r.json(); pw.value = ''; adding = false;
           msg.textContent = `Connected: ${out.inbox} emails in your Inbox. Your agent starts reading in a few minutes.`; load();
         } }, h('label', { for: 'mail-addr', class: 'field-label' }, 'Gmail address'), addr,
         h('label', { for: 'mail-pw', class: 'field-label' }, 'App password'), revealable(pw),
@@ -513,7 +528,7 @@ function email(body) {
       const r = await getJSON('/api/v2/mail').catch(() => null);
       if (!alive || !r) return;
       if (r.signin && r.signin.state === 'failed') { msg.textContent = r.signin.error; outlook(r); return; }
-      if (r.signin && r.signin.state === 'connected') msg.textContent = 'Connected. Your agent starts reading in a few minutes.';
+      if (r.signin && r.signin.state === 'connected') { msg.textContent = 'Connected. Your agent starts reading in a few minutes.'; adding = false; }
       load();
     }, 3000);
   }
@@ -543,6 +558,7 @@ function email(body) {
 
 // The house speaker (Voice V1.2): each agent answers in its own voice, chosen here by its people (for the
 // household agent, either of you). Every voice has a play button; the sample comes from the speaker's own Piper.
+// V3.4: and a French voice for each agent, used when it answers in French (Béré speaks French to the speaker).
 function speaker(body) {
   let alive = true, playing = null;
   const player = new Audio();
@@ -569,26 +585,35 @@ function speaker(body) {
       playing = btn; btn.replaceChildren(icon(ICONS.stop)); btn.setAttribute('aria-label', 'Stop the sample');
     } catch (e) { msg.textContent = 'The sample could not be played just now.'; } finally { btn.disabled = false; }
   }
-  function agentBlock(a, voices) {
-    const note = h('p', { class: 'when appearance-note', role: 'status' });
-    const list = h('div', { class: 'settings-choices voice-list', role: 'radiogroup', 'aria-label': `${a.display_name}: voice` },
+  function choiceList(a, voices, fr, note) {
+    const key = fr ? 'voice_fr' : 'voice', usual = fr ? a.default_fr : a.default;
+    return h('div', { class: 'settings-choices voice-list', role: 'radiogroup', 'aria-label': `${a.display_name}: ${fr ? 'French voice' : 'voice'}` },
       voices.map((v) => {
         const label = `Play a sample of ${v.name}`;
         const btn = h('button', { type: 'button', class: 'icon-btn voice-play', 'aria-label': label, 'data-label': label, title: 'Play a sample',
           onclick: () => play(btn, v.id) }, icon(ICONS.play));
         return h('div', { class: 'voice-row' },
           h('label', { class: 'appearance-mode choice' },
-            h('input', { type: 'radio', name: `voice-${a.name}`, value: v.id, checked: v.id === a.voice, onchange: async () => {
-              const r = await api(`/api/v2/agents/${a.name}/speaker-voice`, { method: 'PUT', body: { voice: v.id === a.default ? '' : v.id } }).catch(() => null);
-              note.textContent = r && r.ok ? `Saved: ${a.display_name} speaks as ${v.name} from its next answer.` : 'That could not be saved just now.';
+            h('input', { type: 'radio', name: `${fr ? 'voice-fr' : 'voice'}-${a.name}`, value: v.id, checked: v.id === a[key], onchange: async () => {
+              const r = await api(`/api/v2/agents/${a.name}/speaker-voice`, { method: 'PUT', body: { [key]: v.id === usual ? '' : v.id } }).catch(() => null);
+              note.textContent = r && r.ok ? `Saved: ${a.display_name} speaks${fr ? ' French' : ''} as ${v.name} from its next answer.` : 'That could not be saved just now.';
             } }),
-            h('span', {}, h('strong', {}, v.name), h('span', { class: 'when' }, `${v.accent} ${v.who}${v.id === a.default ? ' · its usual voice' : ''}`))),
+            h('span', {}, h('strong', {}, v.name), h('span', { class: 'when' }, `${v.accent} ${v.who}${v.id === usual ? ' · its usual voice' : ''}`))),
           btn);
       }));
+  }
+  function agentBlock(a, voices) {
+    const note = h('p', { class: 'when appearance-note', role: 'status' });
+    const english = voices.filter((v) => (v.lang || 'en') === 'en'), french = voices.filter((v) => v.lang === 'fr');
+    const list = choiceList(a, english, false, note);
+    const frNote = h('p', { class: 'when appearance-note', role: 'status' });
+    const frBlock = french.length ? [h('h3', { class: 'label voice-lang' }, 'In French'),
+      h('p', { class: 'when' }, 'When it answers in French (to someone who spoke French to it).'),
+      choiceList(a, french, true, frNote), frNote] : [];
     const where = a.speaks ? (a.shared ? 'Answers the speaker. Shared: either of you can change it' : 'Answers the speaker')
       : 'Not on the speaker yet: this is the voice it will have';
     const section = h('section', { 'aria-label': `${a.display_name}'s voice` },
-      h('h2', { class: 'label' }, a.display_name), h('p', { class: 'when' }, where), list, note);
+      h('h2', { class: 'label' }, a.display_name), h('p', { class: 'when' }, where), list, note, ...frBlock);
     if (a.speaks) return section;
     // An agent not on the speaker yet: folded away behind one line, so Home's list is not lost below it.
     const now = (voices.find((v) => v.id === a.voice) || {}).name || '';
@@ -729,8 +754,10 @@ function valueOf(id, state) {
   if (id === 'matrix') return state.me.matrix_id ? (mx.saved() ? 'Connected' : 'Not connected') : '';
   if (id === 'notifications') return push.status().then((st) => (st === 'on'
     ? (getPref('alerts', 'who') === 'private' ? 'On · private' : 'On') : { blocked: 'Blocked', unsupported: '' }[st] ?? 'Off'));
-  if (id === 'email') return getJSON('/api/v2/mail').then((d) => (d.mailbox
-    ? ({ gmail: 'Gmail', outlook: 'Outlook' }[d.mailbox.kind] || 'Connected') : 'Not connected'));
+  if (id === 'email') return getJSON('/api/v2/mail').then((d) => {
+    const b = d.mailboxes || [];
+    return b.length > 1 ? `${b.length} mailboxes` : b.length ? ({ gmail: 'Gmail', outlook: 'Outlook' }[b[0].kind] || 'Connected') : 'Not connected';
+  });
   if (id === 'metrics') return getJSON('/api/v2/metrics').then((d) => (d.enabled ? 'On' : 'Off'));
   if (id === 'speaker') return getJSON('/api/v2/speaker').then((d) => {
     const a = (d.agents || []).find((x) => x.speaks) || (d.agents || [])[0];

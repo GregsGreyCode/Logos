@@ -1,12 +1,16 @@
 """Run the Logos mail service (story E1): each person's agent reads its own person's email.
 
-``scripts/logos-mail connect <person>`` writes the mailbox login to
-``~/.config/logos/mail/<person>.json`` (mode 0600, never in git or a sandbox):
+A person may connect several mailboxes (F43, 27 Nov 2026), Gmail and Outlook mixed. Settings › Email
+or ``scripts/logos-mail connect <person>`` writes one login per mailbox to
+``~/.config/logos/mail/<person>/<id>.json`` (folder 0700, files 0600, never in git or a sandbox):
 
     Outlook.com: {"kind": "outlook", "address": ..., "client_id": ..., "refresh_token": ...}
     Gmail:       {"kind": "gmail", "address": ..., "app_password": ...}
 
-either with an optional "exclude": ["mybank.example", "someone@example.com"] (never copied).
+each with its ``id`` (8 hex characters), when it was ``added``, and an optional
+"exclude": ["mybank.example", "someone@example.com"] (never copied). Before F43 there was one file
+per person, ``<person>.json``; it is moved into the folder the first time it is read, marked
+``carried_over`` so the service keeps the mail it had already copied (no reconnecting).
 
 The service (``gateway/mail_service.py``, container ``logos-mail``) gets those files as one
 read-only config, keeps its copy of the mail and Microsoft's rotating token in the
@@ -18,8 +22,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import secrets
+import time
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, List, Mapping, Optional
 
 CONTAINER = "logos-mail"
 VOLUME = "logos-mail"                 # config.json, read only in the container
@@ -50,19 +57,133 @@ def config_dir(env: Mapping[str, str]) -> Path:
     return Path(base) / "logos" / "mail"
 
 
-def mailboxes(env: Mapping[str, str], people) -> Dict[str, dict]:
-    """The connected mailboxes of these people (files written by scripts/logos-mail)."""
-    out = {}
-    for person in sorted(set(people)):
-        path = config_dir(env) / f"{person}.json"
+BOX_ID = re.compile(r"^[0-9a-f]{8}$")
+PERSON = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+
+
+def _person_dir(env: Mapping[str, str], person: str) -> Path:
+    if not PERSON.match(person or ""):
+        raise MailError("bad person name")
+    return config_dir(env) / person
+
+
+def _write(path: Path, box: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(box, indent=1))
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def _stamp(t: float) -> str:
+    """When a mailbox was added: they are listed in that order (to the microsecond, so two added in the
+    same second keep their order)."""
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + f".{int(t * 1e6) % 1000000:06d}Z"
+
+
+def _new_id(env: Mapping[str, str]) -> str:
+    taken = {p.stem for p in config_dir(env).glob("*/*.json")} if config_dir(env).exists() else set()
+    while True:
+        bid = secrets.token_hex(4)
+        if bid not in taken:
+            return bid
+
+
+def migrate(env: Mapping[str, str], person: str) -> Optional[str]:
+    """F43: the one mailbox file a person had before (``<person>.json``) moves into their folder as it
+    is, marked ``carried_over``: the service then keeps the mail it already copied and Microsoft's
+    rotated token. The id it was given, or None when there was nothing to move."""
+    old = config_dir(env) / f"{person}.json"
+    try:
+        box = json.loads(old.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(box, dict):
+        return None
+    bid = _new_id(env)
+    box.update(id=bid, carried_over=True)
+    box.setdefault("added", _stamp(old.stat().st_mtime))
+    _write(_person_dir(env, person) / f"{bid}.json", box)
+    old.unlink()
+    return bid
+
+
+def boxes_of(env: Mapping[str, str], person: str) -> List[dict]:
+    """A person's mailboxes, oldest first, each with its ``id`` (an old single file is moved first)."""
+    if not PERSON.match(person or ""):
+        return []
+    migrate(env, person)
+    out = []
+    d = config_dir(env) / person
+    for path in sorted(d.glob("*.json")) if d.is_dir() else []:
         try:
             box = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        if box.get("kind") == "outlook" and box.get("client_id") and box.get("refresh_token"):
-            out[person] = box
-        elif box.get("kind") == "gmail" and box.get("address") and box.get("app_password"):
-            out[person] = box
+        if isinstance(box, dict) and BOX_ID.match(path.stem):
+            box["id"] = path.stem
+            out.append(box)
+    return sorted(out, key=lambda b: (str(b.get("added") or ""), b["id"]))
+
+
+def box_of(env: Mapping[str, str], person: str, box_id: str) -> Optional[dict]:
+    return next((b for b in boxes_of(env, person) if b["id"] == box_id), None)
+
+
+def same_mailbox(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    return (a.get("kind") == b.get("kind") and bool(a.get("address"))
+            and str(a.get("address")).lower() == str(b.get("address") or "").lower())
+
+
+def save_box(env: Mapping[str, str], person: str, box: dict) -> dict:
+    """Keep a login. With an ``id``, that mailbox is rewritten; without one, connecting a mailbox that
+    is already there (same kind and address) replaces its login and keeps its id, private senders
+    and copied mail; anything else is a new mailbox. The saved box, with its id."""
+    box = dict(box)
+    have = boxes_of(env, person)
+    old = next((b for b in have if b["id"] == box.get("id")), None) if box.get("id") else \
+        next((b for b in have if same_mailbox(b, box)), None)
+    if box.get("id") and not old:
+        raise MailError("no such mailbox")
+    if old:
+        for keep in ("exclude", "added", "carried_over"):
+            if keep in old and keep not in box:
+                box[keep] = old[keep]
+        box["id"] = old["id"]
+    else:
+        box["id"] = _new_id(env)
+        box.setdefault("added", _stamp(time.time()))
+    _write(_person_dir(env, person) / f"{box['id']}.json", box)
+    return box
+
+
+def remove_box(env: Mapping[str, str], person: str, box_id: str) -> bool:
+    if not BOX_ID.match(box_id or ""):
+        return False
+    migrate(env, person)
+    try:
+        (_person_dir(env, person) / f"{box_id}.json").unlink()
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def usable(box: Mapping[str, Any]) -> bool:
+    if box.get("kind") == "outlook":
+        return bool(box.get("client_id") and box.get("refresh_token"))
+    if box.get("kind") == "gmail":
+        return bool(box.get("address") and box.get("app_password"))
+    return False
+
+
+def mailboxes(env: Mapping[str, str], people) -> Dict[str, dict]:
+    """The connected mailboxes of these people, by mailbox id, each with its ``person``."""
+    out = {}
+    for person in sorted(set(people)):
+        for box in boxes_of(env, person):
+            if usable(box):
+                out[box["id"]] = {**box, "person": person}
     return out
 
 
@@ -144,12 +265,12 @@ class MailHost:
                 self.rt.runner.sleep(1)
         raise TimeoutError("the mail service did not start; see: docker logs " + CONTAINER)
 
-    def forget_token(self, person: str) -> None:
+    def forget_token(self, box_id: str) -> None:
         """After a fresh sign-in: drop the rotated token so the new one from the config is used."""
-        if not person.replace("-", "").replace("_", "").isalnum():
-            raise MailError("bad person name")
+        if not BOX_ID.match(box_id or ""):
+            raise MailError("bad mailbox id")
         self.rt.run(["docker", "run", "--rm", "--network", "none", "-v", f"{STATE}:/s", "alpine:3", "sh", "-c",
-                     f"rm -f /s/outlook-{person}.token"], check=False)
+                     f"rm -f /s/outlook-{box_id}.token"], check=False)
 
     def down(self) -> None:
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)

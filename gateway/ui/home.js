@@ -10,11 +10,14 @@ import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
 import { unreadFromAgents } from './notify.js';
+import { monthWidget } from './calendar.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
 const ASK_KEY = 'logos-ask';           // Chat picks the question up from here and sends it
 const SEEN_KEY = 'logos-home-last';    // the last Home seen on this device, drawn at once while the new one loads
 
+// An event on Home opens the Calendar at its day, with it open (Greg, 27 Nov).
+const calHref = (e) => `#/calendar/day/${String(e.start || '').slice(0, 10)}${e.id ? `/${encodeURIComponent(e.id)}` : ''}`;
 // "2026-11-19 10:30" -> "10:30"; an all-day event shows "All day".
 const timeOf = (e) => (e.all_day ? 'All day' : String(e.start || '').slice(11, 16));
 
@@ -34,6 +37,7 @@ export async function homeView(root, rest, state) {
   const msgBox = h('div', { class: 'home-msgs' });
   const msgSec = h('section', { class: 'home-messages', 'aria-label': 'Messages', hidden: true },
     h('h2', { class: 'label' }, 'Messages'), msgBox);
+  let msgRows = [];
   async function showMessages() {
     let items = [];
     try {
@@ -43,13 +47,19 @@ export async function homeView(root, rest, state) {
     if (!alive) return;
     // One row per chat (its newest unread message), at most three.
     const seen = new Set();
-    const rows = items.filter((i) => !seen.has(i.link) && seen.add(i.link)).slice(0, 3);
-    msgSec.hidden = !rows.length;
-    msgBox.replaceChildren(...rows.map((i) => h('a', { class: 'home-msg', href: i.link },
-      h('span', { class: 'home-msg-head' }, h('strong', {}, i.title), h('span', { class: 'when' }, when(i.ts))),
-      h('span', { class: 'home-msg-text' }, i.text))));
+    msgRows = items.filter((i) => !seen.has(i.link) && seen.add(i.link)).slice(0, 3);
+    drawMessages();
   }
-  // "Next · 15:00 Call Maman · in 40 min": the next timed event today, while it is still to come.
+  // Compact: who and when, without the message's first words.
+  function drawMessages() {
+    const compact = compactOf('messages');
+    msgSec.hidden = !msgRows.length;
+    msgBox.replaceChildren(...msgRows.map((i) => h('a', { class: 'home-msg', href: i.link },
+      h('span', { class: 'home-msg-head' }, h('strong', {}, i.title), h('span', { class: 'when' }, when(i.ts))),
+      compact ? null : h('span', { class: 'home-msg-text' }, i.text))));
+  }
+  // "Next · 15:00 Call Maman · in 40 min": the next timed event today, while it is still to come. Compact leaves out
+  // "Next" and says how long in a word ("40 min").
   function showNext(today) {
     const now = new Date();
     const next = (today && !today.error ? today.events : []).filter((e) => !e.all_day && String(e.start).startsWith(today.date))
@@ -59,7 +69,9 @@ export async function homeView(root, rest, state) {
     if (!next) return;
     const mins = Math.round((next.at - now) / 60000);
     const inWords = mins < 60 ? `in ${mins} min` : mins < 120 ? 'in an hour' : `in ${Math.round(mins / 60)} hours`;
-    nextUp.replaceChildren(h('span', { class: 'label' }, 'Next'), h('strong', {}, `${timeOf(next.e)} ${next.e.title}`), h('span', { class: 'when' }, inWords));
+    const compact = compactOf('next');
+    nextUp.replaceChildren(compact ? null : h('span', { class: 'label' }, 'Next'), h('strong', {}, `${timeOf(next.e)} ${next.e.title}`),
+      h('span', { class: 'when' }, compact ? inWords.replace(/^in /, '').replace('an hour', '1 h').replace(/ hours$/, ' h') : inWords));
   }
 
   let data = null;
@@ -89,9 +101,11 @@ export async function homeView(root, rest, state) {
     drawListsData(d.lists.map((l) => ({ name: l.name, id: l.id, items: (l.items || []).map((i) => ({ text: i.text, due: i.due || '' })) })));
   }
   let listsData = null, listsLive = false;     // what is drawn, so changing the size or ticking redraws without asking again
-  // Which widgets have more than one size (Greg, 23 Nov): chosen in Edit, each person's own.
-  const SIZES = { lists: [['compact', 'Compact'], ['full', 'Full']] };
-  const sizeOf = (id) => { const v = (getPref('widget_sizes', {}) || {})[id]; return (SIZES[id] || []).some(([k]) => k === v) ? v : (SIZES[id] || [[null]])[0][0]; };
+  // Every widget comes Compact or Full (Greg, 23 Nov for Lists; 24 Nov: every widget), chosen in Edit, each person's own.
+  // Each decides what Compact leaves out. A widget nobody has chosen for stays as it always looked: Lists compact, the rest full.
+  const SIZES = [['compact', 'Compact'], ['full', 'Full']];
+  const sizeOf = (id) => { const v = (getPref('widget_sizes', {}) || {})[id]; return v === 'compact' || v === 'full' ? v : id === 'lists' ? 'compact' : 'full'; };
+  const compactOf = (id) => sizeOf(id) === 'compact';
   function drawLists(page) {              // the copy in the brain: the same lists, to read
     if (!alive || !page || !page.text) return;
     listsLive = false;
@@ -194,21 +208,30 @@ export async function homeView(root, rest, state) {
     // end. Today's that are over are dimmed.
     const now = new Date();
     const over = (e) => !e.all_day && String(e.start).startsWith(day) && new Date(String(e.end || e.start).replace(' ', 'T')) < now;
-    const row = (e) => h('div', { class: `home-row home-line${over(e) ? ' over' : ''}` },
+    const row = (e) => h('div', { class: `home-row home-line${over(e) ? ' over' : ''}`, role: 'link', tabindex: '0', 'data-href': calHref(e) },
       h('span', { class: 'home-time' }, timeOf(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, e.title),
       h('span', { class: 'home-meta' }, whose(e), place(e.location)));
     // One list, Today then Tomorrow (Greg, 22 Nov: no longer side by side, which left half the width
     // empty whenever one day had more on than the other).
-    const part = (label, list, empty) => [h('h3', { class: 'sub-label' }, label), ...(list.length ? list.map(row) : [none(empty)])];
+    const part = (label, list, empty, on) => [h('h3', { class: 'sub-label' }, h('span', { class: 'label-link', role: 'link', tabindex: '0', 'data-href': `#/calendar/day/${on}` }, label)),
+      ...(list.length ? list.map(row) : [none(empty)])];
+    const tomorrow = (() => { const t = new Date(`${day}T12:00:00`); t.setDate(t.getDate() + 1); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; })();
+    // Compact: today only, what is still to come, without whose and where.
+    if (compactOf('calendar')) {
+      const ahead = todays.filter((e) => !over(e));
+      todayBox.replaceChildren(h('div', { class: 'home-list home-agenda compact' }, ...part('Today', ahead,
+        todays.length ? 'Nothing more today.' : 'Nothing today.', day)));
+      return;
+    }
     todayBox.replaceChildren(h('div', { class: 'home-list home-agenda' },
-      ...part('Today', todays, 'Nothing today.'), ...part('Tomorrow', later.slice(0, 6), 'Nothing yet.')));
+      ...part('Today', todays, 'Nothing today.', day), ...part('Tomorrow', later.slice(0, 6), 'Nothing yet.', tomorrow)));
   }
 
 
   // ── Home is yours to arrange (Greg, 22 Nov): widgets in your order, dragged into place in Edit ──
-  const WIDGETS = { next: 'Next', weather: 'Weather', calendar: 'Calendar', messages: 'Messages', coming: 'Coming up', lights: 'Lights', lists: 'Lists' };
+  const WIDGETS = { next: 'Next', weather: 'Weather', calendar: 'Calendar', messages: 'Messages', coming: 'Coming up', lights: 'Lights', lists: 'Lists', month: 'Month' };
   // Everyone starts with Greg's own arrangement (23 Nov), then moves things as they like.
   const DEFAULT_WIDGETS = ['weather', 'calendar', 'messages', 'next', 'lists', 'lights', 'coming'];
   const chosen = () => {
@@ -228,17 +251,37 @@ export async function homeView(root, rest, state) {
   const weatherSec = h('section', { class: 'home-weather-sec', 'aria-label': 'Weather' }, weatherBox);
   const MIN = 60000;
   const showWeather = () => swr('/api/v2/weather', 30 * MIN, drawWeather, { error: 'weather_unavailable' });   // kept 30 minutes
+  // More than one place (Greg, 24 Nov): a row each, in your order, each with its own now and tomorrow. Full: now, today's
+  // high and low and rain, then tomorrow. Compact: now and tomorrow's high, one line a place.
+  let weatherData = null;
+  const shortName = (n) => String(n || '').split(',')[0];
+  function placeRow(p, compact) {
+    const name = shortName(p.place);
+    if (p.error || !p.now) {
+      return h('div', { class: 'home-weather-place failed' }, h('span', { class: 'home-weather-text' },
+        h('span', {}, h('strong', {}, name), ' · could not be read just now')));
+    }
+    const [icon, words] = SKY(p.now.code);
+    const [tIcon, tWords] = SKY(p.tomorrow.code);
+    const now = h('span', { class: 'home-weather-now' }, h('span', { class: 'home-weather-icon', 'aria-hidden': 'true' }, icon), h('strong', {}, deg(p.now.temp)));
+    if (compact) {
+      return h('div', { class: 'home-weather-place compact', 'aria-label': `${name}: ${words}, ${deg(p.now.temp)}; tomorrow ${tWords.toLowerCase()}, ${deg(p.tomorrow.high)}` }, now,
+        h('span', { class: 'home-weather-name' }, name),
+        h('span', { class: 'when home-weather-tomorrow' }, `Tomorrow `, h('span', { 'aria-hidden': 'true' }, tIcon), ` ${deg(p.tomorrow.high)}`));
+    }
+    return h('div', { class: 'home-weather-place' }, now,
+      h('span', { class: 'home-weather-text' },
+        h('span', {}, h('strong', { class: 'home-weather-name' }, name), ` · ${words} · today ${deg(p.today.high)} / ${deg(p.today.low)}${p.today.rain ? ` · ${p.today.rain}% rain` : ''}`),
+        h('span', { class: 'when' }, `Tomorrow ${tIcon} ${tWords.toLowerCase()} ${deg(p.tomorrow.high)} / ${deg(p.tomorrow.low)}${p.tomorrow.rain ? ` · ${p.tomorrow.rain}% rain` : ''}`)));
+  }
   function drawWeather(w) {
     if (!alive) return;
-    if (w.error === 'no_place') { weatherBox.replaceChildren(h('div', {}, h('p', { class: 'when' }, 'Weather: which town?'), placePicker())); return; }
-    if (w.error) { weatherBox.replaceChildren(h('p', { class: 'when' }, `The weather could not be read just now${w.place ? ` for ${w.place}` : ''}.`)); return; }
-    const [icon, words] = SKY(w.now.code);
-    const [tIcon, tWords] = SKY(w.tomorrow.code);
-    weatherBox.replaceChildren(
-      h('span', { class: 'home-weather-now' }, h('span', { class: 'home-weather-icon', 'aria-hidden': 'true' }, icon), h('strong', {}, deg(w.now.temp))),
-      h('span', { class: 'home-weather-text' },
-        h('span', {}, `${words} · today ${deg(w.today.high)} / ${deg(w.today.low)}${w.today.rain ? ` · ${w.today.rain}% rain` : ''}`),
-        h('span', { class: 'when' }, `Tomorrow ${tIcon} ${tWords.toLowerCase()} ${deg(w.tomorrow.high)} / ${deg(w.tomorrow.low)}${w.tomorrow.rain ? ` · ${w.tomorrow.rain}% rain` : ''} · ${w.place.split(',')[0]}`)));
+    weatherData = w;
+    const places = Array.isArray(w.places) ? w.places : w.error === 'no_place' ? [] : [w];     // an older server: one place
+    weatherBox.classList.toggle('many', places.length > 1);
+    if (!places.length) { weatherBox.replaceChildren(h('div', { class: 'home-place-first' }, h('p', { class: 'when' }, 'Weather: which town?'), placePicker(addPlace))); return; }
+    if (places.length === 1 && w.error && !w.now) { weatherBox.replaceChildren(h('p', { class: 'when' }, `The weather could not be read just now${w.place ? ` for ${w.place}` : ''}.`)); return; }
+    weatherBox.replaceChildren(...places.map((p) => placeRow(p, compactOf('weather'))));
   }
 
   // Lights: each room, lit or not; a tap switches it (on if all off, else off), and All off.
@@ -257,7 +300,11 @@ export async function homeView(root, rest, state) {
     if (!r || !r.ok) lightsNote.textContent = d.message || 'The lights did not answer just now.';
     drawLights(d.rooms ? d : await getJSON('/api/v2/home/lights').catch(() => ({})));
   }
+  let lightsData = null;
+  // Compact: smaller pills with the room's name only (how bright still shows as the fill).
   function drawLights(d) {
+    lightsData = d;
+    lightsBox.classList.toggle('compact', compactOf('lights'));
     if (!d || d.error || !d.rooms) { lightsBox.replaceChildren(h('p', { class: 'when' }, d && d.error === 'no_house' ? 'No agent here can work the lights.' : 'The lights could not be read just now.')); return; }
     // Each room is a pill (Greg, 23 Nov): a tap switches it; sliding along it sets how bright, the pill
     // filling as the finger moves (from off too), set when let go. Up and down still scrolls the page.
@@ -314,43 +361,85 @@ export async function homeView(root, rest, state) {
 
   // Coming up: the next two weeks after tomorrow, one line each (all-day ones, like birthdays, too).
   const comingBox = h('div', { class: 'home-list home-agenda' }, loading('rows', 3));
-  const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up' }, h('h2', { class: 'label' }, 'Coming up'), comingBox);
+  const comingSec = h('section', { class: 'home-coming', 'aria-label': 'Coming up' },
+    h('h2', { class: 'label' }, h('a', { class: 'label-link', href: '#/calendar/list' }, 'Coming up')), comingBox);
   const showComing = () => swr('/api/v2/home/coming', 5 * MIN, drawComing, { error: 'x' });   // kept 5 minutes
+  let comingData = null;
+  // Compact: the next three, without whose.
   function drawComing(d) {
     if (!alive) return;
+    comingData = d;
     if (d.error) { comingBox.replaceChildren(h('p', { class: 'when' }, d.error === 'no_calendar' ? 'No calendar yet.' : 'The calendar could not be read just now.')); return; }
-    const events = (d.events || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start))).slice(0, 8);
+    const compact = compactOf('coming');
+    const events = (d.events || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start))).slice(0, compact ? 3 : 8);
     const day = (e) => new Date(`${String(e.start).slice(0, 10)}T12:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric' });
     const whose = (e) => (e.calendar === 'personal' ? 'Yours' : String((d.calendars || {})[e.calendar] || e.calendar).replace(/\s*\(.*\)\s*$/, ''));
-    comingBox.replaceChildren(...(events.length ? events.map((e) => h('div', { class: 'home-row home-line' },
+    comingBox.replaceChildren(...(events.length ? events.map((e) => h('div', { class: 'home-row home-line', role: 'link', tabindex: '0', 'data-href': calHref(e) },
       h('span', { class: 'home-time' }, day(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),
       h('span', { class: 'home-title' }, `${e.all_day ? '' : `${String(e.start).slice(11, 16)} `}${e.title}`),
-      h('span', { class: 'home-meta' }, whose(e)))) : [none('Nothing in the next two weeks.')]));
+      compact ? null : h('span', { class: 'home-meta' }, whose(e)))) : [none('Nothing in the next two weeks.')]));
   }
 
-  // Weather's town, chosen in the widget itself: found by name, kept with your login.
-  function placePicker() {
-    const place = getPref('weather_place', null);
-    const q = h('input', { type: 'search', placeholder: 'Town or city', autocomplete: 'off', 'aria-label': 'Town or city for the weather',
-      value: place ? place.name.split(',')[0] : '' });
+  // Weather's places, chosen in the widget itself: found by name, kept with your login, in the order you put them
+  // (Greg, 24 Nov). Someone who chose one town before keeps it, as the first.
+  const MAX_PLACES = 8;
+  const myPlaces = () => {
+    const list = getPref('weather_places', null);
+    if (Array.isArray(list)) return list;
+    const one = getPref('weather_place', null);
+    return one ? [one] : [];
+  };
+  async function savePlaces(list) {
+    await setPref('weather_places', list);
+    forget('/api/v2/weather'); showWeather();
+  }
+  const samePlace = (a, b) => Math.round(a.lat * 100) === Math.round(b.lat * 100) && Math.round(a.lon * 100) === Math.round(b.lon * 100);
+  async function addPlace(pl) {
+    const list = myPlaces();
+    if (list.some((x) => samePlace(x, pl)) || list.length >= MAX_PLACES) return;
+    await savePlaces([...list, pl]);
+  }
+  function placePicker(onPick) {
+    const q = h('input', { type: 'search', placeholder: 'Town or city', autocomplete: 'off', 'aria-label': 'Town or city for the weather' });
     const found = h('div', { class: 'home-places' });
     const find = async () => {
       found.replaceChildren(h('p', { class: 'when' }, 'Looking…'));
       const r = await getJSON(`/api/v2/weather/places?q=${encodeURIComponent(q.value.trim())}`).catch(() => ({ places: [] }));
       found.replaceChildren(...((r.places || []).length ? r.places.map((pl) => h('button', { type: 'button', class: 'btn quiet small', onclick: async () => {
-        await setPref('weather_place', pl); forget('/api/v2/weather'); showWeather();
+        await onPick(pl); q.value = ''; found.replaceChildren();
       } }, pl.name)) : [h('p', { class: 'when' }, 'No place by that name.')]));
     };
     return h('div', { class: 'home-place' },
       h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); find(); } }, q, h('button', { type: 'submit', class: 'btn quiet small' }, 'Find')),
-      found, h('p', { class: 'when' }, 'Only the town\'s position, to about a kilometre, goes to the weather service.'));
+      found, h('p', { class: 'when' }, 'Only each town\'s position, to about a kilometre, goes to the weather service.'));
+  }
+  // Edit › Places: your places in order, each moved up or down or taken off, and another found by name.
+  function placesEditor() {
+    const box = h('div', { class: 'home-place home-places-edit', 'aria-label': 'Weather places' });
+    const draw = () => {
+      const list = myPlaces();
+      // The list is changed at once (setPref keeps it straight away), saved in the background.
+      const change = (l) => { savePlaces(l); draw(); };
+      const move = (i, by) => { const l = [...list]; const [x] = l.splice(i, 1); l.splice(i + by, 0, x); change(l); };
+      const row = (pl, i) => h('li', { class: 'home-place-row' },
+        h('span', { class: 'home-place-name' }, pl.name),
+        h('button', { type: 'button', class: 'place-btn', 'aria-label': `Move ${shortName(pl.name)} up`, title: 'Up', disabled: i === 0, onclick: () => move(i, -1) }, '↑'),
+        h('button', { type: 'button', class: 'place-btn', 'aria-label': `Move ${shortName(pl.name)} down`, title: 'Down', disabled: i === list.length - 1, onclick: () => move(i, 1) }, '↓'),
+        h('button', { type: 'button', class: 'place-btn remove', 'aria-label': `Take ${shortName(pl.name)} off`, title: 'Take off', onclick: () => change(list.filter((_, j) => j !== i)) }, '✕'));
+      const rows = h('ol', { class: 'home-place-list' }, ...list.map(row));
+      box.replaceChildren(h('span', { class: 'label' }, list.length ? `Places · ${list.length}` : 'Places'), rows,
+        list.length >= MAX_PLACES ? h('p', { class: 'when' }, `Up to ${MAX_PLACES} places.`) : placePicker(async (pl) => { await addPlace(pl); draw(); }));
+    };
+    draw();
+    return box;
   }
 
   // ── Edit: drag a widget by its handle (finger or mouse), ✕ takes it off, Add puts one back ──────
   const nextSec = h('section', { class: 'home-next-sec', 'aria-label': 'Next' }, nextUp);
   const calSec = h('section', { 'aria-label': 'Calendar', class: 'home-cal' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox);
-  const SECS = { next: nextSec, weather: weatherSec, calendar: calSec, messages: msgSec, coming: comingSec, lights: lightsSec, lists: listsSec };
+  const month = monthWidget();            // the Calendar's own widget (calendar.js)
+  const SECS = { next: nextSec, weather: weatherSec, calendar: calSec, messages: msgSec, coming: comingSec, lights: lightsSec, lists: listsSec, month: month.sec };
   for (const [id, el] of Object.entries(SECS)) { el.dataset.widget = id; el.classList.add('home-widget'); }
   const board = h('div', { class: 'home-widgets' });
   // A wide screen (Greg, 23 Nov): two columns that each pack up on their own, still in your order
@@ -377,8 +466,10 @@ export async function homeView(root, rest, state) {
         const els = widgets();
         const width = board.getBoundingClientRect().width || 900;
         const items = els.map((el) => {
-          const id = el.dataset.widget, c = layout[id];
-          const w = c ? c.w : G.defaultWidth(window.innerWidth), fixed = c ? c.h : 0;
+          const id = el.dataset.widget;
+          // Never smaller than its own minimum for the size it is (a saved place from before, or Compact turned Full)
+          const c = layout[id] ? G.atLeast(layout[id], id, sizeOf(id), width) : null;
+          const w = c ? c.w : Math.max(G.defaultWidth(window.innerWidth), G.minCols(id, sizeOf(id), width)), fixed = c ? c.h : 0;
           if (!fixed) el.style.height = '';
           return { id, x: c ? c.x : null, y: c ? c.y : 0, w, fixed, h: fixed || G.rowsFor(el.getBoundingClientRect().height) };
         });
@@ -415,6 +506,45 @@ export async function homeView(root, rest, state) {
           g.style.left = `${r.right - hr.left - 10}px`; g.style.top = `${r.bottom - hr.top - 10}px`;
         }
       },
+      // While a widget is moved or resized (Greg, 24 Nov): a ghost outline where it will land, and guides where its edges line
+      // up with another widget's (or the board's). In a layer of their own over the board, like the corners.
+      guide(id) {
+        const host = board.parentElement;
+        let layer = host.querySelector(':scope > .guide-layer');
+        if (!layer) { layer = h('div', { class: 'guide-layer', 'aria-hidden': 'true' }); host.append(layer); }
+        if (!id) { layer.replaceChildren(); layer.hidden = true; return; }
+        layer.hidden = false;
+        const hr = host.getBoundingClientRect(), b = board.getBoundingClientRect(), m = G.metrics(b.width);
+        const ox = b.left - hr.left, oy = b.top - hr.top;
+        const el = SECS[id], prev = el.style.transform;
+        el.style.transform = '';
+        const slot = el.getBoundingClientRect();                     // where it lands: its place in the grid, before it is moved
+        el.style.transform = prev;
+        const items = widgets().map((w) => { const c = layout[w.dataset.widget]; return { id: w.dataset.widget, x: c.x, y: c.y, w: c.w, h: c.h || G.rowsFor(w.getBoundingClientRect().height) }; });
+        const me = items.find((i) => i.id === id);
+        const lines = G.guides(items, me);
+        const colX = (e) => ox + (e === 0 ? 0 : e === G.COLS ? b.width : e * m.stepX - G.GAPX / 2);
+        const span = Math.max(b.height, slot.bottom - b.top);
+        const ghost = h('div', { class: 'grid-ghost', style: `left:${slot.left - hr.left}px;top:${slot.top - hr.top}px;width:${slot.width}px;height:${slot.height}px` });
+        const cols = Array.from({ length: G.COLS }, (_, k) => h('div', { class: 'grid-col', style: `left:${ox + k * m.stepX}px;top:${oy}px;width:${m.col}px;height:${span}px` }));
+        layer.replaceChildren(...cols, ghost,
+          ...lines.cols.map((e) => h('div', { class: 'snap-guide v', 'data-col': String(e), style: `left:${colX(e) - 1}px;top:${oy}px;height:${span}px` })),
+          ...lines.rows.map((r) => h('div', { class: 'snap-guide h', 'data-row': String(r), style: `top:${oy + r * G.ROWU - (r ? G.GAPV / 2 : 0) - 1}px;left:${ox}px;width:${b.width}px` })));
+      },
+      // Tidy up: everything packed neatly, the order kept (home-grid.js tidy).
+      // Twice: the widths first (a widget as tall as its content is taller or shorter at its new width), then the places with
+      // the heights they have now.
+      tidy() {
+        const els = widgets(), width = board.getBoundingClientRect().width || 900, track = G.defaultWidth(window.innerWidth);
+        const ids = G.readingOrder(layout, els.map((e) => e.dataset.widget));
+        const items = () => ids.map((id) => {
+          const c = layout[id] || { w: track, h: 0 };
+          return { id, w: c.w, min: G.minCols(id, sizeOf(id), width), h: c.h || G.rowsFor(SECS[id].getBoundingClientRect().height) };
+        });
+        const place = () => { for (const t of G.tidy(items(), track)) layout[t.id] = { ...(layout[t.id] || { h: 0 }), x: t.x, y: t.y, w: t.w }; api.apply(); };
+        place();
+        requestAnimationFrame(() => { place(); api.persist(); });
+      },
       forget(id) { delete layout[id]; },
       reset() { layout = {}; setPref('widget_grid', {}).catch(() => {}); api.apply(); },
       layout: () => layout,
@@ -441,13 +571,13 @@ export async function homeView(root, rest, state) {
           const b = board.getBoundingClientRect(), m = G.metrics(b.width), c = layout[id];
           const at = G.cellAt(m, ev.clientX - grab.x - b.left, ev.clientY - grab.y - b.top, c.w);
           layout[id] = { ...c, x: at.x, y: at.y };
-          api.apply(id); follow();
+          api.apply(id); follow(); api.guide(id);
           if (ev.clientY < 90) window.scrollBy(0, -12); else if (ev.clientY > window.innerHeight - 160) window.scrollBy(0, 12);
         };
         const up = (ev) => {
           if (ev.pointerId !== pid) return;
           window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
-          el.classList.remove('dragging'); el.style.transform = '';
+          el.classList.remove('dragging'); el.style.transform = ''; api.guide(null);
           api.apply(); api.persist();
         };
         window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
@@ -460,15 +590,15 @@ export async function homeView(root, rest, state) {
           if (ev.pointerId !== pid) return;
           ev.preventDefault();
           const b = board.getBoundingClientRect(), m = G.metrics(b.width), c = layout[id];
-          const w = Math.max(G.minWidth(id), Math.min(G.COLS - c.x, Math.round((ev.clientX - r0.left + G.GAPX) / m.stepX)));
-          const h = Math.max(G.MIN_H, G.rowsFor(ev.clientY - r0.top));
+          const w = Math.max(G.minCols(id, sizeOf(id), b.width), Math.min(G.COLS - c.x, Math.round((ev.clientX - r0.left + G.GAPX) / m.stepX)));
+          const h = Math.max(G.minRows(id, sizeOf(id)), G.rowsFor(ev.clientY - r0.top));
           layout[id] = { ...c, w, h };
-          api.apply(id);
+          api.apply(id); api.guide(id);
         };
         const up = (ev) => {
           if (ev.pointerId !== pid) return;
           window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
-          el.classList.remove('resizing'); api.apply(); api.persist();
+          el.classList.remove('resizing'); api.guide(null); api.apply(); api.persist();
         };
         window.addEventListener('pointermove', move, { passive: false }); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
       },
@@ -481,7 +611,7 @@ export async function homeView(root, rest, state) {
         const dx = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0, dy = e.key === 'ArrowDown' ? 4 : e.key === 'ArrowUp' ? -4 : 0;
         if (e.altKey) {
           const rows = c.h || G.rowsFor(el.getBoundingClientRect().height);
-          layout[id] = { ...c, w: Math.max(G.minWidth(id), Math.min(G.COLS - c.x, c.w + dx)), h: dy ? Math.max(G.MIN_H, rows + dy) : c.h };
+          layout[id] = { ...c, w: Math.max(G.minCols(id, sizeOf(id), board.getBoundingClientRect().width), Math.min(G.COLS - c.x, c.w + dx)), h: dy ? Math.max(G.minRows(id, sizeOf(id)), rows + dy) : c.h };
         } else layout[id] = { ...c, x: Math.max(0, Math.min(G.COLS - c.w, c.x + dx)), y: Math.max(0, c.y + dy) };
         api.apply(id); api.persist();
         return true;
@@ -510,13 +640,20 @@ export async function homeView(root, rest, state) {
   const editBtn = h('button', { type: 'button', class: 'home-edit-link', 'aria-label': 'Arrange Home', title: 'Arrange Home',
     onclick: () => setEditing(!editing) }, icon(ICONS.pencil));
   const SHOW = { next: () => showNext(data && data.today), weather: () => showWeather(), messages: () => showMessages(), coming: () => showComing(),
-    lights: () => showLights(), lists: () => showLists(), calendar: () => {} };
+    lights: () => showLights(), lists: () => showLists(), calendar: () => {}, month: () => month.show(state && state.me && state.me.username) };
+  // Drawn again from what is already here, when its size changes: nothing is asked again.
+  const REDRAW = { next: () => showNext(data && data.today), weather: () => weatherData && drawWeather(weatherData), calendar: () => data && showToday(data.today),
+    messages: () => drawMessages(), coming: () => comingData && drawComing(comingData), lights: () => lightsData && drawLights(lightsData),
+    lists: () => listsData && drawListsData(listsData),
+    month: () => month.show(state && state.me && state.me.username) };
+  const markSize = (id) => { const el = SECS[id]; if (el) { el.classList.toggle('size-compact', compactOf(id)); el.classList.toggle('size-full', !compactOf(id)); } };
 
   function applyWidgets() {
     const order = chosen();
     for (const [id, w] of Object.entries(BANDS)) w.el.hidden = !order.includes(id);        // the sign: on or off
     for (const id of order) if (SECS[id]) board.append(SECS[id]);          // in your order
     for (const [id, el] of Object.entries(SECS)) {
+      markSize(id);
       el.classList.toggle('off', !order.includes(id));
       if (!order.includes(id)) board.append(el);                           // kept, out of sight, after the rest
     }
@@ -538,7 +675,7 @@ export async function homeView(root, rest, state) {
     for (const k of list || []) {
       KINDS[k.id] = k;
       if (SECS[k.id] || BANDS[k.id]) continue;
-      const w = homelabWidget(k, { onChange: () => drawTray() });
+      const w = homelabWidget(k, { onChange: () => drawTray(), compact: () => compactOf(k.id) });
       if (BAND.has(k.id)) {
         BANDS[k.id] = w; WIDGETS[k.id] = k.name; SHOW[k.id] = w.show;
         w.el.dataset.widget = k.id; w.el.classList.add('home-band-widget');
@@ -548,25 +685,30 @@ export async function homeView(root, rest, state) {
       WIDGETS[k.id] = k.name;
       SECS[k.id] = w.el;
       SHOW[k.id] = w.show;
+      REDRAW[k.id] = w.redraw;
       w.el.dataset.widget = k.id; w.el.classList.add('home-widget');
     }
   }
   function drawTray() {
     const hidden = Object.keys(WIDGETS).filter((id) => !on(id) && (!KINDS[id] || KINDS[id].set_up || KINDS[id].can_set_up));
     tray.replaceChildren(h('span', { class: 'label' }, hidden.length ? 'Add' : 'Every widget is on Home'),
-      grid.on() ? h('button', { type: 'button', class: 'linkish small home-reset', onclick: () => grid.reset() }, 'Reset layout') : null,
+      grid.on() ? h('span', { class: 'home-grid-tools' },
+        h('button', { type: 'button', class: 'btn quiet small home-tidy', title: 'Pack everything neatly, in the same order', onclick: () => grid.tidy() }, 'Tidy up'),
+        h('button', { type: 'button', class: 'linkish small home-reset', onclick: () => grid.reset() }, 'Reset layout')) : '',     // not null: replaceChildren would write "null" (it did, on a phone)
       ...hidden.map((id) => h('button', { type: 'button', class: 'chip home-add', onclick: async () => {
         save([...orderNow(), id]); applyWidgets(); decorate(); SHOW[id](); grid.apply();
       } }, `+ ${WIDGETS[id]}`)));
   }
-  // Compact or Full, in the widget's bar while arranging; kept with your login, redrawn at once.
+  // Compact or Full, in the widget's bar while arranging; kept with your login, redrawn at once. On a desktop the widget
+  // grows to the new size's minimum if it is narrower or shorter than that.
   function sizeSwitch(id) {
     const now = sizeOf(id);
-    return h('div', { class: 'widget-size', role: 'group', 'aria-label': `${WIDGETS[id]} size` }, ...SIZES[id].map(([k, label]) => h('button', {
-      type: 'button', class: k === now ? 'on' : '', 'aria-pressed': String(k === now), onclick: async () => {
-        await setPref('widget_sizes', { ...(getPref('widget_sizes', {}) || {}), [id]: k });
-        if (id === 'lists' && listsData) drawListsData(listsData);
-        decorate();
+    return h('div', { class: 'widget-size', role: 'group', 'aria-label': `${WIDGETS[id]} size` }, ...SIZES.map(([k, label]) => h('button', {
+      type: 'button', class: k === now ? 'on' : '', 'aria-pressed': String(k === now), onclick: () => {
+        if (k === sizeOf(id)) return;
+        setPref('widget_sizes', { ...(getPref('widget_sizes', {}) || {}), [id]: k });     // kept in the background; the page at once
+        markSize(id); REDRAW[id]?.(); decorate();
+        if (grid.on()) { grid.apply(id); grid.persist(); }
       } }, label)));
   }
   function decorate() {
@@ -593,10 +735,12 @@ export async function homeView(root, rest, state) {
         if (sib && !sib.classList.contains('off')) { if (e.key === 'ArrowUp') sib.before(el); else sib.after(el); save(orderNow()); handle.focus(); }
       });
       el.prepend(h('div', { class: 'widget-bar' }, handle, h('span', { class: 'widget-name' }, WIDGETS[id]),
-        SIZES[id] ? sizeSwitch(id) : null,
-        id === 'weather' ? h('button', { type: 'button', class: 'linkish small', onclick: () => {
-          const open = el.querySelector('.home-place'); if (open) open.remove(); else el.querySelector('.widget-bar').after(placePicker());
-        } }, 'Town') : null,
+        sizeSwitch(id),
+        id === 'weather' ? h('button', { type: 'button', class: 'linkish small', 'aria-expanded': String(!!el.querySelector('.home-places-edit')), onclick: (e) => {
+          const open = el.querySelector('.home-places-edit');
+          if (open) open.remove(); else el.querySelector('.widget-bar').after(placesEditor());
+          e.currentTarget.setAttribute('aria-expanded', String(!open));
+        } }, 'Places') : null,
         h('button', { type: 'button', class: 'widget-remove', 'aria-label': `Take ${WIDGETS[id]} off Home`, title: 'Take off Home', onclick: async () => {
           grid.forget(id); save(orderNow().filter((w) => w !== id)); applyWidgets(); decorate(); grid.apply(); grid.persist();   // the page first, the saving after
         } }, '✕')));
@@ -611,9 +755,19 @@ export async function homeView(root, rest, state) {
     editBtn.setAttribute('aria-label', v ? 'Done arranging' : 'Arrange Home'); editBtn.title = v ? 'Done' : 'Arrange Home';
     editBtn.classList.toggle('done', v);
     askForm.classList.toggle('editing', v);
-    if (!v) for (const el of board.querySelectorAll('.home-place')) el.remove();
+    if (!v) for (const el of board.querySelectorAll('.home-places-edit')) el.remove();
     decorate(); drawTray();
   }
+  // The calendar lines open the Calendar (Greg, 27 Nov). They are not links, so a long press on one still starts Edit;
+  // while arranging, a tap does nothing.
+  const follow = (e) => {
+    const el = e.target.closest('[data-href]');
+    if (!el || e.target.closest('a') || board.classList.contains('editing')) return;
+    if (e.type === 'keydown' && e.key !== 'Enter') return;
+    location.hash = el.dataset.href;
+  };
+  board.addEventListener('click', follow);
+  board.addEventListener('keydown', follow);
   // A long press on a widget also starts Edit (as a phone's home screen does).
   let pressT = null;
   board.addEventListener('pointerdown', (e) => {
@@ -784,18 +938,29 @@ export async function homeView(root, rest, state) {
 export function handOver(agent, text, voice) {
   try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent, text, voice: voice && voice.seconds > 0 ? voice : null })); } catch (e) { /* sent below anyway */ }
 }
+// Words put in the agent's message box, not sent: the person finishes them (the Calendar's "Ask your agent", 27 Nov).
+export function draftFor(agent, text) {
+  try { sessionStorage.setItem(ASK_KEY, JSON.stringify({ agent, text, draft: true })); } catch (e) { /* nothing then */ }
+}
+export function takeDraft(agent) {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');
+    if (v && v.draft && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return v.text; }
+  } catch (e) { /* nothing waiting */ }
+  return null;
+}
 // The same, with the voice message's length and shape when it was spoken: {text, voice}.
 export function takeAskFull(agent) {
   try {
     const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');
-    if (v && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return { text: v.text, voice: v.voice || null }; }
+    if (v && !v.draft && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return { text: v.text, voice: v.voice || null }; }
   } catch (e) { /* nothing waiting */ }
   return null;
 }
 export function takeAsk(agent) {
   try {
     const v = JSON.parse(sessionStorage.getItem(ASK_KEY) || 'null');
-    if (v && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return v.text; }
+    if (v && !v.draft && v.agent === agent && v.text) { sessionStorage.removeItem(ASK_KEY); return v.text; }
   } catch (e) { /* nothing waiting */ }
   return null;
 }
