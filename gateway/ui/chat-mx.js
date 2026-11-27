@@ -307,7 +307,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   }
   // Device names are a nicety: wait at most 0.3 s for them, so opening a chat never hangs on it.
   await Promise.race([readNames(), new Promise((ok) => setTimeout(ok, 300))]);
-  let looking = false;
+  let looking = false, lookedAt = 0;
   const fromWhere = (ev) => {
     // 'sent' is the library's word for "the server has it, its echo has not come back yet" (Greg, 23 Nov: photos said
     // "sending…" while the agent was already working on them). Working on it: "received". Otherwise the tick.
@@ -316,7 +316,12 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const key = ev.getSenderKey && ev.getSenderKey();
     if (!key || key === ownKey) return 'sent';
     const name = deviceNames.get(key);
-    if (!name && !looking) { looking = true; readNames().then(() => { looking = false; redraw(); }); }
+    // Look a missing name up again at most every five minutes: a device that has gone (an old browser) never
+    // gets one, and looking it up and redrawing on every draw redrew the chat for ever (Greg, 27 Nov: the ☺ flickered).
+    if (!name && !looking && Date.now() - lookedAt > 300000) {
+      looking = true; lookedAt = Date.now();
+      readNames().then(() => { looking = false; if (deviceNames.get(key)) redraw(); });
+    }
     return name ? `from ${name}` : 'from another of your devices';
   };
 
@@ -734,6 +739,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const onDecrypted = (ev) => { if (room && ev.getRoomId() === room.roomId) redraw(); };
   const onTyping = (ev, member) => {
     if (!room || member.roomId !== room.roomId || !(group ? agentIds.has(member.userId) : member.userId === agent.matrix_id)) return;
+    // Agents repeat "typing" every few seconds while they work: redraw only when it changes, or the chat
+    // was rebuilt under the mouse the whole time (the ☺ flickered and could not be clicked).
+    if (typing === member.typing) return;
     typing = member.typing; thinkingRow.hidden = !typing && thinkingRow.hidden; redraw();
   };
   const onEcho = () => redraw();
