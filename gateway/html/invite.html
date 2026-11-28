@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="referrer" content="no-referrer"/>
+  <title>Logos invitation</title>
+  <meta name="theme-color" content="#0d0d12">
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg">
+  <style>
+    /* F38: the page an invited person opens (gateway/people_api.py). The secret is in the address's
+       #fragment, which browsers never send to a server; this page reads it, drops it from the address
+       bar, and sends it in a JSON body. */
+    :root { --bg: #0d0d12; --card: #16161f; --line: #2a2a38; --text: #ececf1; --dim: #9a9aad; --accent: #7c83ff;
+            --bad: #ff7b7b; --good: #5fd49a; color-scheme: dark; }
+    @media (prefers-color-scheme: light) {
+      :root { --bg: #f4f4f7; --card: #ffffff; --line: #dcdce4; --text: #16161f; --dim: #5d5d70; --accent: #4f56e0;
+              --bad: #c62828; --good: #1b7f4b; color-scheme: light; }
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+           background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px 24px; }
+    .mark { width: 40px; height: 40px; display: block; margin-bottom: 16px; }
+    h1 { font-size: 1.4rem; margin: 0 0 6px; }
+    p { margin: 0 0 14px; color: var(--dim); }
+    label { display: block; font-size: .9rem; margin: 14px 0 6px; }
+    input[type=password], input[type=text] { width: 100%; padding: 12px 14px; font: inherit; color: var(--text); background: var(--bg);
+           border: 1px solid var(--line); border-radius: 10px; }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .show { display: flex; gap: 8px; align-items: center; font-size: .9rem; color: var(--dim); margin-top: 10px; }
+    button { width: 100%; margin-top: 20px; padding: 13px; font: inherit; font-weight: 600; color: #fff; background: var(--accent);
+             border: 0; border-radius: 10px; cursor: pointer; }
+    button[disabled] { opacity: .6; cursor: default; }
+    .error { color: var(--bad); margin-top: 12px; min-height: 1.5em; }
+    .also { font-size: .9rem; border-top: 1px solid var(--line); padding-top: 14px; margin-top: 18px; }
+    .also li { margin: 4px 0; }
+    code { font-size: .9em; }
+    ul.steps { list-style: none; padding: 0; margin: 12px 0 0; }
+    ul.steps li { display: flex; gap: 8px; margin: 6px 0; }
+    .ok { color: var(--good); } .failed { color: var(--bad); }
+    a.go { display: block; text-align: center; margin-top: 20px; padding: 13px; border-radius: 10px; background: var(--accent);
+           color: #fff; font-weight: 600; text-decoration: none; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+<main>
+  <img class="mark" src="/static/logo.svg" alt="">
+  <section id="loading"><p>Opening your invitation…</p></section>
+
+  <section id="gone" hidden>
+    <h1>This link cannot be used</h1>
+    <p id="gone-why">It was used already, it expired, or a newer one was sent. Ask whoever invited you for a new link.</p>
+    <a class="go" href="/login">Sign in instead</a>
+  </section>
+
+  <form id="choose" hidden autocomplete="on">
+    <h1 id="hello">Welcome</h1>
+    <p id="by"></p>
+    <input type="text" id="username" name="username" autocomplete="username" hidden readonly>
+    <label for="pw">Choose a password</label>
+    <input type="password" id="pw" autocomplete="new-password" required>
+    <label for="pw2">Type it again</label>
+    <input type="password" id="pw2" autocomplete="new-password" required>
+    <label class="show"><input type="checkbox" id="show"> Show the password</label>
+    <div class="also" id="also"></div>
+    <button type="submit" id="go">Set my password</button>
+    <div class="error" id="error" role="alert"></div>
+  </form>
+
+  <section id="done" hidden>
+    <h1>You're in</h1>
+    <p>Your agent is being set up now; it takes a minute or two. You can look around meanwhile.</p>
+    <ul class="steps" id="steps"></ul>
+    <a class="go" href="/">Open Logos</a>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const token = decodeURIComponent((location.hash || '').slice(1));
+  // The secret leaves the address bar (and the history entry) straight away.
+  history.replaceState(null, '', location.pathname);
+  const show = (id) => { for (const s of ['loading', 'gone', 'choose', 'done']) $(s).hidden = s !== id; };
+  const post = (path, body) => fetch(path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body), referrerPolicy: 'no-referrer' });
+  let min = 10;
+  const text = (el, t) => { el.textContent = t; return el; };
+  async function open() {
+    if (!token) return show('gone');
+    let r;
+    try { r = await post('/auth/invite/check', { token }); } catch (e) { $('gone-why').textContent = 'Logos did not answer. Check you are connected, then open the link again.'; return show('gone'); }
+    if (!r.ok) { const d = await r.json().catch(() => ({})); if (d.message) $('gone-why').textContent = d.message; return show('gone'); }
+    const d = await r.json();
+    min = d.min_password || min;
+    text($('hello'), `Welcome, ${d.display_name}`);
+    text($('by'), `${d.invited_by ? d.invited_by + ' invited you to Logos. ' : ''}You'll sign in as “${d.username}”.`);
+    $('username').value = d.username;
+    const also = $('also');
+    const list = document.createElement('ul');
+    const item = (t) => { const li = document.createElement('li'); li.textContent = t; list.append(li); };
+    item(`At least ${min} characters. Keep it in your password manager.`);
+    if (d.chat_id) item(`It is also your password in Element X, where you chat with your agent, as ${d.chat_id}.`);
+    if (d.calendar) item('And for your calendar (DAVx5 on your phone).');
+    const until = new Date(d.expires_at * 1000).toLocaleDateString([], { day: 'numeric', month: 'long' });
+    item(`This link works once, until ${until}.`);
+    also.replaceChildren(list);
+    show('choose');
+    $('pw').focus();
+  }
+  $('show').addEventListener('change', (e) => { for (const id of ['pw', 'pw2']) $(id).type = e.target.checked ? 'text' : 'password'; });
+  $('choose').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pw = $('pw').value, err = $('error');
+    if (pw.length < min) return text(err, `Choose a password of at least ${min} characters.`);
+    if (pw !== $('pw2').value) return text(err, 'The two passwords are not the same.');
+    err.textContent = '';
+    $('go').disabled = true; $('go').textContent = 'Setting up your accounts…';
+    let r;
+    try { r = await post('/auth/invite/accept', { token, password: pw }); } catch (e2) {
+      $('go').disabled = false; $('go').textContent = 'Set my password';
+      return text(err, 'Logos did not answer. Try again.');
+    }
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 410) { if (d.message) $('gone-why').textContent = d.message; return show('gone'); }
+    if (!r.ok) { $('go').disabled = false; $('go').textContent = 'Set my password'; return text(err, d.message || 'That did not work. Try again.'); }
+    $('pw').value = ''; $('pw2').value = '';
+    const steps = $('steps');
+    for (const s of d.steps || []) {
+      if (s.state === 'waiting' || s.state === 'skipped') continue;
+      const li = document.createElement('li');
+      const mark = document.createElement('span'); mark.className = s.state; mark.textContent = s.state === 'ok' ? '✓' : '✗';
+      const words = document.createElement('span'); words.textContent = `${s.label}${s.detail ? ': ' + s.detail : ''}`;
+      li.append(mark, words); steps.append(li);
+    }
+    show('done');
+  });
+  open();
+})();
+</script>
+</body>
+</html>

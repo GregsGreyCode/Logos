@@ -16,6 +16,8 @@ offsite, so losing the site costs at most a day of them:
                              Matrix is stopped for the few seconds the copy takes, so its
                              database is consistent; phones and agents reconnect by themselves
   auth.db.gz                 the dashboard's accounts and sessions (a consistent SQLite copy)
+  people-agents.tar.gz       the definitions of the agents added from People (F38), kept
+                             outside the repo because they name people (docs/people.md)
   manifest.json              when it ran, and the size and sha256 of every file
 
 Everything else stays covered by the nightly VM backup only.
@@ -40,6 +42,7 @@ HELPER = "alpine/git:latest"          # the same helper image logos-agent uses f
 SQLITE_HELPER = "python:3.12-alpine"  # has Python's sqlite3, for consistent copies of live databases
 MATRIX = "logos-matrix"
 AUTH_DB = Path.home() / ".logos" / "auth.db"
+PEOPLE_AGENTS = Path(os.environ.get("LOGOS_PEOPLE_DIR") or Path.home() / ".logos" / "people") / "agents"
 
 # Copies a live SQLite database with SQLite's own backup API (safe while hermes writes to it),
 # then gzips it. argv: source destination.
@@ -121,6 +124,12 @@ def export(out: Path) -> dict:
         export_matrix(out)
     if AUTH_DB.exists():
         sqlite_copy(AUTH_DB, out / "auth.db.gz")
+    people = PEOPLE_AGENTS
+    if people.is_dir() and any(people.glob("*.yaml")):
+        import tarfile
+        with tarfile.open(out / "people-agents.tar.gz", "w:gz") as t:
+            t.add(people, arcname="agents")
+        os.chmod(out / "people-agents.tar.gz", 0o600)
     files = {}
     for f in sorted(out.iterdir()):
         files[f.name] = {"bytes": f.stat().st_size, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}

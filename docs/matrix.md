@@ -40,6 +40,8 @@ On its first `up`, the agent gets its own account, `@<name>-agent`. Its login is
 
 ## Adding a person
 
+Use People › Add a person ([people.md](people.md)): it makes their chat account with the password they choose and a chat with their own agent. By hand:
+
 1. Create their account with a temporary password. Use `MatrixHost.register` or Element's sign-up with the registration token.
 2. They install Tailscale and Element X, sign in to the tailnet address, and change the password.
 3. Add them to the agent's `allowed_users` and run `scripts/logos-agent up <name>`.

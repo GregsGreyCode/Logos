@@ -533,6 +533,29 @@ def _run_migrations() -> None:
                 updated_at INTEGER
             )
         """)
+        # F38: invitations (People › Add a person). Only a hash of each link's secret is kept; a link
+        # works once, until it expires or is cancelled. ``options`` says what to set up for the person.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS invites (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash  TEXT UNIQUE NOT NULL,
+                created_by  TEXT,
+                created_at  INTEGER NOT NULL,
+                expires_at  INTEGER NOT NULL,
+                used_at     INTEGER,
+                revoked_at  INTEGER,
+                options     TEXT
+            )
+        """)
+        # F38: what was set up for each person added from the dashboard, step by step (shown on their page).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS people_setup (
+                username    TEXT PRIMARY KEY,
+                steps       TEXT NOT NULL,
+                updated_at  INTEGER
+            )
+        """)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS schema_flags (
                 key        TEXT PRIMARY KEY,
@@ -1658,3 +1681,106 @@ def set_voice_print(username: str, data: Optional[dict]) -> None:
             return
         conn.execute("INSERT OR REPLACE INTO voice_prints (username, print, updated_at) VALUES (?, ?, ?)",
                      (username, json.dumps(data), int(time.time() * 1000)))
+
+
+# ── Invitations and people's setup (F38) ─────────────────────────────────────
+
+def create_invite(user_id: str, token_hash: str, created_by: Optional[str], expires_at: int,
+                  options: Optional[dict] = None) -> dict:
+    """A new invitation for ``user_id``; any earlier one still open for them is cancelled."""
+    iid = _new_id("inv")
+    now = int(time.time())
+    with _conn() as conn:
+        conn.execute("UPDATE invites SET revoked_at = ? WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL",
+                     (now, user_id))
+        conn.execute("""INSERT INTO invites (id, user_id, token_hash, created_by, created_at, expires_at, options)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                     (iid, user_id, token_hash, created_by, now, expires_at, json.dumps(options or {})))
+    return latest_invite(user_id)
+
+
+def _invite_row(row) -> Optional[dict]:
+    if not row:
+        return None
+    out = dict(row)
+    try:
+        out["options"] = json.loads(out.get("options") or "{}")
+    except ValueError:
+        out["options"] = {}
+    return out
+
+
+def find_open_invite(token_hash: str, now: Optional[int] = None) -> Optional[dict]:
+    """The invitation with this hash, when it can still be used (not used, cancelled or expired)."""
+    now = int(time.time()) if now is None else now
+    with _conn() as conn:
+        row = conn.execute("""SELECT * FROM invites WHERE token_hash = ? AND used_at IS NULL
+                              AND revoked_at IS NULL AND expires_at > ?""", (token_hash, now)).fetchone()
+    return _invite_row(row)
+
+
+def use_invite(token_hash: str, now: Optional[int] = None) -> Optional[dict]:
+    """Mark the invitation used, once: of two people opening the same link at the same moment only one
+    gets it. Returns it, or None when it cannot be used."""
+    now = int(time.time()) if now is None else now
+    with _conn() as conn:
+        cur = conn.execute("""UPDATE invites SET used_at = ? WHERE token_hash = ? AND used_at IS NULL
+                              AND revoked_at IS NULL AND expires_at > ?""", (now, token_hash, now))
+        if cur.rowcount != 1:
+            return None
+        row = conn.execute("SELECT * FROM invites WHERE token_hash = ?", (token_hash,)).fetchone()
+    return _invite_row(row)
+
+
+def latest_invite(user_id: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM invites WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                           (user_id,)).fetchone()
+    return _invite_row(row)
+
+
+def revoke_invites(user_id: str) -> int:
+    with _conn() as conn:
+        cur = conn.execute("UPDATE invites SET revoked_at = ? WHERE user_id = ? AND used_at IS NULL AND revoked_at IS NULL",
+                           (int(time.time()), user_id))
+        return cur.rowcount
+
+
+def get_people_setup(username: str) -> list:
+    with _conn() as conn:
+        row = conn.execute("SELECT steps FROM people_setup WHERE username = ?", (username,)).fetchone()
+    try:
+        return json.loads(row["steps"]) if row else []
+    except ValueError:
+        return []
+
+
+def set_people_setup(username: str, steps: Optional[list]) -> None:
+    """``steps`` None forgets them."""
+    with _conn() as conn:
+        if steps is None:
+            conn.execute("DELETE FROM people_setup WHERE username = ?", (username,))
+            return
+        conn.execute("INSERT OR REPLACE INTO people_setup (username, steps, updated_at) VALUES (?, ?, ?)",
+                     (username, json.dumps(steps), int(time.time() * 1000)))
+
+
+def list_audit(actions: Optional[list] = None, limit: int = 100) -> list:
+    """The newest audit rows (optionally only these actions), with who did it."""
+    where, params = "", []
+    if actions:
+        where = "WHERE a.action IN (%s)" % ",".join("?" * len(actions))
+        params = list(actions)
+    with _conn() as conn:
+        rows = conn.execute(f"""SELECT a.*, u.username AS by_username, u.display_name AS by_display_name
+                                FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id {where}
+                                ORDER BY a.created_at DESC LIMIT ?""", [*params, int(limit)]).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["metadata"] = json.loads(d.get("metadata") or "null")
+        except ValueError:
+            d["metadata"] = None
+        out.append(d)
+    return out
