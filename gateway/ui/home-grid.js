@@ -14,7 +14,7 @@ export const COLS = 12, ROWU = 8, GAPX = 24, GAPV = 22;
 // The edit bar (handle, name, Compact/Full, ✕) wraps on a narrow widget, so it does not count.
 // MIN_TABLE_START (measured 27 Nov 2026: what makes each smaller is in widget_minimums.mjs's MEASURE=1 output)
 export const MIN = {
-  next: { compact: [160, 120], full: [160, 120] },          // "15:00 Dinner with Alex · 40 min", on two lines at its narrowest
+  next: { compact: [270, 48], full: [160, 120] },           // compact: one line, dot, "15:00 Dinner with Alex", "40 min" (28 Nov); full: on two lines at its narrowest
   weather: { compact: [270, 40], full: [270, 104] },        // one place's row; narrower cuts the town's name (compact) or wraps tomorrow (full)
   calendar: { compact: [200, 64], full: [270, 104] },       // Today and its first event (full: and whose); narrower cuts the titles
   messages: { compact: [330, 72], full: [330, 96] },        // two messages; narrower cuts a group's name ("Household Group · Household agent")
