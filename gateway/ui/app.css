@@ -2726,6 +2726,18 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 
 /* E6: network approvals (a site an agent's sandbox refused) and the People page's list of sites. */
 .network-ask .row { flex-wrap: wrap; }
+.net-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; margin: 10px 0 12px; font-size: var(--t-sm); }
+.net-facts dt { color: var(--muted); }
+.net-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 599px) { .net-facts { grid-template-columns: 1fr; gap: 2px; } .net-facts dd { margin-bottom: 6px; } }
+.net-domain { display: inline-block; padding: 0 8px; border-radius: 6px; background: var(--chip); font: 600 13px/1.6 var(--font-mono, ui-monospace, monospace); }
+.net-askers { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.net-rec { display: inline-block; padding: 0 10px; border-radius: 999px; font-weight: 600; }
+.net-rec.rec-no { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+.net-rec.rec-need { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.net-rec.rec-ask { background: var(--warn-bg); color: var(--warn-ink); }
+.net-advice { color: var(--muted); }
+.net-whys { margin-top: 8px; gap: 8px; }
 .network-sites { margin-top: 16px; display: grid; gap: 10px; }
 .site-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
 .site-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow-wrap: anywhere; }

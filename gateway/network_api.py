@@ -4,7 +4,8 @@
   rules; a new question goes to the agent's people as a phone alert too.
 * ``GET  /api/v2/network``: the questions waiting for you, and what your agents may reach (an admin
   sees every agent's list: who can reach what is the admin's to know, like who can use which agent).
-* ``POST /api/v2/network/{rid}/{once|always|deny}``: only one of the agent's own people.
+* ``POST /api/v2/network/{rid}/{once|always|deny}``: only one of the agent's own people. ``rid`` may be
+  a group (one site asked by several agents at once): each of this person's agents in it is decided.
 * ``POST /api/v2/network-sites/{agent}/remove`` ``{host, port}``: its people, or an admin.
 * Notifications: :func:`notification_items` (called by dashboard_api.handle_notifications).
 """
@@ -45,39 +46,60 @@ def _shown(runtime: Any, name: str) -> str:
         return name
 
 
-async def doing_for(app: Any, req: Mapping[str, Any], agent: Mapping[str, Any]) -> str:
-    """What the agent was busy with when it was refused: the title of the conversation it was in.
-    On a shared agent (the household one) only a scheduled job's name: one person's conversation is
-    not shown to the other."""
+def job_about(title: str) -> str:
+    """A scheduled job's name and what it does, from its session title (hermes: ``<name> · Nov 28 14:02``,
+    blank while it runs). Logos's own jobs have a plain description (dashboard_api.JOB_LABELS)."""
+    name = str(title or "").split(" · ")[0].strip()
+    if not name or name.startswith("cron "):
+        return "A scheduled job"
+    from gateway.dashboard_api import JOB_LABELS
+    what = JOB_LABELS.get(name)
+    return f"Scheduled job “{name}”: {what}" if what else f"Scheduled job “{name}” (one the agent set up)"
+
+
+async def doing_for(app: Any, req: Mapping[str, Any], agent: Mapping[str, Any]) -> Optional[Dict[str, str]]:
+    """What the agent was busy with when it was refused: ``{"kind": "chat"|"job", "text": ...}``, or None.
+    A chat shows its title on a private agent only: on a shared one (the household agent) one person's
+    conversation is not shown to the other, only that it was a chat. A job shows its name and what it does."""
     links = app.get("agent_links")
     if links is None:
-        return ""
+        return None
     try:
         client = await links.client(req["agent"])
         sessions = (await client.list_sessions(limit=10)).get("data") or []
     except Exception:
-        return ""
+        return None
     sole = len(na.approvers(agent)) == 1
     near = [s for s in sessions if abs(float(req["ts"]) - float(s.get("last_active") or s.get("started_at") or 0)) < DOING_WINDOW_S]
     near.sort(key=lambda s: -float(s.get("last_active") or 0))
     for s in near:
         if s.get("source") == "cron":
-            return str(s.get("title") or "a scheduled job")
+            return {"kind": "job", "text": job_about(str(s.get("title") or ""))}
+    for s in near:
         if sole and s.get("title"):
-            return str(s["title"])
-    return ""
+            return {"kind": "chat", "text": f"Your chat “{s['title']}”"}
+        return {"kind": "chat", "text": "A chat with one of you (not shown: the agent is shared)"}
+    return None
 
 
-async def alert(app: Any, req: Mapping[str, Any], shown: str) -> None:
-    """A phone alert to each of the agent's people. Never raises."""
+def _alerted(app: Any) -> Dict[str, set]:
+    try:
+        return app.setdefault("network_alerted", {})
+    except AttributeError:
+        return {}
+
+
+async def alert(app: Any, req: Mapping[str, Any], shown: str, count: int = 1,
+                people: Optional[List[str]] = None) -> None:
+    """A phone alert to each of the agent's people (or only ``people``). Never raises."""
     try:
         from gateway import push
         store, session = app.get("push_store"), app.get("push_session")
         if store is None or session is None:
             return
         key = store.vapid_key()
-        for username in req.get("approvers") or []:
-            message = na.push_message(req, shown, push.alerts_private(username))
+        for username in (req.get("approvers") or []) if people is None else people:
+            message = na.push_message(req, shown, push.alerts_private(username), count)
             for d in store.devices(username):
                 sub = store.get(d["pushkey"])
                 if sub:
@@ -93,10 +115,24 @@ async def poll_once(app: Any) -> List[Dict[str, Any]]:
     new = await asyncio.to_thread(net.poll)
     for req in new:
         agent = await asyncio.to_thread(net._definition, req["agent"])
-        what = await doing_for(app, req, agent)
-        if what:
-            await asyncio.to_thread(net.set_for, req["id"], what)
-        await alert(app, req, _shown(net.runtime, req["agent"]))
+        doing = await doing_for(app, req, agent)
+        await asyncio.to_thread(net.set_for, req["id"], (doing or {}).get("text", ""), na.asker(req, doing))
+    # One alert per question: several agents asking for the same site at once are one question, and a
+    # person already alerted about it is not alerted again when another of their agents joins it.
+    alerted = _alerted(app)
+    pending = await asyncio.to_thread(net.pending)
+    for gid in dict.fromkeys(r.get("group") or r["id"] for r in new):
+        group = [r for r in pending if (r.get("group") or r["id"]) == gid]
+        done = alerted.setdefault(gid, set())
+        for username in sorted({u for r in group for u in r.get("approvers") or []} - done):
+            theirs = sorted((r for r in group if username in (r.get("approvers") or [])), key=lambda r: r["agent"])
+            names = [_shown(net.runtime, r["agent"]) for r in theirs]
+            shown = na.names_list(names) if len(names) <= 3 else f"{len(names)} agents"
+            await alert(app, theirs[0], shown, len(names), [username])
+            done.add(username)
+    live = {r.get("group") or r["id"] for r in pending}
+    for gid in [g for g in alerted if g not in live]:
+        alerted.pop(gid, None)
     return new
 
 
@@ -167,7 +203,9 @@ async def handle_list(request: web.Request) -> web.Response:
                            "people": na.approvers(agent), **a})
     for r in await asyncio.to_thread(net.pending):
         if user["username"].lower() in (r.get("approvers") or []):
-            out_requests.append({k: r.get(k) for k in ("id", "agent", "host", "port", "ts", "for", "binaries")})
+            out_requests.append({**{k: r.get(k) for k in ("id", "agent", "host", "port", "ts", "for", "binaries")},
+                                 "group": r.get("group") or r["id"], "asker": na.asker_of(r),
+                                 "site": na.about_site(r["host"])})
     return web.json_response({"requests": out_requests, "agents": out_agents, "is_admin": admin})
 
 
@@ -176,7 +214,9 @@ async def handle_decide(request: web.Request) -> web.Response:
     net = approvals_of(request.app)
     if net is None:
         return web.json_response({"error": "no_backend"}, status=503)
-    status, body = await asyncio.to_thread(net.decide, request.match_info["rid"], request.match_info["decision"],
+    # One question's id, or a group's (one site asked by several agents at once): each of this person's
+    # agents in it is decided; the other agents' people still decide theirs.
+    status, body = await asyncio.to_thread(net.decide_group, request.match_info["rid"], request.match_info["decision"],
                                            user["username"], user["id"] or None)
     return web.json_response(body, status=status)
 

@@ -50,6 +50,7 @@ DENY_S = 7 * 86400                            # "Deny": not asked again for a we
 REQUEST_KEEP_S = 7 * 86400                    # a question nobody answers goes away after a week
 LOG_KEEP_S = 30 * 86400
 POLL_S = 15
+GROUP_S = 600                                 # the same site asked by several agents within this is one question
 RULE_PREFIX = "logos_net_"
 HERMES_PYTHON = "/opt/hermes/tools/python-*/bin/python3*"     # as in infra/agent-image/policy.yaml
 DECISIONS = ("once", "always", "deny")
@@ -414,9 +415,16 @@ class Approvals:
                                             "decision": "refused", "by": "", "reason": reason})
                         continue
                     rid = hashlib.sha256(f"{name}|{host}|{port}|{now}".encode()).hexdigest()[:12]
+                    # Several agents asking for the same site at about the same time (28 Nov: all three
+                    # wanted models.dev after a restart) are one question: the same group.
+                    same = [r for r in data["requests"].values() if r["host"] == host and r["port"] == port
+                            and now - float(r.get("group_ts") or r.get("ts") or 0) < GROUP_S]
+                    first = min(same, key=lambda r: float(r.get("group_ts") or r.get("ts") or 0)) if same else None
                     req = {"id": rid, "agent": name, "host": host, "port": port, "ts": now,
+                           "group": (first.get("group") or first["id"]) if first else rid,
+                           "group_ts": float(first.get("group_ts") or first["ts"]) if first else now,
                            "binaries": sorted({c["binary"] for c in cs if c["binary"]}),
-                           "chunks": sorted(c["id"] for c in cs), "for": "",
+                           "chunks": sorted(c["id"] for c in cs), "for": "", "asker": {},
                            "approvers": approvers(agent)}
                     data["requests"][rid] = req
                     new.append(dict(req))
@@ -438,13 +446,45 @@ class Approvals:
                         ", ".join(r["approvers"]) or "nobody (no owners)")
         return new
 
-    def set_for(self, rid: str, text: str) -> None:
-        """What the agent was doing when it was refused (dashboard: the conversation's title)."""
+    def set_for(self, rid: str, text: str, asker: Optional[Mapping[str, Any]] = None) -> None:
+        """What the agent was doing when it was refused, and who was really asking (dashboard:
+        :func:`gateway.network_api.asker_for`): ``{"kind": chat|job|background|agent, "text": ...}``."""
         with _LOCK:
             data = load(self.env)
             if rid in data["requests"]:
                 data["requests"][rid]["for"] = str(text or "")[:160]
+                if asker is not None:
+                    data["requests"][rid]["asker"] = {"kind": str(asker.get("kind") or ""),
+                                                      "text": str(asker.get("text") or "")[:200]}
                 save(self.env, data)
+
+    def decide_group(self, gid: str, decision: str, username: str,
+                     user_id: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
+        """Answer one question for every agent in it that ``username`` decides for (the same site
+        asked by several agents at once). Each agent is still decided on its own, by its own people:
+        the others in the group stay open for theirs. ``gid`` may also be a single question's id."""
+        with _LOCK:
+            reqs = [r for r in load(self.env)["requests"].values() if (r.get("group") or r["id"]) == gid or r["id"] == gid]
+        if not reqs:
+            return 404, {"error": "not_found", "message": "That question has already been answered."}
+        me = (username or "").lower()
+        mine = [r for r in reqs if me in approvers(self._definition(r["agent"]))]
+        if not mine:
+            return 403, {"error": "forbidden", "message": "Only the agent's own people can decide this."}
+        done, failed = [], None
+        for r in sorted(mine, key=lambda r: r["agent"]):
+            code, body = self.decide(r["id"], decision, username, user_id)
+            if code == 200:
+                done.append(r["agent"])
+            elif code != 404 and failed is None:
+                failed = (code, body)
+        if failed and not done:
+            return failed
+        out: Dict[str, Any] = {"ok": True, "decision": decision, "agents": done, "host": reqs[0]["host"],
+                               "port": reqs[0]["port"]}
+        if failed:
+            out["message"] = failed[1].get("message") or "Some of them did not take the change."
+        return 200, out
 
     # ── deciding ──
 
@@ -542,6 +582,95 @@ class Approvals:
 
 # ── what the person sees ─────────────────────────────────────────────────────────────────────
 
+#: The sites Logos knows, by registrable domain: what it is in one plain line, whether an agent needs
+#: it ("needed", "not_needed", or "ask": it depends on what the agent was doing), and why.
+#: Greg, 28 Nov: "I can't properly gauge if it's safe from the desktop UI."
+NEEDED, NOT_NEEDED, ASK = "needed", "not_needed", "ask"
+SITES: Dict[str, Tuple[str, str, str]] = {
+    "models.dev": ("A public catalogue of AI models and their prices.", NOT_NEEDED,
+                   "The agent software reads it; Logos gives every agent its own copy."),
+    "pypi.org": ("The Python package index: where Python libraries are downloaded from.", ASK,
+                 "Only if you asked the agent for something that needs a new Python library."),
+    "pythonhosted.org": ("Downloads for the Python package index (pypi.org).", ASK,
+                         "Only if you asked the agent for something that needs a new Python library."),
+    "github.com": ("GitHub: code and files people publish.", ASK,
+                   "Only if the agent is fetching code or a file for something you asked."),
+    "githubusercontent.com": ("Files published on GitHub.", ASK,
+                              "Only if the agent is fetching code or a file for something you asked."),
+    "npmjs.org": ("The JavaScript package registry.", ASK,
+                  "Only if you asked the agent for something that needs a JavaScript library."),
+    "huggingface.co": ("Hugging Face: AI models and datasets to download.", NOT_NEEDED,
+                       "The agents' models run on the AI computer; nothing needs downloading."),
+    "openweathermap.org": ("OpenWeather: a weather forecast service.", NOT_NEEDED,
+                           "Logos's web reader already gives the agents the forecast."),
+    "open-meteo.com": ("Open-Meteo: a weather forecast service.", NOT_NEEDED,
+                       "Logos's web reader already gives the agents the forecast."),
+    "openai.com": ("OpenAI's paid AI service.", NOT_NEEDED, "The agents' thinking stays on the AI computer at home."),
+    "anthropic.com": ("Anthropic's paid AI service (Claude).", NOT_NEEDED,
+                      "Questions to Claude go through Logos's advisor, which asks you first."),
+    "openrouter.ai": ("OpenRouter: a paid gateway to many AI services.", NOT_NEEDED,
+                      "The agents' thinking stays on the AI computer at home."),
+    "googleapis.com": ("Google's online services.", ASK, "Depends on what the agent was doing."),
+    "google.com": ("Google.", NOT_NEEDED, "Web searches go through Logos's web reader."),
+    "duckduckgo.com": ("DuckDuckGo search.", NOT_NEEDED, "Web searches go through Logos's web reader."),
+    "bing.com": ("Bing search.", NOT_NEEDED, "Web searches go through Logos's web reader."),
+    "wikipedia.org": ("Wikipedia, the encyclopedia.", ASK,
+                      "Only if the agent needs a page its web search cannot read."),
+    "nousresearch.com": ("The makers of the agent software (hermes).", NOT_NEEDED,
+                         "Updates to the agent software come with Logos updates."),
+    "sentry.io": ("Sentry: crash reports sent to software makers.", NOT_NEEDED, "Nothing in Logos uses it."),
+    "posthog.com": ("PostHog: usage statistics sent to software makers.", NOT_NEEDED, "Nothing in Logos uses it."),
+    "ollama.com": ("Ollama: AI models to download.", NOT_NEEDED,
+                   "The agents' models run on the AI computer; nothing needs downloading."),
+    "docker.io": ("Docker Hub: software images.", NOT_NEEDED, "Agents never install software images."),
+    "ubuntu.com": ("Ubuntu's software downloads.", NOT_NEEDED, "An agent cannot install system software."),
+    "debian.org": ("Debian's software downloads.", NOT_NEEDED, "An agent cannot install system software."),
+}
+#: Two-part endings under which a name's own part is the third label from the right.
+_SECOND_LEVEL = {"co.uk", "org.uk", "ac.uk", "gov.uk", "me.uk", "ltd.uk", "plc.uk", "net.uk", "com.au", "net.au",
+                 "org.au", "co.nz", "org.nz", "co.jp", "ne.jp", "or.jp", "com.br", "com.cn", "com.mx", "co.za",
+                 "co.in", "com.sg", "com.tr", "co.kr", "com.ar", "gouv.fr", "asso.fr", "github.io", "pages.dev",
+                 "netlify.app", "vercel.app", "herokuapp.com", "azurewebsites.net", "cloudfront.net",
+                 "amazonaws.com", "appspot.com", "web.app", "firebaseapp.com"}
+RECOMMEND = {NEEDED: "Needed", NOT_NEEDED: "Not needed", ASK: "Unknown: ask the agent"}
+
+
+def registrable(host: str) -> str:
+    """The part of a name its owner registered: ``cdn.example.co.uk`` -> ``example.co.uk``.
+    A short list of two-part endings, not the whole public-suffix list: enough to show a person
+    whose site it is."""
+    labels = normalise(host).split(".")
+    if len(labels) >= 3 and ".".join(labels[-2:]) in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def about_site(host: str) -> Dict[str, Any]:
+    """What a person needs to judge ``host``: what it is, whose it is, and whether it is needed."""
+    h = normalise(host)
+    base = registrable(h)
+    for key in (h, base):
+        if key in SITES:
+            what, rec, why = SITES[key]
+            return {"known": True, "domain": base, "about": what, "rec": rec, "advice": why,
+                    "recommend": RECOMMEND[rec]}
+    return {"known": False, "domain": base, "about": "Not a site Logos knows.", "rec": ASK,
+            "advice": "Ask the agent what it needs it for before allowing it.", "recommend": RECOMMEND[ASK]}
+
+
+def is_hermes_python(binary: str) -> bool:
+    """The agent software's own interpreter (``/opt/hermes/tools/python-<ver>/bin/python3.<n>``)."""
+    import fnmatch
+    return fnmatch.fnmatch(binary or "", HERMES_PYTHON)
+
+
+def names_list(names: Sequence[str]) -> str:
+    names = list(dict.fromkeys(n for n in names if n))
+    if len(names) <= 2:
+        return " and ".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
 def site(host: str, port: Any) -> str:
     return host if int(port or 0) == 443 else f"{host}:{port}"
 
@@ -562,15 +691,23 @@ def notification_items(approvals: Approvals, username: str, visible: Mapping[str
     this person may use. A question shows only to the agent's own people (its approvers)."""
     items: List[Dict[str, Any]] = []
     me = (username or "").lower()
+    groups: Dict[str, List[Dict[str, Any]]] = {}
     for r in approvals.pending():
         if r["agent"] not in visible or me not in (r.get("approvers") or []):
             continue
-        who = visible[r["agent"]]
-        bits = [f"For: {r['for']}" if r.get("for") else "", f"Using {prog(r.get('binaries') or [])}" if r.get("binaries") else ""]
-        items.append({"id": f"net:{r['id']}", "kind": "network", "type": "needs", "ts": float(r["ts"]),
-                      "agent": r["agent"], "who": who, "rid": r["id"], "host": r["host"], "port": r["port"],
-                      "title": f"{who} wants to reach {site(r['host'], r['port'])}",
-                      "text": " · ".join(b for b in bits if b) or "Its sandbox stopped the connection.",
+        groups.setdefault(r.get("group") or r["id"], []).append(r)
+    # One question per site asked at about the same time, for all of this person's agents that asked.
+    for gid, rs in groups.items():
+        rs.sort(key=lambda r: (float(r["ts"]), r["agent"]))
+        host, port = rs[0]["host"], rs[0]["port"]
+        about = about_site(host)
+        agents = [{"agent": r["agent"], "who": visible[r["agent"]], "rid": r["id"], "asker": asker_of(r)} for r in rs]
+        who = names_list([a["who"] for a in agents]) if len(agents) <= 3 else f"{len(agents)} agents"
+        items.append({"id": f"net:{gid}", "kind": "network", "type": "needs", "ts": max(float(r["ts"]) for r in rs),
+                      "agent": rs[0]["agent"], "who": who, "rid": gid, "host": host, "port": port,
+                      "site": about, "agents": agents,
+                      "title": f"{who} {'wants' if len(agents) == 1 else 'want'} to reach {site(host, port)}",
+                      "text": f"{about['about']} {about['recommend']}.",
                       "link": "#/noticeboard"})
     for l in approvals.recent(since):
         if l["agent"] not in visible or l.get("decision") not in ("once", "always", "deny", "removed"):
@@ -584,9 +721,43 @@ def notification_items(approvals: Approvals, username: str, visible: Mapping[str
     return items
 
 
-def push_message(req: Mapping[str, Any], shown: str, private: bool) -> Dict[str, Any]:
+def push_message(req: Mapping[str, Any], shown: str, private: bool, count: int = 1) -> Dict[str, Any]:
+    """The phone alert. ``shown``: the agent's name, or the agents' names when several asked at once
+    (``count`` of them): one alert for one question."""
+    room = f"net-{req.get('group') or req['id']}"
     if private:
-        return {"title": "Logos", "body": "Something needs you", "link": "#/noticeboard", "room": f"net-{req['id']}"}
-    return {"title": f"{shown} wants to reach {site(req['host'], req['port'])}",
-            "body": "Allow once, always allow or deny, in Logos Notifications.",
-            "link": "#/noticeboard", "room": f"net-{req['id']}"}
+        return {"title": "Logos", "body": "Something needs you", "link": "#/noticeboard", "room": room}
+    about = about_site(req["host"])
+    return {"title": f"{shown} {'wants' if count == 1 else 'want'} to reach {site(req['host'], req['port'])}",
+            "body": f"{about['recommend']}. Allow once, always allow or deny, in Logos Notifications.",
+            "link": "#/noticeboard", "room": room}
+
+
+ASKER_BACKGROUND = "The agent software in the background: no chat or job was running"
+ASKER_SOFTWARE = "The agent software itself, in the background: not the agent's choice"
+#: Sites only the agent software itself fetches (hermes's model catalogue, its makers' site).
+SOFTWARE_HOSTS = {"models.dev", "nousresearch.com"}
+
+
+def asker_of(req: Mapping[str, Any]) -> Dict[str, str]:
+    """Who was really asking: ``{"kind": chat|job|background|agent, "text": ...}``. The dashboard
+    works it out when the question is made (:func:`gateway.network_api.asker_for`); this is the
+    same answer from what is kept, for a question made before that (or with no link to the agent)."""
+    a = req.get("asker") or {}
+    if a.get("text"):
+        return {"kind": str(a.get("kind") or "agent"), "text": str(a["text"])}
+    return asker(req, {"kind": "agent", "text": f"Busy with “{req['for']}”"} if req.get("for") else None)
+
+
+def asker(req: Mapping[str, Any], doing: Optional[Mapping[str, str]]) -> Dict[str, str]:
+    """``doing``: what the agent was busy with (a chat or a job) when it was refused, or None."""
+    binaries = [b for b in req.get("binaries") or [] if b]
+    others = [b for b in binaries if not is_hermes_python(b)]
+    using = f" · using {prog(others)}" if others else ""
+    if binaries and not others and registrable(req.get("host") or "") in SOFTWARE_HOSTS:
+        return {"kind": "background", "text": ASKER_SOFTWARE}     # the agent software's own fetch, chat or no chat
+    if doing and doing.get("text"):
+        return {"kind": str(doing.get("kind") or "agent"), "text": str(doing["text"]) + using}
+    if binaries and not others:
+        return {"kind": "background", "text": ASKER_BACKGROUND}
+    return {"kind": "agent", "text": "The agent, with no chat or job running" + using}

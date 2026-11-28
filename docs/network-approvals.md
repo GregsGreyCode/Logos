@@ -5,9 +5,33 @@ services and nothing else (`infra/agent-image/policy.yaml`). When an agent tries
 open (a `curl` in its terminal, a Python download), the connection fails as before, and now its
 person is asked:
 
-> **Finn wants to reach example.org**
-> For: Train times to Lyon · Using curl
-> [Allow once] [Always allow] [Deny]
+> **Finn wants to reach shop.example.org**
+> The site: Not a site Logos knows. `example.org`
+> Who is asking: Your chat "Train times to Lyon" · using curl
+> Logos says: **Unknown: ask the agent**. Ask the agent what it needs it for before allowing it.
+> [Allow once] [Always allow] [Deny] · [Ask the agent why]
+
+What the card says (28 Nov, after three agents asked about `models.dev` at once and the card did not
+say enough to judge it):
+
+- **The site**, in one plain line, from a small table of sites Logos knows
+  (`network_approvals.SITES`, by registered name: `api.models.dev` is `models.dev`). Any other site
+  is "Not a site Logos knows", with its registered name (`registrable()`: `cdn.shop.example.co.uk`
+  shows `example.co.uk`) set apart, so a look-alike name is easy to spot.
+- **Who is asking**: a chat (its title, on a private agent only; on the household agent just "a chat
+  with one of you"), a scheduled job (its name and what it does, from the dashboard's job labels), or
+  "the agent software in the background": hermes's own Python with no chat or job running, or a site
+  only hermes itself fetches (`SOFTWARE_HOSTS`, e.g. `models.dev`) whatever was running.
+- **Logos says**: Needed, Not needed, or Unknown: ask the agent, with one line of why. A "Not needed"
+  site makes Deny the main button.
+- **Ask the agent why** opens the agent's chat with a short question (which site, when, what for)
+  already sent.
+- **One question for one site asked by several agents** within 10 minutes (`GROUP_S`): one card
+  ("Finn and Household agent want to reach models.dev") and one phone alert per person, not one per
+  agent. Each person sees only their own agents in it, and an answer decides only those
+  (`decide_group`): the household agent's question goes to both people as before, either can answer
+  it, and Greg's answer on the card does not decide Béré's private agent. The audit log still has one
+  line per agent.
 
 The question is under **Needs you** in Logos Notifications and comes as a phone alert. Only the
 agent's own people (`owners` in its definition) can answer; the household agent's questions go to
@@ -115,6 +139,40 @@ definition (it then neither asks nor gets the rule).
   settings (agent-written proposals); they are unset and not used.
 - Recreating a sandbox gives it a fresh draft inbox; the `always` list is what carries over.
 
+## What hermes fetches by itself: the models.dev catalogue
+
+The 28 Nov questions about `models.dev:443` (chunk binary: hermes's bundled `python3.14`) were not
+the agents' doing. hermes's `agent/models_dev.py` downloads `https://models.dev/api.json` (a public
+catalogue of AI models, context sizes and prices, about 7 MB) when its disk copy
+(`$HERMES_HOME/models_dev_cache.json`) is missing or older than 4 hours, then every 4 hours, with an
+ETag `GET`. Its config has a supported mirror setting, `models_dev.url`.
+
+So Logos keeps a copy (`gateway/models_catalogue.py`):
+
+- `scripts/logos-deploy` fetches it **on the host** on every deploy/update (by hand:
+  `python3 gateway/models_catalogue.py refresh`), never from a sandbox. It is checked (valid JSON,
+  1e5 to 6.4e7 bytes, at least 20 providers and 200 models) and written atomically to
+  `~/.logos/models-dev.json`; a failed or odd download keeps the last good copy and never fails the
+  deploy.
+- The dashboard serves it read-only at `/api/v2/models-dev/api.json` (public data, no login), with
+  an ETag and gzip, so hermes's refreshes are a 304.
+- `agent_runtime` writes `models_dev.url` pointing there, and the sandbox rule `models_catalogue`
+  opens only that path, `GET`, for hermes's Python.
+
+Checked on the dev machine on 28 Nov (the bench agent, a throwaway eval agent, with a copy served on a
+spare port via `LOGOS_PORT`): `config.yaml` had the local URL; hermes's own `fetch_models_dev()` in the
+sandbox loaded 327 providers / 10,076 models (`GET ... 200`, then `304` on a forced refresh, OCSF
+`ALLOWED ... [policy:models_catalogue engine:l7]`); `openshell rule get` showed no rules.
+
+Other things hermes reaches by itself at start (OCSF log, 28 Nov): only Logos's own services. It probes
+the model gateway to tell what kind of model server it is (`GET /v1/props` allowed; `/api/v1/models`,
+`/api/tags`, `/version` refused at L7, which makes no question), and the noticeboard MCP server
+(`HEAD /mcp` refused, then the MCP calls allowed). Update checks and hermes's own model catalogue are
+off in its config (`updates.check: false`, `model_catalog.enabled: false`). Nothing reached the
+internet and no other draft rule appeared. hermes's code names other sites (its makers' site, GitHub,
+OpenRouter, paid AI services) for setup flows Logos does not use; they are in the card's table as
+"Not needed" in case one shows up.
+
 ## Rolling out
 
 1. Deploy as usual (`scripts/logos-deploy`): the dashboard starts looking at once. No agent needs
@@ -122,3 +180,8 @@ definition (it then neither asks nor gets the rule).
 2. Optional: list the household's own domains in `~/.config/logos/network-never.txt` on the server.
 3. Recreate the agents when convenient (`scripts/logos-agent up <name>`) so their SOUL.md gets the
    "blocked sites ask" rule.
+4. models.dev copy (28 Nov): the deploy fetches the copy and restarts the dashboard (new route); then
+   recreate each agent (`scripts/logos-agent up <name>`) so its config points at the copy and its
+   policy has the `models_catalogue` rule. Check: `openshell rule get <name>` stays empty after start,
+   and `curl -sI http://127.0.0.1:8091/api/v2/models-dev/api.json` answers 200 with an ETag. Deny any
+   models.dev question still open from before.
