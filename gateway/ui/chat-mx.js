@@ -618,12 +618,15 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const row = h('div', { class: 'mx-picker', role: 'menu', 'aria-label': 'React' },
       ...QUICK.map((k) => h('button', { type: 'button', role: 'menuitem', class: have.get(k) ? 'mine' : '', 'aria-label': QUICK_HINT[k] || `React ${k}`, title: QUICK_HINT[k] || '',
         'aria-pressed': String(!!have.get(k)), onclick: () => react(ev, k, have.get(k) || null) }, k)),
-      text && navigator.clipboard ? h('button', { type: 'button', role: 'menuitem', class: 'mx-copy', onclick: async () => {
-        closePicker();
-        try { await navigator.clipboard.writeText(text.trim()); note.textContent = 'Copied.'; } catch { note.textContent = 'Could not copy.'; }
-      } }, 'Copy') : null,
-      h('button', { type: 'button', role: 'menuitem', class: 'mx-reply', onclick: () => { closePicker(); setReply({ id: ev.getId(), name: name || 'them', text: snippet(text) || 'a message' }); } }, 'Reply'),
-      fold ? h('button', { type: 'button', role: 'menuitem', class: 'mx-fold', onclick: fold }, 'Fold') : null);
+      // Reply, Copy and Fold together, in one style, apart from the emoji (Greg, 28 Nov: on a phone Reply wrapped
+      // onto a line of its own, in another colour from Copy).
+      h('span', { class: 'mx-picker-actions' },
+        h('button', { type: 'button', role: 'menuitem', class: 'mx-act mx-reply', onclick: () => { closePicker(); setReply({ id: ev.getId(), name: name || 'them', text: snippet(text) || 'a message' }); } }, 'Reply'),
+        text && navigator.clipboard ? h('button', { type: 'button', role: 'menuitem', class: 'mx-act mx-copy', onclick: async () => {
+          closePicker();
+          try { await navigator.clipboard.writeText(text.trim()); note.textContent = 'Copied.'; } catch { note.textContent = 'Could not copy.'; }
+        } }, 'Copy') : null,
+        fold ? h('button', { type: 'button', role: 'menuitem', class: 'mx-act mx-fold', onclick: fold }, 'Fold') : null));
     requestAnimationFrame(() => { if (row.isConnected && !row.contains(document.activeElement)) row.querySelector('button')?.focus({ preventScroll: true }); });
     return row;
   }

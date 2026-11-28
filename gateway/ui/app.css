@@ -942,7 +942,13 @@ dialog.appearance .label { margin: 16px 0 8px; }
   font: inherit; font-size: 22px; cursor: pointer; }
 .mx-picker button:hover, .mx-picker button:focus-visible { background: var(--accent-soft); }
 .mx-picker button.mine { background: var(--accent-soft); outline: 1px solid var(--accent); }
-.mx-picker .mx-copy { font-size: var(--t-sm); padding: 0 12px; color: var(--accent-text); }
+.mx-picker-actions { display: flex; gap: 4px; align-items: center; padding-left: 6px; margin-left: 2px; border-left: 1px solid var(--line); }
+.mx-picker .mx-act { font-size: var(--t-sm); font-weight: 600; padding: 0 12px; color: var(--accent-text); }
+/* A narrow screen: the emoji on one line, Reply / Copy / Fold side by side on the next, divided by a line. */
+@media (max-width: 599px) {
+  .mx-picker-actions { flex-basis: 100%; border-left: 0; border-top: 1px solid var(--line); margin: 2px 0 0; padding: 4px 0 0; }
+  .mx-picker .mx-act { flex: 1; }
+}
 /* No text selection where a tap means "open" or "press" (F35): notification rows, cards' headers, the
    chat's chips, links and footers. Message text stays selectable with a mouse; on a touch screen a
    long press opens the emoji row instead, which has Copy. */
@@ -3047,7 +3053,6 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 
 /* Replies and tap-to-react (Greg, 28 Nov). */
 .msg.tappable { cursor: pointer; }
-.mx-picker .mx-reply, .mx-picker .mx-fold { font-size: var(--t-sm); padding: 0 12px; }
 .mx-reply-bar { display: flex; align-items: center; gap: 10px; margin: 0 auto; padding: 8px 12px; border-left: 3px solid var(--accent);
   background: var(--surface-2, var(--surface)); border-radius: 8px; max-width: 100%; box-sizing: border-box; }
 .mx-reply-bar[hidden] { display: none; }
