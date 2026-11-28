@@ -58,3 +58,42 @@ def test_the_question_is_for_the_agents_people_and_the_list_for_the_admin_too(tm
     site = {"host": "example.org", "port": 443}
     assert call(net, monkeypatch, "u-bere", "POST", "/api/v2/network-sites/finn/remove", site)[0] == 403
     assert call(net, monkeypatch, "u-admin", "POST", "/api/v2/network-sites/finn/remove", site)[0] == 200
+
+
+def test_a_new_question_says_what_the_agent_was_doing_and_alerts_its_people(tmp_path, monkeypatch):
+    from gateway import push
+    net, shell = make(tmp_path)
+    shell.rules["finn"] = PENDING
+    sent = []
+
+    class Store:
+        def vapid_key(self):
+            return "k"
+
+        def devices(self, username):
+            return [{"pushkey": f"pk-{username}"}]
+
+        def get(self, pushkey):
+            return {"pushkey": pushkey}
+
+    async def fake_send(session, sub, message, key):
+        sent.append((sub["pushkey"], message))
+        return 201
+
+    class Client:
+        async def list_sessions(self, limit=None):
+            return {"data": [{"id": "s1", "source": "matrix", "title": "Train times to Lyon", "last_active": 1e12}]}
+
+    class Links:
+        async def client(self, name):
+            return Client()
+
+    monkeypatch.setattr(push, "send", fake_send)
+    monkeypatch.setattr(push, "alerts_private", lambda username: False)
+    net.clock = lambda: 1e12
+    app = {"network_approvals": net, "push_store": Store(), "push_session": object(), "agent_links": Links()}
+    [req] = asyncio.run(network_api.poll_once(app))
+    assert net.pending()[0]["for"] == "Train times to Lyon"
+    assert sent == [("pk-greg", {"title": "Finn wants to reach example.org",
+                                 "body": "Allow once, always allow or deny, in Logos Notifications.",
+                                 "link": "#/noticeboard", "room": f"net-{req['id']}"})]
