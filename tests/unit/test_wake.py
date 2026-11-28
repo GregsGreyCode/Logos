@@ -278,3 +278,30 @@ def test_voice_converse_answers_with_the_agent_called(heard, monkeypatch, tmp_pa
     status, out = _post(app, auth, {"text": "lights off", "device_id": "pe1", "conversation_id": "c2"})
     assert out["agent"] == "household"                                   # nobody named: Home
     assert links.asked == ["greg", "greg", "household"]
+
+
+def test_quiet_speech_is_raised_and_silence_is_left_alone():
+    import array, math
+    from gateway import wake
+    rate = 16000
+
+    def tone(db, s=0.1):
+        a = 10 ** (db / 20) * math.sqrt(2)
+        return array.array("f", (a * math.sin(2 * math.pi * 300 * i / rate) for i in range(int(rate * s))))
+    g = wake.Gain()
+    t = 0.0
+    for _ in range(20):                                  # far speech at -45 dBFS: raised towards -24, by at most 18 dB
+        out = g(tone(-45), rate, t)
+        t += 0.1
+    assert 17.5 <= g.db <= 18.0 and wake.Gain.level(out) > -28
+    g2 = wake.Gain()
+    for i in range(20):                                  # a quiet room (-70 dBFS) is not turned into hiss
+        out = g2(tone(-70), rate, i * 0.1)
+    assert g2.db == 0.0
+    g3 = wake.Gain()
+    for i in range(20):                                  # speech already loud enough is never turned down
+        g3(tone(-12), rate, i * 0.1)
+    assert g3.db == 0.0
+    g4 = wake.Gain(on=False)
+    x = tone(-45)
+    assert g4(x, rate, 0.0) is x

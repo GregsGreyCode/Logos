@@ -135,6 +135,51 @@ def pcm_to_float(audio: bytes) -> "array.array":
     return array.array("f", (s / 32768.0 for s in samples))
 
 
+class Gain:
+    """Raises quiet speech before the spotter hears it (Greg, 28 Nov: "Hey Finn" from across the room was missed).
+
+    The keyword model was trained on speech at ordinary loudness; a name said a few metres from the speaker
+    reaches it 15-25 dB quieter. Each chunk is scaled so that the loudest 100 ms of the last two seconds
+    sits near ``TARGET_DB``, by at most ``MAX_DB`` and never down; silence (below ``FLOOR_DB``) is left as it is,
+    so a quiet room is not turned into hiss. The gain moves at most ``STEP_DB`` per chunk, so speech is not
+    pumped. It also reports the loudest speech of each stretch of sound (levels only, never sound)."""
+
+    TARGET_DB, MAX_DB, FLOOR_DB, STEP_DB = -24.0, 18.0, -58.0, 3.0
+    WINDOW_S = 2.0
+
+    def __init__(self, on: bool = True) -> None:
+        self.on, self.db, self.peaks, self.burst = on, 0.0, [], None   # peaks: (time s, dBFS) of 100 ms frames
+
+    @staticmethod
+    def level(frame) -> float:
+        import math
+        if not frame:
+            return -120.0
+        rms = math.sqrt(sum(x * x for x in frame) / len(frame))
+        return 20 * math.log10(rms) if rms > 1e-6 else -120.0
+
+    def __call__(self, samples, rate: int, t: float):
+        n = max(1, rate // 10)
+        for i in range(0, len(samples), n):
+            self.peaks.append((t + i / rate, self.level(samples[i:i + n])))
+        self.peaks = [p for p in self.peaks if p[0] >= t - self.WINDOW_S]
+        loud = max((db for _, db in self.peaks), default=-120.0)
+        # A stretch of sound: its loudest level, said once it ends.
+        if loud > self.FLOOR_DB + 10:
+            self.burst = max(self.burst or -120.0, loud)
+        elif self.burst is not None:
+            print(f"sound: loudest {self.burst:.0f} dBFS, raised {self.db:.0f} dB", flush=True)
+            self.burst = None
+        if not self.on:
+            return samples
+        want = 0.0 if loud < self.FLOOR_DB else min(max(self.TARGET_DB - loud, 0.0), self.MAX_DB)
+        self.db += max(-self.STEP_DB, min(self.STEP_DB, want - self.db))
+        if self.db < 0.05:
+            return samples
+        g = 10 ** (self.db / 20)
+        return array.array("f", (max(-1.0, min(1.0, x * g)) for x in samples))
+
+
 class Spotter:
     """The keyword spotter, made again when names.json changes."""
 
@@ -208,6 +253,7 @@ def make_handler(spotter: Spotter, heard_path: str):
             self.rate = 16000
             self.quiet_until = 0.0
             self.detected = False
+            self.gain = Gain(os.environ.get("WAKE_GAIN", "1") != "0")
 
         def _start(self) -> None:
             spotter.refresh()
@@ -239,8 +285,10 @@ def make_handler(spotter: Spotter, heard_path: str):
                 chunk = AudioChunk.from_event(event)
                 if chunk.width != 2 or chunk.channels != 1:
                     return True              # Home Assistant always sends 16-bit mono
+                rate = chunk.rate or self.rate
+                t = self.samples / rate
                 self.samples += len(chunk.audio) // 2
-                self.stream.accept_waveform(chunk.rate or self.rate, pcm_to_float(chunk.audio))
+                self.stream.accept_waveform(rate, self.gain(pcm_to_float(chunk.audio), rate, t))
                 while self.kws.is_ready(self.stream):
                     self.kws.decode_stream(self.stream)
                     pid = self.kws.get_result(self.stream)
@@ -258,7 +306,8 @@ def make_handler(spotter: Spotter, heard_path: str):
                     except OSError as e:
                         print(f"wake words: could not write {HEARD_FILE}: {e}", flush=True)
                     print(f"heard {p['phrase']!r} -> {p['agent']} (threshold {p['threshold']:g}) "
-                          f"at {at_ms / 1000:.2f} s into the stream", flush=True)
+                          f"at {at_ms / 1000:.2f} s into the stream; loudest {self.gain.burst or -120:.0f} dBFS, "
+                          f"raised {self.gain.db:.0f} dB", flush=True)
                     await self.write_event(Detection(name=reported_name(self.names, pid), timestamp=at_ms).event())
                 return True
             if AudioStop.is_type(event.type):
