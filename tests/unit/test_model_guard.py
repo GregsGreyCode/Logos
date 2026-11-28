@@ -669,8 +669,8 @@ def test_a_model_that_is_not_loaded_is_loaded_once_at_its_window_however_many_as
         srv.shutdown()
 
 
-def test_a_copy_at_the_wrong_window_is_replaced_only_when_nothing_else_is_running():
-    srv = studio({QWEN: [(QWEN, 262144)]})
+def test_a_copy_too_small_is_replaced_only_when_nothing_else_is_running():
+    srv = studio({QWEN: [(QWEN, 32768)]})
     try:
         ld = loader_for(srv)
         assert ld.ensure(QWEN, alone=False) == "" and srv.state["calls"] == []     # a reply running: left alone
@@ -682,8 +682,28 @@ def test_a_copy_at_the_wrong_window_is_replaced_only_when_nothing_else_is_runnin
         srv.shutdown()
 
 
-def test_two_copies_become_one_at_its_window():
+def test_a_copy_loaded_by_hand_at_a_bigger_window_is_left_alone():
+    srv = studio({QWEN: [(QWEN, 135168)]})
+    try:
+        ld = loader_for(srv)
+        assert ld.ensure(QWEN, alone=True) == "" and srv.state["calls"] == []
+        assert srv.state["loaded"][QWEN] == [(QWEN, 135168)]
+    finally:
+        srv.shutdown()
+
+
+def test_two_copies_become_one_keeping_the_biggest():
     srv = studio({QWEN: [(QWEN, 262144), (QWEN + ":2", WIN)]})
+    try:
+        assert loader_for(srv).ensure(QWEN, alone=True) == "trimmed"
+        assert srv.state["loaded"][QWEN] == [(QWEN, 262144)]
+        assert [p for p, _ in srv.state["calls"]] == ["/api/v1/models/unload"]
+    finally:
+        srv.shutdown()
+
+
+def test_two_small_copies_become_one_at_its_window():
+    srv = studio({QWEN: [(QWEN, 8192), (QWEN + ":2", 16384)]})
     try:
         assert loader_for(srv).ensure(QWEN, alone=True) == "reloaded"
         assert srv.state["loaded"][QWEN] == [(QWEN, WIN)]

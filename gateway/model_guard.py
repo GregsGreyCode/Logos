@@ -78,8 +78,12 @@ class Loader:
     agents' ``load_context_length``, from GUARD_LOAD):
 
     - not loaded: the guard loads it once at its window; other requests wait for that load;
-    - loaded at another window: reloaded at its window, but only when no other reply is running
-      through the guard (``alone``), so nothing is cut off;
+    - one copy loaded at that window or bigger: left alone, whatever settings it was loaded with
+      (Greg, 28 Nov: a copy he loaded himself at 135,168 with his own KV-cache quantisation was
+      being replaced at 96,512 on every request);
+    - two or more copies: the biggest is kept when it is big enough, the others unloaded;
+    - loaded smaller than its window: reloaded at its window, but only when no other reply is
+      running through the guard (``alone``), so nothing is cut off;
     - anything failing: the request goes on as before, and LM Studio does what it would have done.
     """
 
@@ -115,21 +119,33 @@ class Loader:
         return self.seen["loaded"]
 
     def ensure(self, model: str, alone: bool) -> str:
-        """What was done: "", "loaded", "reloaded", or "failed"."""
+        """What was done: "", "loaded", "reloaded", "trimmed" or "failed"."""
         # LM Studio's own key; also as the agents name it to the gateway ("lm-studio/qwen/…"),
         # in case it arrives with that prefix.
         model = next((k for k in self.windows if model == k or model.endswith("/" + k)), model)
         window = self.windows.get(model)
         if not window:
             return ""
+        def fine(have) -> bool:
+            return len(have) == 1 and have[0][1] >= window
+
         try:
             have = self.loaded().get(model, [])
-            if have and (all(w == window for _, w in have) or not alone):
+            if have and (fine(have) or not alone):
                 return ""
             with self.lock:
                 have = self.loaded(fresh=True).get(model, [])
-                if have and (all(w == window for _, w in have) or not alone):
+                if have and (fine(have) or not alone):
                     return ""                    # another request has just seen to it
+                biggest = max(have, key=lambda h: h[1]) if have else None
+                if biggest and biggest[1] >= window:
+                    for inst, _ in have:         # keep the copy someone chose; drop the extras
+                        if inst != biggest[0]:
+                            self._call("POST", "/api/v1/models/unload", {"instance_id": inst}, timeout=120)
+                    self.loaded(fresh=True)
+                    self.log(json.dumps({"event": "model_extra_copies_unloaded", "model": model, "kept": biggest[1],
+                                         "was": [w for _, w in have], "at": time.strftime("%Y-%m-%d %H:%M:%S")}), flush=True)
+                    return "trimmed"
                 for inst, _ in have:
                     self._call("POST", "/api/v1/models/unload", {"instance_id": inst}, timeout=120)
                 self._call("POST", "/api/v1/models/load", {"model": model, "context_length": int(window),
