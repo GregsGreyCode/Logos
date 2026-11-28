@@ -168,7 +168,11 @@ async def check_claim(app: Any, session_id: str, text: str, who: Any, agent: str
     if not suspect:
         return None, ""
     prints = await asyncio.to_thread(voice_id.load_prints)
-    threshold = prints[suspect].threshold if suspect in prints else None
+    if suspect not in prints or prints[suspect].state != voice_id.vp.ACTIVE:
+        # VO.3: their voice print is still learning (or there is none), so the voice cannot be judged yet. Not
+        # an alarm; and nothing private is unlocked by the claim (that needs an ACTIVE, recognised person, D2).
+        return None, ""
+    threshold = prints[suspect].threshold_for(voice_id.vp.SPEAKER)
     if impostor.verified(who, suspect, threshold):
         return None, ""                                    # it clearly is them
     if impostor.mark(app, session_id, suspect) and claim:
@@ -302,8 +306,8 @@ async def handle_converse(request: "Any") -> "Any":
         raise web.HTTPBadRequest(text='{"error":"text is required"}', content_type="application/json")
 
     # The agent whose name woke the speaker (VW.1), else the one this conversation started with.
-    agent = wake_host.agent_for(str(body.get("conversation_id") or "")) \
-        or os.environ.get("LOGOS_VOICE_AGENT") or DEFAULT_AGENT
+    woken = wake_host.agent_for(str(body.get("conversation_id") or ""))
+    agent = woken or os.environ.get("LOGOS_VOICE_AGENT") or DEFAULT_AGENT
     session_id = session_for(agent, device)
     started = time.monotonic()
 
@@ -339,9 +343,13 @@ async def handle_converse(request: "Any") -> "Any":
     who = await voice_id.identify(request.app, text)
     # Words that claim to be someone whose voice this clearly is not (gateway/impostor.py, Greg 27 Nov).
     suspect, extra = await check_claim(request.app, session_id, text, who, agent, definition)
+    # VO.3: learn from it afterwards (labelled when its person's agent's name woke the speaker). Never waited for.
+    if who is not None and who.heard:
+        claim = impostor.claimed(text, await asyncio.to_thread(_people)) or impostor.suspect_for(request.app, session_id)
+        asyncio.ensure_future(voice_id.collect(request.app, who, definition, bool(woken), claim))
     if suspect:
         if who is not None and who.username == suspect:      # a borderline match does not count now
-            who = voice_id.Who(voice_id.vp.UNSURE, enrolled=who.enrolled)
+            who = voice_id.Who(voice_id.vp.UNSURE, enrolled=who.enrolled, active=who.active)
         owners = voice_id._owners(definition)
         if owners is not None and definition.get("role") != "household" and suspect in owners:
             return answer("refused", impostor.refusal(voice_id.display_name(suspect)))
@@ -363,7 +371,8 @@ async def handle_converse(request: "Any") -> "Any":
                     turn="first" if await is_first(client, session_id) else "followup")
     # D2: private details out loud only while the speaker's own phone is home (gateway/presence.py).
     private_ok = await presence.at_home(who.username if who is not None and who.known else None)
-    instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), presence.rule(private_ok), extra,
+    instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), voice_id.learning_line(definition, who),
+                                        presence.rule(private_ok), extra,
                                         IN_FRENCH if lang == "fr" else "") if p)
     outcome, words = await collect(client, voice_id.tagged(without_wake(text, agent, definition), who),
                                    session_id=session_id, instructions=instructions)

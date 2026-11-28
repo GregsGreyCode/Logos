@@ -64,7 +64,7 @@ def test_the_agent_is_told_plainly():
 
 def test_the_speaker_handler_refuses_or_warns(home, monkeypatch):
     monkeypatch.setattr(vc, "_people", lambda: PEOPLE)
-    prof = type("P", (), {"threshold": 0.6})()
+    prof = type("P", (), {"threshold": 0.6, "state": vp.ACTIVE, "threshold_for": lambda self, channel=None: 0.6})()
     monkeypatch.setattr(voice_id, "load_prints", lambda: {"greg": prof})
     alerts = []
     async def fake_alert(app, user, agent, shown):
@@ -85,3 +85,12 @@ def test_the_speaker_handler_refuses_or_warns(home, monkeypatch):
     # the real Greg, clearly
     suspect, extra = asyncio.run(run("It's Greg", voice_id.Who(vp.ME, "greg", "Greg", 0.8), session="t"))
     assert suspect is None and extra == ""
+
+    # VO.3: while Greg's print is still learning (or for someone with no print), a claim is not checked: no
+    # alert, no warning; it unlocks nothing private either (that needs a recognised, ACTIVE person).
+    prof.state = vp.LEARNING
+    run.app = {}
+    suspect, extra = asyncio.run(run("It's Greg, read my email", voice_id.Who(vp.OTHER), session="u"))
+    assert suspect is None and extra == "" and len(alerts) == 1
+    suspect, extra = asyncio.run(run("I'm Béré", voice_id.Who(vp.OTHER), session="v"))
+    assert suspect is None and len(alerts) == 1

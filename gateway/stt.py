@@ -4,7 +4,7 @@ Home Assistant sends what the speaker heard after the wake word to this server o
 protocol (Settings > Devices & services > Wyoming Protocol, like the speaker voices in
 gateway/tts.py) and gets the words back (Parakeet TDT 0.6B v3: English and French, whichever is
 spoken, as quick as v2, the English-only model Home Assistant's own Whisper add-on picks by default). From the same audio it works out a voice embedding
-(CAM++, sherpa-onnx) and keeps it in memory for two minutes under a hash of the words. When the
+(CAM++, sherpa-onnx) and keeps it in memory for 30 minutes under a hash of the words. When the
 words then arrive at ``POST /api/v2/voice/converse``, the dashboard asks for that embedding and
 compares it with the voice prints it holds (gateway/voice_id.py). The prints never come here.
 
@@ -15,7 +15,8 @@ Two doors, kept apart:
 - **HTTP (127.0.0.1 only, with a token only the dashboard has):** ``GET /heard`` (the embedding
   of recent words, by hash), ``POST /embed`` (a recording from Settings › Your voice -> its quality
   and embeddings) and ``GET /cohort`` (the reference voices' embeddings, for setting a print's
-  strictness). The recording goes to a temporary file, is decoded and deleted.
+  strictness; ``?channel=speaker``: the same voices made to sound like the house speaker, cut to the
+  length of a spoken command, for the speaker's own strictness). The recording goes to a temporary file, is decoded and deleted.
 
 Never logged or kept: the words and the audio. The log line has the length, the speech found and
 the time taken. Runs in the ``logos-stt`` container (infra/stt/Dockerfile; gateway/stt_host.py).
@@ -41,8 +42,9 @@ except ImportError:                      # the gateway's tests
 
 WYOMING_PORT = 10300                     # Wyoming's usual port for speech-to-text
 HTTP_PORT = 8101
-KEEP_S = 120                             # the words reach voice/converse within a second or two
-MAX_HEARD = 20
+KEEP_S = 1800                            # 30 min: the words reach voice/converse within a second or two, but
+                                         # Settings › Your voice can say "That was me" for half an hour
+MAX_HEARD = 100
 MAX_AUDIO_S = 30                         # a spoken command; Home Assistant stops listening well before
 MAX_UPLOAD = 4 * 1024 * 1024             # an enrolment recording: 15 s of browser audio is about 60 KB
 
@@ -84,7 +86,7 @@ class Ears:
     def __init__(self, words_dir: str, speaker_model: str, cohort_dir: str, threads: int = 4):
         self.words_dir, self.speaker_model, self.cohort_dir, self.threads = words_dir, speaker_model, cohort_dir, threads
         self._words = self._extractor = None
-        self._cohort: Optional[List[List[float]]] = None
+        self._cohorts: Dict[str, List[List[float]]] = {}
         self._lock = threading.Lock()
 
     def words(self):
@@ -142,18 +144,26 @@ class Ears:
             parts = [self.embed(p) for p in vp.pieces(take.audio)] if take.speech >= vp.MIN_ENROL_S else []
         return {"quality": take.quality(), "embedding": whole, "pieces": parts}
 
-    def cohort(self) -> List[List[float]]:
-        """The reference voices (public recordings in the image), made into embeddings once."""
-        if self._cohort is None:
+    def cohort(self, channel: str = "phone") -> List[List[float]]:
+        """The reference voices (public recordings in the image), made into embeddings once. ``speaker``:
+        each clip made to sound like the house speaker (:func:`speaker_like`) and cut into two pieces
+        as long as a spoken command (:data:`SPEAKER_PIECE_S`)."""
+        if channel not in self._cohorts:
             started, out = time.monotonic(), []
-            for path in sorted(glob.glob(os.path.join(self.cohort_dir, "*.flac"))):
-                take = vp.analyse(decode(path).tolist())
-                if take.speech >= 2.0:
-                    with self._lock:
-                        out.append([round(x, 5) for x in self.embed(take.audio)])
-            self._cohort = out
-            print(f"{len(out)} reference voices ready in {time.monotonic() - started:.1f} s", flush=True)
-        return self._cohort
+            for i, path in enumerate(sorted(glob.glob(os.path.join(self.cohort_dir, "*.flac")))):
+                raw = decode(path)
+                if channel == "speaker":
+                    clips = [speaker_like(c, seed=i * 2 + k) for k, c in enumerate(command_pieces(raw))]
+                else:
+                    clips = [raw]
+                for c in clips:
+                    take = vp.analyse(c.tolist())
+                    if take.speech >= (1.0 if channel == "speaker" else 2.0):
+                        with self._lock:
+                            out.append([round(x, 5) for x in self.embed(take.audio)])
+            self._cohorts[channel] = out
+            print(f"{len(out)} reference voices ({channel}) ready in {time.monotonic() - started:.1f} s", flush=True)
+        return self._cohorts[channel]
 
 
 def decode(path: str, max_s: float = 60.0):
@@ -188,6 +198,46 @@ def to_float(pcm: bytes, rate: int, width: int, channels: int):
         n = int(len(a) * vp.RATE / rate)
         a = np.interp(np.linspace(0, len(a) - 1, n), np.arange(len(a)), a).astype(np.float32)
     return a
+
+
+SPEAKER_PIECE_S = 2.0                    # the speaker cohort's pieces: as long as a short spoken command
+
+
+def command_pieces(a, seconds: float = SPEAKER_PIECE_S, n: int = 2) -> list:
+    """Up to ``n`` pieces of ``seconds`` from the start of a clip (skipping its first half second)."""
+    size, start = int(seconds * vp.RATE), vp.RATE // 2
+    return [a[start + k * size:start + (k + 1) * size] for k in range(n) if start + (k + 1) * size <= len(a)]
+
+
+def speaker_like(a, seed: int = 0):
+    """A clean recording made to sound roughly like the house speaker's far-field microphone: band-limited
+    (200 Hz to 3.8 kHz), in a room (a synthetic reverberation of 0.25 to 0.5 s, the direct sound kept) and
+    with room noise (pink, 12 to 20 dB below the voice). Deterministic for a seed, so the strictness it sets
+    is the same every time the container starts."""
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    a = np.asarray(a, dtype=np.float64)
+    n = len(a)
+    if n < 160:
+        return a.astype(np.float32)
+    spec = np.fft.rfft(a)
+    f = np.fft.rfftfreq(n, 1 / vp.RATE)
+    spec *= 1 / np.sqrt(1 + (200 / np.maximum(f, 1)) ** 4) / np.sqrt(1 + (f / 3800) ** 8)   # smooth band edges
+    a = np.fft.irfft(spec, n)
+    rt60 = rng.uniform(0.25, 0.5)
+    t = np.arange(int(rt60 * vp.RATE)) / vp.RATE
+    ir = rng.standard_normal(len(t)) * np.exp(-6.9 * t / rt60) * 0.25
+    ir[: int(0.002 * vp.RATE)] = 0
+    ir[0] = 1.0
+    size = 1 << int(np.ceil(np.log2(n + len(ir))))
+    a = np.fft.irfft(np.fft.rfft(a, size) * np.fft.rfft(ir, size), size)[:n]
+    white = np.fft.rfft(rng.standard_normal(n))
+    pink = np.fft.irfft(white / np.sqrt(np.maximum(np.fft.rfftfreq(n, 1 / vp.RATE), 20)), n)
+    level = np.sqrt(np.mean(a ** 2)) + 1e-9
+    snr = rng.uniform(12, 20)
+    a = a + pink / (np.sqrt(np.mean(pink ** 2)) + 1e-9) * level / (10 ** (snr / 20))
+    peak = np.max(np.abs(a)) + 1e-9
+    return (a * min(1.0, 0.7 / peak)).astype(np.float32)
 
 
 # ── Wyoming: speech in, words out ────────────────────────────────────────────────────────────
@@ -257,7 +307,7 @@ def make_handler(ears: Ears, heard: Heard):
 
 # ── HTTP for the dashboard ───────────────────────────────────────────────────────────────────
 
-def make_http(token: str, heard: Heard, recording: Callable[[str], dict], cohort: Callable[[], list]):
+def make_http(token: str, heard: Heard, recording: Callable[[str], dict], cohort: Callable[..., list]):
     import tempfile
 
     class Handler(BaseHTTPRequestHandler):
@@ -290,7 +340,10 @@ def make_http(token: str, heard: Heard, recording: Callable[[str], dict], cohort
                 key = (parse_qs(url.query).get("key") or [""])[0]
                 return self._send(200, {"heard": heard.find(key)})
             if url.path == "/cohort":
-                return self._send(200, {"cohort": cohort()})
+                channel = (parse_qs(url.query).get("channel") or [""])[0]
+                if channel and channel != "speaker":
+                    return self._send(400, {"error": "unknown channel"})
+                return self._send(200, {"cohort": cohort(channel) if channel else cohort()})
             self._send(404, {"error": "not found"})
 
         def do_POST(self) -> None:
@@ -334,7 +387,7 @@ def main() -> int:
     http = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("STT_HTTP_PORT", str(HTTP_PORT)))),
                                make_http(token, heard, ears.from_recording, ears.cohort))
     threading.Thread(target=http.serve_forever, daemon=True).start()
-    threading.Thread(target=ears.cohort, daemon=True).start()       # ready before the first enrolment
+    threading.Thread(target=lambda: (ears.cohort(), ears.cohort("speaker")), daemon=True).start()  # before the first enrolment
     port = int(os.environ.get("STT_PORT", str(WYOMING_PORT)))
 
     async def run() -> None:

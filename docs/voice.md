@@ -281,14 +281,15 @@ answer, e.g. `en_GB-northern_english_male-medium for household: 42 characters in
 | `onnxruntime` | 1.32.0 | what Piper runs on (the voice service's pin) |
 | `rhasspy/piper-voices` | fixed revision (12 Nov) | twelve English and three French medium voice models (UPMC has two speakers), fetched at build time only |
 
-### Who is speaking (voice prints, VO.1 and VO.2)
+### Who is speaking (voice prints, VO.1, VO.2 and VO.3)
 
-Logos can tell who is speaking at the speaker from their voice. Home then answers for that person
-("what's on today?" is their day, "add milk" is from them), and a personal agent (Greg's Finn, later
-Béré's) answers only its own person and politely says no to anyone else.
+Logos learns to tell who is speaking at the speaker from their voice. Once it is sure (VO.3, below),
+Home answers for that person ("what's on today?" is their day, "add milk" is from them), and a
+personal agent (Greg's Finn, later Béré's) answers only its own person and politely says no to anyone
+else. Until then it is **learning**: nothing is enforced.
 
 ```
-speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of the voice (kept 2 min)
+speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of the voice (kept 30 min)
                           -> /api/v2/voice/converse -> "whose voice said these words?" -> agent
 ```
 
@@ -297,7 +298,8 @@ speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of
   Parakeet TDT 0.6B v3: English and French, below; v2, English only, is the model Home Assistant's
   Whisper add-on itself picks by default) and, from
   the same audio, works out a voice embedding (192 numbers, the CAM++ model from 3D-Speaker). It
-  keeps the embedding in memory for two minutes under a hash of the words. When the words arrive
+  keeps the embedding in memory for 30 minutes under a hash of the words (so Settings can offer
+  "That was me" / "Not me" for half an hour). When the words arrive
   at `voice/converse`, the dashboard asks for that embedding and compares it with the voice prints
   (`gateway/voice_id.py`). Words Home Assistant changed on the way are matched to the one command
   heard in the last 20 seconds, if there is only one.
@@ -306,72 +308,186 @@ speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of
   wrong); Home Assistant's Whisper add-on container with its default model (the same Parakeet)
   0.25 s (1.1%), with Whisper small 1.1 s (3.6%), base 0.7 s (4.7%), tiny 0.3 s (9.6%). The extra
   50 ms is the voice embedding. It holds about 900 MB of memory. (That was v2; v3 is as quick, below.)
-- **Three answers:** that person (`known`), `not sure` (too short, too close to call, or just under
-  the strictness), or `someone else`. Only `known` names anyone. Home is told who it is in its
+- **Three answers:** that person (`known`), `not sure` (too short, too close to call, just under
+  the strictness, or the closest print is still learning), or `someone else`. Only `known` names
+  anyone, and only a print that is ACTIVE can be `known`. Under 1.5 s of speech it is never `someone
+  else` (below). Home is told who it is in its
   spoken-answer instructions ("The person speaking is Greg …"), and the words reach it as
   `[Speaker: Greg] what's on today?` (which the chat post uses).
   Only the end of the instructions changes with who is speaking, so the warm prompt (above) still
   holds: about a second more when the speaker changes.
-- **A personal agent** answers only when its own person was recognised. Anyone else hears "Sorry, I
-  only answer Greg. Home can help you."; a voice it is not sure of hears "… Could you say it again?";
-  and while its person has no voice print, "… I don't know their voice yet". The agent is not run.
-  Home (and any agent for everyone) answers anyone; when nobody has a voice print, nothing changes.
+- **A personal agent**, once its person's print is ACTIVE, answers only when they were recognised.
+  The agent is not run otherwise, and what it says depends on why:
+
+  | heard | Finn says |
+  | --- | --- |
+  | someone else of the house, recognised | "Sorry Béré, I only answer Greg. Home can help you." |
+  | a voice that is not anyone's | "Sorry, I only answer Greg. Home can help you." |
+  | too close to call | "Sorry, I couldn't tell who that was. Could you say it again?" |
+  | under 1.5 s of speech | "Sorry, that was too short for me to tell who it was. Could you say it again, in a few more words?" |
+
+  While its person's print is still learning (or they have none), it answers whoever says its name,
+  is told that the voice is not confirmed, and says nothing private aloud (D2 needs a recognised,
+  ACTIVE person). Home (and any agent for everyone) answers anyone; Home asks neutrally ("may be Greg,
+  Béré or a guest") when it is not sure.
 - **A voice print is a strong hint, not a lock.** A recording of someone's voice can fool it.
   Anything private stays behind the phone-on-the-home-network rule (a later story), not behind the
   voice.
 
+#### Learning first, then recognising (VO.3, 28 Nov)
+
+Greg, 28 Nov, after his own agent refused him at the speaker (he had enrolled on his phone; his
+commands at the speaker scored 0.27 and 0.37): "we need recordings from different distances. Remove
+recognising whose voice it is until the agent is sure, with enough recordings, that it can get it right
+99% of the time." So every print has a state (`gateway/voiceprint.py`, `gateway/voice_id.py`):
+
+- **LEARNING** (every print starts here, including the ones made before 28 Nov). Nobody is named from
+  their voice; a personal agent answers its name without the voice check; someone saying they are a
+  person whose print is learning is not checked against it (no alarm, `gateway/impostor.py`), and the
+  claim unlocks nothing private.
+- **Collecting, labelled by the agent's name.** A command the speaker was woken for by a personal
+  agent's name ("Hey Finn" → Greg, its one owner) is a labelled sample of that person, taken from the
+  speaker itself (its microphone, the room, every distance and day). It is not added when the words
+  claim someone else, when it clearly is someone else whose print is ACTIVE, or when it is **clearly
+  unlike the print** (Greg: "if a voice is very different then it should … not include that voice"):
+  - its median likeness to the person's samples must reach 0.20 (a median, so a few bad samples cannot
+    pull more in; measured below: 1–3% of their own speaker-like commands fall under it, against 90%
+    of other people's);
+  - it must be more like this person than like anyone else who has a print;
+  - and when it is not already above the strictness, more like this person than like any of the
+    reference voices.
+
+  What fails is **held back**: listed in Settings for 30 minutes with "That was me", counted, and
+  never a miss. Through Home ("Hey Home"), a command is added only when it is already a clear match for
+  exactly one person (well above their strictness, two seconds or more, clean), and never as a label.
+  Each sample keeps when it was heard, the seconds of speech, the loudness and how clean (a hint of the
+  distance); 60 are kept, a near copy from the same day is not added, and when full the most alike
+  sample of the best-covered day goes, so the days and distances stay spread.
+- **The self-test.** Before a labelled command is added, the print as it was is asked: would it have
+  recognised this? The last 50 answers are kept (commands under 1.5 s are not tests).
+- **ACTIVE** when all of these hold (constants `ON_*` in `gateway/voiceprint.py`):
+
+  | | |
+  | --- | --- |
+  | labelled samples from the speaker | 50 or more |
+  | on different days | 3 or more, no day more than 60% of them |
+  | the self-test | 99% of the last 50 (so all 50) |
+  | held back meanwhile | at most 10 |
+  | other people of the house taken for them | none of their labelled samples (the speaker's own room) |
+  | reference voices above the strictness | none |
+
+  The person is told (a notification and a phone alert: "The house speaker now recognises your
+  voice").
+- **Back to LEARNING** when the last 50 fall under 95%, or it takes someone of the house for them; the
+  person is told. Once ACTIVE, only what it recognised is added, and a miss counts only when the person
+  says "That was me" in Settings: a stranger saying "Hey Finn" again and again must not be able to
+  switch the check off.
+
 #### Your voice (Settings)
 
-Settings › **Your voice**: read all the words on the screen (about 25 seconds; it stops by itself at 45), tap ■, and the
-voice print is made. It says how good the recording was (seconds of speech, how clean) and how good
-the print is: your own samples' scores, how close the 40 reference voices come, and the strictness
-it set. Then:
+Settings › **Your voice**: read all the words on the screen (about 25 seconds; it stops by itself at 45),
+tap ■, and the voice print is made. Then it says, in plain words, where it is:
+
+- "**Learning your voice:** 23 recordings from the speaker, it would have recognised you 19 of the last
+  20 times. It switches on at 99%." Under **Details**: how many samples of each kind, on how many days,
+  how many were held back, what is still needed, and the strictness for a recording here and at the
+  speaker.
+- "**Recognising you.**" with the same numbers, and **Start learning again**.
+
+Also:
 
 - **Test: me** and **Test: someone else** (hand the phone over): each says the score and whether it
-  was recognised. Someone else heard makes it stricter if they came close.
-- **Recording again** adds to the print (another room or distance helps).
-- **At the house speaker:** ask the speaker something, then **Check what it heard**: the last two
-  minutes, each scored against your print only. If it did not recognise you, **That was me** adds it
-  (not if it sounds more like someone else who has a print). The speaker's microphone sounds
-  different from a phone's, so this matters (measured below).
+  was recognised. Someone else heard makes it stricter if they came close (at the speaker too).
+- **Recording again** adds to the print (the speaker samples and the self-test are kept).
+- **At the house speaker:** **Check what it heard** lists the speaker's last 30 minutes, newest first,
+  with the time, the seconds of speech, the score against your print and what happened to it (added,
+  held back and why, recognised or not). **That was me** adds one; **Not me** takes out one that was
+  added (and its self-test). Optional: it learns without them.
+- An admin also sees **Everyone's voice**: each person's state and how far along (no voices, no
+  scores of single commands).
 - **Delete my voice print.**
 
 Each person sees and manages only their own. The browser's own noise suppression is switched off
-for this recording, so the voice is heard as it is.
+for this recording, so the voice is heard as it is. Starting again, deleting and "Not me" are in the
+audit log (no audio, no words).
 
-#### How it decides (ported from the wake-word spike)
+#### How it decides
 
 - A print is several samples: the recording's speech cut into pieces about as long as a spoken
-  command (3 s), plus the whole. A new voice's score is the average of its likeness to the centre
-  of your samples and to your three closest ones.
-- **The strictness** sits just above the closest other voice: 40 people from LibriSpeech (three
-  clips each, in the image) with a margin, and anyone you let it hear in "Test: someone else".
-  Never looser than 0.5. The spike put it halfway between the others and your own scores; here you
-  enrol on a phone and are heard through the speaker, which scores you lower, and halfway refused
-  too many (below).
-- **It learns:** a clear match at the speaker (well above the strictness, two seconds or more,
-  clean) is added to your print; the newest ten are kept beside the enrolment.
+  command (3 s), plus the whole, then the speaker samples. A new voice's score is the average of its
+  likeness to the centre of all the samples and to the three closest.
+- **Two strictnesses.** For a recording in Settings: just above the closest of 40 LibriSpeech people
+  (three clips each, in the image) with a margin, and anyone you let it hear in "Test: someone else";
+  never looser than 0.5. **At the speaker:** just above (0.06) the closest of the same 40 people made to
+  sound like the speaker (`logos-stt`'s `/cohort?channel=speaker`: band-limited to 200 Hz–3.8 kHz, a
+  synthetic room of 0.25–0.5 s, pink room noise 12–20 dB down, cut into 2-second commands: 229 clips),
+  and 0.05 above the closest labelled sample of anyone else of the house; also never looser than 0.5.
+- **Kept at 0.5 at the speaker.** Measured (below) with no learned samples, a floor of 0.40 would
+  recognise 86% of far-field commands instead of 68%, but took others for them 19 times in 35,568
+  (0.45: also not 0). Not 0, so 0.5 stays.
+- **Not the speaker samples alone.** Scoring a speaker command only against the speaker samples
+  recognised a little more but let 4–5 times as many other voices through: the room and the microphone
+  are in those samples, so everybody in that room comes closer. Every sample counts together.
+- **Short commands.** Under 1.5 s of speech it says `not sure`, never `someone else`. On speaker-like
+  1.2 s commands it had answered "someone else" to the person's own voice 31% of the time (36% in the
+  harder room); now that is 0% (they hear "say it again, in a few more words" instead). It still names
+  nobody it is not sure of.
 - Two people both above their strictness and less than 0.08 apart: not sure.
 
-Measured 27 Nov on this dev machine with 40 LibriSpeech speakers who are not among the reference
-voices (enrolled from 13 s of reading; tested on 3-second commands; 3,120 tries by others each way):
+Measured 28 Nov on this dev machine with the 40 LibriSpeech test-clean speakers (not among the
+reference voices), enrolled from 13 s of clean reading, tested on speaker-like commands of 1.2, 2 and 3
+s (ffmpeg: band-limited, echo, pink noise; "harder room": narrower band, longer echo, more noise; a
+different recipe from the reference voices'). The print against everyone else's commands, the
+before = Settings' strictness and "That was me" as it was on 27 Nov:
 
-| | own commands recognised | others wrongly accepted |
-| --- | --- | --- |
-| same kind of microphone | 96% | 0 of 3,120 |
-| speaker-like (band-limited, echo, room noise) | 71% | 0 of 3,120 |
-| speaker-like, after two "That was me" | 91% | 1 of 3,120 |
-| Piper voices (synthetic, 36 clips × 40 prints) | | 0 of 1,440 |
+| speaker-like commands | own recognised | own told "someone else" | under 1.5 s told "someone else" | others accepted |
+| --- | --- | --- | --- | --- |
+| no learned samples, before | 62% | 18% | 31% | 0 of 35,568 |
+| no learned samples, now | 68% | 5% | 0% | 0 of 35,568 |
+| 1 learned, before | 73% | 11% | 22% | 1 |
+| 1 learned, now | 79% | 2% | 0% | 3 |
+| 3 learned, before | 87% | 4% | 10% | 17 |
+| 3 learned, now | 91% | 1% | 0% | 13 |
+| harder room, 3 learned, before | 80% | 8% | 15% | 10 of 33,657 |
+| harder room, 3 learned, now | 86% | 2% | 0% | 17 of 33,657 |
 
-In a household of two, a guest's command was taken for one of them once in 1,520 tries (after
-learning); the rest were "someone else" or "not sure". Real people at the real speaker will differ:
-test it with Settings › Your voice.
+Learning at the speaker brings the strangers in the same room closer as well (13 in 35,568 is 0.04%):
+that is why it now learns first and only switches on after the self-test, and why other people of the
+house, heard at the same speaker, set a floor for the strictness.
+
+**How long until it switches on** (simulated with the real code, `collect_sync`): 20 households of two
+from the same 40 speakers, each person calling their own agent by name, 15 commands a day, 1 to 3.5 s
+long at three distances (near, far, harder room), mixed; a guest saying the first person's agent's
+name after every 5 of their commands. Each person has 139 to 311 commands (every
+LibriSpeech utterance of theirs, cut three to five ways; so the later ones are not all new sentences):
+
+| | |
+| --- | --- |
+| switched to ACTIVE | 39 of 40 people |
+| their own commands needed | median 70 (59 to 213), i.e. about 5 days at 15 a day |
+| the guest's "Hey Finn" let into the print while learning | 11 of 951 (1.2%) |
+| their own labelled commands held back while learning | 27 of 8,798 (0.3%) |
+| once ACTIVE: their own commands recognised | 5,143 of 5,259 (97.8%; the rest "not sure", say it again) |
+| once ACTIVE: the other person of the house taken for them | 0 of 5,226 |
+| once ACTIVE: the guest taken for them | 4 of 1,202 (0.3%) |
+
+With only the first 60 to 80 commands each, 16 of 40 switched on (the rest were at 44 to 49 of the last
+50): the 99% rule is strict on purpose. Recognised 97.8% once on, not 99%: the self-test's window is
+not a guarantee, and after switching on a miss only counts when the person says "That was me", so
+tapping it when the speaker gets it wrong is what keeps it honest (and below 95% it goes back to
+learning).
 
 #### What is kept, and what is not
 
-- **Voice prints:** the embeddings and their strictness, in the dashboard's database
-  (`voice_prints`), one row per person. Never audio.
-- **`logos-stt`:** the last two minutes of embeddings, in memory, under hashes of the words. The
+#### What is kept, and what is not
+
+- **Voice prints:** the embeddings, their strictnesses, the state and the self-test's last 100
+  answers (when, recognised or not, the score), and for each speaker sample when it was heard, its
+  seconds of speech, loudness and how clean, in the dashboard's database (`voice_prints`), one row per
+  person. Never audio, never words. Held-back commands are listed from memory only (30 minutes).
+- **Notifications:** "now recognises your voice" / "learning again" in `~/.logos/voice-alerts.json`
+  (owner-only, a month).
+- **`logos-stt`:** the last 30 minutes of embeddings (at most 100), in memory, under hashes of the words. The
   audio is transcribed in memory and dropped; a recording from Settings goes to a temporary file
   and is deleted at once. Its log line has the length, the seconds of speech and the time taken.
 - **The dashboard's log:** the answer (`known`, `not_sure`, `someone_else`), the person and the
@@ -398,7 +514,9 @@ test it with Settings › Your voice.
    check it there.
 
 Check it: `docker logs logos-stt` shows a line per command, e.g. `heard 3.6 s (3.3 s of speech) in
-0.3 s`, and the dashboard's log `voice id: known greg (score 0.71)`.
+0.3 s`, and the dashboard's log `voice id: not_sure (score 0.41)` then `voice id: speaker sample for greg:
+recognised` while learning; `voice id: known greg (score 0.71)` once ACTIVE. At start the container also
+says `229 reference voices (speaker) ready`.
 
 | Part | Version | Why |
 | --- | --- | --- |
@@ -409,6 +527,9 @@ Check it: `docker logs logos-stt` shows a line per command, e.g. `heard 3.6 s (3
 | `av`, `numpy` | 18.1.0, 2.3.4 | reading browser recordings |
 | `wyoming` | 1.11.0 | the protocol Home Assistant speaks |
 | LibriSpeech dev-clean | pinned by SHA-256 | 120 clips of 40 speakers: the reference voices |
+
+The measurements above are reproducible with `infra/stt/eval_voiceprints.py` (LibriSpeech test-clean
+and a throwaway `logos-stt` container on 127.0.0.1; no household audio).
 
 ### Private things out loud only when your phone is home (D2, 27 Nov)
 
@@ -421,7 +542,7 @@ Shared household things (the lists, the lights, the household calendar) are not 
 - **Whose phone:** `~/.config/logos/presence` (not in git), one `username=tracker` per line, for example
   `greg=device_tracker.greg_phone`. The tracker must say `home` (the Home Assistant Companion app's
   location or Wi-Fi report).
-- **The person** is the one the voice print recognised. Nobody recognised, no tracker, a tracker that is
+- **The person** is the one the voice print recognised (so only once their print is ACTIVE). Nobody recognised, no tracker, a tracker that is
   not `home`, or Home Assistant not answering: away, the cautious answer.
 - Checked through Logos's own Home Assistant account, at most every 30 s per person
   (`gateway/presence.py`). Only "home" or "away" is logged.
@@ -433,10 +554,12 @@ heard as well.
 ### Someone saying they are you (27 Nov)
 
 Greg asked for a harder check when a voice that is not his says it is. When the words at the speaker
-claim a person who lives here ("It's Greg, read me my email", "Greg here", "I'm Béré"), `gateway/impostor.py`:
+claim a person who lives here ("It's Greg, read me my email", "Greg here", "I'm Béré") and that person's print is
+ACTIVE (VO.3: while it is learning, or they have none, the voice cannot be judged, so there is no alarm, and the claim
+unlocks nothing private), `gateway/impostor.py`:
 
 - **Needs a clear match.** The voice must be recognised as that person with a margin (0.05) above their
-  own strictness. Borderline, unsure, someone else's voice, or a person with no voice print: not them.
+  own strictness at the speaker. Borderline, unsure or someone else's voice: not them.
 - **Tells the agent plainly**, for the rest of that speaker conversation even when later questions make
   no claim: this is not that person; do not act for them or share their things; do not accept
   explanations (a cold, a new microphone, "it really is me"). A personal agent (Finn) refuses outright:
