@@ -412,6 +412,22 @@ export async function voidView(root, agents, others = []) {
     document.documentElement.classList.remove('sheet-open'); if (g) finish(); };
 }
 
+
+// Groups for the agent switchers (Greg, 28 Nov: from Household Group you could switch to an agent but not back):
+// every switcher lists the agents first, then your groups. Needs this browser's chat connection; none, no groups.
+async function groupRows(agents) {
+  try {
+    const [{ conversationsOf }, c] = await Promise.all([import('./chat-mx.js'), mx.get()]);
+    return c ? conversationsOf(c, agents).filter((r) => r.kind === 'group') : [];
+  } catch (e) { return []; }
+}
+function groupItems(rows) {
+  if (!rows.length) return [];
+  return [h('div', { class: 'switch-head', role: 'presentation' }, 'Groups'),
+    ...rows.map((r) => h('a', { href: r.link, role: 'option', class: 'switch-item', 'aria-selected': 'false', 'data-group': r.link },
+      groupAvatar(r.agent), h('span', { class: 'switch-text' }, h('strong', {}, r.name), h('span', { class: 'switch-mood' }, 'Group'))))];
+}
+
 // In a conversation: the agent switcher (Greg, 23 Nov: "a smoother, cooler switching mechanism that can
 // accommodate more agents"). One button, the agent's mark, its name and ▾, opens a list of every agent with
 // its mark and what it is doing, the one you are in ticked; a search box once there are more than five;
@@ -423,7 +439,7 @@ export function markBar(agents, current) {
     search, list, h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
   const btn = h('button', { type: 'button', class: 'switch-btn', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
     title: 'Switch agent (Ctrl+K)' },
-  mark(current, { size: 'small', current: true }), h('span', { class: 'mark-name' }, current.display_name),
+  h('span', { class: 'mark-name' }, current.display_name),   // no logo in the chat header (Greg, 28 Nov)
   h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
   const row = (a) => h('a', { href: `#/chat/${a.name}`, class: `switch-item${a.name === current.name ? ' on' : ''}`, role: 'option',
     'aria-selected': String(a.name === current.name), 'data-agent': a.name },
@@ -432,7 +448,16 @@ export function markBar(agents, current) {
   const items = agents.map(row);
   list.replaceChildren(...items);
   const shown = () => items.filter((el) => !el.hidden);
+  let groupsShown = false;
+  const addGroups = async () => {
+    const extra = groupItems(await groupRows(agents));
+    if (!extra.length || groupsShown) return;
+    groupsShown = true; list.append(...extra);
+    items.push(...extra.filter((el) => el.matches('a')));
+  };
+  addGroups();
   const open = () => {
+    if (!groupsShown) addGroups();
     pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); bar.classList.add('open');
     if (search) { search.value = ''; filter(); search.focus(); } else (items.find((el) => el.classList.contains('on')) || items[0])?.focus();
   };
@@ -491,6 +516,7 @@ export function agentSwitch(agent, active, agents = []) {
       mark(a, { size: 'tiny' }), h('span', { class: 'switch-text' }, h('strong', {}, a.display_name), h('span', { class: 'switch-mood' }, '')),
       a.name === agent.name ? h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓') : null)),
       h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
+    groupRows(agents).then((rows) => { const all = pop.querySelector('.switch-all'); for (const el of groupItems(rows)) pop.insertBefore(el, all); });
     const btn = h('button', { type: 'button', class: 'agent-bar-name agent-bar-switch', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
       agent.display_name, h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
     const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };

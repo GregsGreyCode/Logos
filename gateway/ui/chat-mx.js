@@ -263,7 +263,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // Your chats, as in the Chats list: each agent's chat and each group, this one ticked.
     const fill = () => {
       if (!c) return [];
-      const rows = conversationsOf(c, agents);
+      // Agents first, then groups (Greg, 28 Nov), as in the agent switchers.
+      const all = conversationsOf(c, agents);
+      const rank = (r) => (r.kind === 'agent' ? agents.findIndex((a) => a.name === r.agent?.name) : 1000);
+      const rows = [...all.filter((r) => r.kind === 'agent').sort((a, b) => rank(a) - rank(b)), ...all.filter((r) => r.kind !== 'agent')];
       const items = rows.map((r) => {
         const on = r.kind === 'group' && r.link === main;
         return h('a', { href: r.link, role: 'option', class: `switch-item${on ? ' on' : ''}`, 'aria-selected': String(on) },
@@ -311,7 +314,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     if (on === sec.classList.contains('agent-working') && (!on || pulseFrom !== null)) return;
     sec.classList.toggle('agent-working', on);
     if (!on) { pulseFrom = null; return; }
-    for (const el of sec.querySelectorAll('.chat-head .agent-mark.current .mark-glow, .chat-head .phone-mark .mark-glow, .chat-head .group-switch .void-avatar, .mx-thinking-mark .mark-glow')) el.classList.add('work-pulse');
+    // Only the thinking row's mark pulses (Greg, 28 Nov: the header's logo could not keep step with the menu's, so it went).
+    for (const el of sec.querySelectorAll('.mx-thinking-mark .mark-glow')) el.classList.add('work-pulse');
     pulseFrom = document.timeline.currentTime;
     requestAnimationFrame(() => {
       for (const el of sec.querySelectorAll('.work-pulse')) for (const a of el.getAnimations()) if (a.animationName === 'work-pulse') a.startTime = pulseFrom;
@@ -326,7 +330,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       h('header', { class: `chat-head${group ? ' group-head' : ''}` },
         // M4: the agents' marks replace the agent tabs; inside a thread, its title; in a group, its name.
         group ? groupHead : threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
-        threadId || group ? null : withPhoneMark(agentBar(agent, 'chat', agents.filter((a) => a.matrix_id))),
+        threadId || group ? null : agentBar(agent, 'chat', agents.filter((a) => a.matrix_id)),
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : pageTitle,
         sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null),
       group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, pending, form),

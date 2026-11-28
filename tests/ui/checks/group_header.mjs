@@ -31,8 +31,9 @@ for (const [tag, opts, menuSel] of [
   ok(grp.name && grp.name.l > grp.back.l && grp.name.r < grp.menu.l, `${tag}: the name with ▾ after it`);
   ok(grp.menu && agent.menu && Math.abs(grp.menu.r - agent.menu.r) <= 2, `${tag}: ≡ on the right, where the agent chat has its right-hand control (${grp.menu?.r} / ${agent.menu?.r})`);
   const pic = page.locator('.chat-head .group-switch .void-avatar.group');
-  ok(await pic.isVisible() && grp.pic && agent.pic && Math.abs(grp.pic.l - agent.pic.l) <= 12,
-    `${tag}: the group picture after ‹, where the agent chat has the agent's mark (${grp.pic?.l} / ${agent.pic?.l})`);
+  // The agent chat has no logo in its header any more (Greg, 28 Nov); the group keeps its picture, right after ‹.
+  ok(await pic.isVisible() && grp.pic && grp.back && grp.pic.l > grp.back.l && grp.pic.l - grp.back.r <= 24 && !agent.pic,
+    `${tag}: the group picture right after ‹; no agent logo in an agent chat's header (${grp.pic?.l} / ${agent.pic ? 'agent logo shown' : 'none'})`);
   ok((await page.locator('.chat-head .group-who').innerText()).includes('Béré'), `${tag}: who is in it, under the name`);
   const nameText = await page.locator('.chat-head .group-title .mark-name').evaluate((e) => e.scrollWidth <= e.clientWidth + 1);
   ok(nameText, `${tag}: the group's name is not cut`);

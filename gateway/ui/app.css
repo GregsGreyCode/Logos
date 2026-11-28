@@ -2819,3 +2819,5 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 @keyframes apply-wait { from { opacity: .35; } to { opacity: 1; } }
 .apply-lines { margin: 6px 0 0; max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap; color: var(--muted); }
 @media (max-width: 599px) { .apply-card .row .btn { flex: 1 1 100%; } }
+/* Agent switchers list your groups after the agents (Greg, 28 Nov). */
+.switch-head { padding: 8px 12px 4px; font-size: var(--t-xs); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
