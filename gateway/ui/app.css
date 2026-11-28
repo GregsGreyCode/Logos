@@ -1351,6 +1351,8 @@ form.recording > :not(.rec-bar) { display: none !important; }
   /* Centred by padding, never by a width, so nothing can push the page wider than the screen. */
   .chat .log, .chat .composer { padding-left: max(24px, calc((100% - 760px) / 2)); padding-right: max(24px, calc((100% - 760px) / 2)); }
   .chat .model-line, .chat .mx-note { margin-left: max(24px, calc((100% - 760px) / 2)); margin-right: max(24px, calc((100% - 760px) / 2)); }
+  /* "… is thinking" lines up with the agent's messages, in the same centred column (Greg, 28 Nov). */
+  .chat .mx-thinking { padding-left: calc(max(24px, calc((100% - 760px) / 2)) + 30px); }
 }
 /* The phone tab bar never stretches its tabs across a wide phone. */
 @media (max-width: 599px) {
@@ -2167,6 +2169,7 @@ html.widget-moving, html.widget-moving * { cursor: grabbing !important; }
 }
 @media (min-width: 1600px) {
   .chat .log, .chat .composer { padding-left: max(24px, calc((100% - 920px) / 2)); padding-right: max(24px, calc((100% - 920px) / 2)); }
+  .chat .mx-thinking { padding-left: calc(max(24px, calc((100% - 920px) / 2)) + 30px); }
 }
 
 /* The agent switcher in a chat's header (Greg, 23 Nov). */
