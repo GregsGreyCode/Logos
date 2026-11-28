@@ -10,7 +10,7 @@ import { getPref, setPref } from './prefs.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
 import { unreadFromAgents } from './notify.js';
-import { monthWidget } from './calendar.js';
+import { monthWidget, ownerOf } from './calendar.js';
 
 const DAY = { weekday: 'long', day: 'numeric', month: 'long' };
 const ASK_KEY = 'logos-ask';           // Chat picks the question up from here and sends it
@@ -193,7 +193,7 @@ export async function homeView(root, rest, state) {
     const todays = rows.filter((e) => String(e.start).startsWith(day));
     const later = rows.filter((e) => !String(e.start).startsWith(day));
     const whose = (e) => (e.kind === 'busy' ? e.who
-      : e.calendar === 'personal' ? 'Yours' : String((today.calendars || {})[e.calendar] || e.calendar).replace(/\s*\(.*\)\s*$/, ''));
+      : ownerOf(e.calendar, (today.calendars || {})[e.calendar]));
     // A location that is a web address (a Maps link) shows as a short link, never the whole address:
     // one long unbreakable address made the whole page wider than a phone (Greg, 21 Nov).
     const place = (loc) => {
@@ -373,7 +373,7 @@ export async function homeView(root, rest, state) {
     const compact = compactOf('coming');
     const events = (d.events || []).slice().sort((a, b) => String(a.start).localeCompare(String(b.start))).slice(0, compact ? 3 : 8);
     const day = (e) => new Date(`${String(e.start).slice(0, 10)}T12:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric' });
-    const whose = (e) => (e.calendar === 'personal' ? 'Yours' : String((d.calendars || {})[e.calendar] || e.calendar).replace(/\s*\(.*\)\s*$/, ''));
+    const whose = (e) => ownerOf(e.calendar, (d.calendars || {})[e.calendar]);
     comingBox.replaceChildren(...(events.length ? events.map((e) => h('div', { class: 'home-row home-line', role: 'link', tabindex: '0', 'data-href': calHref(e) },
       h('span', { class: 'home-time' }, day(e)),
       h('span', { class: `dot ${e.calendar === 'personal' ? data.me : e.calendar}`, 'aria-hidden': 'true' }),

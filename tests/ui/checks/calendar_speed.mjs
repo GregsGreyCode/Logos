@@ -46,7 +46,7 @@ for (const [w, hgt, dev, mobile] of [[1440, 900, 'desk', false], [412, 915, 'pho
   const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   fs.writeFileSync(`${OUT}/slow-calendar`, '1');
   try {
-    await page.goto('http://127.0.0.1:8779/#/home');
+    await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`);
     await page.locator('.home-widgets').waitFor(); await page.waitForTimeout(2500);     // Home up a moment
     const open = mobile ? '.tabbar a[data-view="calendar"]' : '.nav-links a[data-view="calendar"]';
     await page.evaluate(() => { try { localStorage.setItem('logos-cal-view', 'month'); } catch (e) { /* fine */ } });
@@ -57,7 +57,7 @@ for (const [w, hgt, dev, mobile] of [[1440, 900, 'desk', false], [412, 915, 'pho
       ok(t < FAST, `${dev}: ${from} → ${to} in under ${FAST} ms (${t})`);
       await page.waitForTimeout(150);
     }
-    for (const [i, step] of ['Later', 'Later', 'Earlier', 'Earlier', 'Earlier'].entries()) {
+    for (const [i, step] of ['Next month', 'Next month', 'Previous month', 'Previous month', 'Previous month'].entries()) {
       const t = await timed(page, `${dev} month ${step} ${i + 1}`, `.cal-step[aria-label="${step}"]`, '.cal-month', { titleChanges: true });
       ok(t < FAST, `${dev}: Month, ${step} (${i + 1}) in under ${FAST} ms (${t})`);
       await page.waitForTimeout(400);                 // a glance at each month
@@ -67,7 +67,7 @@ for (const [w, hgt, dev, mobile] of [[1440, 900, 'desk', false], [412, 915, 'pho
     ok(t < FAST, `${dev}: "Open day" in under ${FAST} ms (${t})`);
     await page.waitForTimeout(150);
     for (let i = 0; i < 6; i++) {                      // into next month, a day at a time
-      const s = await timed(page, `${dev} day Later ${i + 1}`, '.cal-step[aria-label="Later"]', '.cal-dayview', { titleChanges: true });
+      const s = await timed(page, `${dev} day Later ${i + 1}`, '.cal-step[aria-label="Next day"]', '.cal-dayview', { titleChanges: true });
       ok(s < FAST, `${dev}: Day, Later (${i + 1}) in under ${FAST} ms (${s})`);
       await page.waitForTimeout(120);
     }

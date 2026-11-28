@@ -79,13 +79,18 @@ Every call is logged in `docker logs logos-calendar-service`: the agent, the act
 Béré asked for it on 27 Nov, and Greg made it a full app the same day. It is in the side menu on a desktop and the fourth tab on a phone (after Home, Agents and Notifications), and Home's calendar widgets open it.
 
 - **Views:** Month (the default), Week, Day and List (the next four weeks, only the days with something on).
-  - On a phone the month shows dots, and the day you tap is listed under it. A swipe moves a month or a week.
-  - On a desktop the month shows the events by name (two lines at most), fills the screen's height, and the day you pick sits beside it. Day and List keep their words in a readable column with the month beside them (a day there opens it) and the key under it.
-  - The period shown (the month, the week, the day) is the screen's heading; tap it to go to a date.
+  - On a phone the month shows dots, and the day you tap is listed under it, with **Add on <day>** to add an event on it. A swipe moves a month or a week.
+  - On a desktop (a mouse, 28 Nov) the month shows the events by name (two lines at most) and fills the screen's height; today's list sits beside it. A click on a day opens it in Day (Back returns to the month); an event in a day opens that event. Over a day (or with the focus on it) a **+** shows in its corner: it opens Add with that day filled in. Enter on a focused day opens it; Tab reaches its +.
+  - Week on a desktop has an arrow before Monday and after Sunday: one week back or on, the new week sliding in from that side (no slide with reduced motion). Left and Right do the same while the week has the focus, and so does a sideways swipe on a trackpad.
+  - Day and List keep their words in a readable column with the month beside them (a day there opens it) and the key under it.
+  - The bar (28 Nov): the period is the screen's heading with its arrows on it, "‹ November 2026 ›", "‹ 23–29 Nov ›", "‹ Saturday 28 Nov ›"; they are labelled "Previous month", "Next week" and so on (List steps four weeks). Tap the period to go to a date. **Today** is its own button, greyed while the period shown has today in it.
+  - A new event starts at the next whole hour on today, else at 09:00, an hour long, not all day.
+  - Panels (an event, the form) have one ✕ in the top-right corner; Escape, a tap outside, or a swipe down on a phone close them too.
   - Day shows each event whole: title, whose, where and the notes, line by line. Week and List wrap long titles; nothing is cut short with "…".
 - **Fast:** the calendar is always fetched a whole month at a time (as the month view shows it, so a week or a day is inside it): switching Month, Week, Day and List never waits. This month and the ones either side are fetched quietly when the app opens; two months either side of the one shown are fetched ahead. What the device kept (five minutes) draws at once; a fresh copy replaces it in place only if something changed, keeping the picked day and an open event. A first visit shows a placeholder. `tests/ui/checks/calendar_speed.mjs` times every switch with the calendar answering in 1.6 s.
 - **Calendars:** each has its colour and a switch: yours, Household, then everyone else's. The key with the switches sits under the calendar (under the month grid, above the day's list). The switches are remembered on that device.
 - **An event:** tap it to see all of it (when, calendar, where, notes, whether it repeats).
+- **Whose it is** is said the same way everywhere (the day's list, Day, an event, Home): "Your calendar", "Household", "Béré's calendar". Someone else's event has no Change or Cancel, and the Add form only offers your calendar and Household. The key keeps the plain names.
 - **Who sees what:** exactly what Home shows. It reads with your own read-only key, so you see your calendar, Household and the other people's. Someone without a calendar account sees what their agent sees: busy times show as "Busy".
 - **Adding, changing, cancelling:** these go through your own agent. That is an agent that is yours alone and has `calendar: {person: <you>}`. It has the same rights as when you ask it in chat:
   - only your calendar and Household
@@ -100,7 +105,7 @@ Béré asked for it on 27 Nov, and Greg made it a full app the same day. It is i
   - `GET /api/v2/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD` covers both days, at most 62. It returns `events`, `busy`, `calendars` (`key`, `name`), `today`, `agent` and `can_change`.
   - `POST /api/v2/calendar/add|update|cancel` makes a change.
   - The dashboard keeps each answer for a minute, and the page keeps it for five, so moving between months costs one call per new range. A change clears both.
-- Code: `gateway/home.py` (`calendar_range`, `calendar_change`), `gateway/ui/calendar.js`, `gateway/ui/calendar.css`. Screen check: `tests/ui/checks/calendar.mjs`.
+- Code: `gateway/home.py` (`calendar_range`, `calendar_change`), `gateway/ui/calendar.js`, `gateway/ui/calendar.css`. Screen checks: `tests/ui/checks/calendar*.mjs`.
 
 ## Setting it up on a machine
 

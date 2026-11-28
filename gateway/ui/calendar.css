@@ -13,6 +13,12 @@
   background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
 .cal-title-btn:hover { background: var(--chip); }
 .cal-title-btn .icon { flex: none; width: 18px; height: 18px; color: var(--muted); }
+/* "‹ November 2026 ›": the arrows are on the period they step through; Today is its own button, quiet when the period
+   shown already has today in it (Greg, 28 Nov). */
+.cal-nav { gap: 2px; }
+.cal-nav .cal-title { margin: 0 2px; }
+.cal-nav .cal-title-btn { margin-left: 0; }
+.cal-today:disabled { opacity: .45; }
 .cal-goto { position: absolute; left: 0; bottom: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; }
 .cal-views button { min-height: 30px; }
 .cal-legend { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -58,6 +64,18 @@
 .cal-day:nth-child(7n) { border-right: 0; }
 .cal-day:nth-last-child(-n+7) { border-bottom: 0; }
 .cal-day:hover { background: var(--chip); }
+.cal-day:focus-visible { outline-offset: -2px; }
+/* A day's "+" (desktop): in its corner when the pointer is over the day or the day has the focus; it adds an event on it. */
+.cal-day-add { position: absolute; top: 5px; right: 5px; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+  padding: 0; border: 0; border-radius: 13px; background: var(--accent); color: var(--accent-ink); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.cal-day-add .icon { width: 16px; height: 16px; stroke-width: 2.4; }
+.cal-day:hover .cal-day-add, .cal-day:focus-within .cal-day-add { opacity: 1; }
+.cal-day-add:hover { filter: brightness(1.1); }
+@media (pointer: coarse), (max-width: 599px) { .cal-day-add { display: none; } }
+@media (pointer: fine) and (min-width: 600px) {
+  .cal-pill { cursor: pointer; }
+  .cal-pill:hover { background: color-mix(in srgb, var(--cal) 30%, transparent); }
+}
 .cal-day.other { color: var(--muted); }
 .cal-day.other .cal-chips { opacity: .6; }
 .cal-day.picked { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -76,7 +94,24 @@
 .cal-side { gap: 10px; }
 .cal-side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .cal-side-head h3 { margin: 0; font-size: var(--t-md); }
+.cal-side-head { flex-wrap: wrap; }
 .cal-side-head .linkish { min-height: 0; font-size: var(--t-sm); text-decoration: none; }
+.cal-side-acts { display: inline-flex; align-items: center; gap: 14px; margin-left: auto; }
+.cal-side-add { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font: inherit; font-size: var(--t-sm); }
+.cal-side-add .icon { width: 14px; height: 14px; stroke-width: 2.4; }
+
+/* Week on a desktop: an arrow before Monday and one after Sunday; the new week slides in from the side it comes from. */
+.cal-week-wrap { min-width: 0; }
+.cal-week-wrap:focus { outline: none; }
+.cal-week-step { display: none; }
+@media (min-width: 1100px) {
+  .cal-week-wrap { display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; gap: 10px; align-items: center; }
+  .cal-week-wrap.sliding { overflow-x: clip; overflow-clip-margin: 8px; }
+  .cal-week-step { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 22px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
+  .cal-week-step:hover { background: var(--chip); border-color: var(--accent); }
+  .cal-week-step .icon { width: 22px; height: 22px; stroke-width: 2.2; }
+}
 
 /* An event (the day beside the month, a week's day, a day, the list): every word shows (Greg, 27 Nov: "most of the
    explanations are cut off"). Its time, its colour, then its title over whose it is; titles wrap, never "…". */
@@ -126,8 +161,15 @@
 }
 
 /* An event in full, and the form to add or change one (Logos's own sheet). */
-.cal-detail-head { display: flex; align-items: center; gap: 10px; }
-.cal-detail-head .dot { width: 12px; height: 12px; background: var(--cal); }
+/* Every panel: its title, and ✕ in the top-right corner, in line with it. */
+.cal-panel-head { display: flex; align-items: flex-start; gap: 12px; }
+.cal-panel-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; min-height: 40px; }
+.cal-panel-title h2 { margin: 0; font-size: 18px; line-height: 1.3; overflow-wrap: anywhere; }
+.cal-panel-title .dot { flex: none; width: 12px; height: 12px; }
+.cal-x { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin: 0 -8px 0 0; padding: 0;
+  border: 0; border-radius: 20px; background: transparent; color: var(--muted); cursor: pointer; }
+.cal-x:hover { background: var(--chip); color: var(--ink); }
+.cal-x .icon { width: 20px; height: 20px; stroke-width: 2.2; }
 .cal-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
 .cal-facts dt { color: var(--muted); font-size: var(--t-sm); }
 .cal-facts dd { margin: 0; overflow-wrap: anywhere; }
@@ -150,10 +192,13 @@
   /* The bar (narrow phones too, now the Calendar is a tab, 27 Nov): the date whole on its own line; ‹ Today › and Add;
      then Month · Week · Day · List across. */
   .cal-bar { justify-content: flex-start; gap: 8px; }
-  .cal-nav, .cal-tools { display: contents; }
-  .cal-title { order: 1; flex: 1 1 100%; margin: 0; font-size: var(--t-lg); }
-  .cal-nav .cal-step, .cal-nav .cal-today { order: 2; }
-  .cal-tools .cal-add { order: 3; margin-left: auto; }
+  /* Three rows: ‹ the period ›; Today and Add; Month · Week · Day · List. */
+  .cal-nav { order: 1; flex: 1 1 100%; justify-content: space-between; }
+  .cal-tools { display: contents; }
+  .cal-nav .cal-title { flex: 1; margin: 0; font-size: var(--t-lg); text-align: center; }
+  .cal-nav .cal-title-btn { justify-content: center; width: 100%; }
+  .cal-tools .cal-today { order: 2; }
+  .cal-tools .btn.small.cal-add { order: 3; margin-left: auto; }
   .cal-views { order: 4; flex: 1 1 100%; }
   .cal-views button { flex: 1 1 0; justify-content: center; padding: 0 6px; }
   .cal-legend { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }

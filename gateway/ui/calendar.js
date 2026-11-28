@@ -75,16 +75,36 @@ export function daysOf(e) {
   return out;
 }
 
+// Whose calendar an event is in, said the same way wherever it shows (Greg, 28 Nov: "it would be obvious because it
+// says Calendar Béré"): "Your calendar", "Household", "Béré's calendar". Someone else's is never offered to change.
+export function ownerOf(key, name) {
+  if (key === 'personal') return 'Your calendar';
+  if (key === 'household') return 'Household';
+  const n = String(name || key || '').replace(/\s*\(.*\)\s*$/, '');
+  return n ? `${n}'s calendar` : 'Calendar';
+}
+
 // Each calendar's colour: the person's own (or their agent's) colour, Household's, else one of a few spare ones.
 function paletteFor(d, me) {
   const out = {};
   (d.calendars || []).forEach((c, i) => {
     const cls = String(c.key === 'personal' ? me : c.key).replace(/[^a-z0-9_-]/gi, '');
     out[c.key] = { cls, colour: `var(--agent-${cls}, var(--${cls}, ${FALLBACK[i % FALLBACK.length]}))`,
-      name: c.key === 'personal' ? 'Yours' : c.name };
+      name: c.key === 'personal' ? 'Yours' : c.name, owner: ownerOf(c.key, c.name) };
   });
   return out;
 }
+const palOf = (pal, e) => pal[e.calendar] || { cls: '', colour: 'var(--muted)', name: e.who || e.calendar, owner: ownerOf(e.calendar, e.who || e.calendar) };
+// Desktop (a mouse, a window wide enough for names in the month): a click on a day opens it; on a phone a tap picks it.
+const desktop = () => window.matchMedia('(pointer: fine) and (min-width: 600px)').matches;
+const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.dataset.anim === 'off';
+// A new event's time: the next whole hour today, else 09:00; an hour long.
+function defaultTimes(onDay, today) {
+  if (onDay !== today) return ['09:00', '10:00'];
+  const h0 = Math.min(new Date().getHours() + 1, 23);
+  return [`${pad(h0)}:00`, h0 === 23 ? '23:59' : `${pad(h0 + 1)}:00`];
+}
+const CLOSE_ICON = ['M6 6l12 12', 'M18 6L6 18'];
 
 // Events of a range by day, with busy times (what some agents see of others) as "Busy", in time order.
 function byDay(d, hidden) {
@@ -184,10 +204,14 @@ export async function calendarView(root, rest, state) {
   const hidden = loadHidden();
 
   // The period shown is the heading, and a button: it opens the date picker (Greg, 28 Nov: one control fewer in the bar).
+  // Its arrows sit on it, "‹ November 2026 ›", and say what they step by; Today is a button of its own (Greg, 28 Nov:
+  // "Today and the arrows don't make a lot of sense").
   const titleText = h('span', { class: 'cal-title-text', 'aria-live': 'polite' });
-  const prev = h('button', { type: 'button', class: 'btn quiet small cal-step', 'aria-label': 'Earlier' }, icon(['M15 6l-6 6 6 6']));
-  const next = h('button', { type: 'button', class: 'btn quiet small cal-step', 'aria-label': 'Later' }, icon(ICONS.chevron));
+  const prev = h('button', { type: 'button', class: 'btn quiet small cal-step', 'data-step': '-1' }, icon(['M15 6l-6 6 6 6']));
+  const next = h('button', { type: 'button', class: 'btn quiet small cal-step', 'data-step': '1' }, icon(ICONS.chevron));
   const todayBtn = h('button', { type: 'button', class: 'btn quiet small cal-today' }, 'Today');
+  let slide = 0;                        // the week just stepped to slides in from this side (-1 left, 1 right)
+  const wheel = { dx: 0, idle: 0, rest: 0 };   // a trackpad's sideways swipe over the week
   const goTo = h('input', { type: 'date', class: 'cal-goto', 'aria-label': 'Go to a date', tabindex: '-1', value: day });
   const titleBtn = h('button', { type: 'button', class: 'cal-title-btn', title: 'Go to a date', 'aria-haspopup': 'dialog' }, titleText,
     icon(['M6 9l6 6 6-6']));
@@ -202,8 +226,8 @@ export async function calendarView(root, rest, state) {
   const page = h('div', { class: 'page calendar' },
     h('header', { class: 'page-band' }, h('h1', {}, 'Calendar')),
     h('div', { class: 'cal-bar' },
-      h('div', { class: 'cal-nav' }, prev, todayBtn, next, title),
-      h('div', { class: 'cal-tools' }, tabs, addBtn)),
+      h('div', { class: 'cal-nav' }, prev, title, next),
+      h('div', { class: 'cal-tools' }, todayBtn, tabs, addBtn)),
     note, body);
   root.replaceChildren(page);
 
@@ -214,14 +238,22 @@ export async function calendarView(root, rest, state) {
     try { sessionStorage.setItem('logos.last.calendar', want); } catch (e) { /* fine */ }
   };
 
+  // What the arrows step by, for their labels: "Previous week", "Next 4 weeks".
+  const unit = () => (view === 'list' ? `${LIST_DAYS / 7} weeks` : view);
   function drawTitle() {
     const [a, b] = range(), d = parse(day);
+    const yr = (x) => (x.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {});
+    // "November 2026", "23–29 Nov" (or "30 Nov – 6 Dec"), "Saturday 28 Nov": short enough for a 320 px phone.
+    const span = () => (a.getMonth() === b.getMonth()
+      ? `${a.getDate()}–${b.toLocaleDateString([], { day: 'numeric', month: 'short', ...yr(b) })}`
+      : `${a.toLocaleDateString([], { day: 'numeric', month: 'short', ...(a.getFullYear() !== b.getFullYear() ? { year: 'numeric' } : {}) })} – ${b.toLocaleDateString([], { day: 'numeric', month: 'short', ...yr(b) })}`);
     titleText.textContent = view === 'month' ? d.toLocaleDateString([], { month: 'long', year: 'numeric' })
-      : view === 'day' ? dayWords(d, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-        : `${a.toLocaleDateString([], { day: 'numeric', month: 'short' })} – ${b.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`;
+      : view === 'day' ? dayWords(d, { weekday: 'long', day: 'numeric', month: 'short', ...yr(d) }) : span();
+    for (const [btn, word] of [[prev, 'Previous'], [next, 'Next']]) { btn.setAttribute('aria-label', `${word} ${unit()}`); btn.title = `${word} ${unit()}`; }
     for (const t of tabs.children) t.setAttribute('aria-selected', String(t.dataset.view === view));
     goTo.value = day;
     todayBtn.disabled = iso(range()[0]) <= today && today <= iso(range()[1]) && (view !== 'day' || day === today);
+    todayBtn.title = todayBtn.disabled ? `This ${view === 'list' ? 'list' : view} has today in it` : 'Go to today';
   }
 
   function drawLegend(pal) {
@@ -243,14 +275,14 @@ export async function calendarView(root, rest, state) {
   // One event: its time, colour and title, whose, and (in the Day view, where there is room: Greg, 27 Nov) where and
   // its notes. Every word shows: titles wrap, nothing is cut short.
   const eventRow = (e, pal, dayIso, full = false) => {
-    const p = pal[e.calendar] || { cls: '', colour: 'var(--muted)', name: e.who || e.calendar };
+    const p = palOf(pal, e);
     return h('button', { type: 'button', class: `cal-event${full ? ' full' : ''}${e.all_day ? ' all-day' : ''}${e.busy ? ' busy' : ''}`, style: `--cal:${p.colour}`,
       'data-id': e.id || '', onclick: (ev) => { ev.stopPropagation(); details(e, ev.currentTarget); } },
     h('span', { class: 'cal-ev-time' }, whenShort(e, dayIso)),
     h('span', { class: `dot ${p.cls}`, 'aria-hidden': 'true' }),
     h('span', { class: 'cal-ev-main' },
       h('span', { class: 'cal-ev-title' }, e.busy ? `Busy · ${e.who}` : e.title || '(no title)'),
-      h('span', { class: 'cal-ev-who' }, p.name),
+      h('span', { class: 'cal-ev-who' }, p.owner),
       full && e.location ? h('span', { class: 'cal-ev-where' }, placeOf(e.location, true)) : null,
       full && e.notes ? h('span', { class: 'cal-ev-notes' }, e.notes) : null));
   };
@@ -264,24 +296,42 @@ export async function calendarView(root, rest, state) {
     const cells = [];
     for (let d = a; d <= b; d = add(d, 1)) {
       const key = iso(d), evs = map.get(key) || [];
-      const cell = h('button', { type: 'button', role: 'gridcell', class: `cal-day${d.getMonth() !== month ? ' other' : ''}${key === today ? ' today' : ''}${key === selected ? ' picked' : ''}`,
-        'data-day': key, 'aria-label': `${dayWords(d)}: ${evs.length ? `${evs.length} event${evs.length > 1 ? 's' : ''}` : 'nothing on'}`,
+      const words = dayWords(d);
+      // A day is a cell, not a button, so it can hold its "+" (Greg, 28 Nov: on a desktop, a click on a day opens it, its
+      // "+" adds an event on it). Enter or Space on it does what a click does.
+      const plus = h('button', { type: 'button', class: 'cal-day-add', 'aria-label': `Add an event on ${words}`, title: `Add on ${dayWords(d, { weekday: 'short', day: 'numeric', month: 'short' })}` }, icon(ICONS.plus));
+      const cell = h('div', { role: 'gridcell', tabindex: '0', class: `cal-day${d.getMonth() !== month ? ' other' : ''}${key === today ? ' today' : ''}${key === selected ? ' picked' : ''}`,
+        'data-day': key, 'aria-label': `${words}: ${evs.length ? `${evs.length} event${evs.length > 1 ? 's' : ''}` : 'nothing on'}`,
         'aria-current': key === today ? 'date' : null, 'aria-selected': String(key === selected) },
       h('span', { class: 'cal-num' }, String(d.getDate())),
       h('span', { class: 'cal-dots', 'aria-hidden': 'true' }, evs.slice(0, 4).map((e) => h('span', { class: `dot ${(pal[e.calendar] || {}).cls || ''}`, style: `background:${(pal[e.calendar] || {}).colour || 'var(--muted)'}` }))),
-      h('span', { class: 'cal-chips', 'aria-hidden': 'true' }, evs.slice(0, 3).map((e) => h('span', { class: `cal-pill${e.all_day ? ' all-day' : ''}`, style: `--cal:${(pal[e.calendar] || {}).colour || 'var(--muted)'}` },
+      h('span', { class: 'cal-chips', 'aria-hidden': 'true' }, evs.slice(0, 3).map((e, i) => h('span', { class: `cal-pill${e.all_day ? ' all-day' : ''}`, 'data-i': String(i), title: e.busy ? 'Busy' : e.title, style: `--cal:${(pal[e.calendar] || {}).colour || 'var(--muted)'}` },
         // (a space after the time, so a long title can go to the next line instead of out of the cell)
         e.all_day || !(timeOf(e.start) && String(e.start).slice(0, 10) === key) ? '' : [h('span', { class: 'cal-ev-time' }, timeOf(e.start)), ' '], e.busy ? 'Busy' : e.title)),
-      evs.length > 3 ? h('span', { class: 'cal-more' }, `+${evs.length - 3} more`) : null));
-      cell.addEventListener('click', () => { selected = key; if (d.getMonth() !== month) { day = key; load(); } else draw(); });
-      cell.addEventListener('dblclick', () => { day = key; view = 'day'; load(); });
+      evs.length > 3 ? h('span', { class: 'cal-more' }, `+${evs.length - 3} more`) : null), plus);
+      plus.addEventListener('click', (ev) => { ev.stopPropagation(); editor(null, key, plus); });
+      plus.addEventListener('keydown', (ev) => ev.stopPropagation());
+      const pick = (ev) => {
+        const pill = ev && ev.target.closest && ev.target.closest('.cal-pill');
+        if (desktop()) {
+          if (pill) { details(evs[Number(pill.dataset.i)], cell); return; }    // an event in the cell opens that event
+          history.pushState(null, '', `#/calendar/day/${key}`);              // Back comes back to the month
+          day = key; selected = key; view = 'day'; load();
+          return;
+        }
+        selected = key; if (d.getMonth() !== month) { day = key; load(); } else draw();
+      };
+      cell.addEventListener('click', pick);
+      cell.addEventListener('keydown', (ev) => { if (ev.target === cell && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); pick(null); } });
       cells.push(cell);
     }
     const grid = h('div', { class: 'cal-month', role: 'grid', 'aria-label': titleText.textContent }, heads, cells);
     const sd = parse(selected);
+    const onSel = h('button', { type: 'button', class: 'linkish small cal-side-add' }, icon(ICONS.plus), `Add on ${dayWords(sd, { weekday: 'short', day: 'numeric' })}`);
+    onSel.addEventListener('click', () => editor(null, selected, onSel));
     const side = h('section', { class: 'cal-side card', 'aria-label': dayWords(sd) },
       h('div', { class: 'cal-side-head' }, h('h3', {}, selected === today ? `Today · ${dayWords(sd, { day: 'numeric', month: 'long' })}` : dayWords(sd)),
-        h('a', { class: 'linkish small', href: `#/calendar/day/${selected}` }, 'Open day')),
+        h('span', { class: 'cal-side-acts' }, onSel, h('a', { class: 'linkish small', href: `#/calendar/day/${selected}` }, 'Open day'))),
       dayList(map.get(selected), pal, selected));
     swipe(grid);
     // The key under the month, above the day's list (Greg, 27 Nov).
@@ -301,8 +351,39 @@ export async function calendarView(root, rest, state) {
     }
     if (!out.length) out.push(none(`Nothing in the ${LIST_DAYS} days from ${dayWords(parse(day), { day: 'numeric', month: 'long' })}.`));
     const box = h('div', { class: cls }, out);
-    if (cls === 'cal-week') swipe(box);
-    return box;
+    if (cls !== 'cal-week') return box;
+    swipe(box);
+    // On a desktop, an arrow before Monday and after Sunday (Greg, 28 Nov): one week back or on, the new week sliding in
+    // from the side it comes from. Left and Right do the same while the week has the focus; so does a sideways swipe
+    // on a trackpad. They are the period's arrows again, so the two always agree.
+    const arrow = (n) => {
+      const label = `${n < 0 ? 'Previous' : 'Next'} week`;
+      const b = h('button', { type: 'button', class: 'cal-week-step', 'data-nav': n < 0 ? 'week-prev' : 'week-next', 'aria-label': label, title: label },
+        icon(n < 0 ? ['M15 6l-6 6 6 6'] : ICONS.chevron));
+      b.addEventListener('click', () => step(n));
+      return b;
+    };
+    const wrap = h('div', { class: 'cal-week-wrap', tabindex: '-1', 'aria-label': `Week of ${dayWords(days[0], { day: 'numeric', month: 'long' })}` }, arrow(-1), box, arrow(1));
+    wrap.addEventListener('keydown', (e) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || !['ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      e.preventDefault(); e.stopPropagation(); step(e.key === 'ArrowLeft' ? -1 : 1);
+    });
+    wrap.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      e.preventDefault();
+      const t = performance.now(), w = wheel;
+      if (t - w.idle > 300) w.dx = 0;
+      w.idle = t; w.dx += e.deltaX;
+      // one week per swipe: what the trackpad sends after (its momentum) waits until it has stopped
+      if (Math.abs(w.dx) > 120 && t > w.rest) { w.rest = t + 700; const n = w.dx > 0 ? 1 : -1; w.dx = 0; step(n); }
+      else if (t <= w.rest) w.rest = t + 300;
+    }, { passive: false });
+    if (slide && !still()) {
+      wrap.classList.add('sliding');
+      box.animate([{ transform: `translateX(${slide * 56}px)`, opacity: 0.25 }, { transform: 'none', opacity: 1 }], { duration: 220, easing: 'cubic-bezier(.2, .8, .2, 1)' })
+        .finished.then(() => wrap.classList.remove('sliding'), () => wrap.classList.remove('sliding'));
+    }
+    return wrap;
   }
 
   function draw() {
@@ -322,8 +403,11 @@ export async function calendarView(root, rest, state) {
     const [a, b] = range();
     const days = []; for (let d = a; d <= b; d = add(d, 1)) days.push(d);
     // A redraw keeps the place: what had the focus has it again.
-    const had = document.activeElement && body.contains(document.activeElement)
-      ? (document.activeElement.dataset.day ? `[data-day="${document.activeElement.dataset.day}"]` : document.activeElement.dataset.id ? `[data-id="${CSS.escape(document.activeElement.dataset.id)}"]` : '') : '';
+    const act = document.activeElement;
+    const had = act && body.contains(act)
+      ? (act.dataset.nav ? `[data-nav="${act.dataset.nav}"]` : act.classList.contains('cal-day-add') && act.parentElement.dataset.day ? `[data-day="${act.parentElement.dataset.day}"] .cal-day-add`
+        : act.dataset.day ? `[data-day="${act.dataset.day}"]` : act.dataset.id ? `[data-id="${CSS.escape(act.dataset.id)}"]`
+          : act.closest('.cal-week-wrap') ? '.cal-week-wrap' : '') : '';
     // The key goes under the calendar (Greg, 27 Nov): under the month grid, else under the days.
     const keyed = (el) => h('div', { class: 'cal-keyed' }, el, legend);
     // Day and List on a wide screen (Greg, 28 Nov: "the placement of everything isn't very good"): the words in a
@@ -335,8 +419,9 @@ export async function calendarView(root, rest, state) {
       : view === 'week' ? keyed(drawDays(days, map, pal))
         : view === 'day' ? aside(h('div', { class: 'cal-dayview card' }, dayList(map.get(day), pal, day, 'Nothing on this day.', true)))
           : aside(drawDays(days, map, pal, { skipEmpty: true, cls: 'cal-agenda' })));
+    slide = 0;
     addBtn.hidden = false;
-    if (had) { const el = body.querySelector(had); if (el) el.focus({ preventScroll: true }); }
+    if (had) { const el = body.querySelector(had) || (had.startsWith('[data-id') ? body.querySelector('.cal-week-wrap') : null); if (el) el.focus({ preventScroll: true }); }
   }
 
   // Fast (Greg, 27 Nov): what this device kept draws at once; a fresh copy (when the kept one is older than five
@@ -386,12 +471,13 @@ export async function calendarView(root, rest, state) {
   };
   const step = (n) => {
     day = stepped(n);
+    slide = view === 'week' ? n : 0;
     if (view === 'month') selected = parse(today).getMonth() === parse(day).getMonth() && parse(today).getFullYear() === parse(day).getFullYear() ? today : day;
     load();
   };
   prev.addEventListener('click', () => step(-1));
   next.addEventListener('click', () => step(1));
-  todayBtn.addEventListener('click', () => { day = today; selected = today; load(); });
+  todayBtn.addEventListener('click', () => { slide = view === 'week' ? Math.sign(parse(today) - parse(day)) : 0; day = today; selected = today; load(); });
   goTo.addEventListener('change', () => { if (validDay(goTo.value)) { day = goTo.value; selected = day; load(); } });
   for (const t of tabs.children) t.addEventListener('click', () => {
     view = t.dataset.view;
@@ -399,7 +485,7 @@ export async function calendarView(root, rest, state) {
     try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* fine */ }
     load();
   });
-  addBtn.addEventListener('click', () => editor(null, view === 'month' ? selected : day));
+  addBtn.addEventListener('click', () => editor(null, view === 'month' ? selected : day, addBtn));
   // On a phone, a swipe across the month or week moves to the next or the last one.
   function swipe(el) {
     let s = null;
@@ -429,30 +515,38 @@ export async function calendarView(root, rest, state) {
     return r && r.ok && !d.error ? { ok: true, d } : { ok: false, message: d.message || 'The calendar could not be reached just now.' };
   }
 
-  // ── One event in full ──────────────────────────────────────────────────────────────────────
-  function layer(label, opener) {
+  // ── A panel: an event in full, or the form ──────────────────────────────────────────────────
+  // Its title, and in the top-right corner the one way to close it, ✕ (Greg, 28 Nov: "the close button is weird").
+  // Escape, a tap outside it, or on a phone a swipe down on its top close it too.
+  function layer(label, opener, ...head) {
     const box = h('div', { class: 'ask-layer cal-layer' });
-    const close = () => { box.remove(); document.removeEventListener('keydown', key); if (opener && opener.isConnected) opener.focus(); };
+    const close = () => { box.remove(); document.removeEventListener('keydown', key); if (opener && opener.isConnected) opener.focus({ preventScroll: true }); };
     const key = (e) => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', key);
-    const panel = h('div', { class: 'ask-panel cal-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': label });
+    const x = h('button', { type: 'button', class: 'cal-x', 'aria-label': 'Close', title: 'Close', onclick: close }, icon(CLOSE_ICON));
+    const top = h('div', { class: 'cal-panel-head' }, h('div', { class: 'cal-panel-title' }, head), x);
+    const panel = h('div', { class: 'ask-panel cal-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': label }, top);
+    let y0 = null;
+    top.addEventListener('touchstart', (e) => { y0 = e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });
+    top.addEventListener('touchend', (e) => { if (y0 != null && e.changedTouches[0].clientY - y0 > 60) close(); y0 = null; }, { passive: true });
     box.append(h('div', { class: 'ask-scrim', onclick: close }), panel);
     document.body.append(box);
     return { panel, close };
   }
   function details(e, opener) {
-    const pal = paletteFor(data, me), p = pal[e.calendar] || { cls: '', colour: 'var(--muted)', name: e.who || e.calendar };
-    const { panel, close } = layer(e.title || 'Event', opener);
+    const pal = paletteFor(data, me), p = palOf(pal, e);
+    const { panel, close } = layer(e.title || 'Event', opener,
+      h('span', { class: `dot ${p.cls}`, style: `background:${p.colour}`, 'aria-hidden': 'true' }), h('h2', {}, e.busy ? 'Busy' : e.title || '(no title)'));
+    // Someone else's calendar needs no saying more than whose it is: it simply has no Change or Cancel.
     const why = e.busy ? `Only the time ${e.who} is busy is shared.`
-      : e.repeats ? 'A repeating event: change it on your phone.'
-        : e.read_only || !['personal', 'household'].includes(e.calendar) ? `${p.name}'s calendar: you can see it, not change it.`
-          : !canChange(e) ? 'To change it, ask your agent.' : '';
+      : e.repeats && canChange({ ...e, repeats: false }) ? 'A repeating event: change it on your phone.'
+        : ['personal', 'household'].includes(e.calendar) && !canChange(e) && !e.repeats ? 'To change it, ask your agent.' : '';
     const msg = h('p', { class: 'when', role: 'status' });
     const btns = [];
     if (canChange(e)) {
-      btns.push(h('button', { type: 'button', class: 'btn', onclick: () => { close(); editor(e); } }, 'Change'));
+      btns.push(h('button', { type: 'button', class: 'btn', onclick: () => { close(); editor(e, null, opener); } }, 'Change'));
       btns.push(h('button', { type: 'button', class: 'btn danger', onclick: async () => {
-        if (!(await ask({ title: 'Cancel this event?', text: `“${e.title}” comes off ${p.name === 'Yours' ? 'your calendar' : p.name} for everyone.`, yes: 'Cancel event', danger: true }))) return;
+        if (!(await ask({ title: 'Cancel this event?', text: `“${e.title}” comes off ${e.calendar === 'personal' ? 'your calendar' : p.owner} for everyone.`, yes: 'Cancel event', danger: true }))) return;
         const r = await send('cancel', { id: e.id });
         if (!r.ok) { msg.textContent = r.message; return; }
         close(); changed(`“${e.title}” is cancelled.`);
@@ -460,42 +554,42 @@ export async function calendarView(root, rest, state) {
     } else if (!e.busy && data.agent && !(data.can_change || []).length) {
       btns.push(h('a', { class: 'btn quiet', href: `#/chat/${data.agent}`, onclick: () => draftFor(data.agent, `About “${e.title}” on ${dayWords(parse(e.start))}: `) }, 'Ask your agent'));
     }
-    btns.push(h('button', { type: 'button', class: 'btn quiet', onclick: close }, 'Close'));
-    panel.append(
-      h('div', { class: 'cal-detail-head', style: `--cal:${p.colour}` }, h('span', { class: `dot ${p.cls}`, 'aria-hidden': 'true' }), h('h2', {}, e.busy ? 'Busy' : e.title || '(no title)')),
+    panel.append(...[
       h('dl', { class: 'cal-facts' },
         h('dt', {}, 'When'), h('dd', {}, whenLong(e)),
-        h('dt', {}, 'Calendar'), h('dd', {}, p.name),
+        h('dt', {}, 'Calendar'), h('dd', { class: 'cal-owner' }, p.owner),
         e.location ? [h('dt', {}, 'Where'), h('dd', {}, placeOf(e.location))] : null,
         e.repeats ? [h('dt', {}, 'Repeats'), h('dd', {}, 'Yes')] : null,
         e.notes ? [h('dt', {}, 'Notes'), h('dd', { class: 'cal-notes' }, e.notes)] : null),
       why ? h('p', { class: 'when' }, why) : null, msg,
-      h('div', { class: 'row' }, btns));
-    focusIfKeyboard(panel.querySelector('button'));
+      btns.length ? h('div', { class: 'row' }, btns) : null].filter(Boolean));
+    focusIfKeyboard(panel.querySelector('.row button, .row a') || panel.querySelector('.cal-x'));
   }
 
   // ── Add or change one ──────────────────────────────────────────────────────────────────────
-  function editor(e, onDay) {
+  // Only ever the calendars this person can change (theirs and Household), never someone else's.
+  function editor(e, onDay, opener) {
     if (!data || data.error) return;
-    const can = data.can_change || [];
+    const can = (data.can_change || []).filter((k) => k === 'personal' || k === 'household');
     if (!can.length) {                         // no agent of their own with their calendar: the words go to its chat
       if (!data.agent) { note.textContent = 'There is no agent to add it for you.'; return; }
       draftFor(data.agent, `Add an event on ${dayWords(parse(onDay || day))}: `);
       location.hash = `#/chat/${data.agent}`;
       return;
     }
-    const { panel, close } = layer(e ? 'Change event' : 'Add an event', addBtn);
+    const { panel, close } = layer(e ? 'Change event' : 'Add an event', opener || addBtn, h('h2', {}, e ? 'Change event' : 'Add an event'));
     const allDay0 = e ? !!e.all_day : false;
     const startDay = e ? String(e.start).slice(0, 10) : onDay || day;
+    const [from0, to0] = defaultTimes(startDay, today);
     const endDay = e ? (e.all_day ? iso(add(parse(e.end || e.start), e.end ? -1 : 0)) : String(e.end || e.start).slice(0, 10)) : startDay;
     const f = {
       title: h('input', { type: 'text', id: 'cal-f-title', maxlength: '200', required: true, value: e ? e.title : '', autocomplete: 'off' }),
       calendar: h('select', { id: 'cal-f-cal', disabled: e ? true : null },
-        can.map((k) => h('option', { value: k, selected: e ? e.calendar === k : k === 'personal' ? true : null }, k === 'personal' ? 'Yours' : 'Household'))),
+        can.map((k) => h('option', { value: k, selected: e ? e.calendar === k : k === 'personal' ? true : null }, ownerOf(k)))),
       allDay: h('input', { type: 'checkbox', id: 'cal-f-allday', checked: allDay0 ? true : null, disabled: e ? true : null }),
       date: h('input', { type: 'date', id: 'cal-f-date', required: true, value: startDay }),
-      from: h('input', { type: 'time', id: 'cal-f-from', value: e && !e.all_day ? timeOf(e.start) : '09:00' }),
-      to: h('input', { type: 'time', id: 'cal-f-to', value: e && !e.all_day ? timeOf(e.end) : '10:00' }),
+      from: h('input', { type: 'time', id: 'cal-f-from', value: e && !e.all_day ? timeOf(e.start) : from0 }),
+      to: h('input', { type: 'time', id: 'cal-f-to', value: e && !e.all_day ? timeOf(e.end) : to0 }),
       endDate: h('input', { type: 'date', id: 'cal-f-enddate', value: endDay }),
       location: h('input', { type: 'text', id: 'cal-f-where', maxlength: '300', value: e ? e.location || '' : '', autocomplete: 'off' }),
       notes: h('textarea', { id: 'cal-f-notes', rows: '3', maxlength: '1000' }, e ? e.notes || '' : ''),
@@ -526,7 +620,6 @@ export async function calendarView(root, rest, state) {
       day = f.date.value; selected = day;
       changed(e ? `“${payload.title}” is changed.` : `“${payload.title}” is in ${f.calendar.value === 'household' ? 'Household' : 'your calendar'}.`);
     } },
-    h('h2', {}, e ? 'Change event' : 'Add an event'),
     h('label', { class: 'field-label', for: 'cal-f-title' }, 'What', f.title),
     h('div', { class: 'cal-form-row' },
       h('label', { class: 'field-label', for: 'cal-f-cal' }, 'Calendar', f.calendar),
@@ -536,7 +629,7 @@ export async function calendarView(root, rest, state) {
     h('label', { class: 'field-label', for: 'cal-f-where' }, 'Where (optional)', f.location),
     h('label', { class: 'field-label', for: 'cal-f-notes' }, 'Notes (optional)', f.notes),
     e ? h('p', { class: 'when' }, 'Its calendar, and whether it is all day, stay as they are.') : null,
-    msg, h('div', { class: 'row' }, save, h('button', { type: 'button', class: 'btn quiet', onclick: close }, 'Close')));
+    msg, h('div', { class: 'row' }, save));
     panel.append(form);
     focusIfKeyboard(f.title);
   }
@@ -567,7 +660,7 @@ export function monthWidget({ compact = () => false } = {}) {
         h('span', { class: 'home-time' }, e.all_day || String(e.start).slice(0, 10) !== today ? 'All day' : timeOf(e.start)),
         h('span', { class: 'dot', style: `background:${(pal[e.calendar] || {}).colour || 'var(--muted)'}`, 'aria-hidden': 'true' }),
         h('span', { class: 'home-title' }, e.busy ? 'Busy' : e.title),
-        h('span', { class: 'home-meta' }, (pal[e.calendar] || {}).name || '')))) : none('Nothing today.')].filter(Boolean));
+        h('span', { class: 'home-meta' }, e.busy ? e.who : palOf(pal, e).owner)))) : none('Nothing today.')].filter(Boolean));
   }
   return {
     sec,
