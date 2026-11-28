@@ -44,3 +44,16 @@ def test_registers_both_hooks_and_forgets_old_sessions(tmp_path, monkeypatch):
         jl._remember(session_id=f"s{i}", platform="cron", user_message=MARKED)
     assert len(jl._jobs) == jl.KEEP and "s0" not in jl._jobs
     assert not jl.blocked("resend_messages") and jl.blocked("noticeboard.send_message")
+
+
+def test_the_same_call_over_and_over_is_refused_after_three(tmp_path, monkeypatch):
+    """28 Nov: a noticeboard check read the same empty note 150 times in 13 minutes."""
+    jl = load(tmp_path, monkeypatch)
+    note = {"path": "/opt/data/brain/inbox/2026-11-23.md"}
+    got = [jl._check(tool_name="read_file", args=dict(note), session_id="check-run") for _ in range(5)]
+    assert got[:3] == [None, None, None]
+    assert got[3]["action"] == "block" and "3 times" in got[3]["message"] and got[4]["action"] == "block"
+    assert jl._check(tool_name="read_file", args={"path": "/opt/data/brain/inbox/2026-11-28.md"}, session_id="check-run") is None
+    assert jl._check(tool_name="read_file", args=dict(note), session_id="another-chat") is None
+    assert jl.repeated("check-run", "read_file", note, now=10 ** 10) == 1          # a new task later starts again
+    assert "repeat_refused" in (tmp_path / "logs" / "job-limits.log").read_text()

@@ -60,7 +60,44 @@ def blocked(tool_name: str) -> bool:
     return any(name == t or name.endswith("_" + t) or name.endswith("." + t) for t in BLOCKED_TOOLS)
 
 
-def _check(tool_name="", session_id="", **_):
+# ── the same call again and again (Greg, 28 Nov) ─────────────────────────────────────────────
+# A noticeboard check read the same empty note 150 times in 13 minutes (each time the whole
+# conversation went back to the model), holding up a question at the house speaker. Any session:
+# a call repeated with the very same arguments more than REPEAT_LIMIT times within one task (a gap
+# of REPEAT_GAP_S starts a new one) is refused, and the model is told to use what it has.
+REPEAT_LIMIT = 3
+REPEAT_GAP_S = 600
+REPEAT_REFUSAL = ("Not run: you have already made this exact call {n} times in this task, and it gave the same "
+                  "answer each time (an empty or missing file stays empty). Do not call it again. Use what you "
+                  "have, and finish your answer now.")
+_calls: dict = {}                          # (session, tool, args) -> [count, last seen]
+
+
+def repeated(session_id: str, tool_name: str, args, now: float = None) -> int:
+    """How many times this exact call has now been asked for in this session's task (this one included)."""
+    now = time.time() if now is None else now
+    try:
+        key_args = json.dumps(args, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        key_args = str(args)
+    key = (str(session_id), str(tool_name), key_args)
+    with _lock:
+        seen = _calls.get(key)
+        n = 1 if seen is None or now - seen[1] > REPEAT_GAP_S else seen[0] + 1
+        _calls[key] = [n, now]
+        if len(_calls) > KEEP * 4:
+            for k, _v in sorted(_calls.items(), key=lambda kv: kv[1][1])[: len(_calls) - KEEP * 2]:
+                _calls.pop(k, None)
+    return n
+
+
+def _check(tool_name="", args=None, session_id="", **_):
+    if session_id:
+        n = repeated(session_id, tool_name, args)
+        if n > REPEAT_LIMIT:
+            _log("repeat_refused", tool=tool_name, times=n, session=str(session_id)[:16])
+            logger.warning("job-limits: %s refused, the same call %d times", tool_name, n)
+            return {"action": "block", "message": REPEAT_REFUSAL.format(n=n - 1)}
     if not blocked(tool_name):
         return None
     with _lock:
