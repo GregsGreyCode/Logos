@@ -26,6 +26,13 @@ const CRON_ROOT = /^Hermes\s+[—–-]\s+(\S+)\s*$/;
 const JOB_TITLES = { 'morning-briefing': 'Morning briefing', 'morning-briefing-weekend': 'Morning briefing',
   'daily-question': 'Daily question', 'weekly-digest': 'Weekly digest', 'changes-daily': 'What changed',
   'changes-week': 'What changed this week', 'noticeboard-check': 'Waiting on you', 'noticeboard-urgent': 'Urgent' };
+// The quoted line(s) a reply starts with ("> <Name> …" then a blank line: the Matrix reply fallback), left out
+// when the message is shown: the quote is drawn from the message it answers instead.
+export function stripReplyFallback(t) {
+  const m = /^(?:> [^\n]*\n)+\n/.exec(t);
+  return m ? t.slice(m[0].length) : t;
+}
+
 export const jobTitle = (job) => JOB_TITLES[job] || (job.charAt(0).toUpperCase() + job.slice(1)).replace(/[-_]+/g, ' ');
 const cronJob = (ev) => (ev && ev.getType && ev.getType() === 'm.room.message' && CRON_ROOT.exec(String(ev.getContent()?.body || ''))?.[1]) || null;
 const titleOf = (ev) => (ev && ev.isDecryptionFailure && ev.isDecryptionFailure()
@@ -177,6 +184,19 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const attach = h('button', { type: 'button', class: 'mx-attach', 'aria-label': 'Add photos or files', title: 'Add photos or files',
     onclick: () => picker.click() }, icon(ICONS.clip));
   const pending = h('div', { class: 'mx-pending', hidden: true });
+  // Replying to one message (Greg, 28 Nov): its quote above the box, ✕ to drop it; the message sent carries
+  // m.in_reply_to (and the quoted line in its text, so the agent reads which message it answers).
+  let replyTo = null;                        // { id, name, text }
+  const replyBar = h('div', { class: 'mx-reply-bar', hidden: true, role: 'status' });
+  function setReply(r) {
+    replyTo = r;
+    replyBar.hidden = !r;
+    replyBar.replaceChildren(...(r ? [h('div', { class: 'mx-reply-what' }, h('span', { class: 'mx-reply-label' }, `Replying to ${r.name}`),
+      h('span', { class: 'mx-reply-text' }, r.text)),
+    h('button', { type: 'button', class: 'mx-reply-x', 'aria-label': 'Do not reply to it', title: 'Do not reply to it', onclick: () => { setReply(null); input.focus(); } }, '✕')] : []));
+    if (r) input.focus();
+  }
+  const snippet = (t) => { const one = stripReplyFallback(String(t || '')).replace(/\s+/g, ' ').trim(); return one.length > 120 ? `${one.slice(0, 117)}…` : one; };
   let files = [];
   function drawPending() {
     pending.hidden = !files.length;
@@ -296,7 +316,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         // The one agent bar (UI review, 28 Nov); inside a thread, its title with a way back.
         headBar || crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : pageTitle,
         ...(headBar ? [] : [sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null, ...(sideBits.extraTools || [])])),
-      group ? null : chipsRow, log, thinkingRow, note, modelLine, pending, form),
+      group ? null : chipsRow, log, thinkingRow, note, modelLine, replyBar, pending, form),
     ...[sideBits.side, sideBits.sideScrim].filter(Boolean));
 
   // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
@@ -496,7 +516,20 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         h('div', {}, h('span', { class: 'mx-speaker-label' }, `${typeof sp.who === 'string' && sp.who ? `${sp.who} at the house speaker` : 'Heard at the house speaker'}${sp.late ? ' · answered here' : ''}`),
           h('q', { class: 'mx-speaker-heard' }, sp.heard))),
       ...markdown(cut >= 0 ? all.slice(cut + 2) : all)];
-    } else body = mine ? [String(content.body || '')] : markdown(String(content.body || ''));
+    } else {
+      const plainBody = stripReplyFallback(String(content.body || ''));
+      body = mine ? [plainBody] : markdown(plainBody);
+    }
+    const inReplyTo = content['m.relates_to']?.['m.in_reply_to']?.event_id;
+    if (inReplyTo) {
+      const orig = room.findEventById(inReplyTo);
+      const what = orig ? snippet((edits.get(inReplyTo) || orig.getContent()).body) : 'an earlier message';
+      body.unshift(h('button', { type: 'button', class: 'mx-quote', title: 'Show that message', onclick: (e) => {
+        e.stopPropagation();
+        const el = log.querySelector(`[data-ev="${CSS.escape(inReplyTo)}"]`);
+        if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); }
+      } }, h('span', { class: 'mx-quote-name' }, orig ? nameOf(orig.getSender()) : ''), h('span', { class: 'mx-quote-text' }, what)));
+    }
     const rx = [...(reactions.get(ev.getId()) || [])];
     const seen = mine && rx.some(([k, r]) => ACK.has(k) && r.n > (r.mine ? 1 : 0));
     const chips = rx.filter(([k, r]) => !(mine && ACK.has(k) && !r.mine));
@@ -504,8 +537,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // "Thinking ›" under a reply only with Settings > Show thinking on (Greg, 21 Nov: off by default).
     const think = ev.getSender() === agent.matrix_id && kind === 'm.text' && content.body && getPref('thinking', false) ? thinking(String(content.body)) : null;
     const canReact = ev.getId() && !ev.getId().startsWith('~') && !(ev.isDecryptionFailure && ev.isDecryptionFailure());
-    const bubble = h('div', { class: `msg ${mine ? 'user' : 'assistant'}${mine || fromAgent ? '' : ' person'}` }, ...body);
-    const text = String(content.body || '');
+    const bubble = h('div', { class: `msg ${mine ? 'user' : 'assistant'}${mine || fromAgent ? '' : ' person'}`, 'data-ev': ev.getId() || '' }, ...body);
+    const text = stripReplyFallback(String(content.body || ''));
     // Long replies fold, but not the newest one while it is the last thing said and under 10 minutes old
     // (Greg, 23 Nov: a question at the end of a long answer was hidden while it waited on him).
     const fresh = ev === latestShown && Date.now() - ev.getTs() < 10 * 60000;
@@ -518,7 +551,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       bubble.classList.add('foldable');
       bubble.setAttribute('role', 'button'); bubble.tabIndex = 0; bubble.setAttribute('aria-expanded', String(!folded));
       bubble.setAttribute('aria-label', folded ? 'Long message, tap to read it all' : 'Long message, tap to fold it');
-      bubble.addEventListener('click', (e) => { if (!e.target.closest('a, button') && !String(getSelection())) flip(); });
+      bubble.addEventListener('click', (e) => {
+        // Folded: a tap opens it. Open: a tap brings the reactions (below), whose row has Fold.
+        if (folded && !e.target.closest('a, button') && !String(getSelection())) { e.stopImmediatePropagation(); flip(); }
+      });
       bubble.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === bubble) { e.preventDefault(); flip(); } });
     }
     // A folded message that asks something shows its question under the fold, so it is never missed.
@@ -543,11 +579,16 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       bubble.addEventListener('click', openFail);
       if (failMenuFor === ev) turn.insertBefore(failMenu(ev), bubble.nextSibling);
     }
-    if (canReact) {
-      const open = () => { pickerFor = ev.getId(); draw(false); };
+    if (canReact && !(mine && ev.status === 'not_sent')) {
+      const open = () => { pickerFor = pickerFor === ev.getId() ? null : ev.getId(); draw(false); };
       bubble.append(h('button', { type: 'button', class: 'mx-react-open', 'aria-label': 'React to this message', title: 'React', onclick: (e) => { e.stopPropagation(); open(); } }, '☺'));
       longPress(bubble, open);
-      if (pickerFor === ev.getId()) turn.insertBefore(pickerOf(ev, new Map(rx.map(([k, r]) => [k, r.mine])), String(content.body || '')), bubble.nextSibling);
+      // A tap (or click) on the message brings the reactions too (Greg, 28 Nov), not only ☺ and a long press;
+      // not on a link or a button in it, nor when text is being selected to copy.
+      bubble.classList.add('tappable');
+      bubble.addEventListener('click', (e) => { if (!e.target.closest('a, button, summary, audio, video, img') && !String(getSelection())) open(); });
+      if (pickerFor === ev.getId()) turn.insertBefore(pickerOf(ev, new Map(rx.map(([k, r]) => [k, r.mine])), text,
+        { name: nameOf(ev.getSender()), fold: long && !folded ? () => { unfolded.delete(ev.getId()); pickerFor = null; draw(false); } : null }), bubble.nextSibling);
     }
     return turn;
   }
@@ -573,18 +614,20 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   let pickerFor = null;
   const takenBack = new Set();               // your reactions taken back here, gone from the screen at once
   function closePicker() { if (pickerFor) { pickerFor = null; draw(false); } }
-  function pickerOf(ev, have, text) {
+  function pickerOf(ev, have, text, { name = '', fold = null } = {}) {
     const row = h('div', { class: 'mx-picker', role: 'menu', 'aria-label': 'React' },
       ...QUICK.map((k) => h('button', { type: 'button', role: 'menuitem', class: have.get(k) ? 'mine' : '', 'aria-label': QUICK_HINT[k] || `React ${k}`, title: QUICK_HINT[k] || '',
         'aria-pressed': String(!!have.get(k)), onclick: () => react(ev, k, have.get(k) || null) }, k)),
       text && navigator.clipboard ? h('button', { type: 'button', role: 'menuitem', class: 'mx-copy', onclick: async () => {
         closePicker();
         try { await navigator.clipboard.writeText(text.trim()); note.textContent = 'Copied.'; } catch { note.textContent = 'Could not copy.'; }
-      } }, 'Copy') : null);
+      } }, 'Copy') : null,
+      h('button', { type: 'button', role: 'menuitem', class: 'mx-reply', onclick: () => { closePicker(); setReply({ id: ev.getId(), name: name || 'them', text: snippet(text) || 'a message' }); } }, 'Reply'),
+      fold ? h('button', { type: 'button', role: 'menuitem', class: 'mx-fold', onclick: fold }, 'Fold') : null);
     requestAnimationFrame(() => { if (row.isConnected && !row.contains(document.activeElement)) row.querySelector('button')?.focus({ preventScroll: true }); });
     return row;
   }
-  const outside = (e) => { if (pickerFor && !e.target.closest('.mx-picker, .mx-react-open')) closePicker(); };
+  const outside = (e) => { if (pickerFor && !e.target.closest('.mx-picker, .mx-react-open, .msg.tappable')) closePicker(); };
   const escape = (e) => { if (e.key === 'Escape') closePicker(); };
   document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
   off.push(() => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); });
@@ -807,6 +850,12 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     if (!text || !room) return;
     // A voice message carries its length and shape beside the words (agents ignore it; Element X shows plain text).
     const extra = spoken && spoken.seconds > 0 ? { 'org.logos.voice': { seconds: spoken.seconds, wave: spoken.wave || [] } } : {};
+    const quoting = replyTo;
+    if (quoting) {
+      extra['m.relates_to'] = { 'm.in_reply_to': { event_id: quoting.id } };
+      text = `> <${quoting.name}> ${quoting.text}\n\n${text}`;
+      setReply(null);
+    }
     input.value = ''; grow();
     idle();
     note.textContent = '';
@@ -819,7 +868,12 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         return;
       }
       if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text, ...extra });
-      else if (group) await c.sendMessage(room.roomId, { ...groupMessage(text), ...extra });
+      else if (group) {
+        // The quote goes before the names in a group, so the agents' "@Name:" prefix stays first after it.
+        const g = groupMessage(quoting ? text.slice(text.indexOf('\n\n') + 2) : text);
+        if (quoting) g.body = `> <${quoting.name}> ${quoting.text}\n\n${g.body}`;
+        await c.sendMessage(room.roomId, { ...g, ...extra });
+      }
       else await c.sendMessage(room.roomId, { msgtype: 'm.text', body: text, ...extra });
     } catch (e) {
       // The failed message stays in the chat with its ! (retried by itself, or held to retry), as in
