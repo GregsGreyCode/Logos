@@ -313,12 +313,15 @@ def test_the_name_is_found_in_what_speech_to_text_heard():
     from gateway import wake
     assert wake.name_words("Hey Finn") == ["finn"] and wake.name_words("Hey Home") == ["home"]
     assert wake.name_words("Finn") == ["finn"]
-    for heard in ("Hey Finn.", "hey fin", "Hey, Finn's", "Finn", "Fin.", "A Thing What is on today.", "Afin what"):
+    for heard in ("Hey Finn.", "hey fin", "Hey, Finn's", "Hi Finn", "Afin what", "OK Finn"):
         assert wake.says_name(heard, "Hey Finn"), heard
-    for heard in ("", "Hey.", "the fun bit", "I'm in", "been there", "Hey, how are you?"):
+    # 28 Nov: in a conversation, "thing", "fine" or a bare name are not a call.
+    for heard in ("", "Hey.", "the fun bit", "I'm in", "been there", "Hey, how are you?", "the thing is",
+                  "a fine day", "I think so", "Finn said so", "it's fine", "hey, that thing"):
         assert not wake.says_name(heard, "Hey Finn"), heard
+    assert wake.says_name("Finn", "Finn") and wake.says_name("fin", "Finn")
     assert wake.says_name("hey home", "Hey Home") and not wake.says_name("hey hello", "Hey Home")
-    assert wake.says_name("hey ad am", "Hey Adam")                    # a name heard as two words
+    assert wake.says_name("hey mira", "Hey Mira") and not wake.says_name("a mirror", "Hey Mira")
 
 
 def test_the_check_address_and_audio_for_it():

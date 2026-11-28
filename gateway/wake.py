@@ -117,12 +117,14 @@ def name_words(phrase: str) -> List[str]:
 
 
 def sound(word: str) -> str:
-    """A word as it sounds, roughly, so speech-to-text's spelling does not matter: "th" and "ph" as "f"
-    (TH-fronting, common in British English: "Finn" came back as "Thing"), doubled letters as one, a
-    final "ng" as "n"."""
-    w = re.sub(r"(th|ph)", "f", word.lower())
+    """A word as it sounds, roughly, so speech-to-text's spelling does not matter: "ph" as "f", doubled
+    letters as one, a final "ng" as "n". ("th" as "f" let "thing" in ordinary talk wake Finn, 28 Nov.)"""
+    w = re.sub(r"ph", "f", word.lower())
     w = re.sub(r"(.)\1+", r"\1", w)
     return w[:-1] if w.endswith("ng") else w
+
+
+CALLS = {"hey", "hi", "hay", "ey", "eh", "ok", "okay", "oi", "hello"}   # what is heard before a name in "Hey Finn"
 
 
 def says_name(text: str, phrase: str) -> bool:
@@ -134,7 +136,20 @@ def says_name(text: str, phrase: str) -> bool:
     pairs = [sound(h) for h in heard + [a + b for a, b in zip(heard, heard[1:])]]
     def like(n: str, h: str) -> bool:     # alike, and starting the same way ("in" is not "Finn"), or holding it ("Afin")
         return (h[:1] == n[:1] or n in h) and difflib.SequenceMatcher(None, n, h).ratio() >= NAME_LIKE
-    return bool(heard) and all(any(like(sound(n), h) for h in pairs) for n in name_words(phrase))
+    names = name_words(phrase)
+    if len(spell(phrase).split()) > len(names):
+        # "Hey Finn": the name must come straight after a call ("hey", "hi"…), or be run into it ("Afin"), so
+        # "a fine day" or "the thing is" in a conversation is not a name (28 Nov: it woke during a chat).
+        first = sound(names[0])
+        for i, w in enumerate(heard):
+            run_in = len(w) > len(first) and w[0] in "ah" and like(first, sound(w))
+            after_call = i > 0 and heard[i - 1] in CALLS and like(first, sound(w))
+            if run_in or after_call:
+                rest = [sound(x) for x in heard[i + 1:i + len(names)]]
+                if all(any(like(sound(n), h) for h in rest) for n in names[1:]):
+                    return True
+        return False
+    return bool(heard) and all(any(like(sound(n), h) for h in pairs) for n in names)
 
 
 def float_to_pcm(samples) -> bytes:
@@ -458,6 +473,8 @@ def make_handler(spotter: Spotter, heard_path: str, quiet_path: str = ""):
                     p = self.listen.get(pid)
                     if sure or p is None or time.monotonic() < self.lquiet_until:
                         continue
+                    if len(spell(p["phrase"]).split()) == len(name_words(p["phrase"])):
+                        continue              # a bare name ("Finn") wakes only when the first spotter is sure
                     self.lquiet_until = time.monotonic() + QUIET_S
                     started = time.monotonic()
                     words = await check(spotter.check_address, float_to_pcm([x for a in self.recent for x in a]), rate)
