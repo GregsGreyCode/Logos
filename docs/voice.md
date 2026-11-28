@@ -101,6 +101,34 @@ explains itself and does nothing on a plain `http://` address.
 
 On the Agents screen each of your agents' marks has a small microphone: tap it, speak, tap ■, and that agent's chat opens with the voice message sent. Holding a mark only lifts it, to move it (it used to also record, with a swipe up to send and down to cancel: too easy to get wrong).
 
+## Household words (28 Nov)
+
+Speech-to-text writes a name it does not know as a word it does ("Zoé" as "Zoey"). **Settings ›
+Household words** keeps the names and what speech-to-text writes instead; anyone in the household
+can add, edit or remove one. People's first names and the agents' own names (a single-word name, the
+name the speaker wakes to) are on the list by themselves; you add what it gets wrong for them.
+
+- **Put right afterwards, everywhere:** every transcript, from the house speaker (`logos-stt`, also
+  the wake words' second check) and from voice notes and dictation (`logos-voice`), has each "written
+  as" replaced by its word: whole words only, any case, punctuation kept ("Zoey's" becomes "Zoé's",
+  "Zoeylicious" stays). The word without its accents ("Zoe") is put right too. A real word you also
+  mean ("rose") would be changed every time, so add only misspellings.
+- **Listened for (voice notes):** Whisper gets the words as `hotwords` before it starts. Tested on
+  28 Nov with Piper voices: it then spelled every test name as written (without them: "Bayray",
+  "Very right", "Berra").
+- **Not for the speaker's model:** sherpa-onnx 2.0.1 does run Parakeet TDT with
+  `modified_beam_search` and a hotwords file (tokens from `tokens.txt`), and at a score of 3 it
+  fixed one name in a French voice. But a slightly higher score, or five words instead of two,
+  turned clean sentences into "..." or strings of digits. So the speaker uses only the correction.
+- **The agents** get one line on each turn (plugin `logos-household-words`): "Names here: Zoé
+  (speech-to-text may write Zoey), …", for older messages and spellings nobody has added yet.
+
+The list is kept on the server only, `~/.config/logos/household-words.json` (owner-only), never
+in the repo. The dashboard sends it on within a minute of a change, with no container restarted:
+to `logos-stt` through its 127.0.0.1 door (`POST /words`, with its token; the Wyoming side still
+has no token behind it; kept in memory, sent again every minute), to `logos-voice` as `words.json` in
+its volume (read again within seconds), and to each agent as `logos-words.json` in its home.
+
 ## The house speaker (Home Assistant Voice PE)
 
 Say an agent's name to the Voice PE ("Hey Finn", "Hey Home") and that agent answers out loud

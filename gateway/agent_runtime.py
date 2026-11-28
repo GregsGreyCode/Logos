@@ -57,7 +57,7 @@ ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_mor
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time",
                  "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag",
-                 "logos-speaker-chat", "logos-speaker-say", "logos-rename")
+                 "logos-speaker-chat", "logos-speaker-say", "logos-rename", "logos-household-words")
 MANAGED_JOBS = ("brain-commit", "brain-index", "vault-digest", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",

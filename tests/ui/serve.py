@@ -43,6 +43,11 @@ FAKE['/api/v2/network'] = {'requests': [], 'is_admin': True, 'agents': [
    'deny': [_SITE('tracker.example.net', until=int(datetime.datetime.now().timestamp()) + 5 * 86400)]},
   {'name': 'household', 'display_name': 'Household agent', 'yours': True, 'people': ['greg', 'bere'],
    'always': [_SITE('weather.example.org')], 'once': [], 'deny': []}]}
+# Settings › Household words (28 Nov): made-up names (checks/household_words.mjs answers its own PUTs).
+FAKE['/api/v2/household-words'] = {'max': 100, 'words': [
+  {'word': 'Zoé', 'heard_as': ['Zoey', 'Joey'], 'note': 'Sam’s sister'},
+  {'word': 'Sam', 'heard_as': [], 'source': 'person'},
+  {'word': 'Quill', 'heard_as': [], 'source': 'agent'}]}
 # People (F38): an admin's view with someone invited and someone removed, one person's page, the admin actions.
 import time as _time
 _NOW = int(_time.time())

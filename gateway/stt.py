@@ -17,6 +17,9 @@ Two doors, kept apart:
   and embeddings) and ``GET /cohort`` (the reference voices' embeddings, for setting a print's
   strictness; ``?channel=speaker``: the same voices made to sound like the house speaker, cut to the
   length of a spoken command, for the speaker's own strictness). The recording goes to a temporary file, is decoded and deleted.
+  ``POST /words`` (Settings › Household words, gateway/household_words.py): the names it gets wrong
+  and what it writes instead; every transcript is put right with them (whole words only). Kept in
+  memory: the dashboard sends the list again every minute, so a restarted container has it back.
 
 Never logged or kept: the words and the audio. The log line has the length, the speech found and
 the time taken. Runs in the ``logos-stt`` container (infra/stt/Dockerfile; gateway/stt_host.py).
@@ -39,6 +42,13 @@ try:                                     # mounted beside this file in the conta
     import voiceprint as vp              # type: ignore
 except ImportError:                      # the gateway's tests
     from gateway import voiceprint as vp
+try:
+    import household_words as hw         # type: ignore
+except ImportError:
+    try:
+        from gateway import household_words as hw
+    except ImportError:                  # a container made before it was mounted: no words until `up`
+        hw = None                        # type: ignore
 
 WYOMING_PORT = 10300                     # Wyoming's usual port for speech-to-text
 HTTP_PORT = 8101
@@ -48,6 +58,7 @@ MAX_HEARD = 100
 MAX_AUDIO_S = 30                         # a spoken command; Home Assistant stops listening well before
 CHECK_NAME = "logos-wake-check"          # gateway/wake.py's second check: words only, nothing kept
 MAX_UPLOAD = 4 * 1024 * 1024             # an enrolment recording: 15 s of browser audio is about 60 KB
+MAX_WORDS_BODY = 256 * 1024              # Settings › Household words: 100 words at most, a few KB
 
 
 class Heard:
@@ -89,6 +100,14 @@ class Ears:
         self._words = self._extractor = None
         self._cohorts: Dict[str, List[List[float]]] = {}
         self._lock = threading.Lock()
+        # Settings › Household words, from the dashboard (POST /words). Parakeet's own hotwords (sherpa-onnx
+        # modified_beam_search with a hotwords file) are not used: in tests on 28 Nov they turned clean
+        # transcripts into dots and digits (docs/voice.md). The words are put right afterwards instead.
+        self.household: List[Dict[str, Any]] = []
+
+    def set_household(self, entries: Any) -> int:
+        self.household = hw.clean(entries) if hw else []
+        return len(self.household)
 
     def words(self):
         if self._words is None:
@@ -126,7 +145,8 @@ class Ears:
         st = rec.create_stream()
         st.accept_waveform(vp.RATE, np.asarray(audio, dtype=np.float32))
         rec.decode_stream(st)
-        return str(st.result.text or "").strip()
+        text = str(st.result.text or "").strip()
+        return hw.correct(text, self.household) if hw else text
 
     def hear(self, pcm: bytes, rate: int, width: int, channels: int) -> tuple:
         """(words, embedding or None, quality) for a spoken command."""
@@ -328,7 +348,8 @@ def make_handler(ears: Ears, heard: Heard):
 
 # ── HTTP for the dashboard ───────────────────────────────────────────────────────────────────
 
-def make_http(token: str, heard: Heard, recording: Callable[[str], dict], cohort: Callable[..., list]):
+def make_http(token: str, heard: Heard, recording: Callable[[str], dict], cohort: Callable[..., list],
+              household: Optional[Callable[[Any], int]] = None):
     import tempfile
 
     class Handler(BaseHTTPRequestHandler):
@@ -368,7 +389,8 @@ def make_http(token: str, heard: Heard, recording: Callable[[str], dict], cohort
             self._send(404, {"error": "not found"})
 
         def do_POST(self) -> None:
-            if urlparse(self.path).path != "/embed":
+            route = urlparse(self.path).path
+            if route not in ("/embed", "/words") or (route == "/words" and household is None):
                 return self._send(404, {"error": "not found"})
             if not self._allowed():
                 return
@@ -376,6 +398,14 @@ def make_http(token: str, heard: Heard, recording: Callable[[str], dict], cohort
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = 0
+            if route == "/words":
+                if not 0 < length <= MAX_WORDS_BODY:
+                    return self._send(413 if length else 400, {"error": "list missing or too large"})
+                try:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                except ValueError:
+                    return self._send(400, {"error": "not JSON"})
+                return self._send(200, {"words": household(body.get("words") if isinstance(body, dict) else None)})
             if not 0 < length <= MAX_UPLOAD:
                 return self._send(413 if length else 400, {"error": "recording missing or too large"})
             with tempfile.NamedTemporaryFile(suffix=".audio") as f:
@@ -406,7 +436,7 @@ def main() -> int:
     ears.words()
     ears.extractor()
     http = ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("STT_HTTP_PORT", str(HTTP_PORT)))),
-                               make_http(token, heard, ears.from_recording, ears.cohort))
+                               make_http(token, heard, ears.from_recording, ears.cohort, ears.set_household))
     threading.Thread(target=http.serve_forever, daemon=True).start()
     threading.Thread(target=lambda: (ears.cohort(), ears.cohort("speaker")), daemon=True).start()  # before the first enrolment
     port = int(os.environ.get("STT_PORT", str(WYOMING_PORT)))

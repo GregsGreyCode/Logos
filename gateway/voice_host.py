@@ -25,6 +25,7 @@ RUN_AS = "10000:10000"
 TOKEN_ENV = "LOGOS_VOICE_TOKEN"         # the agent's own token, kept in its home volume .env
 MEMORY = "3g"                           # Whisper small needs well under 1 GB; a ceiling, not a reservation
 SERVER_FILE = Path(__file__).with_name("voice.py")
+WORDS_FILE = Path(__file__).with_name("household_words.py")     # Settings › Household words, mounted beside it
 BUILD_DIR = Path(__file__).resolve().parent.parent / "infra" / "voice"
 
 
@@ -93,7 +94,7 @@ class VoiceHost:
             raise ValueError("no agent with voice has a token yet (run scripts/logos-agent up <name> once)")
         config = json.dumps(build_config(tokens), indent=1, sort_keys=True)
         dockerfile = (BUILD_DIR / "Dockerfile").read_text()
-        stamp = hashlib.sha256((config + SERVER_FILE.read_text() + dockerfile).encode()).hexdigest()[:16]
+        stamp = hashlib.sha256((config + SERVER_FILE.read_text() + WORDS_FILE.read_text() + dockerfile).encode()).hexdigest()[:16]
         if self.running() and self._label() == stamp:
             return False
         self.ensure_image()
@@ -110,6 +111,7 @@ class VoiceHost:
                      "--dns", "127.0.0.1",
                      "-p", f"{self.bind_address()}:{PORT}:{PORT}",
                      "-v", f"{VOLUME}:/data:ro", "-v", f"{SERVER_FILE}:/app/voice.py:ro",
+                     "-v", f"{WORDS_FILE}:/app/household_words.py:ro",
                      "-e", "VOICE_CONFIG=/data/config.json", "-e", f"VOICE_PORT={PORT}",
                      IMAGE, "python", "/app/voice.py"])
         self.wait()
@@ -124,6 +126,17 @@ class VoiceHost:
             except Exception:
                 self.rt.runner.sleep(1)
         raise TimeoutError("the voice service did not start; see: docker logs " + CONTAINER)
+
+    def write_words(self, entries: Any) -> bool:
+        """Settings › Household words into the volume (``words.json``, owner-only, as config.json); the
+        server reads it again within seconds. False when the service has never been set up."""
+        if self.rt.runner.run(["docker", "volume", "inspect", VOLUME]).returncode != 0:
+            return False
+        self.rt.run(["docker", "run", "--rm", "-i", "-v", f"{VOLUME}:/v", HELPER, "sh", "-c",
+                     f"cat > /v/words.json.tmp && chown {RUN_AS} /v/words.json.tmp && chmod 0600 /v/words.json.tmp"
+                     " && mv /v/words.json.tmp /v/words.json"],
+                    input=json.dumps({"words": list(entries)}, ensure_ascii=False))
+        return True
 
     def down(self) -> None:
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)

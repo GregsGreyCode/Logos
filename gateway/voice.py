@@ -9,6 +9,10 @@ OpenAI's ``POST /v1/audio/transcriptions``, which hermes already knows how to ca
   nor the text is kept or logged: the log line has the agent, the durations and the language.
 - One recording at a time. The model is loaded on first use and dropped after a quiet
   spell, so an idle service costs almost no memory.
+- Settings › Household words (gateway/household_words.py): Whisper is given the words as
+  ``hotwords`` (so it spells them as written) and the transcript is put right with what it
+  mishears. The dashboard writes the list into this container's volume (``words.json``); it is
+  read again within a few seconds of a change, without a restart.
 
 Runs in the ``logos-voice`` container (infra/voice/Dockerfile). Stdlib only apart from
 ``faster_whisper``, which is imported when the first recording arrives, so the HTTP side
@@ -25,7 +29,15 @@ import time
 from email.parser import BytesParser
 from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+
+try:                                     # mounted beside this file in the container
+    import household_words as hw         # type: ignore
+except ImportError:
+    try:                                 # the gateway's tests
+        from gateway import household_words as hw
+    except ImportError:                  # a container made before it was mounted: no words until `up`
+        hw = None                        # type: ignore
 
 MAX_UPLOAD = 100 * 1024 * 1024          # long dictation (23 Nov: 30 minutes at 32 kbit/s is about 7 MB; room for the rest)
 PATH = "/v1/audio/transcriptions"
@@ -75,8 +87,10 @@ def quiet_onnxruntime() -> None:
 class Whisper:
     """The model, loaded when first needed and dropped after ``idle_s`` without use."""
 
-    def __init__(self, model_path: str, idle_s: int = 600, threads: int = 0):
+    def __init__(self, model_path: str, idle_s: int = 600, threads: int = 0,
+                 words: Optional[Callable[[], List[Dict[str, Any]]]] = None):
         self.model_path, self.idle_s, self.threads = model_path, idle_s, threads
+        self.words = words or (lambda: [])          # Settings › Household words
         self._model = None
         self._lock = threading.Lock()
         self._last = 0.0
@@ -100,8 +114,15 @@ class Whisper:
                 self._model = WhisperModel(self.model_path, device="cpu", compute_type="int8",
                                            cpu_threads=self.threads)
                 print(f"model loaded in {time.monotonic() - started:.1f} s", flush=True)
-            segments, info = self._model.transcribe(path, language=language or None, vad_filter=True)
+            words = self.words() if hw else []
+            # hotwords: Whisper is told the names before it listens (28 Nov: it then spelled every
+            # test name right; docs/voice.md). What it still gets wrong is put right afterwards.
+            hot = hw.hotwords(words) if words else ""
+            segments, info = self._model.transcribe(path, language=language or None, vad_filter=True,
+                                                    **({"hotwords": hot} if hot else {}))
             text = " ".join(s.text.strip() for s in segments).strip()
+            if words:
+                text = hw.correct(text, words)
             self._last = time.monotonic()
             return {"text": text, "language": info.language, "duration": round(float(info.duration), 2)}
 
@@ -173,7 +194,8 @@ def main() -> int:
         tokens = json.load(f)["agents"]
     whisper = Whisper(os.environ.get("VOICE_MODEL", "/models/whisper"),
                       idle_s=int(os.environ.get("VOICE_IDLE_UNLOAD_S", "600")),
-                      threads=int(os.environ.get("VOICE_THREADS", "0")))
+                      threads=int(os.environ.get("VOICE_THREADS", "0")),
+                      words=hw.Watched(os.environ.get("VOICE_WORDS", "/data/words.json")).entries if hw else None)
     port = int(os.environ.get("VOICE_PORT", "8093"))
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(tokens, whisper.transcribe))
     print(f"voice: listening on {port} for {', '.join(sorted(tokens)) or 'no agents'}", flush=True)

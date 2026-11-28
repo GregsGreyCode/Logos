@@ -10,6 +10,7 @@ import { reset as resetTips } from './tips.js';
 import { updatesView } from './updates.js';
 import * as push from './push.js';
 import { createRecorder } from './voice.js';
+import { householdWordsPage, householdWordsSummary } from './household-words.js';
 
 // F45 (Greg, 23 Nov: "more inspired by Element X's settings"): a list, not a row of tabs. Grouped,
 // each row with its icon and what it is set to now; on a phone a row opens its page (with a back
@@ -21,6 +22,7 @@ const SECTIONS = [
   { id: 'email', name: 'Email', icon: 'mail', group: 'You' },
   { id: 'speaker', name: 'Speaker', icon: 'speaker', group: 'You' },
   { id: 'voice', name: 'Your voice', icon: 'mic', group: 'You' },
+  { id: 'words', name: 'Household words', icon: 'chat', group: 'You' },     // names speech-to-text gets wrong (28 Nov)
   { id: 'tips', name: 'Tips', icon: 'bulb', group: 'You' },
   { id: 'matrix', name: 'Chats & devices', icon: 'shield', group: 'This device' },
   { id: 'updates', name: 'Updates', icon: 'update', group: 'Logos', admin: true },
@@ -971,6 +973,7 @@ function statusOf(id, state) {
     return d.problem ? v('Not working', 'The speaker voices are not working') : v(name);
   });
   if (id === 'voice') return getJSON('/api/v2/voiceprint').then((d) => v(!d.enrolled ? 'Not set up' : (d.summary || {}).state === 'active' ? 'Recognising' : 'Learning'));
+  if (id === 'words') return householdWordsSummary().then((t) => v(t));
   if (id === 'updates') return getJSON('/api/v2/updates?check=1').then((d) => {
     const n = ((d.plan || {}).commits || []).length;
     return n ? v(`${n} to install`, `${n} update${n === 1 ? '' : 's'} waiting to install`) : v('Up to date');
@@ -1172,6 +1175,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'speaker') done = speaker(body);
   else if (id === 'sites') done = sitesPage(body);
   else if (id === 'voice') done = yourVoice(body);
+  else if (id === 'words') done = householdWordsPage(body);
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   // Turning a foldable or resizing across the line: the other layout.
   const mq = matchMedia(WIDE);

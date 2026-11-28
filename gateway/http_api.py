@@ -773,6 +773,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _agent_settings_api.register(app)
     from gateway import agent_rename as _agent_rename    # an agent asks for a new name; its person confirms
     _agent_rename.register(app)
+    from gateway import household_words_api as _household_words  # Settings › Household words, for speech-to-text
+    _household_words.register(app)
     from gateway import widgets as _widgets             # F42: homelab widgets on Home
     _widgets.register(app)
     from gateway import metrics as _metrics             # F42: Prometheus /metrics, off until switched on

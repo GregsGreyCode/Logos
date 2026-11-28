@@ -36,7 +36,8 @@ HTTP_PORT = 8101
 RUN_AS = "10000:10000"
 MEMORY = "2g"                     # Whisper small and CAM++ use about 700 MB; a ceiling, not a reservation
 TOKEN_FILE = "stt.token"
-FILES = [Path(__file__).with_name("stt.py"), Path(__file__).with_name("voiceprint.py")]
+FILES = [Path(__file__).with_name("stt.py"), Path(__file__).with_name("voiceprint.py"),
+         Path(__file__).with_name("household_words.py")]
 BUILD_DIR = Path(__file__).resolve().parent.parent / "infra" / "stt"
 
 
@@ -85,6 +86,17 @@ def token(env: Optional[Mapping[str, str]] = None) -> str:
 
 def base_url() -> str:
     return f"http://127.0.0.1:{HTTP_PORT}"
+
+
+def send_words(entries: Any, env: Optional[Mapping[str, str]] = None, timeout: float = 5.0) -> int:
+    """Settings › Household words to the container (``POST /words``, the HTTP door). Blocking; how
+    many words it now has. Raises OSError when it does not answer."""
+    import urllib.request
+    req = urllib.request.Request(base_url() + "/words", data=json.dumps({"words": list(entries)}).encode(),
+                                 method="POST", headers={"Content-Type": "application/json",
+                                                         "Authorization": "Bearer " + token(env)})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return int((json.loads(r.read() or b"{}") or {}).get("words") or 0)
 
 
 def can_connect(address: tuple, timeout: float = 2.0) -> bool:

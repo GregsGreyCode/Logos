@@ -2983,3 +2983,9 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
   .mx-chips .mx-chip.add { width: auto; padding: 0 14px; font-size: 14px; font-weight: 600; }
   .mx-chips .mx-chip.panel { gap: 6px; padding: 0 14px; font-size: 14px; font-weight: 600; }
 }
+/* Settings › Household words (28 Nov): a row per word, its buttons at the end; the form in its place. */
+.hw-row { flex-direction: row; align-items: center; gap: 10px; }
+.hw-row .row-main { flex: 1; min-width: 0; text-align: left; }
+.hw-actions { display: flex; gap: 6px; flex: none; }
+.hw-form { padding: 12px 0; border-bottom: 1px solid var(--line); max-width: none; }
+.hw-add { align-self: flex-start; }

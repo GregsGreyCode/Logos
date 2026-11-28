@@ -1,0 +1,9 @@
+name: logos-household-words
+label: Logos household words
+kind: standalone
+version: 1.0.0
+description: >
+  One line on each turn with the household's names (Settings › Household words) and what
+  speech-to-text may write instead, so a voice note's "Zoey" is read as "Zoé".
+author: Logos
+provides_hooks: [pre_llm_call]

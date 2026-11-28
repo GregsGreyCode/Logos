@@ -229,7 +229,7 @@ def repo(tmp_path):
     at_plugin.mkdir(parents=True)
     (at_plugin / "__init__.py").write_text("def register(ctx):\n    pass\n")
     (at_plugin / "plugin.yaml").write_text("name: logos-alert-text\n")
-    for extra in ("logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename"):
+    for extra in ("logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename", "logos-household-words"):
         d = tmp_path / "infra" / "agent-plugins" / extra
         d.mkdir(parents=True)
         (d / "__init__.py").write_text("def register(ctx):\n    pass\n")
@@ -1084,7 +1084,7 @@ network_policies:
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "models_dev": {"url": "http://172.17.0.1:8091/api/v2/models-dev/api.json"},  # Logos's copy of the catalogue
             "memory": {"memory_char_limit": 6000},
-            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename"]},
+            "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename", "logos-household-words"]},
             "stt": {"enabled": False}}
 
     def test_config_text_session_reset_enables_the_plugin(self, repo):
@@ -1092,10 +1092,10 @@ network_policies:
         agent = r.load("alpha")
         agent["session_reset"] = {"mode": "daily", "at_hour": 3}
         cfg = art.yaml.safe_load(r.config_text("alpha", agent))
-        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename", "hermes-session-reset-policy"]}
+        assert cfg["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename", "logos-household-words", "hermes-session-reset-policy"]}
         assert cfg["session_reset"] == {"mode": "daily", "at_hour": 3}
         agent["session_reset"] = {"mode": "none"}
-        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename"]}
+        assert art.yaml.safe_load(r.config_text("alpha", agent))["plugins"] == {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say", "logos-rename", "logos-household-words"]}
 
     def test_config_text_without_brain_index_keeps_default_memory_limit(self, repo):
         r = rt(repo)
@@ -1133,7 +1133,8 @@ network_policies:
             "plugins/logos-voice-tag/__init__.py", "plugins/logos-voice-tag/plugin.yaml",
             "plugins/logos-speaker-chat/__init__.py", "plugins/logos-speaker-chat/plugin.yaml",
             "plugins/logos-speaker-say/__init__.py", "plugins/logos-speaker-say/plugin.yaml",
-            "plugins/logos-rename/__init__.py", "plugins/logos-rename/plugin.yaml", "SOUL.md"]
+            "plugins/logos-rename/__init__.py", "plugins/logos-rename/plugin.yaml",
+            "plugins/logos-household-words/__init__.py", "plugins/logos-household-words/plugin.yaml", "SOUL.md"]
         out = capsys.readouterr().out
         assert "alpha: Ready" in out
         assert "jobs: brain-commit, consolidate" in out
