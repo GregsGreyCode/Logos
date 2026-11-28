@@ -267,6 +267,8 @@ def test_wake_model_says_so_only_when_it_has_to_load():
     state = {"loaded": False, "loads": 0}
 
     def http(url, *, data=None, headers=None, timeout=10):
+        if url.endswith("/running"):                # LM Studio has no /running (it is not llama-swap)
+            return b"{}"
         if url.endswith("/api/v0/models"):
             rows = [{"id": "qwen/q", "state": "loaded", "loaded_context_length": 65536}] if state["loaded"] else []
             return json.dumps({"data": rows}).encode()

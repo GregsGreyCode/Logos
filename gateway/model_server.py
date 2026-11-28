@@ -117,9 +117,9 @@ def wanted(definitions: Mapping[str, Mapping[str, Any]]) -> Dict[str, Dict[str, 
 
 
 def models(http: Callable[..., bytes], base: str) -> List[dict]:
-    """LM Studio's own list (GET /api/v1/models): every downloaded model and its loaded instances."""
-    data = json.loads(http(base + "/api/v1/models", timeout=10))
-    return [m for m in data.get("models", []) if isinstance(m, dict)]
+    """LM Studio's own list (GET /api/v1/models): every downloaded model and its loaded instances
+    (llama-swap's answers in the same shape, see local_models.listing_v1)."""
+    return local_models.listing_v1(http, base)
 
 
 def describe(m: dict) -> dict:
@@ -130,9 +130,10 @@ def describe(m: dict) -> dict:
             # Mixture of experts: LM Studio reports experts for a loaded one; names say "35B-A3B".
             "moe": bool(re.search(r"\ba\d+(\.\d+)?b\b", str(m.get("key") or "").lower()))
                    or any((i.get("config") or {}).get("num_experts") for i in (m.get("loaded_instances") or [])),
+            "server": str(m.get("server") or local_models.LM_STUDIO),
             "instances": [{"id": str(i.get("id") or ""), **{k: (i.get("config") or {}).get(k) for k in (
                 "context_length", "parallel", "flash_attention", "offload_kv_cache_to_gpu", "num_experts",
-                "eval_batch_size")}} for i in (m.get("loaded_instances") or [])]}
+                "eval_batch_size", "kv_cache_type", "n_cpu_moe")}} for i in (m.get("loaded_instances") or [])]}
 
 
 def checks(want: Mapping[str, dict], listed: List[dict], vram: float = 0.0) -> List[dict]:
@@ -144,7 +145,7 @@ def checks(want: Mapping[str, dict], listed: List[dict], vram: float = 0.0) -> L
         who = ", ".join(w["agents"])
         m = by_key.get(model)
         if m is None:
-            out.append({"level": "warn", "text": f"{model} (used by {who}) is not downloaded in LM Studio."})
+            out.append({"level": "warn", "text": f"{model} (used by {who}) is not on the model server."})
             continue
         if not m["instances"]:
             out.append({"level": "info", "text": f"{model} is not loaded. The first message loads it with a "
@@ -166,7 +167,7 @@ def checks(want: Mapping[str, dict], listed: List[dict], vram: float = 0.0) -> L
             out.append({"level": "ok", "text": f"{model}: {ctx:,}-token window, enough for the agents' "
                                                f"{w['uses']:,} plus room beside it."})
         if slots > 1 and ctx:
-            out.append({"level": "info", "text": f"LM Studio's {slots} parallel slots share that one window; "
+            out.append({"level": "info", "text": f"The server's {slots} parallel slots share that one window; "
                                                  "the model guard lets at most 2 requests run at once."})
         if inst.get("flash_attention") is False:
             out.append({"level": "warn", "text": "Flash attention is off. Turn it on: it saves memory and is faster."})
@@ -225,7 +226,12 @@ def speed(log_lines: List[str]) -> dict:
 
 
 def reload(http: Callable[..., bytes], base: str, model: str, window: int) -> dict:
-    """Unload every copy of ``model`` and load it once with ``window`` tokens. Returns LM Studio's config."""
+    """Unload every copy of ``model`` and load it once with ``window`` tokens. Returns LM Studio's config.
+    On llama-swap the settings are its config file's: the model is restarted with them."""
+    if local_models.kind(http, base) == local_models.LLAMA_SWAP:
+        local_models.unload(http, base, model)
+        local_models.ensure(http, base, model, 0)
+        return {"server": local_models.LLAMA_SWAP, "note": "restarted with the settings in llama-swap's config.yaml"}
     for m in models(http, base):
         if m.get("key") == model:
             for inst in m.get("loaded_instances") or []:
@@ -240,5 +246,8 @@ def unload(http: Callable[..., bytes], base: str, instance_id: str, keep: List[s
     """Unload one instance, never one of the agents' models (``keep``)."""
     if instance_id in keep or instance_id.split(":", 1)[0] in keep:
         raise ValueError("that model is in use by the agents")
+    if local_models.kind(http, base) == local_models.LLAMA_SWAP:
+        local_models.unload(http, base, instance_id)
+        return
     http(base + "/api/v1/models/unload", data=json.dumps({"instance_id": instance_id}).encode(),
          headers=JSON, timeout=120)

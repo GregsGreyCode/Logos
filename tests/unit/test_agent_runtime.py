@@ -438,7 +438,7 @@ class TestEnsureModel:
         runner.http_response = json.dumps({"data": [
             {"id": "some/model", "state": "loaded", "loaded_context_length": 65536}]}).encode()
         rt(repo, runner).ensure_model(self.MODEL)
-        assert [c[0] for c in runner.http_calls] == ["http://10.0.0.5:1234/api/v0/models"]
+        assert [c[0] for c in runner.http_calls if not c[0].endswith("/running")] == ["http://10.0.0.5:1234/api/v0/models"]
 
     def test_ensure_model_accepts_a_larger_loaded_window(self, repo):
         runner = FakeRunner()

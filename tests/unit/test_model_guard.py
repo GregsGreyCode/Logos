@@ -738,3 +738,26 @@ def test_the_gateways_name_for_the_model_is_understood_too():
         assert srv.state["loaded"][QWEN] == [(QWEN, WIN)]
     finally:
         srv.shutdown()
+
+
+def test_the_guard_leaves_llama_swap_to_its_own_config():
+    class Swap(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self.server.calls.append(self.path)
+            body = json.dumps({"running": []} if self.path == "/running" else {}).encode()
+            self.send_response(200 if self.path == "/running" else 404)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Swap)
+    srv.calls = []
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        ld = model_guard.Loader("127.0.0.1", srv.server_address[1], {QWEN: WIN}, log=lambda *a, **k: None)
+        assert ld.ensure(QWEN, alone=True) == "" and ld.ensure(QWEN, alone=True) == ""
+        assert srv.calls == ["/running"]                       # asked once; nothing loaded or listed
+    finally:
+        srv.shutdown()

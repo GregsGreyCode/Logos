@@ -41,6 +41,7 @@ from __future__ import annotations
 import http.client
 import itertools
 import json
+import re
 import os
 import socket
 import sys
@@ -108,6 +109,20 @@ class Loader:
         finally:
             conn.close()
 
+    def is_swap(self) -> bool:
+        """llama-swap (docs/llama-swap.md) loads each model with its own config file's settings:
+        nothing for the guard to load, reload or trim. Asked once, after the server first answers."""
+        if getattr(self, "_swap", None) is None:
+            try:
+                self._swap = "running" in (self._call("GET", "/running", timeout=4) or {})
+            except OSError as e:
+                if "404" not in str(e):
+                    return False                 # not answering: ask again next time
+                self._swap = False
+            except (ValueError, http.client.HTTPException):
+                self._swap = False
+        return self._swap
+
     def loaded(self, fresh: bool = False) -> dict:
         """model -> [(instance id, window)], from LM Studio's own list."""
         if fresh or self.clock() - self.seen["at"] > self.CHECK_EVERY:
@@ -124,8 +139,9 @@ class Loader:
         # in case it arrives with that prefix.
         model = next((k for k in self.windows if model == k or model.endswith("/" + k)), model)
         window = self.windows.get(model)
-        if not window:
+        if not window or self.is_swap():
             return ""
+
         def fine(have) -> bool:
             return len(have) == 1 and have[0][1] >= window
 
@@ -609,6 +625,30 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
     gate = Gate(slots, lambda: options["window"], max_wait=max_queue_wait)
     warmer = Warmer(warm_every, warm_idle)
 
+    def swap_options() -> None:
+        """llama-swap: the window and slots of the running model (from its list and command line)."""
+        def get(path):
+            conn = http.client.HTTPConnection(host, port, timeout=connect_timeout)
+            try:
+                conn.request("GET", path)
+                r = conn.getresponse()
+                data = r.read()
+                if r.status >= 400:
+                    raise OSError(f"{path}: {r.status}")
+                return json.loads(data or b"{}")
+            finally:
+                conn.close()
+        running = [r for r in (get("/running").get("running") or []) if r.get("state") == "ready"]
+        listed = {str(m.get("id")): m for m in get("/v1/models").get("data", []) if isinstance(m, dict)}
+        windows, par = [], []
+        for r in running:
+            windows.append(int((listed.get(str(r.get("model"))) or {}).get("context_length") or 0))
+            m = re.search(r"(?:^|\s)(?:-np|--parallel)[\s=]+(\d+)", str(r.get("cmd") or ""))
+            par.append(int(m.group(1)) if m else 1)
+        options["by_model"] = {}
+        options["window"] = max(windows or [0])
+        options["parallel"] = max(par or [0])
+
     def options_for(model: str) -> list:
         """LM Studio's published reasoning options for ``model``, refreshed every ten minutes."""
         if time.monotonic() - options["at"] > OPTIONS_TTL:
@@ -627,9 +667,15 @@ def make_handler(upstream: str, connect_timeout: float = 3.0, read_timeout: floa
                 configs = [i.get("config") or {} for m in models for i in (m.get("loaded_instances") or [])]
                 options["window"] = max([int(c.get("context_length") or 0) for c in configs] or [0])
                 options["parallel"] = max([int(c.get("parallel") or 0) for c in configs] or [0])
+                if not models:
+                    swap_options()
                 gate.slots = max(1, min(slots, options["parallel"] or slots))
             except (OSError, ValueError, http.client.HTTPException):
-                pass                                # unknown: requests pass unchanged
+                try:
+                    swap_options()
+                    gate.slots = max(1, min(slots, options["parallel"] or slots))
+                except (OSError, ValueError, http.client.HTTPException):
+                    pass                            # unknown: requests pass unchanged
         return options["by_model"].get(model, [])
 
     class Handler(BaseHTTPRequestHandler):

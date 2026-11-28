@@ -54,7 +54,7 @@ def test_not_loaded_or_not_downloaded():
     _, text = levels(ms.checks(ms.wanted(defs())[BASE], [ms.describe(lm_model(QWEN))]))
     assert "is not loaded" in text and "96,512-token window" in text
     lv, text = levels(ms.checks(ms.wanted(defs())[BASE], []))
-    assert lv == ["warn"] and "not downloaded" in text
+    assert lv == ["warn"] and "not on the model server" in text
 
 
 def test_a_dense_model_too_big_for_the_gpu_is_slow():
@@ -97,7 +97,7 @@ class FakeLM:
 def test_reload_unloads_every_copy_then_loads_once():
     lm = FakeLM([lm_model(QWEN, instances=[LOADED, {**LOADED, "id": QWEN + ":2"}])])
     out = ms.reload(lm, BASE, QWEN, 96512)
-    assert [c[0] for c in lm.calls] == ["/api/v1/models", "/api/v1/models/unload", "/api/v1/models/unload",
+    assert [c[0] for c in lm.calls if c[0] != "/running"] == ["/api/v1/models", "/api/v1/models/unload", "/api/v1/models/unload",
                                         "/api/v1/models/load"]
     assert lm.calls[-1][1] == {"model": QWEN, "context_length": 96512, "flash_attention": True,
                                "offload_kv_cache_to_gpu": True, "echo_load_config": True}

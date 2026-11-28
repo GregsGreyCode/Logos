@@ -1523,8 +1523,8 @@ def _local_definitions(runtime: Any) -> Dict[str, Mapping[str, Any]]:
 
 
 def local_model_view(runtime: Any) -> dict:
-    """Everything the "Local model" section shows, one block per LM Studio server. Blocking."""
-    from gateway import model_gateway, model_server
+    """Everything the "Local model" section shows, one block per local model server. Blocking."""
+    from gateway import local_models, model_gateway, model_server
     http = runtime.runner.http
     known = model_server.hardware(runtime.env)
     servers = []
@@ -1536,10 +1536,13 @@ def local_model_view(runtime: Any) -> dict:
             listed = [model_server.describe(m) for m in model_server.models(http, base)]
             vram = float(hw.get("vram_gb") or 0)
             ours = next((m for m in listed if m["key"] in want), None)
+            swap = local_models.kind(http, base) == local_models.LLAMA_SWAP
             view.update(up=True, loaded=[m for m in listed if m["instances"]], downloaded=len(listed),
-                        checks=model_server.checks(want, listed, vram), advice=model_server.advice(ours, vram))
+                        kind=local_models.LLAMA_SWAP if swap else local_models.LM_STUDIO,
+                        checks=model_server.checks(want, listed, vram),
+                        advice=[] if swap else model_server.advice(ours, vram))
         except Exception as e:
-            view["error"] = f"LM Studio did not answer ({type(e).__name__})."
+            view["error"] = f"The model server did not answer ({type(e).__name__})."
             view["advice"] = model_server.advice(None, float(hw.get("vram_gb") or 0))
         servers.append(view)
     gw = model_gateway.ModelGateway(runtime)

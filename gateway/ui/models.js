@@ -153,7 +153,7 @@ function serverBlock(srv, canChange, repaint) {
   const parts = [h('h2', { class: 'label' }, 'Local model')];
   if (!srv.up) {
     parts.push(where);
-    parts.push(h('div', { class: 'notice' }, srv.error || 'LM Studio is closed or that PC is busy.'));
+    parts.push(h('div', { class: 'notice' }, srv.error || 'The model server is off, or that PC is busy.'));
     return h('section', { 'aria-label': `Local model on ${srv.server}` }, parts);
   }
   const cards = [];
@@ -165,7 +165,10 @@ function serverBlock(srv, canChange, repaint) {
         ['Parallel slots', i.parallel ?? '—', 'they share the one window'],
         ['Flash attention', yes(i.flash_attention), ''],
         ['KV cache on GPU', yes(i.offload_kv_cache_to_gpu), ''],
-        ['Experts', i.num_experts ?? '—', ''],
+        ...(srv.kind === 'llama-swap' ? [
+          ['KV cache', String(i.kv_cache_type || 'f16').toUpperCase(), ''],
+          ['Experts on the CPU', i.n_cpu_moe === 'all' ? 'all layers' : i.n_cpu_moe ? `${i.n_cpu_moe} layers` : 'none', 'the rest are on the GPU'],
+        ] : [['Experts', i.num_experts ?? '—', '']]),
         ['File', `${m.size_gb} GB · ${m.quantization}`, m.params],
       ];
       const unload = canChange && !ours ? h('button', { type: 'button', class: 'btn ghost', onclick: async (ev) => {
@@ -195,12 +198,20 @@ function serverBlock(srv, canChange, repaint) {
     const status = h('p', { class: 'when', role: 'status' });
     foot.append(h('div', { class: 'actions' },
       h('button', { type: 'button', class: 'btn', onclick: async (ev) => {
-        if (!await ask({ title: 'Reload the agents\' model?', text: 'With Logos\'s settings. The agents cannot answer for about a minute.', yes: 'Reload' })) return;
-        ev.target.disabled = true; status.textContent = 'Reloading… this takes about a minute.';
+        const swap = srv.kind === 'llama-swap';
+        if (!await ask({ title: swap ? 'Restart the agents\' model?' : 'Reload the agents\' model?',
+          text: swap ? 'With the settings in config.yaml on that PC. The agents cannot answer for a few seconds.'
+            : 'With Logos\'s settings. The agents cannot answer for about a minute.', yes: swap ? 'Restart' : 'Reload' })) return;
+        ev.target.disabled = true; status.textContent = swap ? 'Restarting…' : 'Reloading… this takes about a minute.';
         const r = await post('reload', { server: srv.server });
-        status.textContent = r.ok ? `Reloaded with a ${count(r.body.config?.context_length)}-token window.` : (r.body.error || 'Could not reload.');
+        status.textContent = !r.ok ? (r.body.error || 'Could not reload.')
+          : swap ? 'Restarted with config.yaml\'s settings.' : `Reloaded with a ${count(r.body.config?.context_length)}-token window.`;
         ev.target.disabled = false;
-      } }, 'Reload with Logos settings'), status));
+      } }, srv.kind === 'llama-swap' ? 'Restart the model' : 'Reload with Logos settings'), status));
+  }
+  if (srv.kind === 'llama-swap') {
+    foot.append(h('p', { class: 'when' }, 'llama-swap runs this model with the settings in config.yaml on that PC (window, GPU layers, experts, KV cache). Change them there; the card above shows what is running.'));
+    return h('section', { 'aria-label': `Local model on ${srv.server}` }, parts);
   }
   foot.append(h('details', { class: 'lms-only' }, h('summary', {}, 'Settings only the LM Studio app can change'),
     h('p', { class: 'when' }, 'LM Studio does not let Logos set or read these. On that PC: My Models, the gear next to the model.'),

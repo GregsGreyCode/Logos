@@ -99,7 +99,7 @@ def listing(runtime: Any, definition: Mapping[str, Any]) -> Optional[dict]:
     if not base:
         return None
     try:
-        return json.loads(runtime.runner.http(base + "/api/v0/models", timeout=4))
+        return local_models.listing_v0(runtime.runner.http, base)
     except Exception:
         return None
 
