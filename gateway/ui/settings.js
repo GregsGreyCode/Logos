@@ -987,7 +987,7 @@ function attentionCard(problems) {
 }
 
 // The Agents group: one row per agent you may use, in the words the Agents screen uses for its state.
-function agentsGroup(agentsP, sitesP) {
+function agentsGroup(agentsP, sitesP, id = null) {
   const sec = h('section', { class: 'set-group', 'aria-label': 'Agents' }, h('h2', { class: 'set-group-title' }, 'Agents'), loading('rows', 2));
   Promise.all([agentsP, sitesP.catch(() => null)]).then(async ([d, sites]) => {
     const agents = (d && d.agents) || [];
@@ -996,7 +996,7 @@ function agentsGroup(agentsP, sitesP) {
     sec.replaceChildren(sec.firstChild, ...agents.map((a) => row({ href: `#/agents/${encodeURIComponent(a.name)}/settings`, name: a.display_name,
       dot: h('span', { class: `dot ${a.name}`, style: `background: var(--agent-${a.name}, var(--${a.name}, var(--accent)))` }),
       value: MOODS[mood[a.name]] || (a.running === false ? MOODS.off : a.model_up === false ? MOODS.unplugged : MOODS.asleep), cls: ' set-agent' })),
-    ...(sites ? [row({ href: '#/settings/sites', name: 'Sites', glyph: 'globe', value: sites, cls: ' set-sites' })] : []));
+    ...(sites ? [row({ href: '#/settings/sites', name: 'Sites', glyph: 'globe', value: sites, cls: ' set-sites', current: id === 'sites' })] : []));
     filterIndex(sec.closest('.set-index'));
   }).catch(() => sec.remove());
   return sec;
@@ -1103,7 +1103,7 @@ export async function settingsView(root, [section], state) {
   const listParts = () => {
     const g = gather(state);
     const attention = attentionCard(g.problems);
-    return { status: g.status, attention, agents: agentsGroup(g.agentsP, g.sitesP) };
+    return { status: g.status, attention, agents: agentsGroup(g.agentsP, g.sitesP, id) };
   };
   if (!wide && id) {
     // One header (28 Nov, as Home Assistant's sub-pages): the back arrow and the page's name in the top bar.
