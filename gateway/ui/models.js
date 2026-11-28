@@ -146,6 +146,30 @@ function gpuLine(srv, canChange, repaint) {
   return h('div', {}, h('p', { class: 'when' }, text, ' ', edit), form);
 }
 
+// llama-swap's live numbers (model_server_metrics.live): the GPU, speed, the prompt cache, the queue.
+const pct = (r) => `${Math.round(r * 100)} %`;
+function liveRows(lv) {
+  if (!lv) return [];
+  const rows = [];
+  const g = lv.gpu;
+  if (g && (g.memory_total_bytes || g.temperature_celsius != null)) {
+    const gb = (b) => (b / 2 ** 30).toFixed(1);
+    rows.push(['GPU now', [g.memory_total_bytes ? `${gb(g.memory_used_bytes || 0)} of ${gb(g.memory_total_bytes)} GB` : null,
+      g.temperature_celsius != null ? `${Math.round(g.temperature_celsius)} °C` : null,
+      g.util_percent != null ? `${Math.round(g.util_percent)} % busy` : null].filter(Boolean).join(' · '), g.name || '']);
+  }
+  if (lv.metrics_on === false) {
+    rows.push(['Speed', 'Not reported', 'add --metrics to its cmd in config.yaml']);
+  } else if (lv.metrics_on) {
+    const n = (v) => (v == null ? '—' : count(Math.round(v)));
+    rows.push(['Speed', `reads ${n(lv.prompt_tokens_per_s)} · writes ${n(lv.generation_tokens_per_s)} tokens/s`, 'averages since the model started']);
+    if (lv.prompt_cache_hit_ratio != null) rows.push(['Prompt cache', `${pct(lv.prompt_cache_hit_ratio)} reused`, 'share of prompt tokens it did not have to read again']);
+    if (lv.kv_cache_usage_ratio != null) rows.push(['KV cache in use', pct(lv.kv_cache_usage_ratio), '']);
+    rows.push(['Working on', `${lv.requests_processing} now · ${lv.requests_deferred} waiting`, 'on the model PC']);
+  }
+  return rows;
+}
+
 function serverBlock(srv, canChange, repaint) {
   // P5: the server's address and GPU sit in the model card's own heading, and the checks, the
   // reload button and "Settings only the LM Studio app can change" at its foot.
@@ -170,6 +194,7 @@ function serverBlock(srv, canChange, repaint) {
           ['Experts on the CPU', i.n_cpu_moe === 'all' ? 'all layers' : i.n_cpu_moe ? `${i.n_cpu_moe} layers` : 'none', 'the rest are on the GPU'],
         ] : [['Experts', i.num_experts ?? '—', '']]),
         ['File', `${m.size_gb} GB · ${m.quantization}`, m.params],
+        ...liveRows(m.live),
       ];
       const unload = canChange && !ours ? h('button', { type: 'button', class: 'btn ghost', onclick: async (ev) => {
         if (!await ask({ title: `Unload ${m.key}?`, text: 'No agent uses it.', yes: 'Unload' })) return;

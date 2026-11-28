@@ -18,10 +18,27 @@ FAKE = {
   '/api/v2/noticeboard': {'waiting': [], 'log': []},
   '/api/v2/agents': {'agents': [AG('household', 'Household agent', '@household-agent:test'), AG('greg', "Greg's agent", '@greg-agent:test')], 'others': [AG('bere', "Béré's agent", '@bere-agent:test')]},
   '/api/v2/activity': {'working': [], 'model_up': True},
-  '/api/v2/models/local': {'queue': {'waiting': 0, 'running': 0}, 'speed': {'alone': {'median_tokens_per_s': 16}}},
   '/api/v2/notifications': {'items': [], 'seen_until': 0},
   '/api/v2/agents/household/brain/page': {'text': '## Shopping list\n- [ ] pasta\n- [ ] lemon\n- [ ] something sweet\n## To-do\n- [ ] Drop off giveaway bag at charity shop\n- [ ] a\n- [ ] b\n- [ ] c\n- [ ] d\n## Wedding\n- [ ] Select violin songs & reply to email\n- [ ] x\n- [ ] y\n- [ ] z\n- [ ] w\n- [ ] v\n'},
 }
+# Models (28 Nov): the agents' model on llama-swap, with the PC's live numbers (gateway/model_server_metrics.live).
+_SWAP_MODEL = 'qwen/qwen3.6-35b-a3b'
+FAKE['/api/v2/models'] = {'month': 'November', 'paid_providers': [], 'agents': [], 'all_agents': True, 'total': None,
+  'status': {'model_server': {'up': True, 'ready': True, 'loaded': [{'model': _SWAP_MODEL, 'context': 135168}], 'wanted': [_SWAP_MODEL]},
+             'services': [{'name': 'Model gateway', 'up': True, 'what': ''}, {'name': 'Model guard', 'up': True, 'what': ''}], 'sandboxes': {}}}
+FAKE['/api/v2/models/local'] = {'can_change': True, 'queue': {'waiting': 0, 'running': 1, 'slots': 2},
+  'speed': {'alone': {'replies': 12, 'median_seconds': 9.5, 'median_tokens_per_s': 64}, 'shared': {'replies': 0}, 'queued': 1, 'longest_wait_s': 4},
+  'servers': [{'server': '192.0.2.10:8080', 'up': True, 'kind': 'llama-swap', 'downloaded': 1, 'checks': [], 'advice': [],
+    'hardware': {'gpu': 'RTX 4080 Super', 'vram_gb': 16},
+    'want': {_SWAP_MODEL: {'agents': ['greg', 'household'], 'uses': 65536, 'load': 135168}},
+    'loaded': [{'key': _SWAP_MODEL, 'name': _SWAP_MODEL, 'quantization': 'Q4_K_M', 'size_gb': 21.2, 'params': '', 'max_context': 135168, 'moe': True,
+      'server': 'llama-swap',
+      'instances': [{'id': _SWAP_MODEL, 'context_length': 135168, 'parallel': 3, 'flash_attention': True, 'offload_kv_cache_to_gpu': True,
+                     'kv_cache_type': 'q8_0', 'n_cpu_moe': 25, 'eval_batch_size': 2048}],
+      'live': {'gpu': {'name': 'NVIDIA GeForce RTX 4080 SUPER', 'memory_used_bytes': 15891169280, 'memory_total_bytes': 17171480576,
+                       'util_percent': 35, 'temperature_celsius': 61, 'power_watts': 180.5},
+               'metrics_on': True, 'prompt_tokens_per_s': 2450.0, 'generation_tokens_per_s': 64.0, 'prompt_cache_hit_ratio': 0.75,
+               'requests_processing': 1, 'requests_deferred': 0}}]}]}
 # Settings › House speaker: the real list of voices (gateway/tts.py is stdlib only), and a silent three-second sample.
 import importlib.util, io, wave
 _spec = importlib.util.spec_from_file_location('tts', os.path.join(REPO, 'gateway/tts.py')); TTS = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(TTS)

@@ -248,6 +248,9 @@ async def handle_metrics(request: web.Request) -> web.Response:
     voice = request.app.get("voice_stats")                    # the house speaker's answer times (voice_converse)
     if voice is not None:
         body += voice.render()
+    servers = request.app.get("model_server_metrics")          # the model PC's own numbers (model_server_metrics)
+    if servers is not None:
+        body += await servers.render(runtime)
     return web.Response(text=body, content_type="text/plain", charset="utf-8", headers={"Cache-Control": "no-store"})
 
 
@@ -291,7 +294,9 @@ async def handle_set(request: web.Request) -> web.Response:
 
 def register(app: web.Application, path: Optional[Path] = None) -> None:
     from gateway.auth.middleware import require_csrf
+    from gateway.model_server_metrics import Collector
     app["metrics_path"] = path or config_path()
+    app["model_server_metrics"] = Collector()
     app.router.add_get(PATH, handle_metrics)
     app.router.add_get("/api/v2/metrics", handle_status)
     app.router.add_put("/api/v2/metrics", require_csrf(handle_set))

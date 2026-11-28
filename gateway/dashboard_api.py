@@ -1541,6 +1541,11 @@ def local_model_view(runtime: Any) -> dict:
                         kind=local_models.LLAMA_SWAP if swap else local_models.LM_STUDIO,
                         checks=model_server.checks(want, listed, vram),
                         advice=[] if swap else model_server.advice(ours, vram))
+            if swap:                          # GPU, tokens per second and cache from the PC (cached 15 s)
+                from gateway import model_server_metrics
+                snap = model_server_metrics.SCRAPER.get(http, base)
+                for m in view["loaded"]:
+                    m["live"] = model_server_metrics.live(snap, m["key"])
         except Exception as e:
             view["error"] = f"The model server did not answer ({type(e).__name__})."
             view["advice"] = model_server.advice(None, float(hw.get("vram_gb") or 0))
