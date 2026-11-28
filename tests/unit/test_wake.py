@@ -313,7 +313,7 @@ def test_the_name_is_found_in_what_speech_to_text_heard():
     from gateway import wake
     assert wake.name_words("Hey Finn") == ["finn"] and wake.name_words("Hey Home") == ["home"]
     assert wake.name_words("Finn") == ["finn"]
-    for heard in ("Hey Finn.", "hey fin", "Hey, Finn's", "Finn", "hey fynn"):
+    for heard in ("Hey Finn.", "hey fin", "Hey, Finn's", "Finn", "Fin.", "A Thing What is on today.", "Afin what"):
         assert wake.says_name(heard, "Hey Finn"), heard
     for heard in ("", "Hey.", "the fun bit", "I'm in", "been there", "Hey, how are you?"):
         assert not wake.says_name(heard, "Hey Finn"), heard

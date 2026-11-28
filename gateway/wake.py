@@ -115,15 +115,25 @@ def name_words(phrase: str) -> List[str]:
     return [w.lower() for w in words if w not in FILLERS] or [w.lower() for w in words]
 
 
+def sound(word: str) -> str:
+    """A word as it sounds, roughly, so speech-to-text's spelling does not matter: "th" and "ph" as "f"
+    (TH-fronting, common in British English: "Finn" came back as "Thing"), doubled letters as one, a
+    final "ng" as "n"."""
+    w = re.sub(r"(th|ph)", "f", word.lower())
+    w = re.sub(r"(.)\1+", r"\1", w)
+    return w[:-1] if w.endswith("ng") else w
+
+
 def says_name(text: str, phrase: str) -> bool:
     """Whether the words speech-to-text heard have the wake phrase's name in them, allowing for spelling
     ("Fin", "Finn's"). Each word of the name must match a heard word (or two heard words run together)."""
     import difflib
     heard = [w.strip("'").lower() for w in spell(text).split() if w.strip("'")]
     heard = [w[:-2] if w.endswith("'s") else w for w in heard]
-    pairs = heard + [a + b for a, b in zip(heard, heard[1:])]
-    return bool(heard) and all(any(difflib.SequenceMatcher(None, n, h).ratio() >= NAME_LIKE for h in pairs)
-                               for n in name_words(phrase))
+    pairs = [sound(h) for h in heard + [a + b for a, b in zip(heard, heard[1:])]]
+    def like(n: str, h: str) -> bool:     # alike, and starting the same way ("in" is not "Finn"), or holding it ("Afin")
+        return (h[:1] == n[:1] or n in h) and difflib.SequenceMatcher(None, n, h).ratio() >= NAME_LIKE
+    return bool(heard) and all(any(like(sound(n), h) for h in pairs) for n in name_words(phrase))
 
 
 def float_to_pcm(samples) -> bytes:
