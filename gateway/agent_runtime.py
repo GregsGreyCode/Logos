@@ -577,6 +577,10 @@ class AgentRuntime:
         # Nothing in the sandbox may call home: no update checks, no model catalogue download.
         cfg["updates"] = {"check": False}
         cfg["model_catalog"] = {"enabled": False}
+        # hermes's catalogue of AI models (names, context sizes, prices) comes from Logos's copy of
+        # models.dev's (gateway/models_catalogue.py): its refresh every 4 h was refused and asked the
+        # agent's people about models.dev (28 Nov). Same data; nothing leaves the sandbox.
+        cfg["models_dev"] = {"url": self.models_catalogue_url()}
         # No "gateway shutting down / back online" messages to the person on every rebuild.
         if (agent.get("matrix") or {}).get("enabled"):
             # Scheduled messages (the daily question, the changes post, briefings) go straight into
@@ -779,6 +783,10 @@ class AgentRuntime:
     def speaker_say_url(self) -> str:
         """Where an agent asks Logos to say something on the house speaker: the dashboard, like the alerts."""
         return self.alert_url().replace(_sibling("alert_text").PATH, _sibling("speaker_say").PATH)
+
+    def models_catalogue_url(self) -> str:
+        """Where hermes gets its catalogue of AI models: Logos's copy of models.dev's, on the dashboard."""
+        return self.alert_url().replace(_sibling("alert_text").PATH, _sibling("models_catalogue").PATH)
 
     def env_file(self, agent: Mapping[str, Any], home: str) -> str:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
@@ -1101,6 +1109,7 @@ class AgentRuntime:
         * ``calendar``: the calendar service's address, or removed when the agent has no calendar.
         * ``house``: the house service's address, or removed unless the agent has ``house`` on.
           Only the tools for its domains are let through.
+        * ``models_catalogue``: the dashboard's copy of the models.dev catalogue, GET on that path only.
         * ``logos_net_*``: sites the agent's people always allowed (story E6, docs/network-approvals.md),
           from ``~/.config/logos/network-approvals.json``.
         """
@@ -1161,6 +1170,8 @@ class AgentRuntime:
             point("agent_rename", self.rename_url(), rest_rules=[("POST", rn.PATH)])
         else:
             rules.pop("agent_rename", None)
+        if "models_catalogue" in rules:    # hermes's model catalogue, from Logos's copy: that one path only
+            point("models_catalogue", self.models_catalogue_url(), rest_rules=[("GET", _sibling("models_catalogue").PATH)])
         vh = _sibling("voice_host")
         if vh.uses_voice(agent):
             point("voice", vh.VoiceHost(self).base_url(), rest_rules=[("POST", "/v1/audio/transcriptions")])

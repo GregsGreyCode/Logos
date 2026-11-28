@@ -34,7 +34,8 @@ Steps:
      Agents are recreated only if they are running on this machine, so the dev and
      bench agents never start on production. Their brains, memory and Matrix logins
      live in volumes and are kept.
-  4. Bring the model gateway, model guard, noticeboard, voice, calendar, web reader and house service up to date. Each of
+  4. Refresh the agents' copy of the models.dev catalogue (gateway/models_catalogue.py).
+     Bring the model gateway, model guard, noticeboard, voice, calendar, web reader and house service up to date. Each of
      these restarts only if its own config or code changed.
   5. Health checks: dashboard answers, every agent that was running is Ready again.
 
@@ -112,6 +113,7 @@ def describe(p):
     if p["dashboard"]:
         steps.append("Restart the dashboard (a few seconds)")
     steps.append("Update the model gateway, noticeboard, voice, calendar, web reader and house service where they changed")
+    steps.append("Refresh the agents' copy of the models.dev catalogue")
     steps += [f"Recreate agent {n} (about a minute without replies)" for n in p["agents"]]
     return steps
 
@@ -265,6 +267,19 @@ def update_services(rt):
             print(f"  {label}: FAILED: {e}", flush=True)
 
 
+def refresh_models_catalogue():
+    """The agents' copy of models.dev's catalogue (gateway/models_catalogue.py), fetched here on the
+    host on every deploy. A failed or odd download keeps the last good copy; it never fails a deploy."""
+    try:
+        spec = importlib.util.spec_from_file_location("logos_models_catalogue", REPO / "gateway" / "models_catalogue.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        ok, msg = mod.refresh()
+    except Exception as e:
+        ok, msg = False, f"{type(e).__name__}: {e}"
+    print(f"  models catalogue: {'updated' if ok else 'not updated'} ({msg})", flush=True)
+
+
 def dashboard_port():
     try:
         for line in (STATE_DIR / ".env").read_text().splitlines():
@@ -332,6 +347,7 @@ def deploy(info):
         sh("systemctl", "--user", "restart", SERVICE)
     print("Services:", flush=True)
     update_services(rt)
+    refresh_models_catalogue()
     failed = []
     for n in p["agents"]:
         print(f"Recreating {n}…", flush=True)

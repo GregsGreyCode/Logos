@@ -242,7 +242,9 @@ def test_notifications_show_the_question_to_its_people_only(setup):
     [item] = na.notification_items(setup.net, "bere", vis, setup.clock[0], 0)
     assert item["type"] == "needs" and item["kind"] == "network"
     assert item["title"] == "Household agent wants to reach example.org"
-    assert item["text"] == "For: Morning briefing · Using curl"
+    assert item["text"] == "Not a site Logos knows. Unknown: ask the agent."
+    assert item["site"]["domain"] == "example.org" and item["site"]["known"] is False
+    assert [a["asker"] for a in item["agents"]] == [{"kind": "agent", "text": "Busy with “Morning briefing” · using curl"}]
     assert na.notification_items(setup.net, "alex", vis, setup.clock[0], 0) == []
     setup.net.decide(req["id"], "deny", "bere")
     [done] = na.notification_items(setup.net, "greg", vis, setup.clock[0], 0)
@@ -257,6 +259,9 @@ def test_the_phone_alert_says_only_what_and_where_to_answer():
     req = {"id": "abc", "host": "example.org", "port": 8443}
     m = na.push_message(req, "Finn", False)
     assert m["title"] == "Finn wants to reach example.org:8443" and m["link"] == "#/noticeboard"
+    assert m["body"] == "Unknown: ask the agent. Allow once, always allow or deny, in Logos Notifications."
+    assert na.push_message({**req, "host": "models.dev", "port": 443}, "Finn and Household agent", False, 2)["title"] == \
+        "Finn and Household agent want to reach models.dev"
     assert na.push_message(req, "Finn", True)["title"] == "Logos"
 
 
@@ -287,3 +292,69 @@ def test_every_agent_is_told_not_to_retry_in_a_loop():
     from pathlib import Path
     text = (Path(__file__).resolve().parents[2] / "souls/_shared/network.md").read_text()
     assert "loop" in text and "asks your person" in text
+
+
+# ── clearer questions (28 Nov: three agents asked about models.dev at once) ──
+
+HERMES_PY = "/opt/hermes/tools/python-3.14.9+20261021-linux-x64/bin/python3.14"
+MODELS_DEV = PENDING.replace("example.org", "models.dev").replace("example_org", "models_dev").replace("/usr/bin/curl", HERMES_PY)
+
+
+def test_what_the_site_is_and_whether_it_is_needed():
+    a = na.about_site("models.dev")
+    assert a["known"] and a["rec"] == na.NOT_NEEDED and a["recommend"] == "Not needed" and "catalogue" in a["about"]
+    assert na.about_site("API.models.dev.")["domain"] == "models.dev"              # by its registered name
+    assert na.about_site("files.pythonhosted.org")["recommend"] == "Unknown: ask the agent"
+    u = na.about_site("cdn.shop.example.co.uk")
+    assert (u["known"], u["domain"], u["about"]) == (False, "example.co.uk", "Not a site Logos knows.")
+    assert na.registrable("a.b.example.org") == "example.org" and na.registrable("example.org") == "example.org"
+
+
+def test_who_is_really_asking():
+    bg = {"host": "models.dev", "binaries": [HERMES_PY]}
+    # hermes's own catalogue fetch is the agent software, even during a chat
+    assert na.asker(bg, {"kind": "chat", "text": "Your chat “Lunch”"})["kind"] == "background"
+    py = {"host": "example.org", "binaries": [HERMES_PY]}
+    assert na.asker(py, None) == {"kind": "background", "text": na.ASKER_BACKGROUND}
+    assert na.asker(py, {"kind": "job", "text": "Scheduled job “x”"}) == {"kind": "job", "text": "Scheduled job “x”"}
+    curl = {"host": "example.org", "binaries": ["/usr/bin/curl"]}
+    assert na.asker(curl, {"kind": "chat", "text": "Your chat “Lunch”"})["text"] == "Your chat “Lunch” · using curl"
+    assert na.asker(curl, None)["kind"] == "agent"
+
+
+def test_the_same_site_from_several_agents_is_one_question_each_still_decided_by_its_own_people(setup):
+    setup.shell.rules["finn"] = MODELS_DEV
+    setup.shell.rules["household"] = MODELS_DEV
+    reqs = setup.net.poll(["finn", "household"])
+    assert len(reqs) == 2 and reqs[0]["group"] == reqs[1]["group"] == reqs[0]["id"]
+    vis = {"finn": "Finn", "household": "Household agent"}
+    [item] = na.notification_items(setup.net, "greg", vis, setup.clock[0], 0)
+    assert item["title"] == "Finn and Household agent want to reach models.dev"
+    assert item["rid"] == reqs[0]["group"] and [a["agent"] for a in item["agents"]] == ["finn", "household"]
+    assert item["agents"][0]["asker"]["kind"] == "background" and item["site"]["recommend"] == "Not needed"
+    [hers] = na.notification_items(setup.net, "bere", vis, setup.clock[0], 0)
+    assert hers["title"] == "Household agent wants to reach models.dev" and len(hers["agents"]) == 1
+    # Béré answers the group: only the household agent is decided; Finn is Greg's alone.
+    assert setup.net.decide_group(item["rid"], "deny", "alex")[0] == 403
+    code, out = setup.net.decide_group(item["rid"], "deny", "bere")
+    assert code == 200 and out["agents"] == ["household"]
+    assert [r["agent"] for r in setup.net.pending()] == ["finn"]
+    code, out = setup.net.decide_group(item["rid"], "once", "greg")
+    assert code == 200 and out["agents"] == ["finn"] and setup.net.pending() == []
+    assert {(a[1], a[3]) for a in setup.audit} >= {("network_deny", "household"), ("network_once", "finn")}
+    assert setup.net.decide_group(item["rid"], "once", "greg")[0] == 404
+
+
+def test_a_later_ask_is_a_new_question(setup):
+    setup.shell.rules["finn"] = MODELS_DEV
+    [a] = setup.net.poll(["finn"])
+    setup.clock[0] += na.GROUP_S + 1
+    setup.shell.rules["household"] = MODELS_DEV
+    [b] = setup.net.poll(["household"])
+    assert b["group"] == b["id"] != a["group"]
+
+
+def test_a_home_name_is_still_never_asked(setup):
+    setup.shell.rules["finn"] = PENDING.replace("example.org", "nas.local")
+    setup.shell.rules["household"] = PENDING.replace("example.org", "nas.local")
+    assert setup.net.poll(["finn", "household"]) == [] and setup.net.pending() == []

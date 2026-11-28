@@ -16,7 +16,7 @@ if [ -z "${CHROME:-}" ]; then
   [ -n "$CHROME" ] || CHROME="$(command -v google-chrome || command -v chromium || true)"
 fi
 [ -n "$CHROME" ] || { echo "No Chrome found: set CHROME"; exit 2; }
-export CHROME OUT
+export CHROME OUT PORT
 # The checks talk to 127.0.0.1:8779; another server already there would answer instead of this one.
 if curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then echo "Port $PORT is already in use: stop what is listening there first."; exit 2; fi
 python3 "$HERE/serve.py" "$REPO" "$PORT" > "$OUT/serve.log" 2>&1 &

@@ -38,6 +38,8 @@ _PUBLIC_PATHS = frozenset({
     "/api/v2/voice/converse",  # the house speaker (Home Assistant); checks its own token (gateway/voice_converse.py)
     "/api/v2/alert-text",  # an agent's first words for a phone alert; checks the agent's own token
                            # (gateway/alert_text.py), and the sandbox may reach only this path
+    "/api/v2/models-dev/api.json",  # the public models.dev catalogue, read only, for hermes in the sandboxes
+                                    # (gateway/models_catalogue.py); the sandbox may reach only this path
     "/api/v2/speaker/say",  # an agent speaking up on the house speaker; checks the agent's own token
                             # (gateway/speaker_say.py), and the sandbox may reach only this path
     "/api/v2/agent-rename/ask",  # an agent asking for a new name (its person confirms); checks the

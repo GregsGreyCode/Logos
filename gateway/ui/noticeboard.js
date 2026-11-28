@@ -72,9 +72,21 @@ export function requestCard(m, doing, reload) {
 
 // A site an agent's sandbox refused (story E6): Allow once (an hour), Always allow, or Deny (asked again
 // in a week at the soonest). Only the agent's own people get the question; the server checks that too.
+// Greg, 28 Nov ("I can't gauge if it's safe"): the card says what the site is, who is really asking
+// (a chat, a job, or the agent software in the background), whether it is needed, and offers to ask the
+// agent why. One site asked by several agents at once is one card; it decides all of yours in it.
 const DECIDED = { once: 'Allowed for an hour.', always: 'Always allowed.', deny: 'Denied. It will not ask again for a week.' };
+const REC_CLASS = { needed: 'need', not_needed: 'no', ask: 'ask' };
+export function whyText(i) {
+  const at = new Date(i.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const site = i.port && Number(i.port) !== 443 ? `${i.host}:${i.port}` : i.host;
+  return `Your sandbox stopped a connection to ${site} at ${at}. What were you trying to do, and do you need that site? `
+    + 'Answer in one or two lines; do not try to reach it again for now.';
+}
 export function networkCard(i, reload) {
   const result = h('div', { class: 'result when', role: 'status' });
+  const about = i.site || { known: false, domain: i.host, about: 'Not a site Logos knows.', rec: 'ask', recommend: 'Unknown: ask the agent', advice: '' };
+  const agents = i.agents && i.agents.length ? i.agents : [{ agent: i.agent, who: i.who, rid: i.rid, asker: null }];
   const go = async (decision, btn) => {
     for (const b of el.querySelectorAll('button')) b.disabled = true;
     btn.setAttribute('aria-busy', 'true');
@@ -86,19 +98,38 @@ export function networkCard(i, reload) {
       result.textContent = d.message || d.error || `Could not do that (HTTP ${r.status}).`;
       return;
     }
-    result.textContent = DECIDED[decision];
+    result.textContent = d.message ? `${DECIDED[decision]} ${d.message}` : DECIDED[decision];
     setTimeout(reload, 1200);
   };
   const button = (decision, label, cls) => {
     const b = h('button', { type: 'button', class: cls, onclick: () => go(decision, b) }, label);
     return b;
   };
+  // "Ask the agent why": the question goes into the agent's chat, which sends it when it opens.
+  const askWhy = (a) => h('a', { class: 'btn small quiet net-why', href: `#/chat/${encodeURIComponent(a.agent)}`,
+    onclick: async () => { const { handOver } = await import('./home.js'); handOver(a.agent, whyText(i)); } },
+  agents.length > 1 ? `Ask ${a.who} why` : 'Ask the agent why');
+  const said = (a) => (a.asker ? a.asker.text : 'The agent (what it was doing is not known)');
+  // The same answer for every agent (the agent software's own fetch, as on 28 Nov) is said once.
+  const same = agents.length > 1 && agents.every((a) => said(a) === said(agents[0]));
+  const rows = same ? [{ ...agents[0], who: agents.length === 2 ? 'Both' : `All ${agents.length}` }] : agents;
+  const askers = h('ul', { class: 'net-askers', 'aria-label': 'Who is asking' }, ...rows.map((a) => h('li', { class: `net-asker kind-${a.asker ? a.asker.kind : 'agent'}` },
+    agents.length > 1 ? h('strong', {}, `${a.who}: `) : null, said(a))));
   const el = h('div', { class: 'card network-ask' },
     h('div', { class: 'card-head' }, h('span', { class: `dot ${i.agent}`, 'aria-hidden': 'true' }),
       h('strong', {}, i.title), h('span', { class: 'when' }, when(i.ts))),
-    h('div', { class: 'card-text' }, i.text),
-    h('div', { class: 'row' }, button('once', 'Allow once', 'btn'), button('always', 'Always allow', 'btn quiet'),
-      button('deny', 'Deny', 'btn quiet')),
+    h('dl', { class: 'net-facts' },
+      h('dt', {}, 'The site'),
+      h('dd', {}, h('span', { class: 'net-about' }, about.about), ' ', h('span', { class: 'net-domain', title: i.host }, about.domain)),
+      h('dt', {}, 'Who is asking'),
+      h('dd', {}, askers),
+      h('dt', {}, 'Logos says'),
+      h('dd', {}, h('span', { class: `net-rec rec-${REC_CLASS[about.rec] || 'ask'}` }, about.recommend),
+        about.advice ? h('span', { class: 'net-advice' }, ` ${about.advice}`) : null)),
+    h('div', { class: 'row' }, button('once', 'Allow once', about.rec === 'not_needed' ? 'btn quiet' : 'btn'),
+      button('always', 'Always allow', 'btn quiet'),
+      button('deny', 'Deny', about.rec === 'not_needed' ? 'btn' : 'btn quiet')),
+    h('div', { class: 'row net-whys' }, ...agents.map(askWhy)),
     result);
   return el;
 }
