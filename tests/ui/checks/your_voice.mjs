@@ -16,7 +16,7 @@ async function open(hash, mob = true) {
   page.on('pageerror', (e) => st.errs.push(e.message));
   await page.route('**/api/v2/voiceprint', (r) => {
     if (r.request().method() === 'DELETE') { st.deleted += 1; st.enrolled = false; return r.fulfill({ json: { ok: true } }); }
-    return r.fulfill({ json: { on: true, enrolled: st.enrolled, summary: st.enrolled ? SUMMARY : null, seconds: 12, need: 6,
+    return r.fulfill({ json: { on: true, enrolled: st.enrolled, summary: st.enrolled ? SUMMARY : null, seconds: 25, need: 6,
       prompt: 'Read this aloud: “What\'s on my calendar today?” Then count slowly from twenty to thirty.' } });
   });
   await page.route('**/api/v2/voiceprint?step=*', (r) => {

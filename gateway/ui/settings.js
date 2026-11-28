@@ -629,7 +629,7 @@ function speaker(body) {
   return () => { alive = false; stop(); Object.values(urls).forEach((u) => URL.revokeObjectURL(u)); };
 }
 
-// Your voice (Voice VO.2): about twelve seconds of reading makes a voice print, so the house speaker can tell who
+// Your voice (Voice VO.2): about 25 seconds of reading (the whole text; the recorder stops by itself at 45 s) makes a voice print, so the house speaker can tell who
 // is speaking (Home answers for you; your own agent answers only you). Then test it (you, and someone else), check it
 // against what the speaker itself heard, or delete it. Logos keeps numbers describing the voice, never the recording.
 function yourVoice(body) {
@@ -644,7 +644,7 @@ function yourVoice(body) {
   const heardList = h('div', { class: 'settings-choices voiceprint-heard' });
   const prompt = h('blockquote', { class: 'voiceprint-prompt' });
   const what = h('p', { class: 'when' });
-  const rec = createRecorder({ agent: '', raw: true, maxSeconds: 15, say: (t) => { status.replaceChildren(t || ''); },
+  const rec = createRecorder({ agent: '', raw: true, maxSeconds: 45, say: (t) => { status.replaceChildren(t || ''); },
     onWords: () => {}, onAudio: (blob) => upload(blob) });
   const label = (t) => { rec.mic.setAttribute('aria-label', t); rec.mic.title = t; };
   body.replaceChildren(
@@ -658,15 +658,19 @@ function yourVoice(body) {
     testBox.hidden = speakerBox.hidden = deleteBox.hidden = !s;
     if (!s) {
       printBox.replaceChildren(h('p', { class: 'none' }, 'No voice print yet.'));
-      what.textContent = `Tap the microphone and read this aloud (about ${d.seconds || 12} seconds), then tap ■. A quiet room is best.`;
+      what.textContent = `Tap the microphone and read all of this aloud (about ${d.seconds || 25} seconds; it stops by itself at 45), then tap ■. A quiet room is best.`;
       add = false; label('Record my voice');
       return;
     }
     const own = s.own ? `Your own samples score ${s.own[0].toFixed(2)} to ${s.own[1].toFixed(2)}.` : '';
     const others = s.others ? ` ${s.others} other voices score at most ${Number(s.others_top).toFixed(2)}.` : '';
+    // What it means first, in plain words (Greg, 28 Nov: "is that clear from the UI?"); the numbers after, small.
     printBox.replaceChildren(
       h('p', {}, h('strong', {}, 'Your voice print is set up. '), `${s.samples} samples${s.learned ? `, ${s.learned} learned at the speaker` : ''}.`),
-      h('p', { class: 'when' }, `${own}${others} It needs ${s.threshold.toFixed(2)} to recognise you${s.tested_others ? ` (raised by ${s.tested_others} other voice${s.tested_others === 1 ? '' : 's'} you let it hear)` : ''}.`));
+      h('p', {}, 'The house speaker now knows your voice: your own agent answers you there, and Home knows it is you who asked. '
+        + 'The speaker\'s microphone sounds different from your phone, so if it does not recognise you at first, find the question under '
+        + '"At the house speaker" below and tap That was me. Two or three times is usually enough.'),
+      h('p', { class: 'when' }, `Details: ${own}${others} It needs ${s.threshold.toFixed(2)} to recognise you${s.tested_others ? ` (raised by ${s.tested_others} other voice${s.tested_others === 1 ? '' : 's'} you let it hear)` : ''}.`));
     what.textContent = 'Recording again adds to your voice print: a different room or distance helps.';
     add = true; label('Record more of my voice');
   }
