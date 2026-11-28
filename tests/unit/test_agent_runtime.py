@@ -647,6 +647,31 @@ network_policies:
         (repo / "souls/_shared/speaker.md").write_text("Use say_on_speaker.\n")
         assert "say_on_speaker" in r.soul_text(on) and "say_on_speaker" not in r.soul_text(plain)
 
+    def test_the_models_catalogue_rule_opens_one_path_on_the_dashboard(self, repo):
+        # hermes's models.dev catalogue comes from Logos's copy (gateway/models_catalogue.py), never models.dev.
+        path = repo / "infra/agent-image/policy.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(self.POLICY_WEATHER + """
+  models_catalogue:
+    endpoints:
+      - host: 192.0.2.1
+        port: 8091
+        protocol: rest
+        enforcement: enforce
+        allowed_ips: [192.0.2.1/32]
+        rules:
+          - allow: {method: GET, path: /api/v2/models-dev/api.json}
+""")
+        r = rt(repo)
+        ep = yaml.safe_load(r.policy_path("alpha", r.load("alpha")).read_text())["network_policies"]["models_catalogue"]["endpoints"][0]
+        assert (ep["host"], ep["port"], ep["allowed_ips"]) == ("172.17.0.1", 8091, ["172.17.0.1/32"])
+        assert ep["rules"] == [{"allow": {"method": "GET", "path": "/api/v2/models-dev/api.json"}}]
+        cfg = yaml.safe_load(r.config_text("alpha", r.load("alpha")))
+        assert cfg["models_dev"] == {"url": "http://172.17.0.1:8091/api/v2/models-dev/api.json"}
+        # The tracked policy has the rule, and nothing in it names models.dev.
+        tracked = (Path(__file__).resolve().parents[2] / "infra/agent-image/policy.yaml").read_text()
+        assert "path: /api/v2/models-dev/api.json" in tracked and "host: models.dev" not in tracked
+
     POLICY_WEB = """
 version: 1
 network_policies:
@@ -1028,6 +1053,7 @@ network_policies:
             "context_file_max_chars": 40000,                                   # SOUL.md is never cut
             "cron": {"wrap_response": False, "mirror_delivery": True},         # no header; agent sees its own jobs
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
+            "models_dev": {"url": "http://172.17.0.1:8091/api/v2/models-dev/api.json"},  # Logos's copy of the catalogue
             "memory": {"memory_char_limit": 6000},
             "plugins": {"enabled": ["logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time", "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag", "logos-speaker-chat", "logos-speaker-say"]},
             "stt": {"enabled": False}}

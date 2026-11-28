@@ -757,6 +757,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     app["activity"] = _activity.Activity(_hermes_home)
     from gateway import alert_text as _alert_text       # what an agent said, for its phone alert
     _alert_text.register(app)
+    from gateway import models_catalogue as _models_catalogue  # the agents' copy of models.dev's catalogue (read only)
+    _models_catalogue.register(app)
     from gateway import voice_converse as _voice_converse  # Voice V1: the house speaker, through Home Assistant
     _voice_converse.register(app)
     from gateway import speaker_voice as _speaker_voice  # Voice V1.2: each agent in its own voice on the speaker
