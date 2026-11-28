@@ -322,7 +322,7 @@ speaker -> Home Assistant -> logos-stt (Wyoming): the words, and an embedding of
 
 #### Your voice (Settings)
 
-Settings › **Your voice**: read the words on the screen for about twelve seconds, tap ■, and the
+Settings › **Your voice**: read all the words on the screen (about 25 seconds; it stops by itself at 45), tap ■, and the
 voice print is made. It says how good the recording was (seconds of speech, how clean) and how good
 the print is: your own samples' scores, how close the 40 reference voices come, and the strictness
 it set. Then:

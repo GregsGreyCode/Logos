@@ -245,7 +245,7 @@ async def handle_get(request: Any) -> Any:
     mine = prints.get(user["username"])
     return web.json_response({"on": await asyncio.to_thread(_on), "enrolled": mine is not None,
                               "summary": mine.summary() if mine else None, "prompt": PROMPT,
-                              "seconds": 12, "need": vp.MIN_ENROL_S})
+                              "seconds": 25, "need": vp.MIN_ENROL_S})
 
 
 async def _recording(request: Any) -> bytes:
