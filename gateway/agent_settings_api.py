@@ -124,9 +124,15 @@ def _speaks(definition: Mapping[str, Any]) -> bool:
     return wake_host.uses_wake(definition) or tts_host.uses_speaker(definition)
 
 
-def _taken_wake_words(runtime: Any, name: str) -> Dict[str, str]:
+def _taken_wake_words(runtime: Any, name: str, people: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """Wake words (:func:`S.wake_key`) other agents use, and the people's names (so "Hey Greg" never
+    wakes an agent) -> who has them."""
     from gateway import wake_host
     taken = {}
+    for person, shown in (people or {}).items():
+        for phrase in (person, f"Hey {person}"):
+            if S.wake_key(phrase):
+                taken.setdefault(S.wake_key(phrase), shown)
     for other in runtime.defined():
         if other == name:
             continue
@@ -137,6 +143,89 @@ def _taken_wake_words(runtime: Any, name: str) -> Dict[str, str]:
         for p in wake_host.phrases_of(other, d):
             taken[S.wake_key(p["phrase"])] = str(d.get("display_name") or other)
     return taken
+
+
+def people_names(env: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """Every person's names (username, display name, its first word) -> their display name: an
+    agent is never called what a person is called. Blocking; {} when the accounts cannot be read."""
+    from gateway import agent_runtime as ar
+    rows: List[Mapping[str, Any]] = []
+    try:
+        rows = list(auth_db.list_users(page=1, limit=1000)[0])
+    except Exception as e:
+        logger.info("agent names: the accounts could not be read (%s)", type(e).__name__)
+    try:
+        rows += ar.household_members(os.environ if env is None else env)
+    except Exception:
+        pass
+    out: Dict[str, str] = {}
+    for r in rows:
+        shown = str(r.get("display_name") or r.get("username") or "").strip()
+        for n in (r.get("username"), r.get("display_name"), shown.split()[0] if shown else ""):
+            n = str(n or "").strip()
+            if n:
+                out.setdefault(n, shown or n)
+    return out
+
+
+def taken_names(runtime: Any, name: str, people: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """What the other agents are called (name, display name, speaker name, Matrix name) and what the
+    people are called, as :func:`S.name_key` -> who. Blocking."""
+    taken: Dict[str, str] = {}
+    for n, shown in (people or {}).items():
+        if S.name_key(n):
+            taken.setdefault(S.name_key(n), shown)
+    for other in runtime.defined():
+        if other == name:
+            continue
+        try:
+            d = runtime.load(other)
+        except Exception:
+            continue
+        shown = str(d.get("display_name") or other)
+        mx = str((d.get("matrix") or {}).get("display_name") or "")
+        for n in (other, d.get("display_name"), d.get("speaker_name"), mx):
+            if n and S.name_key(str(n)):
+                taken[S.name_key(str(n))] = shown
+    return taken
+
+
+def set_names(runtime: Any, name: str, plain: Mapping[str, Any], current: Mapping[str, Any],
+              lock: Mapping[str, str], new: Dict[str, Any], values: Mapping[str, Any],
+              people: Optional[Mapping[str, str]] = None) -> List[str]:
+    """The one place an agent's names are checked and set, for its people (Agents › Settings) and
+    for the agent itself (``set_my_name``, gateway/agent_rename.py). ``values`` may hold
+    ``display_name`` and ``speaker_name``; ``new`` (a copy of the overlay) is changed in place.
+    Returns the keys that change. Raises :class:`S.Invalid` saying why not, with ``new`` untouched."""
+    out = dict(new)
+    if "display_name" in values:
+        if lock.get("display_name"):
+            raise S.Invalid(lock["display_name"])
+        value = S.check_display_name(values["display_name"])
+        if S.name_key(value) != S.name_key(str(current.get("display_name") or name)):
+            S.check_not_taken(value, taken_names(runtime, name, people))
+        if value == str(plain.get("display_name") or name):
+            out.pop("display_name", None)
+        else:
+            out["display_name"] = value
+    if "speaker_name" in values:
+        if lock.get("speaker_name"):
+            raise S.Invalid(lock["speaker_name"])
+        if not _speaks(plain):
+            raise S.Invalid("This agent does not speak on the house speaker.")
+        value = S.check_speaker_name(values["speaker_name"], _taken_wake_words(runtime, name, people))
+        if S.name_key(value) != S.name_key(str(current.get("speaker_name") or "")):
+            S.check_not_taken(value, taken_names(runtime, name, people))
+        if value == str(plain.get("speaker_name") or ""):
+            out.pop("speaker_name", None)
+            out.pop("speaker_wake", None)
+        else:
+            # "Hey <name>" only: a bare name wakes the speaker by accident too easily.
+            out["speaker_name"], out["speaker_wake"] = value, [f"Hey {value}"]
+    changed = sorted(k for k in set(out) | set(new) if out.get(k) != new.get(k))
+    new.clear()
+    new.update(out)
+    return changed
 
 
 def settings_view(runtime: Any, name: str, owners: Optional[List[str]], models: Optional[dict]) -> dict:
@@ -176,7 +265,8 @@ def settings_view(runtime: Any, name: str, owners: Optional[List[str]], models: 
     }
 
 
-def change(runtime: Any, name: str, body: Mapping[str, Any], by: str, models: Optional[dict]) -> dict:
+def change(runtime: Any, name: str, body: Mapping[str, Any], by: str, models: Optional[dict],
+           people: Optional[Mapping[str, str]] = None) -> dict:
     """Check every change in ``body`` first, then keep them all. Blocking.
 
     Returns {"changed": [...], "warnings": [...]} or, when a warning must be agreed to and
@@ -209,13 +299,9 @@ def change(runtime: Any, name: str, body: Mapping[str, Any], by: str, models: Op
         if total > ar.SOUL_MAX_CHARS:
             raise S.Invalid(f"With the shared rules that comes to {total:,} characters; the most is {ar.SOUL_MAX_CHARS:,}. Shorten it.")
 
-    if "display_name" in body:
-        refuse_locked("display_name")
-        value = S.check_display_name(body["display_name"])
-        if value == str(plain.get("display_name") or name):
-            new.pop("display_name", None)
-        else:
-            new["display_name"] = value
+    names = {k: body[k] for k in ("display_name", "speaker_name") if k in body}
+    if names:
+        set_names(runtime, name, plain, agent, lock, new, names, people)
     if "voice_echo" in body:
         refuse_locked("voice_echo")
         if not agent.get("voice"):
@@ -226,17 +312,6 @@ def change(runtime: Any, name: str, body: Mapping[str, Any], by: str, models: Op
             new.pop("voice_echo", None)
         else:
             new["voice_echo"] = body["voice_echo"]
-    if "speaker_name" in body:
-        refuse_locked("speaker_name")
-        if not _speaks(plain):
-            raise S.Invalid("This agent does not speak on the house speaker.")
-        value = S.check_speaker_name(body["speaker_name"], _taken_wake_words(runtime, name))
-        if value == str(plain.get("speaker_name") or ""):
-            new.pop("speaker_name", None)
-            new.pop("speaker_wake", None)
-        else:
-            # "Hey <name>" only: a bare name wakes the speaker by accident too easily.
-            new["speaker_name"], new["speaker_wake"] = value, [f"Hey {value}"]
     if "model" in body:
         refuse_locked("model")
         if (plain.get("model") or {}).get("provider") != "lmstudio":
@@ -303,8 +378,11 @@ async def handle_settings(request: web.Request) -> web.Response:
         body = None
     if not isinstance(body, dict) or not body:
         return _err(400, "bad_request", "Nothing to change.")
+    people = await asyncio.to_thread(people_names, runtime.env) if "display_name" in body or "speaker_name" in body else {}
+    before = await asyncio.to_thread(runtime.load, name)
+    was_pending = await asyncio.to_thread(S.pending, runtime.env, name)
     try:
-        done = await asyncio.to_thread(change, runtime, name, body, user["username"], models)
+        done = await asyncio.to_thread(change, runtime, name, body, user["username"], models, people)
     except S.Invalid as e:
         return _err(400, "invalid", str(e))
     if "confirm" in done:
@@ -313,6 +391,13 @@ async def handle_settings(request: web.Request) -> web.Response:
         auth_db.write_audit_log(user["id"], "agent_settings", target_type="agent", target_id=name,
                                 metadata={"changed": done["changed"]}, ip_address=request.remote)
         logger.info("agent settings: %s changed %s for %s", user["username"], ", ".join(done["changed"]), name)
+    if set(done["changed"]) & {"display_name", "speaker_name"}:
+        # A new name is used at once, as when the agent renames itself (gateway/agent_rename.py):
+        # Matrix, the wake words, the dashboard; the rest of the settings wait for the restart.
+        from gateway import agent_rename
+        only_names = set(done["changed"]) <= set(agent_rename.NAME_KEYS)
+        await agent_rename.apply_live(request.app, runtime, name, before, by=user["username"],
+                                      mark_applied=only_names and not was_pending)
     view = await asyncio.to_thread(settings_view, runtime, name, owners, models)
     return web.json_response({**view, "apply": job_view(jobs.get(name)), "changed": done["changed"], "warnings": done["warnings"]})
 

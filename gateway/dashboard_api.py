@@ -1898,6 +1898,11 @@ async def handle_notifications(request: web.Request) -> web.Response:
     items.extend(await asyncio.to_thread(network_api.notification_items, request.app, user["username"],
                                          {n: str(a["definition"].get("display_name") or n) for n, a in agents.items()},
                                          now, since))
+    # An agent that asked for a new name, waiting for its person's Confirm (gateway/agent_rename.py).
+    from gateway import agent_rename
+    items.extend(await asyncio.to_thread(agent_rename.notifications_for, request.app, user["username"],
+                                         {n: str(a["definition"].get("display_name") or n) for n, a in agents.items()},
+                                         now, since))
     # Someone at the house speaker who said they were you, with a voice that was not yours (impostor.py).
     from gateway import impostor
     items.extend(await asyncio.to_thread(impostor.notifications_for, user["username"], now))

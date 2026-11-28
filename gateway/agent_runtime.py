@@ -57,7 +57,7 @@ ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_mor
 SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time",
                  "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag",
-                 "logos-speaker-chat", "logos-speaker-say")
+                 "logos-speaker-chat", "logos-speaker-say", "logos-rename")
 MANAGED_JOBS = ("brain-commit", "brain-index", "vault-digest", "consolidate", "noticeboard-check", "noticeboard-urgent",
                 "weekly-digest", "morning-briefing", "morning-briefing-weekend", "morning-briefing-check",
                 "morning-briefing-weekend-check", "rerun-after-outage", "model-watch", "changes-daily",
@@ -668,8 +668,13 @@ class AgentRuntime:
     def soul_text(self, agent: Mapping[str, Any]) -> str:
         """The persona plus the shared rules every agent follows (brain filing, honesty)."""
         # The persona: the one its people wrote in the dashboard (E6), else the definition's soul: file.
-        text = (_sibling("agent_settings").own_soul(self.repo, self.env, agent).rstrip() + "\n\n"
-                + (self.repo / "souls/_shared/brain.md").read_text())
+        text = _sibling("agent_settings").own_soul(self.repo, self.env, agent).rstrip() + "\n\n"
+        rn = _sibling("agent_rename")
+        if (self.repo / "souls/_shared/name.md").exists():     # what it is called, and renaming itself
+            text += rn.name_section(agent) + "\n"
+            if rn.uses_rename(agent):
+                text += (self.repo / "souls/_shared/name.md").read_text().rstrip() + "\n\n"
+        text += (self.repo / "souls/_shared/brain.md").read_text()
         judgement = self.repo / "souls/_shared/judgement.md"   # checking facts, verifying, learning from mistakes
         if judgement.exists():
             text = text.rstrip() + "\n\n" + judgement.read_text()
@@ -767,6 +772,10 @@ class AgentRuntime:
         host = _sibling("matrix_host").MatrixHost(self).bind_address()
         return f"http://{host}:{os.environ.get('LOGOS_PORT') or '8091'}{_sibling('alert_text').PATH}"
 
+    def rename_url(self) -> str:
+        """Where an agent asks Logos for a new name (gateway/agent_rename.py): the dashboard, like the alerts."""
+        return self.alert_url().replace(_sibling("alert_text").PATH, _sibling("agent_rename").PATH)
+
     def speaker_say_url(self) -> str:
         """Where an agent asks Logos to say something on the house speaker: the dashboard, like the alerts."""
         return self.alert_url().replace(_sibling("alert_text").PATH, _sibling("speaker_say").PATH)
@@ -814,6 +823,15 @@ class AgentRuntime:
         else:
             cur.pop(ss.TOKEN_ENV, None)
             cur.pop(ss.URL_ENV, None)
+        rn = _sibling("agent_rename")
+        if rn.uses_rename(agent):
+            # It may ask for a new name; its person confirms in Logos (gateway/agent_rename.py).
+            cur[rn.TOKEN_ENV] = rn.token_for(agent["name"], key=at.key(self.env))
+            cur[rn.URL_ENV] = self.rename_url()
+            cur["LOGOS_AGENT_NAME"] = agent["name"]
+        else:
+            cur.pop(rn.TOKEN_ENV, None)
+            cur.pop(rn.URL_ENV, None)
         cur["TZ"] = cur["HERMES_TIMEZONE"] = agent.get("timezone", "UTC")
         cur.setdefault("API_SERVER_KEY", secrets.token_urlsafe(32))
         mg = _sibling("model_gateway")
@@ -1138,6 +1156,11 @@ class AgentRuntime:
             point("speaker_say", self.speaker_say_url(), rest_rules=[("POST", ss.PATH)])
         else:
             rules.pop("speaker_say", None)
+        rn = _sibling("agent_rename")
+        if rn.uses_rename(agent) and "agent_rename" in rules:   # asking for a new name: that one path only
+            point("agent_rename", self.rename_url(), rest_rules=[("POST", rn.PATH)])
+        else:
+            rules.pop("agent_rename", None)
         vh = _sibling("voice_host")
         if vh.uses_voice(agent):
             point("voice", vh.VoiceHost(self).base_url(), rest_rules=[("POST", "/v1/audio/transcriptions")])

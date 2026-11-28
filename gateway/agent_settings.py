@@ -255,6 +255,22 @@ def check_speaker_name(value: Any, taken: Mapping[str, str]) -> str:
     return text
 
 
+def name_key(text: str) -> str:
+    """Two spellings of one name are the same name: "Zoé" and "zoe", "Aunt-May" and "aunt may"."""
+    t = unicodedata.normalize("NFKD", str(text or ""))
+    t = "".join(c for c in t if not unicodedata.combining(c)).casefold()
+    return " ".join(re.sub(r"[^\w]+", " ", t).replace("_", " ").split())
+
+
+def check_not_taken(value: str, taken: Mapping[str, str]) -> str:
+    """Refuse a name another agent or a person already goes by. ``taken`` maps :func:`name_key` of
+    each such name to who has it ("Household agent", "Béré")."""
+    owner = taken.get(name_key(value))
+    if owner:
+        raise Invalid(f'"{value}" is taken: {owner} goes by it. Pick another name.')
+    return value
+
+
 def wake_key(phrase: str) -> str:
     """As gateway/wake_host.py ``_id``: two spellings of one phrase are the same wake word."""
     t = unicodedata.normalize("NFKD", phrase)
