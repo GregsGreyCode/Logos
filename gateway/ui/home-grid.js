@@ -14,18 +14,18 @@ export const COLS = 12, ROWU = 8, GAPX = 24, GAPV = 22;
 // The edit bar (handle, name, Compact/Full, ✕) wraps on a narrow widget, so it does not count.
 // MIN_TABLE_START (measured 27 Nov 2026: what makes each smaller is in widget_minimums.mjs's MEASURE=1 output)
 export const MIN = {
-  next: { compact: [270, 48], full: [160, 120] },           // compact: one line, dot, "15:00 Dinner with Alex", "40 min" (28 Nov); full: on two lines at its narrowest
-  weather: { compact: [270, 40], full: [270, 104] },        // one place's row; narrower cuts the town's name (compact) or wraps tomorrow (full)
-  calendar: { compact: [200, 64], full: [270, 104] },       // Today and its first event (full: and whose); narrower cuts the titles
+  next: { compact: [270, 60], full: [160, 130] },           // compact: one line, dot, "15:00 Dinner with Alex", "40 min" (28 Nov); full: on two lines at its narrowest
+  weather: { compact: [290, 50], full: [270, 110] },        // one place's row; narrower cuts the town's name (compact) or wraps tomorrow (full)
+  calendar: { compact: [200, 110], full: [350, 110] },       // Today and its first event (full: and whose); narrower cuts the titles
   messages: { compact: [330, 72], full: [330, 96] },        // two messages; narrower cuts a group's name ("Household Group · Household agent")
-  coming: { compact: [200, 112], full: [280, 112] },        // two events; narrower cuts their titles
-  month: { compact: [190, 344], full: [250, 400] },         // the whole small month (full: and today's first event); narrower spills the day numbers or cuts a title
+  coming: { compact: [200, 120], full: [290, 120] },        // two events; narrower cuts their titles
+  month: { compact: [190, 344], full: [270, 410] },         // the whole small month (full: and today's first event); narrower spills the day numbers or cuts a title
   lights: { compact: [160, 96], full: [160, 120] },         // one row of rooms: a pill a row at its narrowest
   lists: { compact: [170, 120], full: [260, 192] },         // one list's tile or card; narrower spills its card
   services: { compact: [280, 112], full: [280, 112] },      // two services; narrower cuts the names
   servers: { compact: [270, 72], full: [300, 144] },        // one server; full: its three meters
   proxmox: { compact: [220, 136], full: [380, 96] },        // two guests: rows (compact), or cards two by two (full)
-  backups: { compact: [260, 112], full: [260, 112] },       // two backups
+  backups: { compact: [280, 130], full: [280, 130] },       // two backups
   adblock: { compact: [160, 128], full: [240, 160] },       // the ring and its words; full: and the top blocked
   playing: { compact: [270, 72], full: [210, 160] },        // one thing playing: a line (compact), or poster, bar and times (full)
   downloads: { compact: [270, 96], full: [270, 120] },      // two downloads
