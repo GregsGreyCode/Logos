@@ -333,3 +333,20 @@ def test_the_wake_container_is_told_where_speech_to_text_is(tmp_path, monkeypatc
     from gateway import wake_host
     src = open(wake_host.__file__).read()
     assert "WAKE_CHECK=" in src and "stt_host.settings" in src
+
+
+# ── quiet while a voice message is recorded (28 Nov) ────────────────────────
+
+def test_a_recording_in_logos_keeps_its_agents_name_quiet(tmp_path):
+    from gateway import wake, wake_host
+    env = {"XDG_STATE_HOME": str(tmp_path), "HOME": str(tmp_path)}
+    folder = wake_host.state_dir(env)
+    folder.mkdir(parents=True, exist_ok=True)
+    wake_host.set_quiet("bere", True, env, now=1000)
+    path = str(folder / wake_host.QUIET_FILE)
+    assert wake.quiet(path, "bere", now=1005) and not wake.quiet(path, "greg", now=1005)
+    assert not wake.quiet(path, "bere", now=1000 + wake_host.QUIET_WHILE_S + 1)     # the app stopped saying so
+    wake_host.set_quiet("bere", False, env, now=1006)
+    assert wake.quiet(path, "bere", now=1008) and not wake.quiet(path, "bere", now=1006 + wake_host.QUIET_AFTER_S + 1)
+    assert not wake.quiet(str(tmp_path / "missing.json"), "bere")
+    assert wake.QUIET_FILE == wake_host.QUIET_FILE

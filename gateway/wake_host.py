@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import asyncio
 import logging
 import os
 import re
@@ -54,6 +55,11 @@ CPUS = "1"                              # it needs about a tenth of one core whi
 SETTINGS_FILE = "speaker"               # in ~/.config/logos, shared with the speaker voices
 NAMES_FILE = "names.json"
 HEARD_FILE = "heard.json"
+#: Agents whose wake words are ignored for now: their person is recording a voice message to them in Logos
+#: (Greg, 28 Nov: Béré said "Hey Mira" into her phone and the house speaker answered). {"agents": {name: until}}.
+QUIET_FILE = "quiet.json"
+QUIET_WHILE_S = 10.0     # refreshed every few seconds while the recording goes on
+QUIET_AFTER_S = 4.0      # after it stops: the speaker has heard the end of it by then
 SERVER_FILE = Path(__file__).with_name("wake.py")
 BUILD_DIR = Path(__file__).resolve().parent.parent / "infra" / "wake"
 
@@ -348,5 +354,51 @@ async def _refresh(app: Any) -> None:
 
 
 def register(app: Any) -> None:
+    from gateway.auth.middleware import require_csrf
     forget()
     app.on_startup.append(_refresh)
+    app.router.add_post("/api/v2/voice/recording", require_csrf(handle_recording))
+
+
+# ── Quiet while a voice message is recorded (28 Nov) ───────────────────────────────────────
+
+def set_quiet(agent: str, recording: bool, env: Optional[Mapping[str, str]] = None, now: Optional[float] = None) -> None:
+    """Ignore ``agent``'s wake words for a moment: while its person records a voice message to it, and a few
+    seconds after. The wake service reads quiet.json before it wakes the speaker."""
+    now = time.time() if now is None else now
+    folder = state_dir(env)
+    path = folder / QUIET_FILE
+    try:
+        rows = json.loads(path.read_text()).get("agents") or {}
+    except (OSError, ValueError, AttributeError):
+        rows = {}
+    rows = {a: float(t) for a, t in rows.items() if isinstance(t, (int, float)) and float(t) > now}
+    rows[agent] = now + (QUIET_WHILE_S if recording else QUIET_AFTER_S)
+    tmp = folder / (QUIET_FILE + ".tmp")
+    tmp.write_text(json.dumps({"agents": rows}))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+async def handle_recording(request: "Any") -> "Any":
+    """POST /api/v2/voice/recording {agent, recording}: the Logos app says a voice message to ``agent`` is being
+    recorded (repeated every few seconds) or has stopped. Only for an agent this person may use."""
+    from aiohttp import web
+    from gateway import dashboard_api as d
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    name = str(body.get("agent") or "")
+    user = d._user(request)
+    if name not in await d._visible_agents(request, user["username"]):
+        return web.json_response({"error": "not_found"}, status=404)
+    if settings() is None:
+        return web.json_response({"ok": True, "speaker": False})
+    try:
+        await asyncio.to_thread(set_quiet, name, bool(body.get("recording")))
+    except OSError as e:
+        logger.warning("wake words: could not write %s: %s", QUIET_FILE, e)
+        return web.json_response({"ok": False}, status=503)
+    return web.json_response({"ok": True, "speaker": True})

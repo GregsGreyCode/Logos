@@ -48,8 +48,23 @@ export function voiceBar(v, extra = '') {
 // onSettled(): that is over (words delivered, or it failed). onRecording(true|false): the microphone is on or off.
 // onAudio(blob, seconds): instead of turning it into words, hand the recording over (Settings › Your voice), with the
 // browser's own clean-up switched off (raw: true) so the voice is heard as it is.
-export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}, onTranscribing = () => {}, onSettled = () => {}, onRecording = () => {}, maxSeconds = MAX_RECORD_S, onAudio = null, raw = false }) {
+export function createRecorder({ agent: agentOf, say, onWords, onBusy = () => {}, onTranscribing = () => {}, onSettled = () => {}, onRecording: told = () => {}, maxSeconds = MAX_RECORD_S, onAudio = null, raw = false }) {
   const agent = () => (typeof agentOf === 'function' ? agentOf() : agentOf);       // a name, or something that gives it
+  // While a voice message to an agent is recorded, the house speaker ignores that agent's name (Greg, 28 Nov:
+  // Béré said "Hey Mira" into her phone and the speaker answered): told now, again every few seconds, and when
+  // it stops. Not for Settings › Your voice (onAudio), which records no message.
+  let quietTimer = null;
+  const tellSpeaker = (recording) => {
+    const name = agent();
+    if (!name || onAudio) return;
+    api('/api/v2/voice/recording', { method: 'POST', body: { agent: name, recording } }).catch(() => {});
+  };
+  const onRecording = (on) => {
+    clearInterval(quietTimer); quietTimer = null;
+    tellSpeaker(on);
+    if (on) quietTimer = setInterval(() => tellSpeaker(true), 4000);
+    told(on);
+  };
   let rec = null, destroyed = false, busy = false, last = null;      // last: the recording kept for "Try again"
   const canvas = h('canvas', { class: 'rec-wave', 'aria-hidden': 'true' });
   const time = h('span', { class: 'rec-time', role: 'timer' }, '0:00');

@@ -35,6 +35,7 @@ ANY = "logos_any"            # the pseudo wake word that listens for every name
 ANY_PHRASE = "Any agent's name"
 NAMES_FILE = "names.json"
 HEARD_FILE = "heard.json"
+QUIET_FILE = "quiet.json"        # gateway/wake_host.py set_quiet: agents to ignore for now
 KEEP_HEARD = 10
 HEARD_S = 60                 # older detections are dropped from heard.json
 QUIET_S = 1.5                # one call of a name is one detection
@@ -177,6 +178,16 @@ def check_address(env: Optional[Mapping[str, str]] = None) -> Optional[tuple]:
         return (host, int(port)) if host and 1 <= int(port) <= 65535 else None
     except ValueError:
         return None
+
+
+def quiet(path: str, agent: str, now: Optional[float] = None) -> bool:
+    """Whether ``agent``'s wake words are to be ignored now (quiet.json, written by the dashboard while its
+    person records a voice message to it in Logos)."""
+    now = time.time() if now is None else now
+    try:
+        return float((read_json(path).get("agents") or {}).get(agent) or 0) > now
+    except (TypeError, ValueError, AttributeError):
+        return False
 
 
 def reported_name(names: Optional[Sequence[str]], pid: str) -> str:
@@ -334,7 +345,8 @@ def info_event(phrases: Sequence[Mapping]):
                                   installed=True, version="1", models=models)]).event()
 
 
-def make_handler(spotter: Spotter, heard_path: str):
+def make_handler(spotter: Spotter, heard_path: str, quiet_path: str = ""):
+    quiet_path = quiet_path or os.path.join(os.path.dirname(heard_path), QUIET_FILE)
     from wyoming.audio import AudioChunk, AudioStart, AudioStop
     from wyoming.info import Describe
     from wyoming.ping import Ping, Pong
@@ -375,6 +387,10 @@ def make_handler(spotter: Spotter, heard_path: str):
                 self.recent_n -= len(self.recent.pop(0))
 
         async def _detect(self, pid: str, p: Mapping, rate: int, how: str) -> None:
+            if quiet(quiet_path, p["agent"]):
+                print(f"ignored {p['phrase']!r}: a voice message to {p['agent']} is being recorded in Logos", flush=True)
+                self.quiet_until = self.lquiet_until = time.monotonic() + QUIET_S
+                return
             now = time.monotonic()
             self.quiet_until = self.lquiet_until = now + QUIET_S
             self.detected = True
