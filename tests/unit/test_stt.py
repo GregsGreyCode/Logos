@@ -14,7 +14,7 @@ from gateway import stt, stt_host
 from gateway import voiceprint as vp
 
 
-def test_heard_keeps_embeddings_by_the_hash_of_the_words_for_two_minutes():
+def test_heard_keeps_embeddings_by_the_hash_of_the_words_for_half_an_hour():
     h = stt.Heard()
     h.add("What's on today?", [0.1, 0.2], {"speech": 1.8, "snr": 20, "clipped": False}, now=1000)
     h.add("Add milk", [0.3, 0.4], {"speech": 1.2}, now=1010)
@@ -166,3 +166,28 @@ def test_the_image_pins_what_it_fetches():
                 "wyoming=="):
         assert pin in text
     assert "USER 10000:10000" in text
+
+
+def test_the_speaker_like_reference_voices():
+    import numpy as np
+    rng = np.random.default_rng(0)
+    clean = rng.standard_normal(3 * vp.RATE).astype(np.float32) * 0.1
+    a, b = stt.speaker_like(clean, seed=4), stt.speaker_like(clean, seed=4)
+    assert np.array_equal(a, b) and len(a) == len(clean) and float(np.abs(a).max()) <= 0.7 + 1e-6   # the same every start
+    spec = np.abs(np.fft.rfft(a - stt.speaker_like(np.zeros_like(clean), seed=4)))
+    f = np.fft.rfftfreq(len(a), 1 / vp.RATE)
+    assert spec[f > 6000].mean() < spec[(f > 500) & (f < 3000)].mean() / 5         # band-limited like the speaker
+    assert len(stt.command_pieces(np.zeros(6 * vp.RATE))) == 2 and stt.command_pieces(np.zeros(vp.RATE)) == []
+
+
+def test_the_cohort_door_takes_a_channel():
+    asked = []
+    server = ThreadingHTTPServer(("127.0.0.1", 0), stt.make_http("tok", stt.Heard(), lambda p: {},
+                                                                 lambda channel="phone": asked.append(channel) or [[0.1]]))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        assert call(base + "/cohort?channel=speaker") == (200, {"cohort": [[0.1]]}) and asked == ["speaker"]
+        assert call(base + "/cohort?channel=nope")[0] == 400
+    finally:
+        server.shutdown()

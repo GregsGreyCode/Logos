@@ -633,13 +633,15 @@ function speaker(body) {
 // is speaking (Home answers for you; your own agent answers only you). Then test it (you, and someone else), check it
 // against what the speaker itself heard, or delete it. Logos keeps numbers describing the voice, never the recording.
 function yourVoice(body) {
-  let alive = true, mode = 'enrol', add = false;
+  let alive = true, mode = 'enrol', add = false, rulesOf = null;
   const status = h('p', { class: 'when', role: 'status' });
   const intro = h('div', {}, loading('rows', 2));
   const printBox = h('div', { class: 'settings-body-inner voiceprint-now' });
   const testBox = h('section', { 'aria-label': 'Test it', hidden: true });
   const speakerBox = h('section', { 'aria-label': 'At the house speaker', hidden: true });
   const deleteBox = h('section', { 'aria-label': 'Delete your voice print', hidden: true });
+  const peopleBox = h('section', { 'aria-label': 'Everyone\'s voice', hidden: true });
+  const stateNote = h('p', { class: 'when', role: 'status' });
   const testNote = h('p', { class: 'when appearance-note', role: 'status' });
   const heardList = h('div', { class: 'settings-choices voiceprint-heard' });
   const prompt = h('blockquote', { class: 'voiceprint-prompt' });
@@ -651,7 +653,7 @@ function yourVoice(body) {
     h('section', { 'aria-label': 'Your voice' }, heading('Your voice'), intro, printBox),
     h('section', { 'aria-label': 'Record' }, heading('Record'), what, prompt,
       h('form', { class: 'voiceprint-form', onsubmit: (e) => e.preventDefault() }, rec.mic, rec.bar), status),
-    testBox, speakerBox, deleteBox);
+    testBox, speakerBox, peopleBox, deleteBox);
   const quality = (q) => (q ? `I heard ${Number(q.speech || 0).toFixed(1)} s of speech${q.clipped ? ', too loud' : ''}, ${Number(q.snr || 0) >= 15 ? 'clean' : 'a little noisy'} (${Math.round(q.snr || 0)} dB).` : '');
   function showPrint(d) {
     const s = d.summary;
@@ -664,13 +666,38 @@ function yourVoice(body) {
     }
     const own = s.own ? `Your own samples score ${s.own[0].toFixed(2)} to ${s.own[1].toFixed(2)}.` : '';
     const others = s.others ? ` ${s.others} other voices score at most ${Number(s.others_top).toFixed(2)}.` : '';
-    // What it means first, in plain words (Greg, 28 Nov: "is that clear from the UI?"); the numbers after, small.
+    const pr = s.progress || { labelled: 0, window: 0, hits: 0, held: 0, missing: [] };
+    const rules = rulesOf || { rate: 0.99, window: 50, samples: 50, days: 3 };
+    const times = (n) => `${n} time${n === 1 ? '' : 's'}`;
+    const lastN = pr.window ? `it would have recognised you ${pr.hits} of the last ${times(pr.window)}` : 'it has not tested itself yet';
+    const speakerNeeds = s.speaker_threshold != null ? ` At the speaker it needs ${Number(s.speaker_threshold).toFixed(2)}.` : '';
+    // VO.3 (Greg, 28 Nov): it learns first, from the speaker itself, and only recognises you once it is sure.
+    const active = s.state === 'active';
+    const reset = h('button', { type: 'button', class: 'btn quiet', onclick: async () => {
+      if (!await ask({ title: 'Start learning again?', text: 'The speaker stops recognising you until it has tested itself again. What it has learned is kept.', yes: 'Start again' })) return;
+      const r = await api('/api/v2/voiceprint/state', { method: 'POST', body: { state: 'learning' } }).catch(() => null);
+      const got = r ? await r.json().catch(() => ({})) : {};
+      stateNote.textContent = r && r.ok ? 'It is learning your voice again.' : 'That did not work just now.';
+      if (r && r.ok) showPrint({ summary: got.summary });
+    } }, 'Start learning again');
     printBox.replaceChildren(
-      h('p', {}, h('strong', {}, 'Your voice print is set up. '), `${s.samples} samples${s.learned ? `, ${s.learned} learned at the speaker` : ''}.`),
-      h('p', {}, 'The house speaker now knows your voice: your own agent answers you there, and Home knows it is you who asked. '
-        + 'The speaker\'s microphone sounds different from your phone, so if it does not recognise you at first, find the question under '
-        + '"At the house speaker" below and tap That was me. Two or three times is usually enough.'),
-      h('p', { class: 'when' }, `Details: ${own}${others} It needs ${s.threshold.toFixed(2)} to recognise you${s.tested_others ? ` (raised by ${s.tested_others} other voice${s.tested_others === 1 ? '' : 's'} you let it hear)` : ''}.`));
+      active
+        ? h('div', { class: 'voiceprint-state' },
+          h('p', {}, h('strong', {}, 'Recognising you. '), `The house speaker knows your voice: ${lastN} at the speaker.`),
+          h('p', { class: 'when' }, 'Your own agent answers only you there, and Home knows it is you who asked. If it gets worse, it goes back to learning and tells you.'))
+        : h('div', { class: 'voiceprint-state' },
+          h('p', {}, h('strong', {}, 'Learning your voice: '),
+            `${pr.labelled} recording${pr.labelled === 1 ? '' : 's'} from the speaker, ${lastN}. It switches on at ${Math.round(rules.rate * 100)}%.`),
+          h('p', { class: 'when' }, `Just use the speaker as usual: every time you call your own agent by its name it learns a little more, from different distances and days. `
+            + 'Until it switches on, your agent answers anyone who says its name, and nothing private is said out loud. It tells you when it switches on.')),
+      h('details', { class: 'voiceprint-details' }, h('summary', {}, 'Details'),
+        h('p', { class: 'when' }, `${s.samples} samples: ${s.samples - s.speaker} from your recording, ${s.speaker} from the speaker (${pr.labelled} when you called your agent, on ${pr.days || 0} day${pr.days === 1 ? '' : 's'}).`
+          + `${pr.held ? ` ${pr.held} did not sound like you and were held back.` : ''}`),
+        active ? '' : h('p', { class: 'when' }, `It switches on with ${rules.samples} recordings from the speaker on ${rules.days} different days, `
+          + `recognising you in ${Math.round(rules.rate * 100)}% of the last ${rules.window}, and never taking anyone else for you.`
+          + `${pr.missing && pr.missing.length ? ` Still needed: ${pr.missing.join('; ')}.` : ''}`),
+        h('p', { class: 'when' }, `${own}${others} It needs ${s.threshold.toFixed(2)} for a recording here${s.tested_others ? ` (raised by ${s.tested_others} other voice${s.tested_others === 1 ? '' : 's'} you let it hear)` : ''}.${speakerNeeds}`)),
+      active || pr.window ? h('div', { class: 'row' }, reset) : '', stateNote);
     what.textContent = 'Recording again adds to your voice print: a different room or distance helps.';
     add = true; label('Record more of my voice');
   }
@@ -678,8 +705,10 @@ function yourVoice(body) {
     const d = await getJSON('/api/v2/voiceprint').catch(() => null);
     if (!alive) return;
     if (!d) { intro.replaceChildren(h('p', { class: 'none' }, 'Your voice could not be loaded just now.')); return; }
+    rulesOf = d.rules || rulesOf;
+    if (d.admin) people();
     intro.replaceChildren(
-      h('p', { class: 'when' }, 'Logos can tell who is speaking at the house speaker from their voice: Home then answers for you ("what\'s on today?" is your day), and your own agent answers only you.'),
+      h('p', { class: 'when' }, 'Logos learns to tell who is speaking at the house speaker from their voice. Once it is sure it is you, Home answers for you ("what\'s on today?" is your day), and your own agent answers only you.'),
       h('p', { class: 'when' }, 'Logos keeps numbers that describe your voice (a voice print), never the recording. Only you can see, change or delete yours. It is a strong hint, not a lock: a recording of your voice could fool it.'),
       ...(d.on ? [] : [h('p', { class: 'none' }, 'Speech to text for the house speaker is not switched on on this Logos yet.')]));
     prompt.textContent = d.prompt || '';
@@ -713,30 +742,40 @@ function yourVoice(body) {
       h('button', { type: 'button', class: 'btn quiet', onclick: () => testWith('me', 'Listening for you…') }, 'Test: me'),
       h('button', { type: 'button', class: 'btn quiet', onclick: () => testWith('other', 'Hand it over: someone else, say anything…') }, 'Test: someone else')),
     testNote);
+  const clock = (at) => new Date(at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   async function heard() {
     heardList.replaceChildren(loading('rows', 1));
     const d = await getJSON('/api/v2/voiceprint/heard').catch(() => ({ heard: [] }));
     if (!alive) return;
     const rows = d.heard || [];
-    if (!rows.length) { heardList.replaceChildren(h('p', { class: 'none' }, d.problem || 'Nothing heard at the speaker in the last two minutes.')); return; }
+    if (!rows.length) { heardList.replaceChildren(h('p', { class: 'none' }, d.problem || 'Nothing heard at the speaker in the last 30 minutes.')); return; }
     heardList.replaceChildren(...rows.map((r) => {
       const note = h('span', { class: 'when' });
-      const btn = h('button', { type: 'button', class: 'btn quiet', onclick: async () => {
-        btn.disabled = true;
-        const res = await api(`/api/v2/voiceprint/heard/${r.id}`, { method: 'POST' }).catch(() => null);
+      const what = r.added ? 'added to your voice' : r.held ? `held back: ${r.held}` : r.recognised ? 'recognised as you' : 'not recognised';
+      const fix = (claim) => h('button', { type: 'button', class: 'btn quiet', onclick: async (ev) => {
+        ev.target.disabled = true;
+        const res = await api(`/api/v2/voiceprint/heard/${r.id}`, { method: claim ? 'POST' : 'DELETE' }).catch(() => null);
         const got = res ? await res.json().catch(() => ({})) : {};
-        note.textContent = res && res.ok ? ' Learned: it will know you better at the speaker.' : ` ${got.message || 'That could not be added.'}`;
+        note.textContent = res && res.ok ? (claim ? ' Added: it will know you better at the speaker.' : ' Taken out of your voice.') : ` ${got.message || 'That did not work.'}`;
         if (res && res.ok) showPrint({ summary: got.summary });
-      } }, 'That was me');
+      } }, claim ? 'That was me' : 'Not me');
       return h('div', { class: 'voice-row voiceprint-heard-row' },
-        h('span', {}, h('strong', {}, `${r.ago} s ago`), h('span', { class: 'when' },
-          ` · scored ${r.score.toFixed(2)} · ${r.recognised ? 'recognised as you' : 'not recognised'}`), note),
-        r.recognised ? '' : btn);
+        h('span', {}, h('strong', {}, clock(r.at || (Date.now() / 1000 - r.ago))), h('span', { class: 'when' },
+          ` · ${Number(r.speech || 0).toFixed(1)} s · scored ${r.score.toFixed(2)} · ${what}`), note),
+        r.added ? fix(false) : fix(true));
     }));
   }
   speakerBox.replaceChildren(heading('At the house speaker'),
-    h('p', { class: 'when' }, 'The speaker\'s microphone sounds different from this one. Ask the speaker something, then check here: if it did not recognise you, "That was me" teaches it.'),
+    h('p', { class: 'when' }, 'What the speaker heard in the last 30 minutes, newest first. To help it learn sooner: "That was me" adds one, "Not me" takes out one that was not you.'),
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: heard }, 'Check what it heard')), heardList);
+  async function people() {
+    const d = await getJSON('/api/v2/voiceprint/people').catch(() => null);
+    if (!alive || !d || !(d.people || []).length) return;
+    peopleBox.hidden = false;
+    peopleBox.replaceChildren(heading('Everyone\'s voice'), h('div', { class: 'settings-choices' }, ...d.people.map((p) =>
+      h('div', { class: 'voice-row voiceprint-person' }, h('span', {}, h('strong', {}, p.display_name), h('span', { class: 'when' },
+        ` · ${p.state === 'active' ? 'recognising' : 'learning'} · ${p.labelled} from the speaker · ${p.window ? `${p.hits} of the last ${p.window}` : 'not tested yet'}`))))));
+  }
   deleteBox.replaceChildren(heading('Delete'),
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn danger', onclick: async () => {
       if (!await ask({ title: 'Delete your voice print?', text: 'The house speaker will no longer recognise you. You can record it again at any time.', yes: 'Delete', danger: true })) return;
@@ -767,7 +806,7 @@ function valueOf(id, state) {
     const a = (d.agents || []).find((x) => x.speaks) || (d.agents || [])[0];
     return a ? ((d.voices || []).find((v) => v.id === a.voice) || {}).name || '' : '';
   });
-  if (id === 'voice') return getJSON('/api/v2/voiceprint').then((d) => (d.enrolled ? 'Set up' : 'Not set up'));
+  if (id === 'voice') return getJSON('/api/v2/voiceprint').then((d) => (!d.enrolled ? 'Not set up' : (d.summary || {}).state === 'active' ? 'Recognising' : 'Learning'));
   if (id === 'updates') return getJSON('/api/v2/updates?check=1').then((d) => {
     const n = ((d.plan || {}).commits || []).length;
     return n ? `${n} to install` : 'Up to date';

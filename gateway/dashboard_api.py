@@ -1901,6 +1901,9 @@ async def handle_notifications(request: web.Request) -> web.Response:
     # Someone at the house speaker who said they were you, with a voice that was not yours (impostor.py).
     from gateway import impostor
     items.extend(await asyncio.to_thread(impostor.notifications_for, user["username"], now))
+    # Your voice print switched on (the speaker recognises you now), or went back to learning (voice_id.py, VO.3).
+    from gateway import voice_id
+    items.extend(await asyncio.to_thread(voice_id.notifications_for, user["username"], now))
     items.sort(key=lambda i: -i["ts"])
     seen = await asyncio.to_thread(_seen_until, user["id"])
     read = await asyncio.to_thread(_read_ids, user["id"])

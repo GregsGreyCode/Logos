@@ -726,6 +726,9 @@ dialog.appearance .label { margin: 16px 0 8px; }
 .voiceprint-form { display: flex; align-items: center; gap: 12px; min-height: 48px; }
 .voiceprint-heard-row { justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .voiceprint-heard-row > span { min-width: 0; }
+.voiceprint-details { margin: 4px 0 8px; }
+.voiceprint-details > summary { cursor: pointer; color: var(--muted); font-size: 0.9em; padding: 4px 0; }
+.voiceprint-person { padding: 6px 0; }
 .voice-play { flex: none; cursor: pointer; }
 .voice-play:hover { background: var(--chip); }
 .voice-play:disabled { opacity: 0.5; cursor: progress; }
