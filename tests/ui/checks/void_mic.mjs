@@ -23,7 +23,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
 
   const glyph = await first.locator('.mark-glyph').boundingBox();      // the microphone sits on the logo, not on the (wider) name beneath it
   ok(Math.abs((mic.x + mic.width / 2) - (glyph.x + glyph.width)) <= 14 && mic.y + mic.height / 2 <= glyph.y + glyph.height / 2, `${n}: the microphone is fixed to the logo's corner (${Math.round(mic.x + mic.width / 2 - glyph.x - glyph.width)}px off)`);
-  if (!mob) { const hb = await page.locator('.void-band > h1').boundingBox(), pb = await page.locator('.chat.void').boundingBox(); ok(Math.abs(hb.x - pb.x - 40) <= 3, `${n}: "Agents" is on the left at the top, like every screen's title (${Math.round(hb.x - pb.x)}px in)`); await page.screenshot({ path: `${OUT}/agents-top-desktop.png` }); }
+  if (!mob) { const hb = await page.locator('.void-band > h1').boundingBox(), pb = await page.locator('.void-band').boundingBox(); ok(Math.abs(hb.x - pb.x - 40) <= 3, `${n}: "Agents" is on the left at the top, like every screen's title, right of the chats column (${Math.round(hb.x - pb.x)}px into its band)`); await page.screenshot({ path: `${OUT}/agents-top-desktop.png` }); }
 
   const m0 = await first.locator('.mark-mic').boundingBox(), g0 = await first.locator('.mark-glyph').boundingBox();
   await page.waitForTimeout(3500);                                     // the marks drift: the microphone must go with the logo

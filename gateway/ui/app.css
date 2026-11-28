@@ -2177,11 +2177,18 @@ html.dialog-open, html.dialog-open body { overflow: hidden; }
 
   .settings-body { max-width: 1240px; display: block; column-width: 520px; column-gap: 64px; }
   .settings-body > * { break-inside: avoid; margin: 0 0 32px; }
-
-  .chat.void { display: grid; grid-template-columns: minmax(0, 1fr) minmax(420px, 640px); grid-template-rows: auto 1fr; column-gap: 40px; }
-  .chat.void > .void-band { grid-column: 1 / -1; }
-  .chat.void > .void-field { grid-column: 1; height: clamp(320px, 62vh, 640px); max-width: none; margin: 24px 0 0 40px; }
-  .chat.void > .void-groups { grid-column: 2; width: auto; box-sizing: border-box; margin: 24px 40px 40px 0; padding: 0; max-width: none; }
+}
+/* Agents with the full side menu (Greg, 28 Nov: "chats list on the left"): the chats list is a column on the left, at the
+   same edge and width as the one pinned in a chat from 1400 px (.side.pin-wide), so going into a chat it does not move;
+   the agents float to its right, under the title. Narrower (the slim menu, 600-1099 px) they stay stacked: agents, then chats. */
+@media (min-width: 1100px) {
+  .chat.void { display: grid; grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: auto 1fr; column-gap: 0; }
+  .chat.void > .void-band { grid-column: 2; grid-row: 1; }
+  .chat.void > .void-field { grid-column: 2; grid-row: 2; height: clamp(320px, 62vh, 640px); max-width: none; margin: 24px 40px 0; }
+  .chat.void > .void-groups { grid-column: 1; grid-row: 1 / -1; position: sticky; top: 0; align-self: start; width: 300px; max-width: none;
+    height: 100vh; height: 100dvh; max-height: none; overflow-y: auto; box-sizing: border-box; margin: 0; padding: 20px;
+    background: var(--raised); border-right: 1px solid var(--line); }
+  .chat.void > .void-ask, .chat.void > .void-how { left: 300px; }
 }
 @media (min-width: 1600px) {
   .chat .log, .chat .composer { padding-left: max(24px, calc((100% - 920px) / 2)); padding-right: max(24px, calc((100% - 920px) / 2)); }
