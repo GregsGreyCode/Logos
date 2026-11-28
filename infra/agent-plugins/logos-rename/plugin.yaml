@@ -1,0 +1,12 @@
+name: logos-rename
+label: Logos agents ask for a new name
+kind: standalone
+version: 1.0.0
+description: >
+  The agent can ask Logos to rename it (tool set_my_name) when its person asked for or agreed to a new
+  name in the chat. Logos checks the name and asks the person to confirm in Logos; nothing changes before
+  they do. Once renamed, the agent's next turns are told its new name.
+author: Logos
+provides_tools:
+  - set_my_name
+provides_hooks: [pre_llm_call]

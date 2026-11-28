@@ -103,6 +103,37 @@ export function networkCard(i, reload) {
   return el;
 }
 
+// An agent that asked to be called something else (Greg, 28 Nov): nothing changes until one of its
+// people taps Confirm here (gateway/agent_rename.py); the server checks the name again and that it is theirs.
+export function renameCard(i, reload) {
+  const result = h('div', { class: 'result when', role: 'status' });
+  const go = async (decision, btn) => {
+    for (const b of el.querySelectorAll('button')) b.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    const r = await api(`/api/v2/agent-rename/${encodeURIComponent(i.rid)}/${decision}`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    btn.removeAttribute('aria-busy');
+    if (!r.ok) {
+      for (const b of el.querySelectorAll('button')) b.disabled = false;
+      result.textContent = d.message || d.error || `Could not do that (HTTP ${r.status}).`;
+      return;
+    }
+    result.textContent = d.message || (decision === 'confirm' ? 'Renamed.' : 'It keeps its name.');
+    setTimeout(reload, 2500);
+  };
+  const button = (decision, label, cls) => {
+    const b = h('button', { type: 'button', class: cls, onclick: () => go(decision, b) }, label);
+    return b;
+  };
+  const el = h('div', { class: 'card network-ask rename-ask' },
+    h('div', { class: 'card-head' }, h('span', { class: `dot ${i.agent}`, 'aria-hidden': 'true' }),
+      h('strong', {}, i.title), h('span', { class: 'when' }, when(i.ts))),
+    h('div', { class: 'card-text' }, i.text),
+    h('div', { class: 'row' }, button('confirm', 'Confirm', 'btn'), button('dismiss', 'Not now', 'btn quiet')),
+    result);
+  return el;
+}
+
 // The Notifications tab (Greg, 21 Nov; tidied 22 Nov): what needs you first, then one feed by day
 // (Today, Yesterday, then weekdays), two lines a row. New since you last looked keeps its dot. Opening
 // it marks everything seen.
@@ -111,7 +142,7 @@ const dayWord = (ts) => {
   const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 86400000);
   return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'long' });
 };
-const KIND_LABEL = { network: 'Network', network_done: 'Network', widget: 'Home widget', chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents', advisor: 'Claude Advisor',
+const KIND_LABEL = { network: 'Network', network_done: 'Network', rename: 'Agent', rename_done: 'Agent', widget: 'Home widget', chat: 'Message', brain: 'Brain', ai: 'AI computer', agents: 'Between the agents', advisor: 'Claude Advisor',
   budget: 'Claude Advisor', conflict: 'Brain', agent_down: 'Agent', sync: 'Sync' };
 const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 function feedRow(i, TYPES, onOpen) {
@@ -189,8 +220,9 @@ export async function noticeboardView(root, rest, state) {
       const toDo = waiting.length + needs.length;
       waitSec.hidden = !toDo;
       needsLabel.textContent = toDo ? `Needs you · ${toDo}` : 'Needs you';
-      waitingBox.replaceChildren(...waiting.map(card), ...needs.filter((i) => i.kind === 'network').map((i) => networkCard(i, load)));
-      needsBox.replaceChildren(...needs.filter((i) => i.kind !== 'network').map(row));
+      const asks = (i) => i.kind === 'network' || i.kind === 'rename';      // answered right on the card
+      waitingBox.replaceChildren(...waiting.map(card), ...needs.filter(asks).map((i) => (i.kind === 'rename' ? renameCard : networkCard)(i, load)));
+      needsBox.replaceChildren(...needs.filter((i) => !asks(i)).map(row));
       caught.hidden = !!toDo || rest.some((i) => i.fresh);
       allRead.hidden = !items.some((i) => i.fresh);
       // By day, newest first.

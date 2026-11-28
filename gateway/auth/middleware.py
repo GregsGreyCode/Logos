@@ -39,6 +39,8 @@ _PUBLIC_PATHS = frozenset({
                            # (gateway/alert_text.py), and the sandbox may reach only this path
     "/api/v2/speaker/say",  # an agent speaking up on the house speaker; checks the agent's own token
                             # (gateway/speaker_say.py), and the sandbox may reach only this path
+    "/api/v2/agent-rename/ask",  # an agent asking for a new name (its person confirms); checks the
+                                 # agent's own token (gateway/agent_rename.py); the sandbox reaches only this
     # "/ws/worker" removed — Plan A refactor (TASKS.md #24) deleted the
     # reverse-connection WebSocket endpoint. Workers are now subprocess-
     # per-sandbox, launched via `openshell sandbox exec` from the host
