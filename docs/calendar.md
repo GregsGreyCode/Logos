@@ -59,12 +59,14 @@ Every call is logged in `docker logs logos-calendar-service`: the agent, the act
 
 ## The Calendar screen in the dashboard
 
-Béré asked for it on 27 Nov, and Greg made it a full app the same day. It is in the side menu on a desktop; on a phone it is in the account panel (your initial, top right), and Home's calendar widgets open it.
+Béré asked for it on 27 Nov, and Greg made it a full app the same day. It is in the side menu on a desktop and the fourth tab on a phone (after Home, Agents and Notifications), and Home's calendar widgets open it.
 
 - **Views:** Month (the default), Week, Day and List (the next four weeks, only the days with something on).
   - On a phone the month shows dots, and the day you tap is listed under it. A swipe moves a month or a week.
   - On a desktop the month shows the events by name, and the day you pick sits beside it.
-- **Calendars:** each has its colour and a switch: yours, Household, then everyone else's. The switches are remembered on that device.
+  - Day shows each event whole: title, whose, where and the notes, line by line. Week and List wrap long titles; nothing is cut short with "…".
+- **Fast:** what the device kept (five minutes) draws at once; a fresh copy replaces it in place only if something changed, keeping the picked day and an open event. A first visit shows a placeholder. Once a range is drawn, the one before and after are fetched quietly, so Earlier and Later are instant.
+- **Calendars:** each has its colour and a switch: yours, Household, then everyone else's. The key with the switches sits under the calendar (under the month grid, above the day's list). The switches are remembered on that device.
 - **An event:** tap it to see all of it (when, calendar, where, notes, whether it repeats).
 - **Who sees what:** exactly what Home shows. It reads with your own read-only key, so you see your calendar, Household and the other people's. Someone without a calendar account sees what their agent sees: busy times show as "Busy".
 - **Adding, changing, cancelling:** these go through your own agent. That is an agent that is yours alone and has `calendar: {person: <you>}`. It has the same rights as when you ask it in chat:
@@ -74,7 +76,7 @@ Béré asked for it on 27 Nov, and Greg made it a full app the same day. It is i
   - The calendar service checks all of this again. Changes show in Radicale's history as the service's.
   - With no such agent, **Add** opens your agent's chat with "Add an event on …:" typed in, ready to finish.
 - **Home:**
-  - The **Month** widget (Edit → + Month) shows this month small, with today's events under it.
+  - The **Month** widget (Edit → + Month) shows this month small, with today's events under it (Full), or just the month and its dots (Compact).
   - Tapping a line in Today or Coming up opens the Calendar at that day, with the event open. Tapping a heading opens that day or the list.
 - **API:**
   - `GET /api/v2/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD` covers both days, at most 62. It returns `events`, `busy`, `calendars` (`key`, `name`), `today`, `agent` and `can_change`.

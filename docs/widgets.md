@@ -88,6 +88,7 @@ single column, in that order.
   | Calendar | today only, what is still to come, without whose and where |
   | Messages | who and when, not the message's first words |
   | Coming up | the next three, without whose |
+  | Month | the small month with its dots, without today's events under it |
   | Lights | smaller pills with the room's name only (the fill still shows how bright) |
   | Lists | a tile per list (Full: every thing, with a box to tick it off) |
   | Services | four at most, problems first, no times for the ones that are up |

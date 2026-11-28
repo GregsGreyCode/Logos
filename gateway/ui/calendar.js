@@ -488,14 +488,17 @@ export async function calendarView(root, rest, state) {
   return () => { alive = false; document.removeEventListener('keydown', onKey); for (const l of document.querySelectorAll('.cal-layer')) l.remove(); };
 }
 
-// ── Home's Month widget (Greg, 27 Nov): this month small, with today's events under it; a tap opens the Calendar ──
-export function monthWidget() {
+// ── Home's Month widget (Greg, 27 Nov): this month small; a tap opens the Calendar. Full: today's events under it;
+// Compact: the month and its dots only. A size change redraws from what is on screen, asking nothing again. ──
+export function monthWidget({ compact = () => false } = {}) {
   const box = h('div', { class: 'cal-mini-box' });      // its placeholder only once it is on Home
   const sec = h('section', { class: 'home-month', 'aria-label': 'Month' },
     h('h2', { class: 'label' }, h('a', { class: 'label-link', href: '#/calendar' }, 'Month')), box);
-  let me = '';
+  let me = '', last = null;
   function draw(d) {
+    last = d;
     if (!d || d.error) { box.replaceChildren(none(d && d.error === 'no_calendar' ? 'No calendar yet.' : 'The calendar could not be read just now.')); return; }
+    const small = compact();
     const now = new Date(), today = iso(now), [a, b] = rangeOf('month', today);
     const pal = paletteFor(d, me), map = byDay(d, loadHidden());
     const cells = [];
@@ -508,15 +511,15 @@ export function monthWidget() {
     }
     const heads = Array.from({ length: 7 }, (_, i) => h('span', { class: 'cal-dow', 'aria-hidden': 'true' }, add(a, i).toLocaleDateString([], { weekday: 'narrow' })));
     const todays = map.get(today) || [];
-    box.replaceChildren(
+    box.replaceChildren(...[
       h('a', { class: 'cal-mini-title', href: `#/calendar/month/${today}` }, now.toLocaleDateString([], { month: 'long', year: 'numeric' })),
       h('div', { class: 'cal-mini' }, heads, cells),
-      h('h3', { class: 'sub-label' }, 'Today'),
-      todays.length ? h('div', { class: 'home-list home-agenda' }, todays.slice(0, 4).map((e) => h('a', { class: 'home-row home-line', href: `#/calendar/day/${today}/${encodeURIComponent(e.id || '')}` },
+      small ? null : h('h3', { class: 'sub-label' }, 'Today'),
+      small ? null : todays.length ? h('div', { class: 'home-list home-agenda' }, todays.slice(0, 4).map((e) => h('a', { class: 'home-row home-line', href: `#/calendar/day/${today}/${encodeURIComponent(e.id || '')}` },
         h('span', { class: 'home-time' }, e.all_day || String(e.start).slice(0, 10) !== today ? 'All day' : timeOf(e.start)),
         h('span', { class: 'dot', style: `background:${(pal[e.calendar] || {}).colour || 'var(--muted)'}`, 'aria-hidden': 'true' }),
         h('span', { class: 'home-title' }, e.busy ? 'Busy' : e.title),
-        h('span', { class: 'home-meta' }, (pal[e.calendar] || {}).name || '')))) : none('Nothing today.'));
+        h('span', { class: 'home-meta' }, (pal[e.calendar] || {}).name || '')))) : none('Nothing today.')].filter(Boolean));
   }
   return {
     sec,
@@ -524,5 +527,7 @@ export function monthWidget() {
       me = username || me;
       if (!box.childElementCount) box.replaceChildren(loading('rows', 3));
       return swr(urlOf(rangeOf('month', iso(new Date()))), 5 * MIN, draw, { error: 'calendar_unavailable' }); },
+    // Drawn again from what it last had (the size switch); asks only if it has nothing yet.
+    redraw() { if (last) draw(last); else this.show(); },
   };
 }

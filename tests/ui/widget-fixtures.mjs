@@ -53,7 +53,7 @@ export function weatherFor(places) {
     return { place: p.name, lat: p.lat, lon: p.lon, now: { temp: t, code: c, day: true }, today, tomorrow }; });
   return out.length ? { ...out[0], places: out } : { error: 'no_place', places: [] };
 }
-export const ALL = ['weather', 'next', 'calendar', 'messages', 'coming', 'lights', 'lists', ...KINDS.widgets.map((k) => k.id)];
+export const ALL = ['weather', 'next', 'calendar', 'messages', 'coming', 'lights', 'lists', 'month', ...KINDS.widgets.map((k) => k.id)];
 
 // Routes every widget's data on a page. prefs: what /api/v2/me's prefs become (a function of the saved ones).
 export async function routeAll(page, { widgets = ALL, prefs = {} } = {}) {

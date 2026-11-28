@@ -19,6 +19,7 @@ export const MIN = {
   calendar: { compact: [200, 64], full: [270, 104] },       // Today and its first event (full: and whose); narrower cuts the titles
   messages: { compact: [330, 72], full: [330, 96] },        // two messages; narrower cuts a group's name ("Household Group · Household agent")
   coming: { compact: [200, 112], full: [280, 112] },        // two events; narrower cuts their titles
+  month: { compact: [190, 344], full: [250, 400] },         // the whole small month (full: and today's first event); narrower spills the day numbers or cuts a title
   lights: { compact: [160, 96], full: [160, 120] },         // one row of rooms: a pill a row at its narrowest
   lists: { compact: [170, 120], full: [260, 192] },         // one list's tile or card; narrower spills its card
   services: { compact: [280, 112], full: [280, 112] },      // two services; narrower cuts the names

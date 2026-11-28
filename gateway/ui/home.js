@@ -438,7 +438,7 @@ export async function homeView(root, rest, state) {
   // ── Edit: drag a widget by its handle (finger or mouse), ✕ takes it off, Add puts one back ──────
   const nextSec = h('section', { class: 'home-next-sec', 'aria-label': 'Next' }, nextUp);
   const calSec = h('section', { 'aria-label': 'Calendar', class: 'home-cal' }, h('h2', { class: 'visually-hidden' }, 'Calendar'), todayBox);
-  const month = monthWidget();            // the Calendar's own widget (calendar.js)
+  const month = monthWidget({ compact: () => compactOf('month') });   // the Calendar's own widget (calendar.js)
   const SECS = { next: nextSec, weather: weatherSec, calendar: calSec, messages: msgSec, coming: comingSec, lights: lightsSec, lists: listsSec, month: month.sec };
   for (const [id, el] of Object.entries(SECS)) { el.dataset.widget = id; el.classList.add('home-widget'); }
   const board = h('div', { class: 'home-widgets' });
@@ -645,7 +645,7 @@ export async function homeView(root, rest, state) {
   const REDRAW = { next: () => showNext(data && data.today), weather: () => weatherData && drawWeather(weatherData), calendar: () => data && showToday(data.today),
     messages: () => drawMessages(), coming: () => comingData && drawComing(comingData), lights: () => lightsData && drawLights(lightsData),
     lists: () => listsData && drawListsData(listsData),
-    month: () => month.show(state && state.me && state.me.username) };
+    month: () => month.redraw() };
   const markSize = (id) => { const el = SECS[id]; if (el) { el.classList.toggle('size-compact', compactOf(id)); el.classList.toggle('size-full', !compactOf(id)); } };
 
   function applyWidgets() {

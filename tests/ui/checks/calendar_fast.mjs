@@ -72,7 +72,7 @@ const box = (page, sel) => page.locator(sel).first().boundingBox();
         localStorage.setItem(k, JSON.stringify(v));
       }
     });
-    await page.reload(); await page.waitForTimeout(1200);   // a new page: no memory copy, the device's kept one
+    await page.reload(); await page.locator('.home-widgets').waitFor({ timeout: 15000 });   // a new page: no memory copy, the device's kept one
     const before = calls.length;
     await page.evaluate(() => { location.hash = '#/calendar/month'; });
     await page.waitForTimeout(250);

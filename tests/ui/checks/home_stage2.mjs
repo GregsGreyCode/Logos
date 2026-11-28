@@ -33,10 +33,27 @@ const rects = (page) => page.evaluate(() => Object.fromEntries([...document.quer
 const clear = (rs) => { const v = Object.values(rs); return v.every((a, i) => v.every((b, j) => i === j || a.r <= b.x + 1 || b.r <= a.x + 1 || a.b <= b.y + 1 || b.b <= a.y + 1)); };
 const edit = async (page) => { await page.locator('.home-edit-link').evaluate((b) => b.click()); await page.waitForTimeout(500); };
 
+// Month (27 Nov): Full is the small month and today's events; Compact the month and its dots only, drawn again
+// from what is on screen (no new call), and back. (Edit is on.)
+async function monthSizes(page, st, n) {
+  const mw = page.locator('.home-widgets > [data-widget="month"]');
+  ok(await mw.locator('.cal-mini .cal-mini-day').count() >= 28 && await mw.locator('.home-agenda .home-line').count() >= 1, `${n}: Full Month: the month and today's events`);
+  let calCalls = 0; const countCal = (r) => { if (new URL(r.url()).pathname === '/api/v2/calendar') calCalls++; }; page.on('request', countCal);
+  await mw.locator('.widget-size').getByRole('button', { name: 'Compact' }).click(); await page.waitForTimeout(300);
+  ok(await mw.locator('.cal-mini .cal-dots .dot').count() >= 2 && await mw.locator('.home-agenda, .sub-label').count() === 0 && await mw.evaluate((e) => e.classList.contains('size-compact') && !/null|undefined/.test(e.textContent)),
+    `${n}: Compact Month: the month with its dots, no list`);
+  ok(st.prefs.widget_sizes.month === 'compact', `${n}: Month's size kept`);
+  await page.screenshot({ path: `${OUT}/stage2-month-compact-${n}.png` });
+  await mw.locator('.widget-size').getByRole('button', { name: 'Full' }).click(); await page.waitForTimeout(300);
+  ok(await mw.locator('.home-agenda .home-line').count() >= 1 && calCalls === 0, `${n}: Full again, redrawn from what was there (${calCalls} calls)`);
+  page.off('request', countCal);
+  await mw.locator('.widget-size').getByRole('button', { name: 'Compact' }).click(); await page.waitForTimeout(200);
+}
+
 for (const [vw, vh, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'desktop']]) {
   const page = await browser.newPage({ viewport: { width: vw, height: vh }, isMobile: mob, hasTouch: mob });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-  const st = await routeAll(page, { widgets: ['weather', 'agents', 'lights', 'network', 'coming', 'calendar', 'services'] });
+  const st = await routeAll(page, { widgets: ['weather', 'agents', 'lights', 'network', 'coming', 'calendar', 'services', ...(mob ? ['month'] : [])] });
   await page.route('**/api/v2/weather/places*', (r) => r.fulfill({ json: { places: [PLACES[2]] } }));
   await page.goto(URL_HOME); await page.waitForTimeout(3000);
 
@@ -71,6 +88,7 @@ for (const [vw, vh, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   ok(await page.locator('.home-lights.compact').count() === 1, `${n}: Compact Lights: smaller pills`);
   ok(await page.locator('[data-widget="network"] .w-fig').count() === 2, `${n}: Compact Network: down and up only`);
   ok(/6 today/.test(await page.locator('[data-widget="agents"] .w-agent').first().textContent()), `${n}: Compact Agents today: how many today`);
+  if (mob) await monthSizes(page, st, n);
   ok(['weather', 'lights', 'network', 'agents'].every((id) => st.prefs.widget_sizes[id] === 'compact'), `${n}: each choice kept with your login (${JSON.stringify(st.prefs.widget_sizes)})`);
   await page.screenshot({ path: `${OUT}/stage2-compact-${n}.png`, fullPage: true });
 
@@ -163,6 +181,18 @@ for (const [vw, vh, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     await page.screenshot({ path: `${OUT}/stage2-tidy-desktop.png`, fullPage: true });
   }
   ok(errs.length === 0, `${n}: no page errors ${errs.slice(0, 2).join('; ')}`);
+  await page.close();
+}
+// The Month widget's sizes on a desktop too, on a Home of its own.
+{
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const errs = []; page.on('pageerror', (e) => errs.push(e.message));
+  const st = await routeAll(page, { widgets: ['weather', 'month', 'coming'] });
+  await page.goto(URL_HOME); await page.waitForTimeout(3000); await edit(page);
+  await monthSizes(page, st, 'desktop');
+  const r = (await rects(page)).month, [cw, ch] = G.minPx('month', 'compact');
+  ok(r && r.w >= cw - 1 && r.h >= ch - 1, `desktop: Compact Month is at least its minimum ${cw}×${ch} px (${r && Math.round(r.w)}×${r && Math.round(r.h)})`);
+  ok(errs.length === 0, `desktop Month: no page errors ${errs.slice(0, 2).join('; ')}`);
   await page.close();
 }
 await browser.close();

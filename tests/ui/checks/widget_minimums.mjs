@@ -18,7 +18,7 @@ const MEASURE = !!process.env.MEASURE;
 // What a widget is for, at its smallest: [selector, how many]. The bottom of the last one is its minimum height; none
 // given: all of it.
 const ESSENTIAL = {
-  calendar: ['.home-line', 2], coming: ['.home-line', 2], messages: ['.home-msg', 2], lights: ['.home-light', 1], lists: ['.home-list-card', 1],
+  month: ['.cal-mini, .home-month .home-line', 2], calendar: ['.home-line', 2], coming: ['.home-line', 2], messages: ['.home-msg', 2], lights: ['.home-light', 1], lists: ['.home-list-card', 1],
   weather: ['.home-weather-place', 1], services: ['.w-row', 2], backups: ['.w-row', 2], proxmox: ['.w-card, .w-row', 2], servers: ['.w-card, .w-row', 1],
   playing: ['.w-card, .w-row', 1], downloads: ['.w-dl', 2], bookmarks: ['.w-mark, .w-mark-chip', 1], cameras: ['.w-cam', 1], agents: ['.w-agent', 2],
 };
