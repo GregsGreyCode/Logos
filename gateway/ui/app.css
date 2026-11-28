@@ -1652,9 +1652,16 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .mx-sender { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin: 6px 0 2px 4px; }
 .mx-sender.bot { color: var(--accent-text); }
 .msg.assistant.person { background: var(--surface-2, var(--surface)); }
-.mx-ask { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 24px 8px;
-  padding-left: max(24px, calc((100% - 760px) / 2)); padding-right: max(24px, calc((100% - 760px) / 2)); }
-@media (max-width: 599px) { .mx-ask { padding: 4px 16px 8px; } }
+/* The agents to ask, in the message box's row: on a desktop between attach and the text (who the message is for,
+   read with it); on a phone on its own line above them. */
+.composer .mx-ask { display: flex; align-items: center; gap: 8px; flex: none; max-width: 40%; flex-wrap: wrap; padding: 0; align-self: center; }
+.composer .mx-ask[hidden] { display: none; }
+.composer .mx-ask .mx-ask-chip { min-height: 44px; }
+@media (max-width: 599px) {
+  .composer.has-ask { flex-wrap: wrap; }
+  .composer .mx-ask { flex-basis: 100%; max-width: none; order: -1; }
+  .composer .mx-ask .mx-ask-chip { min-height: 34px; }
+}
 .mx-ask-chip { cursor: pointer; user-select: none; font: inherit; font-size: var(--t-sm); min-height: 34px; padding: 0 14px;
   border: 1px dashed var(--line); border-radius: 999px; background: transparent; color: var(--muted); }
 .mx-ask-chip.on { background: var(--accent); color: var(--accent-ink); border: 1px solid var(--accent); font-weight: 600; }
@@ -2962,3 +2969,5 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 .site-deny .site-name { color: var(--muted); }
 .sites-more { margin-top: 6px; }
 .site-add { margin-top: 10px; }
+/* A long placeholder ("Message Household Group") ends in … on one line instead of a cut second line. */
+.composer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

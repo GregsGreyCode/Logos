@@ -321,7 +321,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       for (const el of sec.querySelectorAll('.work-pulse')) for (const a of el.getAnimations()) if (a.animationName === 'work-pulse') a.startTime = pulseFrom;
     });
   }
-  const askRow = h('div', { class: 'mx-ask', hidden: !group });
+  // In the message box's own panel, on a line above the text (Greg, 28 Nov: it floated between the messages and the
+  // box, lined up with neither): who the message is for, read with the message.
+  const askRow = h('div', { class: 'mx-ask', hidden: !group, role: 'group', 'aria-label': 'Ask an agent' });
+  // Desktop: inline, between attach and the text, as a "To:" would be. Phone: the line above (app.css).
+  if (group) { form.classList.add('has-ask'); form.insertBefore(askRow, input); }
   let asking = new Set();                    // the agents your next message in the group is for
   const askKey = `logos.group.ask.${group}`;
 
@@ -333,7 +337,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         threadId || group ? null : agentBar(agent, 'chat', agents.filter((a) => a.matrix_id)),
         crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : pageTitle,
         sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null),
-      group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, pending, form),
+      group ? null : chipsRow, log, thinkingRow, note, modelLine, pending, form),
     sideBits.side, sideBits.sideScrim || null);
 
   // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
