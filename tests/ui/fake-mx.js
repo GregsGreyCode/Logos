@@ -48,6 +48,7 @@ const client = {
   createRoom: async (o) => { window.__mx.created = o; const id = '!new:test'; rooms.push(mkRoom(id, o.name, [ME, ...o.invite], [])); return { room_id: id }; },
   joinRoom: async (id) => { (window.__mx.joined ||= []).push(id); return {}; },
   leave: async (id) => { (window.__mx.left ||= []).push(id); return {}; },
+  invite: async (id, u) => { (window.__mx.invited ||= []).push([id, u]); return {}; },
   mxcUrlToHttp: (mxc) => (window.__mx.blobs || {})[mxc] || null,
   getAccessToken: () => 'tok',
   uploadContent: async (blob, opts) => { const id = `mxc://test/up${Object.keys(window.__mx.blobs ||= {}).length}`; window.__mx.blobs[id] = URL.createObjectURL(blob); (window.__mx.uploads ||= []).push({ id, opts, size: blob.size }); return { content_uri: id }; },
