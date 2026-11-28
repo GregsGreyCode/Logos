@@ -20,8 +20,10 @@ $QuietFor = 120                              # seconds with no game before the m
 # A game is a process run from one of these folders...
 $GameDirs = @('\steamapps\common\', '\Epic Games\', '\XboxGames\', '\GOG Galaxy\Games\', '\EA Games\')
 # ...except these (launchers, crash reporters, helpers that live in the same folders).
-$NotGames = @('EpicGamesLauncher', 'EpicWebHelper', 'UnrealCEFSubProcess', 'CrashReportClient',
-              'steamwebhelper', 'GalaxyClient', 'EADesktop')
+$NotGames = @('EpicGamesLauncher', 'EpicWebHelper', 'UnrealCEFSubProcess', 'steamwebhelper', 'GalaxyClient',
+              'EADesktop', 'start_protected_game', 'EasyAntiCheat', 'EasyAntiCheat_EOS', 'QtWebEngineProcess')
+# ...and anything whose name looks like a crash reporter or a helper (they can outlive the game).
+$NotGameLike = @('*crash*', '*helper*', '*updater*', '*report*', '*cefsub*', '*webview*')
 # Games installed anywhere else, by process name without .exe (e.g. 'javaw' for Minecraft).
 $Extra    = @()
 
@@ -31,7 +33,8 @@ function Say($text) { Add-Content $Log ("{0:yyyy-MM-dd HH:mm:ss}  {1}" -f (Get-D
 function Find-Game {
     Get-Process | Where-Object {
         $path = $_.Path
-        ($NotGames -notcontains $_.Name) -and (
+        $name = $_.Name
+        ($NotGames -notcontains $name) -and -not ($NotGameLike | Where-Object { $name -like $_ }) -and (
             ($Extra -contains $_.Name) -or
             ($path -and ($GameDirs | Where-Object { $path -like "*$_*" })))
     } | Select-Object -First 1
