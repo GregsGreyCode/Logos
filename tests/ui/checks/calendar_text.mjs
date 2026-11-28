@@ -31,7 +31,7 @@ for (const [w, hgt, name, mobile] of [[360, 800, 'phone', true], [1440, 900, 'de
   const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: 2 });
   const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   // Day
-  await page.goto(`http://127.0.0.1:8779/#/calendar/day/${tomorrow}`); await page.waitForTimeout(1500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/calendar/day/${tomorrow}`); await page.waitForTimeout(1500);
   const day = page.locator('.cal-dayview');
   const text = await day.innerText();
   ok(text.includes(LONG) && text.includes(WHERE) && text.includes(NOTE), `${name} Day: the long title, its place and its notes in full`);
@@ -45,7 +45,7 @@ for (const [w, hgt, name, mobile] of [[360, 800, 'phone', true], [1440, 900, 'de
   await page.keyboard.press('Escape'); await page.waitForTimeout(100);
   // Week and List
   for (const v of ['week', 'list']) {
-    await page.goto(`http://127.0.0.1:8779/#/calendar/${v}/${tomorrow}`); await page.waitForTimeout(1200);
+    await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/calendar/${v}/${tomorrow}`); await page.waitForTimeout(1200);
     const sel = v === 'week' ? '.cal-week' : '.cal-agenda';
     ok((await page.locator(sel).innerText()).includes(LONG), `${name} ${v}: the long title in full`);
     const c = await clipped(page, sel);
@@ -55,7 +55,7 @@ for (const [w, hgt, name, mobile] of [[360, 800, 'phone', true], [1440, 900, 'de
   // The bar above: the month name and Add fit (the Calendar is a phone tab now, 27 Nov; 320 px too).
   if (mobile) {
     await page.setViewportSize({ width: 320, height: 640 });
-    await page.goto(`http://127.0.0.1:8779/#/calendar/month/${tomorrow}`); await page.waitForTimeout(1200);
+    await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/calendar/month/${tomorrow}`); await page.waitForTimeout(1200);
     const bar = await page.evaluate(() => { const vw = document.documentElement.clientWidth;
       return [...document.querySelectorAll('.cal-bar button, .cal-bar h2')].filter((e) => e.offsetParent && e.getBoundingClientRect().right > vw + 1).map((e) => e.className); });
     ok(bar.length === 0, `320 px: the Calendar's bar fits${bar.length ? ' (' + bar.join(', ') + ')' : ''}`);

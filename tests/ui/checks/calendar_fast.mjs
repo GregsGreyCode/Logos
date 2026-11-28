@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
 const OUT = process.argv[2];
-const BASE = 'http://127.0.0.1:8779/';
+const BASE = `http://127.0.0.1:${process.env.PORT || 8779}/`;
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const box = (page, sel) => page.locator(sel).first().boundingBox();
 
@@ -54,10 +54,10 @@ const box = (page, sel) => page.locator(sel).first().boundingBox();
     ok(await page.locator('.cal-month').isVisible() && await page.locator('.cal-body .loading').count() === 0, 'then the month');
     await page.waitForTimeout(2800);                     // the months either side, fetched ahead (slowly)
     const n = calls.length;
-    await page.locator('.cal-step[aria-label="Later"]').tap(); await page.waitForTimeout(150);
+    await page.locator('.cal-step[aria-label="Next month"]').tap(); await page.waitForTimeout(150);
     ok(await page.locator('.cal-month').isVisible() && await page.locator('.cal-body .loading').count() === 0, 'Later: the next month at once, fetched ahead');
     ok(!calls.slice(n).includes(calls[1]) && !calls.slice(n).includes(calls[2]), 'without asking again');
-    await page.locator('.cal-step[aria-label="Earlier"]').tap(); await page.waitForTimeout(150);
+    await page.locator('.cal-step[aria-label="Previous month"]').tap(); await page.waitForTimeout(150);
     ok(await page.locator('.cal-month').isVisible(), 'Earlier: back at once');
 
     // An old kept copy: drawn at once, then the fresh one in place, the picked day and the open event kept.
@@ -77,7 +77,7 @@ const box = (page, sel) => page.locator(sel).first().boundingBox();
     await page.waitForTimeout(250);
     ok(await page.locator('.cal-month').isVisible() && await page.locator('.cal-body .loading').count() === 0, 'a kept copy draws at once');
     const pick = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
-    if (await page.locator(`.cal-day[data-day="${pick}"]:not(.other)`).count() === 0) await page.locator('.cal-step[aria-label="Later"]').tap();   // the last day of a month
+    if (await page.locator(`.cal-day[data-day="${pick}"]:not(.other)`).count() === 0) await page.locator('.cal-step[aria-label="Next month"]').tap();   // the last day of a month
     await page.locator(`.cal-day[data-day="${pick}"]`).tap(); await page.waitForTimeout(100);
     ok(!(await page.locator('.cal-side').innerText()).includes('Dentist'), '(the old copy, without the newest event)');
     await page.locator('.cal-side .cal-event').first().tap(); await page.waitForTimeout(100);

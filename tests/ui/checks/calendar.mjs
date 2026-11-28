@@ -6,7 +6,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
 const OUT = process.argv[2];
-const BASE = 'http://127.0.0.1:8779/';
+const BASE = `http://127.0.0.1:${process.env.PORT || 8779}/`;
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const pad = (n) => String(n).padStart(2, '0');
 const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -61,11 +61,32 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
   await page.locator('.cal-side .cal-event', { hasText: 'Call Maman' }).tap(); await page.waitForTimeout(300);
   const dlg = page.locator('.cal-panel');
   const dtext = await dlg.innerText();
-  ok(dtext.includes('When') && dtext.includes('Béré') && /can see it, not change it/.test(dtext), 'an event in full, Béré\'s read only');
-  ok(await dlg.locator('button', { hasText: 'Change' }).count() === 0, 'no Change on someone else\'s');
+  ok(dtext.includes('When') && (await dlg.locator('.cal-owner').innerText()) === 'Béré\'s calendar' && !/read.only|not change|can see it/i.test(dtext), 'an event in full says whose: "Béré\'s calendar", no read-only wording');
+  ok(await dlg.locator('button', { hasText: 'Change' }).count() === 0 && await dlg.locator('button', { hasText: 'Cancel event' }).count() === 0, 'no Change or Cancel on someone else\'s');
+  ok((await page.locator('.cal-side .cal-event', { hasText: 'Call Maman' }).locator('.cal-ev-who').innerText()) === 'Béré\'s calendar'
+    && (await page.locator('.cal-side .cal-event', { hasText: 'Rubbish bins' }).locator('.cal-ev-who').innerText()) === 'Household', 'the day\'s list says whose the same way');
+  // One close: ✕ in the top-right corner, in line with the title, labelled Close; no other Close button.
+  const x = await dlg.locator('.cal-x').boundingBox(), pb = await dlg.boundingBox(), tb = await dlg.locator('.cal-panel-title h2').boundingBox();
+  ok(x && pb.x + pb.width - (x.x + x.width) < 24 && x.y - pb.y < 30 && Math.abs((x.y + x.height / 2) - (tb.y + tb.height / 2)) < 8 && x.width >= 36,
+    `phone: ✕ in the panel's top-right corner, in line with the title (${Math.round(x.x)},${Math.round(x.y)} ${Math.round(x.width)} px)`);
+  ok((await dlg.locator('.cal-x').getAttribute('aria-label')) === 'Close' && await dlg.locator('.row button', { hasText: 'Close' }).count() === 0, 'it is labelled Close, and it is the only close');
   await page.screenshot({ path: `${OUT}/calendar-phone-event.png` });
-  await dlg.locator('button', { hasText: 'Close' }).tap(); await page.waitForTimeout(150);
-  ok(await page.locator('.cal-panel').count() === 0, 'Close closes it');
+  await dlg.locator('.cal-x').tap(); await page.waitForTimeout(150);
+  ok(await page.locator('.cal-panel').count() === 0, '✕ closes it');
+
+  // "Add on <day>" in the day's list: the form, that day filled in, only the calendars you can change.
+  const sideAdd = page.locator('.cal-side .cal-side-add');
+  ok(/^Add on \S+ \d+$/.test((await sideAdd.innerText()).trim()), `the day's list has "Add on <day>" (${(await sideAdd.innerText()).trim()})`);
+  await sideAdd.tap(); await page.waitForTimeout(250);
+  ok(await page.locator('.cal-form').isVisible() && (await page.inputValue('#cal-f-date')) === today && !(await page.isChecked('#cal-f-allday')), 'it opens the form on that day, not all day');
+  const opts = await page.$$eval('#cal-f-cal option', (os) => os.map((o) => o.textContent));
+  ok(JSON.stringify(opts) === JSON.stringify(['Your calendar', 'Household']), `the form offers only yours and Household (${opts})`);
+  const hr = Math.min(now.getHours() + 1, 23);
+  ok((await page.inputValue('#cal-f-from')) === `${pad(hr)}:00`, `today, it starts at the next hour (${await page.inputValue('#cal-f-from')})`);
+  await page.screenshot({ path: `${OUT}/calendar-phone-add-on.png` });
+  await page.locator('.cal-panel .cal-x').tap(); await page.waitForTimeout(150);
+  ok((await page.evaluate(() => location.hash)).startsWith('#/calendar/month'), 'and the phone stays on the month');
+  ok(await page.locator('.cal-day-add').first().isVisible() === false, 'no "+" in the cells on a phone');
 
   // A repeating one says where to change it.
   await page.locator('.cal-side .cal-event', { hasText: 'Rubbish bins' }).tap(); await page.waitForTimeout(250);
@@ -111,10 +132,10 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
   // Earlier and later: a call per new range, kept after that.
   await page.goto(BASE + '#/calendar/month/' + today); await page.waitForTimeout(800);
   const before = calls.slice(), t0 = await page.locator('.cal-title').textContent();
-  await page.locator('.cal-step[aria-label="Later"]').tap(); await page.waitForTimeout(500);
+  await page.locator('.cal-step[aria-label="Next month"]').tap(); await page.waitForTimeout(500);
   const shown = calls.slice(before.length);
   ok((await page.locator('.cal-title').textContent()) !== t0 && shown.length === 1 && !before.includes(shown[0]), `Later: the next month at once (fetched ahead), only the one after it asked for (${shown})`);
-  await page.locator('.cal-step[aria-label="Earlier"]').tap(); await page.waitForTimeout(400);
+  await page.locator('.cal-step[aria-label="Previous month"]').tap(); await page.waitForTimeout(400);
   ok((await page.locator('.cal-title').textContent()) === t0, 'Earlier: back again');
   ok(errs.length === 0, `no page errors on the phone ${errs.join(' | ')}`);
   await ctx.close();
