@@ -39,5 +39,22 @@ ok(await page.locator('.doc-head .btn', { hasText: 'Edit' }).isVisible(), 'Cance
 const phone = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
 await phone.goto('http://127.0.0.1:8779/#/brain/greg'); await phone.waitForTimeout(2500);
 ok(await phone.locator('.brain-phone-search').isVisible(), 'phone: search stays at the top');
+// The phone Brain has the desktop's structure (UI review, 28 Nov; at 390 the picker, search and ask box were doubled or cut).
+const p390 = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+p390.on('pageerror', (e) => errs.push(e.message));
+await p390.goto('http://127.0.0.1:8779/#/brain/greg'); await p390.waitForTimeout(2500);
+ok(await p390.locator('.agent-bar-switch:visible').count() === 1, `390: one agent picker (${await p390.locator('.agent-bar-switch:visible').count()})`);
+const searches = p390.locator('input[type="search"]:visible');
+ok(await searches.count() === 1, `390: one search box (${await searches.count()})`);
+ok(await searches.first().evaluate((el) => getComputedStyle(el).borderRadius !== '0px' && parseFloat(getComputedStyle(el).height) >= 40), '390: the search is the styled one');
+const vh = 844, tabs = await p390.locator('.tabbar').boundingBox();
+const a390 = await p390.locator('.doc .ask').boundingBox(), h390 = await p390.locator('.doc .doc-head').boundingBox();
+ok(a390 && h390 && a390.y > h390.y + h390.height + 100, '390: the ask box is below the page, not above it');
+ok(a390 && Math.abs(a390.y + a390.height - (tabs ? tabs.y : vh)) <= 4, `390: the ask box is docked just above the tabs (${Math.round(a390.y + a390.height)} vs ${Math.round(tabs ? tabs.y : vh)})`);
+const ta = p390.locator('.doc .ask textarea');
+ok(await ta.evaluate((el) => el.clientHeight <= 52 && getComputedStyle(el, '::placeholder').whiteSpace === 'nowrap'), '390: the ask hint stays on one line');
+const send390 = await p390.locator('.doc .ask-go').boundingBox(), taBox = await ta.boundingBox();
+ok(send390.x >= taBox.x + taBox.width && send390.x + send390.width <= 390 - 12, '390: the send button sits beside the box, inside the edge');
+await p390.screenshot({ path: process.argv[2] + '/brain-390.png' });
 ok(errs.length === 0, `no page errors ${errs.slice(0, 2).join('; ')}`);
 await browser.close();

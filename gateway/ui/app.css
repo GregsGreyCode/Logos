@@ -1986,7 +1986,8 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
   .page > header.page-band { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 16px; min-height: 68px;
     margin: -32px -40px 0; padding: 0 40px; border-bottom: 1px solid var(--line); }
   .page > header.page-band > h1 { display: block; margin: 0; font-size: 22px; line-height: 28px; min-height: 0; border: 0; padding: 0; }
-  .chat.void > .void-band { display: flex; align-items: center; justify-content: center; min-height: 68px; padding: 0 40px; border-bottom: 1px solid var(--line); }
+  /* The Agents title on the left like every other screen's (UI review, 28 Nov; it was centred over the floating marks). */
+  .chat.void > .void-band { display: flex; align-items: center; justify-content: flex-start; min-height: 68px; padding: 0 40px; border-bottom: 1px solid var(--line); }
   .chat.void > .void-band > h1 { margin: 0; font-size: 22px; line-height: 28px; }
   [data-look="glass"] .page-band { background: var(--glass); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
   /* Home: the date is the band. */
@@ -2649,6 +2650,26 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
   .doc .toolbar .tool.accent { margin-left: auto; }
 }
 @media (max-width: 599px) { .brain-head .brain-phone-search { order: 3; } }
+/* The phone Brain with the desktop's structure (UI review, 28 Nov): one agent picker (the agent bar's; the band's own was a
+   second copy), one styled search (the band's; the page list's bare one was a second, unstyled copy), and the "ask the agent"
+   box docked at the bottom of the page above the tabs, its hint on one line, as on the desktop and in the chat. */
+@media (max-width: 599px) {
+  .brain-head .agent-bar-who, .brain .tree-top { display: none; }
+  .brain .chat-head.brain-head { padding: 4px 16px 12px; min-height: 0; }
+  .brain .brain-side:not(.searching):has(> .changes.few) { display: none; }
+  .brain .doc { display: flex; flex-direction: column; padding-bottom: 0; min-height: calc(100dvh - 52px - 56px - var(--tabbar-h) - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+  .brain .doc > .ask { order: 99; position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--below-visible, 0px)); z-index: 2;
+    margin: auto -16px 0; padding: 10px 16px; border-top: 1px solid var(--line); background: var(--surface); }
+  .brain .doc > .ask textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brain .doc > .doc-head { padding-bottom: 12px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+}
+/* Notifications, tidied again (UI review, 28 Nov): a title may take two lines (on a phone it was cut after ~20 characters), its
+   chip and time staying on the first; a new update gets a ring rather than the filled dot, which is kept for what the bell
+   counts (what needs you, and unread messages), so the dots match the number. */
+.notifications .feed-top .feed-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.notifications .feed-top .feed-type { align-self: baseline; }
+.notifications .feed-item.open .feed-top .feed-title { display: block; }
+.feed-days .feed-item.fresh:not(.type-message) .feed-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--accent); }
 
 /* People (F38): add a person by invitation, each person's page */
 .form select { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);

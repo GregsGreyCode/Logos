@@ -30,5 +30,5 @@ if (await long.count()) {
   ok(after > before + 40, `a tap on the long message opens it (${Math.round(before)} to ${Math.round(after)}px)`);
 } else ok(false, 'a long message is foldable');
 await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(1500);
-ok(await page.locator('.nav-links .beta-tag').count() === 3, 'Beta beside People, Models and Claude Advisor in the menu');
+ok(await page.locator('.nav-links .beta-tag').count() === 1 && await page.locator('.nav-group .beta-tag').isVisible(), 'one Beta, on the Manage heading (UI review, 28 Nov: not beside each of People, Models and Claude Advisor)');
 await browser.close();

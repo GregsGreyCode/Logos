@@ -4,7 +4,7 @@
 // add or change one, ask the agent); the rest work behind the scenes. Its model and reach fold away.
 import { modelName, h, api, getJSON, none, loading, icon, ICONS, shortName, when, ask, reveal, focusIfKeyboard } from './util.js';
 import * as mx from './mx.js';
-import { agentBar } from './agents-void.js';
+import { agentBar, baseMood, MOODS } from './agents-void.js';
 
 // Logos's routine jobs (gateway/agent_runtime.py ROUTINE_JOBS): shown as the Built in cards, not as rows.
 const ROUTINE_JOBS = new Set(['morning-briefing', 'morning-briefing-check', 'morning-briefing-weekend',
@@ -54,10 +54,12 @@ export async function agentsView(root, [agentArg, sub]) {
   const detail = h('div', { class: 'routines' });
 
   // Which agent (a wide screen): your agents as cards. On a phone the agent's own bar is the header.
+  // Its state in the Agents screen's words (Asleep, Awake, Unplugged, Not running), not the sandbox's "Running" (UI review, 28 Nov).
+  const moodLine = (a) => { const m = baseMood(a); return h('span', { class: `status mood-${m}${m === 'awake' ? ' up' : m === 'off' ? ' down' : ''}` }, MOODS[m]); };
   const cards = h('div', { class: 'cards agent-cards wide-only' },
     data.agents.map((a) => h('a', { href: `#/agents/${a.name}`, class: `card agent-card ${agent && a.name === agent.name ? 'picked' : ''}` },
       h('div', { class: 'card-head' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), h('strong', {}, a.display_name)),
-      h('span', { class: `status ${a.running ? 'up' : ''}` }, a.running ? 'Running' : 'Not running'),
+      moodLine(a),
       a.shared ? h('span', { class: 'when' }, 'Shared with the household') : null)));
 
   const note = h('p', { class: 'when', role: 'status' });
