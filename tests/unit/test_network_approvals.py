@@ -93,7 +93,7 @@ def test_rule_get_is_read_as_openshell_prints_it():
 
 
 @pytest.mark.parametrize("host,port,why", [
-    ("192.168.1.10", 443, "an address"), ("10.0.0.1", 80, "an address"), ("100.101.102.103", 443, "an address"),
+    ("192.168.0.10", 443, "an address"), ("10.0.0.1", 80, "an address"), ("100.101.102.103", 443, "an address"),
     ("[::1]", 443, "an address"), ("localhost", 80, "home network"), ("nas.local", 443, "home network"),
     ("box.tail1234.ts.net", 443, "home network"), ("router.lan", 80, "home network"), ("*.example.org", 443, "wildcards"),
     ("exa mple.org", 443, "not a site name"), ("intranet", 443, "home network"), ("printer", 443, "not a site name"), ("example.org", 0, "port"),
@@ -104,7 +104,7 @@ def test_only_public_site_names_are_offered(host, port, why):
 
 
 def test_a_name_pointing_home_or_at_the_tailnet_is_refused():
-    lan = lambda h, p, proto=None: [(2, 1, 6, "", ("192.168.1.226", p))]
+    lan = lambda h, p, proto=None: [(2, 1, 6, "", ("192.168.0.20", p))]
     tailnet = lambda h, p, proto=None: [(2, 1, 6, "", ("100.88.1.2", p))]
     mapped = lambda h, p, proto=None: [(10, 1, 6, "", ("::ffff:10.1.2.3", p, 0, 0))]
     for resolve in (lan, tailnet, mapped):
@@ -213,7 +213,7 @@ def test_deny_is_remembered_for_a_week(setup):
 
 
 def test_a_private_destination_is_refused_without_asking(setup):
-    setup.shell.rules["finn"] = PENDING.replace("example.org", "192.168.1.50")
+    setup.shell.rules["finn"] = PENDING.replace("example.org", "192.168.0.50")
     assert setup.net.poll(["finn"]) == []
     assert setup.shell.did("openshell", "rule", "reject", "finn")
     assert setup.audit[0][1] == "network_refused" and "address" in setup.audit[0][4]["reason"]
