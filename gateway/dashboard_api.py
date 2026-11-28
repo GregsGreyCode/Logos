@@ -804,6 +804,12 @@ async def handle_agent_status(request: web.Request) -> web.Response:
         allowed.append("The voice service (voice notes to text)")
     if _sibling(runtime, "calendar_host").uses_calendar(definition):
         allowed.append("The calendar service")
+    from gateway import network_api, network_approvals   # E6: the sites its people allowed
+    net = network_api.approvals_of(request.app)
+    sites = (await asyncio.to_thread(net.allowed, name)).get(name, {}) if net is not None else {}
+    let_in = [network_approvals.site(e["host"], e["port"]) for e in (sites.get("always") or []) + (sites.get("once") or [])]
+    if let_in:
+        allowed.append("Sites you allowed: " + ", ".join(dict.fromkeys(let_in)))
     return web.json_response({
         "jobs": jobs,
         "model": {"name": str(model.get("default") or ""), "local": model.get("provider") == "lmstudio",
@@ -811,7 +817,8 @@ async def handle_agent_status(request: web.Request) -> web.Response:
                   "up": await model_server_up(request, definition)},
         "budget": {"monthly_usd": float((definition.get("budget") or {}).get("monthly_usd", mg.DEFAULT_MONTHLY_USD))
                    if via_gateway else None},
-        "reach": {"allowed": allowed, "blocked": ["Your home network", "The internet", "The other agents"]},
+        "reach": {"allowed": allowed, "blocked": ["Your home network", "The rest of the internet" if let_in else "The internet",
+                                                  "The other agents"]},
     })
 
 
@@ -1911,6 +1918,11 @@ async def handle_notifications(request: web.Request) -> web.Response:
                           "title": "AI computer back on" if e["up"] else "AI computer off",
                           "text": "The agents answer again." if e["up"] else
                           ("Messages wait until it is back." if current else "It came back on.")})
+    # E6: a site an agent's sandbox refused, waiting for its person's answer; and the answers of the week.
+    from gateway import network_api
+    items.extend(await asyncio.to_thread(network_api.notification_items, request.app, user["username"],
+                                         {n: str(a["definition"].get("display_name") or n) for n, a in agents.items()},
+                                         now, since))
     # Someone at the house speaker who said they were you, with a voice that was not yours (impostor.py).
     from gateway import impostor
     items.extend(await asyncio.to_thread(impostor.notifications_for, user["username"], now))

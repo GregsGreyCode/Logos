@@ -2706,3 +2706,10 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
   .home-grid-tools .home-reset { margin-left: 0; }
 }
 @media (max-width: 1099px) { .guide-layer { display: none; } }
+
+/* E6: network approvals (a site an agent's sandbox refused) and the People page's list of sites. */
+.network-ask .row { flex-wrap: wrap; }
+.network-sites { margin-top: 16px; display: grid; gap: 10px; }
+.site-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; }
+.site-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow-wrap: anywhere; }
+.site-row .btn.small { margin-left: auto; }

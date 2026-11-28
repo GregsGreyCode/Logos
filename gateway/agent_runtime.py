@@ -585,6 +585,8 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/noticeboard.md").read_text()
         if agent.get("vault", True) and (self.repo / "souls/_shared/vault.md").exists():
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/vault.md").read_text()       # files people send are kept (F47)
+        if _sibling("network_approvals").enabled(agent) and (self.repo / "souls/_shared/network.md").exists():
+            text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/network.md").read_text()   # E6: blocked sites ask
         if _sibling("voice_host").uses_voice(agent):
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/voice.md").read_text()
         if _sibling("speaker_say").speaks(agent) and (self.repo / "souls/_shared/speaker.md").exists():
@@ -974,6 +976,8 @@ class AgentRuntime:
         * ``calendar``: the calendar service's address, or removed when the agent has no calendar.
         * ``house``: the house service's address, or removed unless the agent has ``house`` on.
           Only the tools for its domains are let through.
+        * ``logos_net_*``: sites the agent's people always allowed (story E6, docs/network-approvals.md),
+          from ``~/.config/logos/network-approvals.json``.
         """
         src = self.repo / agent["policy"]
         if not src.exists():
@@ -1090,6 +1094,12 @@ class AgentRuntime:
             point("changes", wh.WebHost(self).changes_url(), rest_rules=[("GET", "/changes/**")])
         else:
             rules.pop("changes", None)
+        na = _sibling("network_approvals")
+        if na.enabled(agent):
+            # E6: the sites the agent's people chose "Always allow" for (~/.config/logos, never in git).
+            for rule, body in na.rules_for(self.env, name).items():
+                rules.setdefault(rule, body)
+            policy["network_policies"] = rules
         if json.dumps(rules, sort_keys=True) == before:
             return src
         out = self.repo / ".rendered" / f"{name}.policy.yaml"
