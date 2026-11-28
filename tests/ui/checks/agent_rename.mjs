@@ -21,7 +21,7 @@ for (const [w, hgt, mobile, tag] of [[412, 915, true, 'phone'], [1280, 860, fals
       r.fulfill({ json: answer === 'confirm'
         ? { ok: true, decision: 'confirm', message: "Greg's agent is now called Finn. At the house speaker say \"Hey Finn\"; \"Hey Logos\" no longer wakes it." }
         : { ok: true, decision: 'dismiss', message: "Greg's agent keeps its name." } }); });
-    await page.goto('http://127.0.0.1:8779/#/noticeboard'); await page.waitForTimeout(2500);
+    await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await page.waitForTimeout(2500);
     const card = page.locator('.notifications .rename-ask');
     ok(await card.count() === 1, `${tag}/${answer}: the question is a card under Needs you`);
     const text = await card.textContent();

@@ -22,7 +22,7 @@ for (const [tag, opts, menuSel] of [
   ['phone', { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }, null]]) {
   const ctx = await browser.newContext(opts); const page = await ctx.newPage();
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-  await page.goto('http://127.0.0.1:8779/#/chat/household'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/household`); await page.waitForTimeout(2500);
   // The agent chat's ≡ on a phone is at the end of its chips row; its right-hand control in the header is the Chat pill.
   const agent = await parts(page, menuSel || '.chat-head .agent-menu > summary');
   await page.evaluate((h) => { location.hash = h; }, GROUP); await page.waitForTimeout(2500);

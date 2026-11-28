@@ -12,7 +12,7 @@ await page.route('**/api/v2/**', async (route) => {
   await route.continue();
 });
 await page.route('**/auth/logout', (route) => route.fulfill({ json: {} }));
-await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
 const w1 = hits['/api/v2/weather'] || 0, c1 = hits['/api/v2/home/coming'] || 0, l1 = hits['/api/v2/home/lights'] || 0;
 await page.evaluate(() => { location.hash = '#/noticeboard'; }); await page.waitForTimeout(1500);
 slow = true;
@@ -27,7 +27,7 @@ await page.screenshot({ path: process.argv[2] + '/cache-nb.png' });
 slow = false; await page.waitForTimeout(1800);
 ok(await page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('logos.cache.'))), 'copies are kept on the device');
 await page.evaluate(() => document.querySelector('.logout-btn').click()); await page.waitForTimeout(800);
-const chk = await ctx.newPage(); await chk.goto('http://127.0.0.1:8779/static/logo.svg');
+const chk = await ctx.newPage(); await chk.goto(`http://127.0.0.1:${process.env.PORT || 8779}/static/logo.svg`);
 const left = await chk.evaluate(() => Object.keys(localStorage).filter((k) => (k.startsWith('logos.cache.') && k !== 'logos.cache.owner') || k === 'logos-home-last'));
 ok(left.length === 0, `Sign out clears them (${left})`);
 await chk.close();
@@ -35,6 +35,6 @@ ok(errs.length === 0, `no page errors ${errs.join('|')}`);
 // someone else on this browser
 const p2 = await ctx.newPage();
 await p2.addInitScript(() => { try { localStorage.setItem('logos.cache.feed', JSON.stringify({ t: Date.now(), v: { items: [{ id: 'x', kind: 'brain', type: 'update', ts: Date.now() / 1000, title: 'SOMEONE ELSES' }], waiting: [] } })); localStorage.setItem('logos.cache.owner', 'bere'); } catch (e) {} });
-await p2.goto('http://127.0.0.1:8779/#/noticeboard'); await p2.waitForTimeout(300);
+await p2.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await p2.waitForTimeout(300);
 ok(!(await p2.content()).includes('SOMEONE ELSES'), 'another person\'s kept copy is never shown');
 await browser.close();

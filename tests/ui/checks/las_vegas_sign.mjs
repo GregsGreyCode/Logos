@@ -24,7 +24,7 @@ async function open(w, hgt, { on, setUp }) {
     return r.fulfill({ json: setUp ? DATA : { state: 'setup' } });
   });
   await page.route('**/api/v2/me/prefs', (r) => { if (r.request().method() === 'PUT') { st.puts.push(r.request().postDataJSON()); return r.fulfill({ json: { prefs: {} } }); } return r.continue(); });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
   return { page, st };
 }
 

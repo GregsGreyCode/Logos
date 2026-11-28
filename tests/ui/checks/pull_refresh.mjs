@@ -19,7 +19,7 @@ async function drag(dy, { hold = false, x = 206, y0 = 320 } = {}) {
 const count = { home: 0, feed: 0 };
 page.on('request', (r) => { const u = new URL(r.url()).pathname; if (u === '/api/v2/home') count.home += 1; if (u === '/api/v2/notifications') count.feed += 1; });
 
-await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
 await page.evaluate(() => { window.__same = 'yes'; });
 ok(await page.locator('.feed-refresh').count() === 0, 'no Refresh button');
 ok(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY === 'contain'), "Chrome's own pull-to-refresh is off");
@@ -57,13 +57,13 @@ ok(await page.locator('.ptr.on').count() === 0, 'scrolled down the page: no pull
 await touch('touchEnd'); await page.evaluate(() => { document.body.style.minHeight = ''; window.scrollTo(0, 0); });
 
 // 4. Notifications asks again
-await page.goto('http://127.0.0.1:8779/#/noticeboard'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await page.waitForTimeout(2500);
 before = count.feed;
 await drag(240); await page.waitForTimeout(1500);
 ok(count.feed > before, `Notifications asked again (${count.feed - before})`);
 
 // 5. not inside a chat
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(2500);
 await drag(240, { hold: true, y0: 400 });
 ok(await page.locator('.ptr.on').count() === 0, 'in a chat, pulling down does not start a refresh');
 await touch('touchEnd');

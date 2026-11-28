@@ -11,7 +11,7 @@ for (const [w, hgt, mob, name] of [[390, 844, true, 'phone'], [412, 915, true, '
   const page = await browser.newPage({ viewport: { width: w, height: hgt }, isMobile: mob, hasTouch: mob, deviceScaleFactor: 2 });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   await page.route('**/api/v2/me', async (route) => { const r = await route.fetch(); const d = await r.json(); d.prefs.tips_seen = ['home', 'agents', 'chat', 'notifications', 'routines']; await route.fulfill({ json: d }); });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2200);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2200);
   const btn = page.locator('.home-edit-link');
   ok(await btn.count() === 1 && await page.locator('.topbar .home-edit-link').count() === 0, `${name}: one Edit, not in the top bar`);
   ok(/Edit/.test(await btn.innerText()) && await btn.locator('.icon').count() === 1, `${name}: a pencil and the word Edit`);

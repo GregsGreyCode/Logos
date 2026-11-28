@@ -7,7 +7,7 @@ const OUT = process.argv[2] || 'out';
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 for (const w of [1440, 1100, 900]) {
   const page = await browser.newPage({ viewport: { width: w, height: 900 } });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(1800);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(1800);
   const logo = await page.locator('.nav .brand-row .logo').boundingBox();
   const nav = await page.locator('nav.nav').boundingBox();
   const home = await page.locator('.nav-links a', { hasText: 'Home' }).boundingBox();

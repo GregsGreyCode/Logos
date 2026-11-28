@@ -16,7 +16,7 @@ for (const phone of [true, false]) {
   page.on('pageerror', (e) => errs.push(e.message));
   const asked = [];
   page.on('request', (r) => { if (/speaker\/sample|speaker-voice|speaker-languages/.test(r.url())) asked.push(`${r.method()} ${r.url().replace(/^https?:\/\/[^/]+/, '')} ${r.postData() || ''}`); });
-  await page.goto('http://127.0.0.1:8779/#/settings'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings`); await page.waitForTimeout(2500);
   const row = page.locator('.set-row', { hasText: 'Speaker' });
   ok(await row.count() === 1 && (await row.locator('.set-value').textContent()) === 'Northern English', `${n}: the Speaker row says Home's voice`);
   await tap(row); await page.waitForTimeout(1500);

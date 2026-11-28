@@ -6,7 +6,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 for (const [hash, want] of [['#/chat/greg', '#/chat/household'], ['#/agents/greg', '#/agents/household']]) {
-  await page.goto('http://127.0.0.1:8779/' + hash); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/` + hash); await page.waitForTimeout(2500);
   const btn = page.locator('.agent-bar .agent-bar-switch');
   ok(await btn.isVisible(), `${hash}: the agent's name is a switcher`);
   await btn.tap(); await page.waitForTimeout(600);

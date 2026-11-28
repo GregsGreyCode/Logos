@@ -34,7 +34,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     return r.fulfill({ json: serversSetUp ? SERVERS : { state: 'setup' } });
   });
   await page.route('**/api/v2/widgets/servers/test', (r) => r.fulfill({ json: { ok: false, error: 'Proxmox refused the token: check the token ID and secret.' } }));
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
 
   const svc = page.locator('section.w-services');
   ok(await svc.count() === 1 && (await svc.locator('.w-summary').textContent()) === '1 down', `${n}: Services on Home, "1 down"`);

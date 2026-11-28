@@ -34,7 +34,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     if (r.request().method() === 'PUT') { put = r.request().postDataJSON(); return r.fulfill({ json: { ok: true, summary: 'nothing playing' } }); }
     return r.fulfill({ json: DATA[id] });
   });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
 
   const en = page.locator('section.w-energy');
   ok(/412\s*W/.test(await en.textContent()) && /about £1\.71/.test(await en.textContent()), `${n}: Energy: now, today and its cost`);

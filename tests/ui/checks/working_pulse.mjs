@@ -24,7 +24,7 @@ for (const [tag, opts] of [['desktop', { viewport: { width: 1440, height: 900 } 
       { msgtype: 'm.text', body: 'Household agent: what is for dinner?', 'm.mentions': { user_ids: ['@household-agent:test'] } }, '@household-agent:test']]) {
     const ctx = await browser.newContext(opts); const page = await ctx.newPage();
     const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-    await page.goto('http://127.0.0.1:8779/' + hash); await page.waitForTimeout(2500);
+    await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/` + hash); await page.waitForTimeout(2500);
     const idle = await pulses(page);
     ok(idle.head === 0 && idle.row === 0 && (kind === 'group' || !idle.headSeen), `${tag} ${kind}: no agent logo in the header, and nothing pulses while the agent rests`);
     await page.evaluate(([room, ask]) => window.__mx.addEvent(room, ask, '@greg:test'), [room, ask]); await page.waitForTimeout(1200);
@@ -44,7 +44,7 @@ for (const [tag, opts] of [['desktop', { viewport: { width: 1440, height: 900 } 
 }
 // Reduced motion: no pulsing at all.
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' }); const page = await ctx.newPage();
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(2500);
 await page.evaluate(() => window.__mx.addEvent('!dm:test', { msgtype: 'm.text', body: 'Anything else?' }, '@greg:test')); await page.waitForTimeout(1200);
 const still = await pulses(page);
 ok(still.head === 0 && still.row === 0, 'reduced motion: the marks do not pulse');

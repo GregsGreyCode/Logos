@@ -8,7 +8,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/brain/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/brain/greg`); await page.waitForTimeout(2500);
 ok(await page.locator('.brain-head h1').innerText() === 'Brain' && await page.locator('.brain-head .agent-bar-switch').isVisible(), 'band: the title and the chat\'s agent switcher');
 ok(await page.locator('.brain-head select, .brain-head input[type="search"]:visible').count() === 0, 'band: no dropdown and no search crowding it');
 ok(await page.locator('.brain > .agent-bar .agent-menu > summary').isVisible(), 'band: the Chat | Brain | Routines pill');
@@ -37,12 +37,12 @@ await page.locator('.doc-head.editing .btn', { hasText: 'Cancel' }).click(); awa
 ok(await page.locator('.doc-head .btn', { hasText: 'Edit' }).isVisible(), 'Cancel returns to the page');
 // the phone keeps a search in the band
 const phone = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
-await phone.goto('http://127.0.0.1:8779/#/brain/greg'); await phone.waitForTimeout(2500);
+await phone.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/brain/greg`); await phone.waitForTimeout(2500);
 ok(await phone.locator('.brain-phone-search').isVisible(), 'phone: search stays at the top');
 // The phone Brain has the desktop's structure (UI review, 28 Nov; at 390 the picker, search and ask box were doubled or cut).
 const p390 = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 p390.on('pageerror', (e) => errs.push(e.message));
-await p390.goto('http://127.0.0.1:8779/#/brain/greg'); await p390.waitForTimeout(2500);
+await p390.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/brain/greg`); await p390.waitForTimeout(2500);
 ok(await p390.locator('.agent-bar-switch:visible').count() === 1, `390: one agent picker (${await p390.locator('.agent-bar-switch:visible').count()})`);
 const searches = p390.locator('input[type="search"]:visible');
 ok(await searches.count() === 1, `390: one search box (${await searches.count()})`);

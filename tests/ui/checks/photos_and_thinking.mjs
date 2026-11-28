@@ -8,7 +8,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(2500);
 const picker = page.locator('.composer input[type=file]');
 ok(await picker.evaluate((e) => e.multiple), 'the picker takes several files');
 await picker.setInputFiles(['a', 'b', 'c'].map((n) => ({ name: `IMG_${n}.png`, mimeType: 'image/png', buffer: png })));

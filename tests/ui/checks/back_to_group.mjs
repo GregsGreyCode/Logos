@@ -6,7 +6,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const b = await chromium.launch({ executablePath: process.env.CHROME });
 for (const [w, hgt, phone] of [[1440, 900, false], [390, 844, true]]) {
   const p = await b.newPage({ viewport: { width: w, height: hgt }, isMobile: phone, hasTouch: phone });
-  await p.goto('http://127.0.0.1:8779/#/chat/greg'); await p.waitForTimeout(2500);
+  await p.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await p.waitForTimeout(2500);
   const btn = phone ? p.locator('.agent-bar-switch').first() : p.locator('.switch-btn').first();
   await btn.click(); await p.waitForTimeout(800);
   const names = await p.locator('.switch-pop:not([hidden]) .switch-item strong').allTextContents();

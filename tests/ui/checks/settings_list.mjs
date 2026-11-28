@@ -9,7 +9,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 // Phone: the list, then a row's own page with a way back.
 let page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/settings'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings`); await page.waitForTimeout(2500);
 await page.screenshot({ path: `${OUT}/settings-phone.png`, fullPage: true });
 const groups = await page.$$eval('.set-group-title', (els) => els.map((e) => e.textContent));
 ok(JSON.stringify(groups) === JSON.stringify(['You', 'Agents', 'This device', 'Logos']), `grouped: ${groups.join(', ')}`);
@@ -33,13 +33,13 @@ await page.close();
 // Desktop: the list beside the page; the sidebar already has People and Models.
 page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/settings'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings`); await page.waitForTimeout(2500);
 ok(await page.locator('.settings-layout .set-row[aria-current="page"]', { hasText: 'Look' }).count() === 1, 'desktop opens on Look, marked in the list');
 ok(await page.locator('.settings-body section[aria-label="Look"]').count() === 1, 'with its page beside the list');
 ok(!(await page.locator('.settings-layout .set-row', { hasText: 'Models' }).isVisible()), 'People and Models only in the sidebar');
 await page.locator('.set-row', { hasText: 'Tips' }).click(); await page.waitForTimeout(1000);
 ok(await page.getByRole('button', { name: 'Show the tips again' }).count() === 1, 'Tips has its own page');
-await page.goto('http://127.0.0.1:8779/#/settings/chat'); await page.waitForTimeout(1500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings/chat`); await page.waitForTimeout(1500);
 ok(await page.locator('.settings-body section[aria-label="Look"]').count() === 1, 'an old link (#/settings/chat) still lands on Look');
 await page.screenshot({ path: `${OUT}/settings-desktop.png` });
 ok(errs.length === 0, `no page errors ${errs.join('|')}`);

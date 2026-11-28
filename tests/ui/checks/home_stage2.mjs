@@ -9,7 +9,7 @@ const G = await import(new URL('../../../gateway/ui/home-grid.js', import.meta.u
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
 const OUT = process.argv[2] || 'out';
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
-const URL_HOME = 'http://127.0.0.1:8779/#/home';
+const URL_HOME = `http://127.0.0.1:${process.env.PORT || 8779}/#/home`;
 
 // ── the Tidy up maths ──
 {

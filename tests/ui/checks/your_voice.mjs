@@ -45,7 +45,7 @@ async function open(hash, mob = true, admin = false) {
   await page.route('**/api/v2/voiceprint/people', (r) => r.fulfill({ json: { people: [
     { username: 'alex', display_name: 'Alex', state: 'active', speaker: 55, labelled: 55, days: 4, window: 50, hits: 50, held: 0 },
     { username: 'sam', display_name: 'Sam', state: 'learning', speaker: 9, labelled: 9, days: 1, window: 7, hits: 6, held: 1 }] } }));
-  await page.goto(`http://127.0.0.1:8779/${hash}`); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/${hash}`); await page.waitForTimeout(2500);
   return { page, ctx, st };
 }
 

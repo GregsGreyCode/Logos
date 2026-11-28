@@ -5,7 +5,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(2500);
 await page.evaluate(() => { window.__mx.offline = true; });
 await page.fill('#chat-input', 'Shared'); await page.locator('.send-btn').click(); await page.waitForTimeout(600);
 ok(await page.locator('.msg.failed', { hasText: 'Shared' }).count() === 1 && await page.locator('.mx-failed').count() === 1, 'a message that did not go shows its ! in the chat');

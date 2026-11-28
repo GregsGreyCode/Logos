@@ -13,7 +13,7 @@ async function run({ typed = '', newer = true }) {
   page.on('load', () => { loads += 1; });
   await page.route('**/api/v2/me', async (r) => { const res = await r.fetch(); const me = await res.json();
     me.version = { commit, date: 1795392000 }; await r.fulfill({ json: me }); });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2000);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2000);
   if (typed) await page.evaluate((t) => { const x = document.createElement('textarea'); x.value = t; document.body.append(x); }, typed);
   const before = loads;
   if (newer) commit = 'def5678';

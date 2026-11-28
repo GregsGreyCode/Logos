@@ -9,7 +9,7 @@ await page.route('**/api/v2/notifications', async (route) => { const r = await r
   d.items.unshift({ id: 'ai:off', kind: 'ai', type: 'problem', up: false, ts: Date.now() / 1000 - 1800, title: 'AI computer is off', text: 'Agents answer again when it is back.' },
     { id: 'agent:bere', kind: 'agent', type: 'problem', ts: Date.now() / 1000 - 600, title: "Béré's agent is not running", text: 'Greg can start it again.' });
   await route.fulfill({ json: d }); });
-await page.goto('http://127.0.0.1:8779/#/noticeboard'); await page.waitForTimeout(2200);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await page.waitForTimeout(2200);
 const inNeeds = await page.locator('section[aria-label="Needs you"] .feed-item').allInnerTexts();
 ok(!inNeeds.some((t) => t.includes('AI computer')), `the AI computer being off is not under Needs you (${inNeeds.length} there)`);
 ok(inNeeds.some((t) => t.includes("Béré's agent")), 'an agent that should run still is');

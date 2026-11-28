@@ -6,7 +6,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 const puts = []; page.on('request', (r) => { if (r.method() === 'PUT' && r.url().includes('/me/prefs')) puts.push(r.postData()); });
-await page.goto('http://127.0.0.1:8779/#/settings/notifications'); await page.waitForTimeout(2000);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings/notifications`); await page.waitForTimeout(2000);
 const sec = page.locator('section[aria-label="What an alert shows"]');
 ok(await sec.isVisible(), 'Phone alerts has "What an alert shows"');
 ok(await sec.locator('input[value="who"]').isChecked(), 'who wrote it, by default');

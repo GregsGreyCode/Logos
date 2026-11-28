@@ -5,7 +5,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(2500);
 const long = 'Here is the rota for Flat 4.\n\n' + Array.from({ length: 16 }, (_, i) => `- **${i + 1} July 2026**: Food waste and recycling`).join('\n')
   + '\n\nShall I add these to the Household calendar, or to yours only?';
 await page.evaluate((body) => window.__mx.addEvent('!dm:test', { msgtype: 'm.text', body }, '@greg-agent:test'), long);

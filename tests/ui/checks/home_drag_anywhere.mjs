@@ -8,7 +8,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
-const URL_HOME = 'http://127.0.0.1:8779/#/home';
+const URL_HOME = `http://127.0.0.1:${process.env.PORT || 8779}/#/home`;
 const TIPS = ['home', 'agents', 'chat', 'notifications', 'routines'];
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 

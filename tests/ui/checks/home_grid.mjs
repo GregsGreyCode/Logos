@@ -35,7 +35,7 @@ await page.route('**/api/v2/me/prefs', async (route) => { const b = JSON.parse(r
 await page.route('**/api/v2/me', async (route) => { const res = await route.fetch(); const d = await res.json(); if (saved) d.prefs = { ...d.prefs, widget_grid: saved }; await route.fulfill({ json: d }); });
 const rects = () => page.evaluate(() => Object.fromEntries([...document.querySelectorAll('.home-widgets > .home-widget')].filter((e) => e.offsetParent).map((e) => { const b = e.getBoundingClientRect(); return [e.dataset.widget, { x: b.x, y: b.y, w: b.width, h: b.height, r: b.right, b: b.bottom }]; })));
 const clear = (rs) => { const v = Object.values(rs); return v.every((a, i) => v.every((b, j) => i === j || a.r <= b.x + 1 || b.r <= a.x + 1 || a.b <= b.y + 1 || b.b <= a.y + 1)); };
-await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(3000);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(3000);
 ok(await page.locator('.home-widgets.free').count() === 1, 'desktop: Home uses the free grid');
 let rs = await rects();
 ok(Object.keys(rs).length >= 4 && clear(rs), `desktop: ${Object.keys(rs).length} widgets laid out with no overlap`);
@@ -93,6 +93,6 @@ await ctx.close();
 
 // ── a phone keeps its plain list ──
 const phone = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
-await phone.goto('http://127.0.0.1:8779/#/home'); await phone.waitForTimeout(2800);
+await phone.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await phone.waitForTimeout(2800);
 ok(await phone.locator('.home-widgets.free').count() === 0, 'phone: no free grid');
 await browser.close();

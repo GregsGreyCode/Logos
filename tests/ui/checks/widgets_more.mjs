@@ -42,7 +42,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     return r.fulfill({ json: id === 'bookmarks' && marks ? { state: 'ok', summary: '', at: now, items: [
       { name: 'Proxmox', url: 'https://pve:8006' }, { name: 'Home Assistant', url: 'http://ha:8123' }, { name: 'Jellyfin', url: 'http://jf' }] } : DATA[id] });
   });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
 
   ok(await page.locator('section.w-proxmox .w-guest').count() === 3 && await page.locator('section.w-proxmox .w-guest.off').count() === 1,
     `${n}: Proxmox: each guest, the stopped one dashed`);

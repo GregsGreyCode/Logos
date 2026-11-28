@@ -5,7 +5,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = require('playwright-core');
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
 const OUT = process.argv[2] || 'out';
-const BASE = 'http://127.0.0.1:8779';
+const BASE = `http://127.0.0.1:${process.env.PORT || 8779}`;
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const errs = [];
 

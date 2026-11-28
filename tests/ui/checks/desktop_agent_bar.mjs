@@ -6,7 +6,7 @@ const { chromium } = require('playwright-core');
 const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process.exitCode = 1; };
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.goto('http://127.0.0.1:8779/#/chat'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat`); await page.waitForTimeout(2500);
 const href = await page.locator('.void-field .agent-mark[data-href]').first().getAttribute('data-href');
 await page.evaluate((h) => { location.hash = h; }, href); await page.waitForTimeout(2500);
 const back = page.locator('.chat-head .agent-back');
@@ -29,6 +29,6 @@ if (await long.count()) {
   const after = (await page.locator('.msg.foldable').first().boundingBox()).height;
   ok(after > before + 40, `a tap on the long message opens it (${Math.round(before)} to ${Math.round(after)}px)`);
 } else ok(false, 'a long message is foldable');
-await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(1500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(1500);
 ok(await page.locator('.nav-links .beta-tag').count() === 1 && await page.locator('.nav-group .beta-tag').isVisible(), 'one Beta, on the Manage heading (UI review, 28 Nov: not beside each of People, Models and Claude Advisor)');
 await browser.close();

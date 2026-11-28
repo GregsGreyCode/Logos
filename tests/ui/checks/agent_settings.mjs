@@ -12,7 +12,7 @@ for (const [label, opts] of [['phone', { viewport: { width: 390, height: 844 }, 
   const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   const reqs = []; page.on('request', (r) => { if (r.method() !== 'GET' && r.url().includes('/api/')) reqs.push(`${r.method()} ${new URL(r.url()).pathname} ${r.postData() || ''}`); });
   // Reached from the agent's Routines page.
-  await page.goto('http://127.0.0.1:8779/#/agents/greg'); await page.waitForTimeout(1500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/agents/greg`); await page.waitForTimeout(1500);
   const link = page.locator('.routines-top a', { hasText: 'Settings' });
   ok(await link.isVisible(), `${label}: Routines links to the agent's settings`);
   await link.click(); await page.waitForTimeout(1500);

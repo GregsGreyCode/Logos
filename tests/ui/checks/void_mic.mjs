@@ -14,7 +14,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   await page.route('**/api/v2/agents', async (r) => { const res = await r.fetch(); const d = await res.json(); for (const a of d.agents || []) a.voice = true; await r.fulfill({ json: d }); });
   await page.route('**/api/v2/agents/*/voice?job=1', (r) => { posts += 1; return r.fulfill({ status: 202, json: { job: 'jobv' } }); });
   await page.route('**/api/v2/agents/*/voice/jobv', (r) => { gets += 1; return r.fulfill({ json: gets < 2 ? { state: 'working' } : { state: 'done', text: 'Is the dentist still on Thursday?' } }); });
-  await page.goto('http://127.0.0.1:8779/#/chat'); await page.waitForTimeout(2800);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat`); await page.waitForTimeout(2800);
   const marks = page.locator('.void-field .agent-mark[data-href]');
   ok(await marks.count() >= 1 && await page.locator('.void-field .agent-mark .mark-mic').count() === await marks.count(), `${n}: each of your agents' marks has a microphone`);
   const first = marks.first(), name = await first.getAttribute('data-agent');

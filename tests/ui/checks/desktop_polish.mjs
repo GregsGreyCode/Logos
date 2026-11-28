@@ -8,7 +8,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 
 // Notifications: one column, every day under the one before
 const p1 = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
-await p1.goto('http://127.0.0.1:8779/#/noticeboard'); await p1.waitForTimeout(2500);
+await p1.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await p1.waitForTimeout(2500);
 const days = await p1.locator('.feed-days > section').evaluateAll((els) => els.map((e) => { const b = e.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width) }; }));
 ok(days.length >= 2 && new Set(days.map((d) => d.x)).size === 1, `1920×1080: the days are in one column (${days.map((d) => d.x + ',' + d.y).join(' · ')})`);
 ok(days.every((d, i) => i === 0 || d.y > days[i - 1].y), 'each day sits under the one before');
@@ -26,7 +26,7 @@ await p2.route('**/api/v2/me', async (r) => { const res = await r.fetch(); const
 await p2.route('**/api/v2/widgets', (r) => r.fulfill({ json: kind }));
 await p2.route('**/api/v2/widgets/marquee', (r) => r.fulfill({ json: DATA }));
 await p2.route('**/api/v2/me/prefs', async (r) => { if (r.request().method() === 'PUT') { putAt = Date.now(); await new Promise((res) => setTimeout(res, 1500)); } await r.fulfill({ json: { ok: true } }); });
-await p2.goto('http://127.0.0.1:8779/#/home'); await p2.waitForTimeout(2500);
+await p2.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await p2.waitForTimeout(2500);
 await p2.locator('.home-edit-link').click(); await p2.waitForTimeout(700);
 const sign = await p2.locator('.home-band-widget .mq, .home-band-widget').first().boundingBox();
 const bar = await p2.locator('.home-band-widget .band-bar').boundingBox();

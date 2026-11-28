@@ -9,7 +9,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 for (const [w, hgt] of [[320, 640], [360, 800], [412, 915]]) {
   const page = await browser.newPage({ viewport: { width: w, height: hgt }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-  await page.goto('http://127.0.0.1:8779/#/calendar'); await page.waitForTimeout(1800);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/calendar`); await page.waitForTimeout(1800);
   const bar = await page.evaluate(() => {
     const tabs = [...document.querySelectorAll('.tabbar a')];
     const vw = document.documentElement.clientWidth;

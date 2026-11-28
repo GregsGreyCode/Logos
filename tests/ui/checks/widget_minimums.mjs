@@ -31,7 +31,7 @@ for (const size of ['compact', 'full']) {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   await routeAll(page, { prefs: { widget_sizes: Object.fromEntries(ALL.map((id) => [id, size])) } });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(3500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(3500);
   const got = await page.evaluate(({ ids, widths, essential }) => {
     // Messages come from Matrix, which the stand-in has none unread of: two rows drawn as Home draws them.
     const msgs = document.querySelector('[data-widget="messages"]');

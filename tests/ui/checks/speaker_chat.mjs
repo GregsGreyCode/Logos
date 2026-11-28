@@ -7,7 +7,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(2500);
 const post = (heard, answer, late) => page.evaluate(([heard, answer, late]) => window.__mx.addEvent('!dm:test', {
   msgtype: late ? 'm.text' : 'm.notice', body: `🔊 Heard at the house speaker:\n> “${heard}”\n\n${answer}`,
   'org.logos.speaker': { heard, late } }, '@greg-agent:test'), [heard, answer, late]);

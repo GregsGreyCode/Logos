@@ -6,7 +6,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push((e.stack || e.message).split('\n').slice(0, 2).join(' < ')));
 const posts = []; page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/notifications')) posts.push(`${new URL(r.url()).pathname} ${r.postData()}`); });
-await page.goto('http://127.0.0.1:8779/#/noticeboard'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await page.waitForTimeout(2500);
 const fresh = () => page.locator('.notifications .feed-item.fresh').count();
 const n0 = await fresh();
 ok(n0 >= 3, `starts with new items (${n0})`);

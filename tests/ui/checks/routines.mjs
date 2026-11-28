@@ -6,7 +6,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 const reqs = []; page.on('request', (r) => { if (r.method() !== 'GET' && r.url().includes('/api/')) reqs.push(`${r.method()} ${new URL(r.url()).pathname} ${r.postData() || ''}`); });
-await page.goto('http://127.0.0.1:8779/#/agents/greg'); await page.waitForTimeout(2000);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/agents/greg`); await page.waitForTimeout(2000);
 const nb = await page.locator('button', { hasText: '+ New routine' }).boundingBox();
 ok(nb && nb.y < 260, `+ New routine near the top (y=${nb && Math.round(nb.y)})`);
 const titles = await page.$$eval('.routine .routine-title strong', (els) => els.map((e) => e.textContent));

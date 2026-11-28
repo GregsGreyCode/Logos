@@ -6,7 +6,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 const posts = []; page.on('request', (r) => { if (r.method() === 'POST' && r.url().includes('/home/lights')) posts.push(r.postData()); });
-await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2200);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2200);
 await page.evaluate(() => { const s = document.querySelector('.home-lights-sec'); window.scrollBy(0, s.getBoundingClientRect().top - 120); }); await page.waitForTimeout(400);
 const cdp = await ctx.newCDPSession(page);
 const drag = async (room, fromFrac, toFrac, steps = 12, dy = 0) => {

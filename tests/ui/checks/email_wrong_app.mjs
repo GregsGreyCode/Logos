@@ -12,7 +12,7 @@ await page.route('**/api/v2/mail**', async (route) => {
   if (r.method() === 'GET') return route.fulfill({ json: S });
   return route.fulfill({ status: u.pathname.endsWith('/outlook') ? 502 : 400, json: { error: 'refused', message: msg } });
 });
-await page.goto('http://127.0.0.1:8779/#/settings/email'); await page.waitForTimeout(1500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings/email`); await page.waitForTimeout(1500);
 await page.getByRole('button', { name: 'Outlook.com / Hotmail' }).tap(); await page.waitForTimeout(300);
 await page.getByRole('button', { name: 'Get a sign-in code' }).tap(); await page.waitForTimeout(500);
 ok((await page.locator('[role=status]').allInnerTexts()).join(' ').includes('Directory (tenant) ID'), 'the error says what to check');

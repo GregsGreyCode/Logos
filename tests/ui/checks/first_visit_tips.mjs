@@ -9,7 +9,7 @@ let seen = [];
 const puts = [];
 await page.route('**/api/v2/me', async (route) => { const r = await route.fetch(); const d = await r.json(); d.prefs.tips_seen = seen; await route.fulfill({ json: d }); });
 await page.route('**/api/v2/me/prefs', async (route) => { const b = JSON.parse(route.request().postData()); puts.push(b); if (b.tips_seen) seen = b.tips_seen; await route.fulfill({ json: { ok: true } }); });
-await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
 const card = page.locator('.tip-card');
 ok(await card.count() === 1 && (await card.innerText()).includes('Your day at a glance'), 'first visit to Home shows its tips');
 await page.screenshot({ path: process.argv[2] + '/tip-home1.png' });

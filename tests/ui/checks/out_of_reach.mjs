@@ -9,7 +9,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   const ctx = await browser.newContext({ viewport: { width: w, height: hgt }, isMobile: mob, hasTouch: mob });
   const page = await ctx.newPage();
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(1500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(1500);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload(); await page.waitForTimeout(1500);              // now under the worker: the app is kept
   ok(await page.locator('.reach-bar').count() === 0, `${n}: no line while the server answers`);

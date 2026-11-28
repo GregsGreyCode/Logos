@@ -5,7 +5,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 for (const [w, hgt] of [[1440, 900], [1024, 768]]) {
   const page = await browser.newPage({ viewport: { width: w, height: hgt } });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2000);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2000);
   await page.mouse.wheel(0, 3000); await page.waitForTimeout(400);
   const so = await page.locator('.nav .logout-btn').boundingBox();
   ok(so && so.y + so.height <= hgt && so.y > hgt - 80, `${w}: Sign out snug at the bottom after scrolling (y=${so && Math.round(so.y)})`);
@@ -13,7 +13,7 @@ for (const [w, hgt] of [[1440, 900], [1024, 768]]) {
   await page.close();
 }
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(3000);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(3000);
 const btn = page.locator('.chat-head .side-reopen');
 ok(await btn.isVisible() && (await btn.getAttribute('aria-label')) === 'Show or hide your chats', 'a chat: a chats icon in its header once the panel slides away');
 await btn.click(); await page.waitForTimeout(500);

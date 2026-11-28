@@ -5,7 +5,7 @@ const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) process
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 // 1. phone: no selecting Home's text; still selecting in a field
 const ph = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-await ph.goto('http://127.0.0.1:8779/#/home'); await ph.waitForTimeout(2200);
+await ph.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await ph.waitForTimeout(2200);
 ok(await ph.evaluate(() => getComputedStyle(document.querySelector('.home-weather')).userSelect === 'none'), 'phone: Home text cannot be selected');
 ok(await ph.evaluate(() => getComputedStyle(document.querySelector('#home-ask')).userSelect !== 'none'), 'phone: the Ask box still can');
 // 2. weather says everything
@@ -14,10 +14,10 @@ ok(!cut, 'phone: the weather is not cut off');
 await ph.locator('.home-weather').screenshot({ path: process.argv[2] + '/weather-phone.png' });
 // desktop keeps normal selection
 const dk = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-await dk.goto('http://127.0.0.1:8779/#/home'); await dk.waitForTimeout(1800);
+await dk.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await dk.waitForTimeout(1800);
 ok(await dk.evaluate(() => getComputedStyle(document.querySelector('.home-weather')).userSelect !== 'none'), 'desktop: text can still be selected');
 // 3. chat stays at the newest message as it grows
-await dk.goto('http://127.0.0.1:8779/#/chat/greg'); await dk.waitForTimeout(2500);
+await dk.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await dk.waitForTimeout(2500);
 await dk.evaluate(() => { const log = document.querySelector('.chat .log'); for (let i = 0; i < 40; i++) { const d = document.createElement('div'); d.style.height = '60px'; d.textContent = 'filler ' + i; log.append(d); } });
 await dk.waitForTimeout(300);
 const gap = await dk.evaluate(() => { const l = document.querySelector('.chat .log'); return l.scrollHeight - l.scrollTop - l.clientHeight; });

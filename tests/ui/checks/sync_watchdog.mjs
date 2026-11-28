@@ -9,7 +9,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 async function setup(typed = '') {
   const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
   await page.clock.install();
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(500);
   await page.evaluate(async (typed) => {
     // '?real': past the import map, which hands the screens the fake Matrix client.
     const mx = await import('/ui/mx.js?real');

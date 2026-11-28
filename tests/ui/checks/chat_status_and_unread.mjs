@@ -8,7 +8,7 @@ const OUT = process.argv[2] || 'out';
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/chat/greg'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/greg`); await page.waitForTimeout(2500);
 const lastMeta = () => page.locator('.mx-turn.me').last().locator('.mx-meta').textContent();
 
 await page.evaluate(() => window.__mx.addMine('!dm:test', 'a photo on its way', 'sending')); await page.waitForTimeout(500);
@@ -19,7 +19,7 @@ ok(await page.locator('.mx-thinking:not([hidden])').count() === 1, '(the agent i
 await page.screenshot({ path: `${OUT}/received.png`, clip: { x: 0, y: 500, width: 412, height: 415 } });
 
 // the list
-await page.goto('http://127.0.0.1:8779/#/chat'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat`); await page.waitForTimeout(2500);
 await page.evaluate(() => window.__mx.addMine('!dm:test', 'something I just wrote', null)); await page.waitForTimeout(600);
 const names = await page.locator('.void-group.with-pic .void-group-name').allTextContents();
 ok(names[0] === 'Household Group' && await page.locator('.void-group.with-pic').first().evaluate((e) => e.classList.contains('unread')),

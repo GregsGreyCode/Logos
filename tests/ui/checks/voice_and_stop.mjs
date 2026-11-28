@@ -21,7 +21,7 @@ async function open(hash, mob = true) {
   await page.route('**/api/v2/agents/greg/voice/job1', (r) => { state.gets += 1; return r.fulfill({ json: state.gets < 2 ? { state: 'working' } : { state: 'done', text: state.text } }); });
   await page.route('**/api/v2/home', async (r) => { const res = await r.fetch(); const d = await res.json();
     if (d.agent) Object.assign(d.agent, { matrix: true, voice: true }); await r.fulfill({ json: d }); });
-  await page.goto(`http://127.0.0.1:8779/${hash}`); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/${hash}`); await page.waitForTimeout(2500);
   return { page, ctx, state };
 }
 
@@ -116,7 +116,7 @@ ok(page.url().endsWith('#/chat/greg'), `finishing a recording on Home opens your
 const heard = await page.evaluate(() => window.__mx.sent.map(([, c]) => c).filter((c) => c['org.logos.voice']));
 ok(heard.length === 1 && heard[0].body === 'Hello, this is what I said.', 'and its words are sent there as a voice message, with no Send');
 ok(await page.locator('.mx-turn.me .mx-voice-bar').count() >= 1, 'which shows as a voice bubble with its transcript');
-await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2000);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2000);
 await page.fill('#home-ask', 'Is the dentist still on Thursday?');
 await page.locator('#home-ask').press('Enter'); await page.waitForTimeout(3500);
 ok(page.url().endsWith('#/chat/greg') && (await page.evaluate(() => window.__mx.sent.map(([, c]) => c.body))).includes('Is the dentist still on Thursday?'), 'a typed question still goes to the same chat and is sent');

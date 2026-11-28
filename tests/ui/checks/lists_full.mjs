@@ -27,7 +27,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     me.prefs.widgets = ['lists', 'weather']; me.prefs.widgets_v2 = true; if (saved) me.prefs.widget_sizes = saved; await r.fulfill({ json: me }); });
   await page.route('**/api/v2/agents/household/brain/page*', (r) => r.fulfill({ json: { path: 'lists.md', title: 'Shared lists', text: TEXT } }));
   await page.route('**/api/v2/me/prefs', (r) => { if (r.request().method() === 'PUT') { put = { ...(put || {}), ...r.request().postDataJSON() }; return r.fulfill({ json: { prefs: put } }); } return r.continue(); });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
 
   ok(await page.locator('.home-lists-row .home-list-card:not(.full)').count() === 2 && await page.locator('.home-list-card.full').count() === 0,
     `${n}: by default it is the compact tiles, as Greg has it (a tile per list, empty ones left out)`);
@@ -74,7 +74,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     if (b.done) live.lists[0].items = live.lists[0].items.filter((i) => i.text !== b.item); else live.lists[0].items.unshift({ text: b.item, due: '' });
     return r.fulfill({ json: { ok: true } });
   });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
   ok(await page.locator('.home-list-card.full button.home-list-box.tick').count() === 4, 'live: every item has a box to tick');
   const box = page.locator('.home-list-card.full').first().locator('li', { hasText: 'pasta' }).locator('button.tick');
   failNext = true;
@@ -100,7 +100,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     me.prefs.widgets = ['lists']; me.prefs.widgets_v2 = true; me.prefs.widget_sizes = { lists: 'full' }; await r.fulfill({ json: me }); });
   await page.route('**/api/v2/home/lists', (r) => r.fulfill({ json: { error: 'house_unavailable', message: 'down' } }));
   await page.route('**/api/v2/agents/household/brain/page*', (r) => r.fulfill({ json: { path: 'lists.md', title: 'Shared lists', text: TEXT } }));
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
   ok(await page.locator('.home-list-card.full').count() === 2 && await page.locator('button.home-list-box.tick').count() === 0, 'Home Assistant unreachable: the saved copy shows, with no boxes to tick');
   await page.close();
 }

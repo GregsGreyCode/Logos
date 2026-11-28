@@ -22,7 +22,7 @@ await page.route('**/api/v2/mail**', async (route) => {
   if (r.method() === 'DELETE') { S.mailboxes = S.mailboxes.filter((m) => m.id !== u.searchParams.get('box')); return route.fulfill({ json: { disconnected: true } }); }
   return route.fulfill({ status: 404, json: {} });
 });
-await page.goto('http://127.0.0.1:8779/#/settings/email'); await page.waitForTimeout(1500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings/email`); await page.waitForTimeout(1500);
 ok(await page.locator('.topbar .topbar-back').count() + await page.locator('.set-row', { hasText: 'Email' }).count() >= 1, 'Settings › Email is its own page');
 await page.getByRole('button', { name: 'Gmail' }).tap(); await page.waitForTimeout(300);
 ok(await page.locator('a[href="https://myaccount.google.com/apppasswords"]').count() === 1, 'Gmail: links straight to App passwords');

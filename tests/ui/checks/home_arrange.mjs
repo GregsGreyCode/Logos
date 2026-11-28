@@ -8,7 +8,7 @@ for (const [label, vp, mobile] of [['phone', { width: 412, height: 915 }, true],
   const ctx = await browser.newContext({ viewport: vp, isMobile: mobile, hasTouch: mobile, deviceScaleFactor: 2 });
   const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push((e.stack || e.message).split('\n').slice(0, 2).join(' < ')));
   const puts = []; page.on('request', (r) => { if (r.method() === 'PUT') puts.push(r.postData()); });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2200);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2200);
   const order = () => page.$$eval('.home-widgets > .home-widget:not(.off)', (els) => els.map((e) => e.dataset.widget));
   console.log(label, 'start order:', (await order()).join(','));
   if (mobile) {           // long press on a widget starts Edit

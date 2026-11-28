@@ -6,7 +6,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 await page.addInitScript(() => { try { localStorage.setItem('fake.groups', '10'); } catch (e) {} });
-await page.goto('http://127.0.0.1:8779/#/chat'); await page.waitForTimeout(2500);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat`); await page.waitForTimeout(2500);
 const rows = () => page.locator('.void-groups a.void-group');
 ok(await rows().count() === 8 && await page.locator('.void-more').count() === 1, `12 chats: the first 8, then "${await page.locator('.void-more').innerText().catch(() => '')}"`);
 await page.locator('.void-more').tap(); await page.waitForTimeout(300);

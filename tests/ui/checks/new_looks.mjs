@@ -9,7 +9,7 @@ const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) +
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
-await page.goto('http://127.0.0.1:8779/#/settings/look'); await page.waitForTimeout(2200);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings/look`); await page.waitForTimeout(2200);
 const names = await page.locator('.look-option, [name="look"]').count();
 const text = await page.locator('#view').innerText();
 ok(text.includes('Paper & ink') && text.includes('Sorbet pop'), 'Settings › Look offers Paper & ink and Sorbet pop');
@@ -32,7 +32,7 @@ for (const look of ['glass', 'hud', 'warm', 'paper', 'pop']) {
 ok(new Set(Object.values(grounds)).size >= 8, `the looks are visibly different from each other (${new Set(Object.values(grounds)).size} grounds)`);
 for (const look of ['paper', 'pop']) for (const r of ['home', 'chat/greg', 'noticeboard', 'brain/greg', 'settings']) {
   await page.evaluate((l) => { document.documentElement.dataset.look = l; document.documentElement.dataset.theme = 'light'; }, look);
-  await page.goto('http://127.0.0.1:8779/#/' + r); await page.waitForTimeout(1500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/` + r); await page.waitForTimeout(1500);
   await page.evaluate((l) => { document.documentElement.dataset.look = l; }, look); await page.waitForTimeout(200);
   ok((await page.locator('#view').innerText()).length > 20, `${look}: ${r} draws`);
 }

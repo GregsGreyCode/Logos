@@ -8,7 +8,7 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
 const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push((e.stack || e.message).split('\n').slice(0, 2).join(' < ')));
 fs.writeFileSync(out + '/slow', '1');
-await page.goto('http://127.0.0.1:8779/#/home');
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`);
 await page.waitForTimeout(1500);   // app.js waits for /api/v2/me (slow) then Home starts loading
 await page.waitForTimeout(500);
 ok(await page.locator('.loading .sk').count() > 4, `placeholders while Home loads (${await page.locator('.loading .sk').count()})`);

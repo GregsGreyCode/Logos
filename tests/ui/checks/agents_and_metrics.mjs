@@ -32,7 +32,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   });
 
   // the widget
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2500);
   const sec = page.locator('section.w-agents-today, section[aria-label="Agents today"]');
   ok(await sec.count() === 1 && (await sec.locator('.w-summary').textContent()) === 'AI computer on', `${n}: Agents today on Home, with whether the AI computer is on`);
   const lines = await sec.locator('.w-agent-words .when').allTextContents();
@@ -42,7 +42,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   await page.screenshot({ path: `${OUT}/agents-widget-${n}.png`, clip: { x: 0, y: 0, width: w, height: 420 } });
 
   // the switch
-  await page.goto('http://127.0.0.1:8779/#/settings'); await page.waitForTimeout(2000);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings`); await page.waitForTimeout(2000);
   const row = page.locator('.set-row', { hasText: 'Metrics' });
   ok(await row.count() === 1 && (await row.locator('.set-value').textContent()) === 'Off', `${n}: Settings › Metrics, "Off"`);
   await row.first().click(); await page.waitForTimeout(800);
@@ -50,7 +50,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   await page.getByRole('button', { name: 'Turn on' }).click(); await page.waitForTimeout(600);
   ok(await page.locator('.w-token').textContent() === TOKEN, `${n}: on: the token, shown`);
   const cfg = await page.locator('.w-config').textContent();
-  ok(cfg.includes(`credentials: ${TOKEN}`) && cfg.includes("targets: ['127.0.0.1:8779']") && cfg.includes('metrics_path: /metrics'), `${n}: with a Prometheus config ready to paste`);
+  ok(cfg.includes(`credentials: ${TOKEN}`) && cfg.includes(`targets: ['127.0.0.1:${process.env.PORT || 8779}']`) && cfg.includes('metrics_path: /metrics'), `${n}: with a Prometheus config ready to paste`);
   await page.screenshot({ path: `${OUT}/metrics-page-${n}.png`, fullPage: !mob });
   await page.reload(); await page.waitForTimeout(1500);
   ok(await page.locator('.w-token').count() === 0 && /shown when you turned it on/.test(await page.locator('.settings-body').textContent()), `${n}: reloaded, the token is not shown again`);
@@ -69,9 +69,9 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   let asked = false;
   await page.route('**/api/v2/me', async (r) => { const res = await r.fetch(); const me = await res.json(); me.role = 'user'; await r.fulfill({ json: me }); });
   await page.route('**/api/v2/metrics', (r) => { asked = true; return r.fulfill({ status: 403, json: { error: 'forbidden' } }); });
-  await page.goto('http://127.0.0.1:8779/#/settings'); await page.waitForTimeout(2000);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings`); await page.waitForTimeout(2000);
   ok(await page.locator('.set-row', { hasText: 'Metrics' }).count() === 0, `${n}: a member does not see Settings › Metrics`);
-  await page.goto('http://127.0.0.1:8779/#/settings/metrics'); await page.waitForTimeout(1500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings/metrics`); await page.waitForTimeout(1500);
   ok(await page.getByText('Prometheus metrics').count() === 0 && await page.getByRole('button', { name: 'Turn on' }).count() === 0 && !asked,
     `${n}: and a typed-in link shows nothing of it, nor asks the server`);
   await page.close();

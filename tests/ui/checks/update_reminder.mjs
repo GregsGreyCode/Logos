@@ -8,7 +8,7 @@ const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => e
 await page.route('**/api/v2/notifications', async (route) => { const r = await route.fetch(); const d = await r.json();
   d.items.unshift({ id: 'logos-update:abc1234', kind: 'logos-update', type: 'needs', ts: Date.now() / 1000 - 60, title: 'An update for Logos is ready',
     text: '3 changes to install, the newest: Home › Lights: brightness', link: '#/settings/updates' }); await route.fulfill({ json: d }); });
-await page.goto('http://127.0.0.1:8779/#/noticeboard'); await page.waitForTimeout(2200);
+await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await page.waitForTimeout(2200);
 const row = page.locator('.feed-item', { hasText: 'An update for Logos is ready' });
 ok(await row.count() === 1, 'the reminder is in Notifications');
 await row.tap(); await page.waitForTimeout(400);

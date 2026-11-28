@@ -26,7 +26,7 @@ async function run({ devices, endpoint, savedKey = 'old-key', savedEp = 'https:/
     app_id: 'logos.web', gateway_url: 'http://172.17.0.1:8091/_matrix/push/v1/notify', devices } }));
   await page.route('**/api/v2/push/subscribe', (r) => { calls.push(['subscribe', r.request().postDataJSON().subscription.endpoint]); return r.fulfill({ json: { pushkey: 'new-key' } }); });
   await page.route('**/api/v2/push/unsubscribe', (r) => { calls.push(['unsubscribe', r.request().postDataJSON().pushkey]); return r.fulfill({ json: { removed: true } }); });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(4500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(4500);
   const out = await page.evaluate(() => ({ key: localStorage.getItem('logos.push.pushkey'), ep: localStorage.getItem('logos.push.endpoint'),
     pushers: (window.__mx && window.__mx.pushers) || [] }));
   await ctx.close();

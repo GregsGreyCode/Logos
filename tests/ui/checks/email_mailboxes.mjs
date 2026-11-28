@@ -29,7 +29,7 @@ for (const [label, opts] of sizes) {
     if (r.method() === 'DELETE') { S.mailboxes = S.mailboxes.filter((m) => m.id !== u.searchParams.get('box')); return route.fulfill({ json: { disconnected: true } }); }
     return route.fulfill({ status: 404, json: {} });
   });
-  await page.goto('http://127.0.0.1:8779/#/settings/email'); await page.waitForTimeout(1500);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/settings/email`); await page.waitForTimeout(1500);
   ok(await page.locator('.mail-card').count() === 1 && await page.getByRole('button', { name: '+ Add another mailbox' }).count() === 1,
     `${label}: one card, and Add another mailbox`);
   await press(page.getByRole('button', { name: '+ Add another mailbox' })); await page.waitForTimeout(300);

@@ -7,7 +7,7 @@ const OUT = process.argv[2] || 'out';
 const browser = await chromium.launch({ executablePath: process.env.CHROME });
 for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [900, 900, false, 'foldable'], [1440, 900, false, 'desktop'], [1920, 1080, false, 'large']]) {
   const page = await browser.newPage({ viewport: { width: w, height: hgt }, isMobile: mob, hasTouch: mob });
-  await page.goto('http://127.0.0.1:8779/#/home'); await page.waitForTimeout(2200);
+  await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/home`); await page.waitForTimeout(2200);
   const ask = await page.locator('form.home-ask').boundingBox();
   const board = await page.locator('.home-widgets').boundingBox();
   ok(Math.abs(ask.x - board.x) <= 2 && Math.abs((ask.x + ask.width) - (board.x + board.width)) <= 2, `${n}: Ask spans the same width as the widgets (${Math.round(ask.x)}–${Math.round(ask.x + ask.width)} vs ${Math.round(board.x)}–${Math.round(board.x + board.width)})`);
