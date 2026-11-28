@@ -458,7 +458,24 @@ house, heard at the same speaker, set a floor for the strictness.
 **How long until it switches on** (simulated with the real code, `collect_sync`): 20 households of two
 from the same 40 speakers, each person calling their own agent by name, 15 commands a day, 1 to 3.5 s
 long at three distances (near, far, harder room), mixed; a guest saying the first person's agent's
-name after every 5 of their commands. SIMRESULTS
+name after every 5 of their commands. Each person has 139 to 311 commands (every
+LibriSpeech utterance of theirs, cut three to five ways; so the later ones are not all new sentences):
+
+| | |
+| --- | --- |
+| switched to ACTIVE | 39 of 40 people |
+| their own commands needed | median 70 (59 to 213), i.e. about 5 days at 15 a day |
+| the guest's "Hey Finn" let into the print while learning | 11 of 951 (1.2%) |
+| their own labelled commands held back while learning | 27 of 8,798 (0.3%) |
+| once ACTIVE: their own commands recognised | 5,143 of 5,259 (97.8%; the rest "not sure", say it again) |
+| once ACTIVE: the other person of the house taken for them | 0 of 5,226 |
+| once ACTIVE: the guest taken for them | 4 of 1,202 (0.3%) |
+
+With only the first 60 to 80 commands each, 16 of 40 switched on (the rest were at 44 to 49 of the last
+50): the 99% rule is strict on purpose. Recognised 97.8% once on, not 99%: the self-test's window is
+not a guarantee, and after switching on a miss only counts when the person says "That was me", so
+tapping it when the speaker gets it wrong is what keeps it honest (and below 95% it goes back to
+learning).
 
 #### What is kept, and what is not
 
