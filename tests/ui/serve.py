@@ -6,7 +6,7 @@ today = datetime.date.today(); tom = today + datetime.timedelta(days=1)
 d, t = today.isoformat(), tom.isoformat()
 AG = lambda n, dn, mx, own=True: {'name': n, 'display_name': dn, 'matrix_id': mx, 'running': True, 'model_up': True, 'voice': True, 'shared': n == 'household'}
 FAKE = {
-  '/api/v2/me': {'username': 'greg', 'display_name': 'Greg', 'role': 'admin', 'matrix_id': '@greg:test', 'look': 'default', 'prefs': {'widgets': ['weather', 'next', 'messages', 'coming', 'lights', 'lists'], 'tips_seen': ['home', 'agents', 'chat', 'notifications', 'routines']}, 'agent_colours': {'greg': '#6d74ff', 'household': '#5fd49a', 'bere': '#a35bd6'}, 'version': {'commit': 'abc1234', 'date': 1795392000}},
+  '/api/v2/me': {'username': 'greg', 'display_name': 'Greg', 'role': 'admin', 'admins': ['Greg'], 'matrix_id': '@greg:test', 'look': 'default', 'prefs': {'widgets': ['weather', 'next', 'messages', 'coming', 'lights', 'lists'], 'tips_seen': ['home', 'agents', 'chat', 'notifications', 'routines']}, 'agent_colours': {'greg': '#6d74ff', 'household': '#5fd49a', 'bere': '#a35bd6'}, 'version': {'commit': 'abc1234', 'date': 1795392000}},
   '/api/v2/home': {'me': 'greg', 'agent': {'name': 'greg', 'display_name': "Greg's agent"}, 'model_up': True, 'model_off_since': None, 'brain_changes': [],
     'today': {'date': d, 'busy': [], 'calendars': {'bere': 'Béré', 'household': 'Household'}, 'events': [
       {'id': 'bere/call-maman.ics', 'start': f'{d} 15:00', 'end': f'{d} 15:30', 'title': 'Call Maman', 'calendar': 'bere', 'read_only': True},
@@ -29,8 +29,20 @@ FAKE['/api/v2/speaker'] = {'on': True, 'problem': '', 'voices': [{'id': i, 'name
   'agents': [{'name': 'household', 'display_name': 'Household agent', 'shared': True, 'speaks': True, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE,
               'voice_fr': 'fr_FR-tom-medium', 'default_fr': 'fr_FR-tom-medium', 'set_by': None},
              {'name': 'greg', 'display_name': "Greg's agent", 'shared': False, 'speaks': False, 'voice': TTS.DEFAULT_VOICE, 'default': TTS.DEFAULT_VOICE,
-              'voice_fr': 'fr_FR-tom-medium', 'default_fr': 'fr_FR-tom-medium', 'set_by': None}]}
+              'voice_fr': 'fr_FR-tom-medium', 'default_fr': 'fr_FR-tom-medium', 'set_by': None}],
+  'installed': [{'code': 'en', 'name': 'English'}, {'code': 'fr', 'name': 'French'}],
+  'more': [{'code': 'de', 'name': 'German'}, {'code': 'es', 'name': 'Spanish'}, {'code': 'it', 'name': 'Italian'}]}
+for _a in FAKE['/api/v2/speaker']['agents']: _a.update(languages=['en', 'fr'], last_used=None)
+FAKE['/api/v2/speaker']['agents'][0]['last_used'] = int(datetime.datetime.now().timestamp()) - 600
 _b = io.BytesIO(); _w = wave.open(_b, 'wb'); _w.setframerate(22050); _w.setsampwidth(2); _w.setnchannels(1); _w.writeframes(b'\0\0' * 66150); _w.close(); SAMPLE = _b.getvalue()
+# Sites the agents may reach (E6): made-up sites, enough of them for "Show more" (28 Nov).
+_SITE = lambda h, **kw: {'host': h, 'port': 443, 'by': 'greg', 'at': 1795300000, **kw}
+FAKE['/api/v2/network'] = {'requests': [], 'is_admin': True, 'agents': [
+  {'name': 'greg', 'display_name': "Greg's agent", 'yours': True, 'people': ['greg'],
+   'always': [_SITE(f'site{i:02d}.example.org') for i in range(1, 13)], 'once': [_SITE('docs.example.com', until=int(datetime.datetime.now().timestamp()) + 3000)],
+   'deny': [_SITE('tracker.example.net', until=int(datetime.datetime.now().timestamp()) + 5 * 86400)]},
+  {'name': 'household', 'display_name': 'Household agent', 'yours': True, 'people': ['greg', 'bere'],
+   'always': [_SITE('weather.example.org')], 'once': [], 'deny': []}]}
 # People (F38): an admin's view with someone invited and someone removed, one person's page, the admin actions.
 import time as _time
 _NOW = int(_time.time())
@@ -161,6 +173,11 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.send(202, json.dumps({'state': 'restarting', 'message': "Recreating Greg's agent: about a minute without replies.", 'seconds': 1, 'lines': []}).encode(), 'application/json')
         self.send(200, b'{}', 'application/json')
     def do_PUT(self):
+        if self.path.endswith('/speaker-languages'):
+            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            on = [l for l in ('en', 'fr') if l not in body.get('off', [])]
+            if not on: return self.send(400, json.dumps({'error': 'one_needed', 'message': 'At least one language stays on.'}).encode(), 'application/json')
+            return self.send(200, json.dumps({'languages': on}).encode(), 'application/json')
         if self.path.endswith('/settings'):
             body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
             out = json.loads(json.dumps(FAKE['/api/v2/agents/greg/settings']))

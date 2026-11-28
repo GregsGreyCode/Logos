@@ -12,7 +12,7 @@ const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 await page.goto('http://127.0.0.1:8779/#/settings'); await page.waitForTimeout(2500);
 await page.screenshot({ path: `${OUT}/settings-phone.png`, fullPage: true });
 const groups = await page.$$eval('.set-group-title', (els) => els.map((e) => e.textContent));
-ok(JSON.stringify(groups) === JSON.stringify(['You', 'This device', 'Logos']), `grouped: ${groups.join(', ')}`);
+ok(JSON.stringify(groups) === JSON.stringify(['You', 'Agents', 'This device', 'Logos']), `grouped: ${groups.join(', ')}`);
 ok(await page.locator('.set-profile', { hasText: 'Greg' }).count() === 1, 'your name and initial at the top');
 const look = await page.locator('.set-row', { hasText: 'Look' }).locator('.set-value').textContent();
 ok(/^(Glass|HUD|Warm) · (Dark|Light|Auto)$/.test(look), `each row says what it is set to (Look: ${look})`);
@@ -25,8 +25,9 @@ ok(fits, 'every row fits the screen');
 await page.locator('.set-row', { hasText: 'Phone alerts' }).tap(); await page.waitForTimeout(1200);
 ok(page.url().endsWith('#/settings/notifications'), 'a row opens its page');
 ok((await page.locator('#screen-name').textContent()) === 'Phone alerts', 'the top bar names it');
-await page.locator('.set-back').tap(); await page.waitForTimeout(1200);
-ok(page.url().endsWith('#/settings') && await page.locator('.set-index').count() === 1, '← Settings goes back to the list');
+ok(await page.locator('.settings-body h2.label', { hasText: 'Phone alerts' }).count() === 0, 'and no second title under it');
+await page.locator('.topbar .topbar-back').tap(); await page.waitForTimeout(1200);
+ok(page.url().endsWith('#/settings') && await page.locator('.set-index').count() === 1, 'the back arrow in the top bar goes back to the list');
 await page.close();
 
 // Desktop: the list beside the page; the sidebar already has People and Models.
