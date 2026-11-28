@@ -3,7 +3,7 @@ import { h, api, getJSON, when, markdown, working, agentLabel, icon, none, focus
 import { getPref, setPref } from './prefs.js';
 import * as mx from './mx.js';
 import { matrixChat } from './chat-mx.js';
-import { voidView } from './agents-void.js';
+import { voidView, MOODS, baseMood } from './agents-void.js';
 import { takeAsk, takeDraft } from './home.js';
 
 const newId = () => Math.random().toString(36).slice(2, 12);
@@ -611,7 +611,7 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
       h('header', { class: 'chat-head' },
         h('h1', { class: tabs ? null : 'agent-solo' }, agent.display_name), tabs,
-        h('span', { class: `status running ${agent.running ? 'up' : ''}` }, agent.running ? 'Running' : 'Not running'),
+        h('span', { class: `status running ${agent.running ? 'up' : ''}` }, MOODS[baseMood(agent)] || (agent.running ? 'Asleep' : 'Not running')),   // the Agents screen's words
         agent.shared ? h('span', { class: 'status scope' }, 'Shared with the household') : null,
         reopen, viewMenu, convBtn),
       connectNote, modelStatus, log, micNote, form),
