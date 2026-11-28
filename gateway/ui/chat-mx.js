@@ -14,7 +14,7 @@ import { voiceNote, imageThumb, fileCard, prepareFile, sendPrepared, fileSize } 
 import { stepsView } from './chat.js';
 import { takeAskFull, takeDraft } from './home.js';
 import { createRecorder, voiceBar } from './voice.js';
-import { markBar, agentBar } from './agents-void.js';
+import { markBar, agentBar, groupAvatar, mark } from './agents-void.js';
 import { getPref } from './prefs.js';
 
 const ARCHIVE_DAYS = 30;
@@ -156,7 +156,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const thinkingMore = h('span', { class: 'mx-thinking-more' });
   const thinkingRow = h('div', { class: 'mx-thinking', hidden: true },
     // One sentence that wraps as text (Greg, 23 Nov: as three flex items it split into columns on a phone).
-    h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }),
+    // The agent's own mark, pulsing in step with its mark in the header (Greg, 28 Nov).
+    h('span', { class: 'mx-thinking-mark', 'aria-hidden': 'true' }, mark(agent, { size: 'tiny' })),
     h('span', { class: 'mx-thinking-text' }, `${agent.display_name} is thinking`, h('span', { class: 'dots', 'aria-hidden': 'true' }, '…'), ' ', thinkingMore));
   const modelLine = h('div', { class: 'model-line down', role: 'status', hidden: agent.model_up !== false },
     'AI computer off · your message will queue');
@@ -244,24 +245,89 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   syncSend();
   off.push(() => voice.destroy());
 
-  // In a group: ‹ back, the group's name and who is in it; and above the box, the agents to ask. Agents
-  // answer in a group only when asked (an @mention), so the message says whom it is for.
+  // In a group: the agent chat's header (Greg, 28 Nov: "the Household Group UI is different from the agent UIs"):
+  // ‹ back, the group's picture, its name with ▾ (a list of your chats to switch to) and who is in it underneath;
+  // ≡ on the right opens its panel (members, invite, leave). Above the box, the agents to ask: agents answer in a
+  // group only when asked (an @mention), so the message says whom it is for.
   const groupTitle = h('span', { class: 'mark-name' }, 'Group');
   const groupWho = h('span', { class: 'when group-who' });
-  const groupHead = h('div', { class: 'mark-bar group-bar', role: 'navigation', 'aria-label': 'Group' },
-    h('a', { href: '#/chat', class: 'mark-back', 'aria-label': 'All agents and groups', title: 'All agents and groups' }, '‹'),
-    h('span', { class: 'group-title' }, groupTitle, groupWho));
+  const groupHead = group ? groupBar() : null;
+  function groupBar() {
+    const list = h('div', { class: 'switch-list', role: 'listbox', 'aria-label': 'Switch chat' });
+    const pop = h('div', { class: 'switch-pop group-pop', hidden: true }, list, h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
+    const btn = h('button', { type: 'button', class: 'switch-btn group-switch', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+      title: 'Switch chat (Ctrl+K)' }, groupAvatar(agent), h('span', { class: 'group-title' }, groupTitle, groupWho),
+    h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
+    const bar = h('nav', { class: 'group-bar', 'aria-label': 'Group' },
+      h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents and chats', title: 'All agents and chats' }, '‹'), btn, pop);
+    // Your chats, as in the Chats list: each agent's chat and each group, this one ticked.
+    const fill = () => {
+      if (!c) return [];
+      const rows = conversationsOf(c, agents);
+      const items = rows.map((r) => {
+        const on = r.kind === 'group' && r.link === main;
+        return h('a', { href: r.link, role: 'option', class: `switch-item${on ? ' on' : ''}`, 'aria-selected': String(on) },
+          r.kind === 'agent' ? mark(r.agent, { size: 'tiny' }) : groupAvatar(r.agent),
+          h('span', { class: 'switch-text' }, h('strong', {}, r.name), h('span', { class: 'switch-mood' }, r.kind === 'group' ? 'Group' : 'Agent')),
+          on ? h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓') : null);
+      });
+      list.replaceChildren(...items);
+      return items;
+    };
+    let items = [];
+    const open = () => {
+      items = fill(); pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); bar.classList.add('open');
+      (items.find((el) => el.classList.contains('on')) || items[0])?.focus();
+    };
+    const close = (refocus) => { if (pop.hidden) return; pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); bar.classList.remove('open'); if (refocus) btn.focus(); };
+    btn.addEventListener('click', () => (pop.hidden ? open() : close(true)));
+    pop.addEventListener('keydown', (e) => {
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); close(true); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); (items[i + 1] || items[0])?.focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); (items[i - 1] || items[items.length - 1])?.focus(); }
+    });
+    pop.addEventListener('click', (e) => { if (e.target.closest('a')) close(false); });
+    const outside = (e) => { if (!bar.contains(e.target)) close(false); };
+    const hotkey = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); pop.hidden ? open() : close(true); } };
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', hotkey);
+    off.push(() => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', hotkey); });
+    return bar;
+  }
+  const pageTitle = h('h1', { class: 'visually-hidden' }, agent.display_name);
+  // On a phone the agent's mark sits after ‹ too (Greg, 28 Nov: it pulses with the thinking row; the desktop has the switcher's).
+  function withPhoneMark(bar) {
+    bar.querySelector('.agent-back')?.after(h('span', { class: 'phone-mark', 'aria-hidden': 'true' }, mark(agent, { size: 'tiny' })));
+    return bar;
+  }
+  // While the agent works, its mark in the header and the one in the thinking row pulse together (Greg, 28 Nov): one
+  // class on the chat starts both, and both animations are given the same start time so they stay in step.
+  let pulseFrom = null;
+  function syncWorking() {
+    const sec = root.querySelector('section.chat');
+    if (!sec) return;
+    const on = !thinkingRow.hidden;
+    if (on === sec.classList.contains('agent-working') && (!on || pulseFrom !== null)) return;
+    sec.classList.toggle('agent-working', on);
+    if (!on) { pulseFrom = null; return; }
+    for (const el of sec.querySelectorAll('.chat-head .agent-mark.current .mark-glow, .chat-head .phone-mark .mark-glow, .chat-head .group-switch .void-avatar, .mx-thinking-mark .mark-glow')) el.classList.add('work-pulse');
+    pulseFrom = document.timeline.currentTime;
+    requestAnimationFrame(() => {
+      for (const el of sec.querySelectorAll('.work-pulse')) for (const a of el.getAnimations()) if (a.animationName === 'work-pulse') a.startTime = pulseFrom;
+    });
+  }
   const askRow = h('div', { class: 'mx-ask', hidden: !group });
   let asking = new Set();                    // the agents your next message in the group is for
   const askKey = `logos.group.ask.${group}`;
 
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
-      h('header', { class: 'chat-head' },
+      h('header', { class: `chat-head${group ? ' group-head' : ''}` },
         // M4: the agents' marks replace the agent tabs; inside a thread, its title; in a group, its name.
         group ? groupHead : threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
-        threadId || group ? null : agentBar(agent, 'chat', agents.filter((a) => a.matrix_id)),
-        crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : h('h1', { class: 'visually-hidden' }, agent.display_name),
+        threadId || group ? null : withPhoneMark(agentBar(agent, 'chat', agents.filter((a) => a.matrix_id))),
+        crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : pageTitle,
         sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null),
       group ? null : chipsRow, log, thinkingRow, note, modelLine, group ? askRow : null, pending, form),
     sideBits.side, sideBits.sideScrim || null);
@@ -337,6 +403,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   }
   if (group) {
     groupTitle.textContent = room.name || 'Group';
+    pageTitle.textContent = room.name || 'Group';
     const people = room.getMembers().filter((mb) => mb.membership === 'join' && !agentIds.has(mb.userId)).map((mb) => (mb.userId === me ? 'you' : mb.name));
     groupWho.textContent = [...people, ...inRoom().map((a) => a.display_name)].join(', ');
     input.placeholder = `Message ${room.name || 'the group'}`;
@@ -619,7 +686,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // keeps it at the bottom; scrolling up unpins it, coming back down pins it again.
   let pinned = true;
   const toBottom = () => { if (pinned) log.scrollTop = log.scrollHeight; };
-  log.addEventListener('scroll', () => { pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 80; }, { passive: true });
+  // Scrolled down from the top, the top edge fades (Greg, 28 Nov: in the group the oldest line looked cut off under the header).
+  log.addEventListener('scroll', () => { pinned = log.scrollHeight - log.scrollTop - log.clientHeight < 80; log.classList.toggle('fade-top', log.scrollTop > 4); }, { passive: true });
   log.addEventListener('load', toBottom, true);                       // an image or a video arriving
   const logGrows = new MutationObserver(() => requestAnimationFrame(toBottom));
   logGrows.observe(log, { childList: true, subtree: true });
@@ -693,6 +761,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       && (!group || (last.getContent()['m.mentions']?.user_ids || []).some((id) => agentIds.has(id))));
     const wasWorking = !thinkingRow.hidden;
     thinkingRow.hidden = !waitingOnAgent && !typing;
+    syncWorking();
     syncSend();
     if (wasWorking !== !thinkingRow.hidden && shown.some((e) => e.getSender() === me && e.status === 'sent')) setTimeout(() => redraw(), 0);
     askedAt = waitingOnAgent ? last.getTs() : (typing ? askedAt || Date.now() : 0);
@@ -742,7 +811,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // Agents repeat "typing" every few seconds while they work: redraw only when it changes, or the chat
     // was rebuilt under the mouse the whole time (the ☺ flickered and could not be clicked).
     if (typing === member.typing) return;
-    typing = member.typing; thinkingRow.hidden = !typing && thinkingRow.hidden; redraw();
+    typing = member.typing; thinkingRow.hidden = !typing && thinkingRow.hidden; syncWorking(); redraw();
   };
   const onEcho = () => redraw();
   c.on(m.RoomEvent.Timeline, onTimeline); off.push(() => c.off(m.RoomEvent.Timeline, onTimeline));
@@ -818,11 +887,41 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   // Panel: the main conversation (threads arrive with M3), then old web chats for 30 days.
   const archive = h('div', { class: 'convs' });
   if (group) {
-    const members = room.getMembers().filter((mb) => ['join', 'invite'].includes(mb.membership));
-    sideBits.side.replaceChildren(sideBits.sideTop || '', h('h2', { class: 'label' }, 'In this group'),
-      h('div', { class: 'convs' }, members.map((mb) => h('p', { class: 'conv-link' },
+    // The group's panel (≡): who is in it, invite someone (a person of the household or an agent), leave the group.
+    const memberBox = h('div', { class: 'convs' });
+    const drawMembers = () => memberBox.replaceChildren(...room.getMembers().filter((mb) => ['join', 'invite'].includes(mb.membership))
+      .map((mb) => h('p', { class: 'conv-link' },
         h('span', { class: 'conv-title' }, mb.userId === me ? `${mb.name} (you)` : mb.name),
-        h('span', { class: 'when' }, agentIds.has(mb.userId) ? 'agent · answers when asked' : mb.membership === 'invite' ? 'invited' : '')))));
+        h('span', { class: 'when' }, agentIds.has(mb.userId) ? 'agent · answers when asked' : mb.membership === 'invite' ? 'invited' : ''))));
+    drawMembers();
+    const inviteBox = h('div', { class: 'group-invite', hidden: true });
+    const groupNote = h('p', { class: 'when', role: 'status' });
+    const inviteBtn = h('button', { type: 'button', class: 'btn quiet small', 'aria-expanded': 'false', onclick: async () => {
+      if (!inviteBox.hidden) { inviteBox.hidden = true; inviteBtn.setAttribute('aria-expanded', 'false'); return; }
+      inviteBox.hidden = false; inviteBtn.setAttribute('aria-expanded', 'true');
+      inviteBox.replaceChildren(loading());
+      const server = me.split(':').slice(1).join(':');
+      const people = ((await getJSON('/api/v2/people').catch(() => ({ people: [] }))).people || [])
+        .filter((p) => !p.is_you && !['invited', 'invite_expired', 'removing', 'removed'].includes(p.state))
+        .map((p) => ({ id: `@${p.username}:${server}`, name: p.display_name }));
+      const inIt = (id) => ['join', 'invite'].includes(room.getMember(id)?.membership);
+      const choices = [...people, ...allAgents.map((a) => ({ id: a.matrix_id, name: a.display_name, agent: true }))].filter((x) => !inIt(x.id));
+      inviteBox.replaceChildren(...(choices.length ? choices.map((x) => h('button', { type: 'button', class: 'conv-link group-invite-pick', onclick: async (e) => {
+        e.currentTarget.disabled = true;
+        try { await c.invite(room.roomId, x.id); groupNote.textContent = `${x.name} is invited.`; e.currentTarget.remove(); setTimeout(drawMembers, 800); }
+        catch (err) { groupNote.textContent = `${x.name} could not be invited: ${err.message}`; e.currentTarget.disabled = false; }
+      } }, h('span', { class: 'conv-title' }, x.name), h('span', { class: 'when' }, x.agent ? 'agent · Invite' : 'Invite')))
+        : [none('Everyone is in this group already.')]));
+    } }, '+ Invite someone');
+    let leaving = 0;
+    const leaveBtn = h('button', { type: 'button', class: 'btn quiet small danger-text group-leave', onclick: async () => {
+      if (Date.now() - leaving > 4000) { leaving = Date.now(); leaveBtn.textContent = 'Tap again to leave'; setTimeout(() => { if (leaveBtn.isConnected && Date.now() - leaving >= 4000) leaveBtn.textContent = 'Leave group'; }, 4100); return; }
+      leaveBtn.disabled = true;
+      try { await c.leave(room.roomId); location.hash = '#/chat'; }
+      catch (err) { groupNote.textContent = `Could not leave: ${err.message}`; leaveBtn.disabled = false; }
+    } }, 'Leave group');
+    sideBits.side.replaceChildren(sideBits.sideTop || '', h('h2', { class: 'label' }, 'In this group'), memberBox,
+      h('div', { class: 'group-actions' }, inviteBtn, inviteBox, groupNote, leaveBtn));
   } else sideBits.side.replaceChildren(sideBits.sideTop || '',
     h('a', { href: `${main}/thread/new`, class: 'btn mx-new' }, 'New conversation'),
     h('h2', { class: 'label' }, 'Chats'), convList,

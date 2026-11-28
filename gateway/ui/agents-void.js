@@ -43,6 +43,11 @@ export function mark(agent, { size = 'big', mood = 'asleep', href = null, curren
     h('span', { class: 'mark-label', 'aria-hidden': 'true' }, h('strong', {}, agent.display_name), h('span', {}, moodWords(mood))))));
 }
 
+// A group's picture: the people icon in a circle of its first agent's colour. The same in the Chats list, the chat
+// switcher and the group's own header (Greg, 28 Nov: the group's header had no picture).
+export const groupAvatar = (agent) => h('span', { class: 'void-avatar group', 'aria-hidden': 'true',
+  style: `--mark: var(--agent-${agent?.name}, var(--accent))` }, icon(ICONS.people));
+
 // Each agent's state, from its Matrix room (this browser), the Noticeboard and the agent list.
 export async function moods(agents) {
   // Fresh AI-computer state each time (the server checks LM Studio at most every 20 s).
@@ -375,7 +380,7 @@ export async function voidView(root, agents, others = []) {
         search.addEventListener('input', () => { convView.query = search.value; const at = search.selectionStart; showConvs().then(() => { const s2 = convBox.querySelector('.void-search'); if (s2) { s2.focus(); s2.setSelectionRange(at, at); } }); });
       }
       const picture = (r) => (r.kind === 'agent' ? mark(r.agent, { size: 'tiny' })
-        : h('span', { class: 'void-avatar group', 'aria-hidden': 'true', style: `--mark: var(--agent-${r.agent?.name}, var(--accent))` }, icon(ICONS.people)));
+        : groupAvatar(r.agent));
       convBox.replaceChildren(h('div', { class: 'void-convs-head' }, h('h2', { class: 'label' }, 'Chats'), newBtn),
         ...(chips || search ? [h('div', { class: 'void-tools' }, chips, search)] : []),
         ...invites.map((r) => h('div', { class: 'void-group invite' },
