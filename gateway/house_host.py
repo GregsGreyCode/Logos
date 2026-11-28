@@ -26,6 +26,11 @@ A definition chooses what the agent may control::
       enabled: true
       domains: [light, scene]        # the default; nothing else is supported yet
       exclude: [light.balcony_balcony]   # entity ids the agent must leave alone
+
+Personal lists (Greg, 28 Nov): an agent with exactly one owner (``owners: [bere]``) and the
+``todo`` domain also works on that person's own lists, which only they see. The service keeps
+them in its own ``logos-lists`` volume (``/lists``, one ``<person>.json`` each, mode 0600), the
+one thing it may write; the household agent (several owners) gets none.
 """
 from __future__ import annotations
 
@@ -34,12 +39,14 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Mapping
 
 CONTAINER = "logos-house"
 VOLUME = "logos-house"
+LISTS_VOLUME = "logos-lists"             # personal lists (Greg, 28 Nov): the service's only writable place
 NETWORK = "logos-house"                  # its own bridge: it needs to reach Home Assistant on the LAN
 IMAGE = "python@sha256:c5ba3deef00c7758561a0f03c26f44f10589263d40e732b8748e0d1f38f6dd89"  # 3.12-alpine
 SERVICE_FILE = Path(__file__).with_name("house_service.py")
@@ -115,10 +122,21 @@ def agent_settings(agent: Mapping[str, Any]) -> Dict[str, List[str]]:
     return {"domains": domains, "exclude": [str(e) for e in house.get("exclude") or []]}
 
 
+def list_owner(agent: Mapping[str, Any]) -> str:
+    """The person whose personal lists this agent works on: its one owner, or '' (the household agent,
+    an agent with no owner or with several)."""
+    owners = agent.get("owners")
+    if agent.get("role") == "household" or not isinstance(owners, list) or len(owners) != 1:
+        return ""
+    person = str(owners[0] or "").strip()
+    return person if re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", person) else ""
+
+
 def service_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str],
                    ha: Mapping[str, str], admin: Mapping[str, str] = None) -> dict:
     out = {"ha_url": ha["url"], "ha_token": ha["token"],
-           "agents": {n: {"token": tokens[n], **agent_settings(a)} for n, a in sorted(agents.items())}}
+           "agents": {n: {"token": tokens[n], **agent_settings(a), **({"person": list_owner(a)} if list_owner(a) else {})}
+                      for n, a in sorted(agents.items())}}
     if admin:                       # only for create_list; see ADMIN_SETTINGS_FILE
         out.update(ha_admin_url=admin["url"], ha_admin_token=admin["token"])
     return out
@@ -178,6 +196,11 @@ class HouseHost:
             self.rt.run(["docker", "volume", "create", VOLUME])
         self.rt.run(["docker", "run", "--rm", "-i", "--network", "none", "-v", f"{VOLUME}:/v", "alpine:3", "sh", "-c",
                      "cat > /v/config.json && chown -R 1000:1000 /v && chmod 0600 /v/config.json"], input=config)
+        if self.rt.runner.run(["docker", "volume", "inspect", LISTS_VOLUME]).returncode != 0:
+            self.rt.run(["docker", "volume", "create", LISTS_VOLUME])
+        # Owned by the service's user and closed to everyone else; the files in it are 0600.
+        self.rt.run(["docker", "run", "--rm", "--network", "none", "-v", f"{LISTS_VOLUME}:/l", "alpine:3", "sh", "-c",
+                     "chown 1000:1000 /l && chmod 0700 /l"])
         if NETWORK not in self.rt.run(["docker", "network", "ls", "--format", "{{.Name}}"], check=False).split():
             self.rt.run(["docker", "network", "create", NETWORK])
         self.rt.run(["docker", "rm", "-f", CONTAINER], check=False)
@@ -188,7 +211,8 @@ class HouseHost:
                      "--dns", "127.0.0.1",
                      "-p", f"{self.bind_address()}:{PORT}:{PORT}",
                      "-v", f"{VOLUME}:/data:ro", "-v", f"{SERVICE_FILE}:/app/house_service.py:ro",
-                     "-e", "HOUSE_CONFIG=/data/config.json", "-e", f"HOUSE_PORT={PORT}",
+                     "-v", f"{LISTS_VOLUME}:/lists",
+                     "-e", "HOUSE_CONFIG=/data/config.json", "-e", f"HOUSE_PORT={PORT}", "-e", "HOUSE_LISTS=/lists",
                      "--entrypoint", "python3", IMAGE, "/app/house_service.py"])
         for _ in range(30):
             try:

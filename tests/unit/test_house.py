@@ -397,9 +397,9 @@ def lists_service(lists=None, domains=("light", "scene", "todo")):
 
 def test_list_items_open_and_done():
     svc, _ = lists_service()
-    assert svc.list_items("household") == {"lists": [{"list": "Shopping list", "id": "todo.shopping_list", "open": ["Peas"]}]}
+    assert svc.list_items("household") == {"lists": [{"list": "Shopping list", "kind": "shared", "id": "todo.shopping_list", "open": ["Peas"]}]}
     assert svc.list_items("household", "the shopping list", done=True) == {
-        "lists": [{"list": "Shopping list", "id": "todo.shopping_list", "open": ["Peas"], "done": ["Lemons"]}]}
+        "lists": [{"list": "Shopping list", "kind": "shared", "id": "todo.shopping_list", "open": ["Peas"], "done": ["Lemons"]}]}
 
 
 def test_add_items_skips_duplicates_and_reopens_ticked_ones():
@@ -590,7 +590,7 @@ def flow_calls(fake):
 def test_create_list_runs_the_flow_and_add_items_works_at_once():
     svc, fake, logs, _ = creating()
     got = svc.create_list("household", "  Wedding  ")
-    assert got == {"list": "Wedding", "id": "todo.wedding", "created": True}
+    assert got == {"list": "Wedding", "kind": "shared", "id": "todo.wedding", "created": True}
     assert flow_calls(fake) == [
         ("POST", "/api/config/config_entries/flow", {"handler": "local_todo", "show_advanced_options": False}),
         ("POST", "/api/config/config_entries/flow/f1abc", {"todo_list_name": "Wedding"})]
@@ -611,7 +611,7 @@ def test_create_list_waits_for_the_new_list_to_appear():
 def test_create_list_gives_back_a_list_that_exists():
     svc, fake, _, _ = creating({"todo.example_list": ("Wedding", []), "todo.example_todo": ("To-do", [])})
     for name in ("wedding", "WEDDING ", "the wedding list", "Wedding  list"):
-        assert svc.create_list("household", name) == {"list": "Wedding", "id": "todo.example_list",
+        assert svc.create_list("household", name) == {"list": "Wedding", "kind": "shared", "id": "todo.example_list",
                                                       "already_existed": True}
     assert svc.create_list("household", "todo")["id"] == "todo.example_todo"
     assert flow_calls(fake) == []
@@ -705,7 +705,7 @@ def test_create_list_over_real_http():
         svc = hs.Service(hs.HomeAssistant(url, "ha-token"),
                          {"household": {"token": "tok", "domains": ["todo"], "exclude": []}},
                          log=lambda m: None, sleep=lambda s: None, lists_admin=hs.ListMaker(url, ADMIN))
-        assert svc.create_list("household", "Wedding") == {"list": "Wedding", "id": "todo.wedding", "created": True}
+        assert svc.create_list("household", "Wedding") == {"list": "Wedding", "kind": "shared", "id": "todo.wedding", "created": True}
         assert svc.add_items("household", "Wedding", ["Rings"])["added"] == ["Rings"]
     finally:
         server.shutdown()

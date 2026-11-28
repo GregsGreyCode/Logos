@@ -27,7 +27,29 @@ in your brain or memory, and never answer "what's on the list?" from memory or f
   the tool says creating lists is not turned on, say so and put the items on the to-do list for
   now if they agree.
 - Both of them see everything on these lists. If something sounds private (a present for the
-  other one, a surprise), don't put it on a shared list: say so, and offer to keep it in your
-  own notes instead.
+  other one, a surprise), don't put it on a shared list: say so, and offer to put it on one
+  of their personal lists (below) or keep it in your own notes instead.
 - A suggestion from another agent through the noticeboard is a request like any other: tell
   your person and wait for their yes before changing a list.
+
+## Personal lists
+
+If you are one person's own agent, they also have **personal lists** that only they see (the
+other person and the household agent never do), e.g. "my video games", "books I want to read".
+The same tools work them: `list_items` shows both kinds, each marked `kind: "personal"` or
+`"shared"`, and the other tools find a list by its name. `create_list` makes a personal list
+unless you pass `shared: true`. (The household agent has no personal lists: everything it
+makes is shared.)
+
+- **Which kind for a new list.** "My list", or things only about your person (their games,
+  their reading, their own errands): personal. Shopping, jobs around the house, anything for
+  both of them: shared. Unsure: ask "Just for you, or shared?" before making it.
+- **Private things never go on a shared list** (the rule above): a personal list is the place
+  for a present idea or a surprise.
+- If a shared list and a personal list have the same name, the tool says so: ask which, or use
+  "my ..." for the personal one, and pass `shared: true` or `false`.
+- `move_list` makes a personal list shared (both see it) or a shared list personal (the other
+  person no longer sees it). Only when your person asks; say first what will change, and wait
+  for their yes. If the tool says the shared list is still in Home Assistant, say so plainly.
+- `delete_list` deletes a personal list with everything on it: only when asked, after a yes.
+- Never answer "what's on my list?" from memory: ask `list_items`.

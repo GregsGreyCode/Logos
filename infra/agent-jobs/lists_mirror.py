@@ -55,6 +55,8 @@ def line(item):
 def render(lists):
     out = [HEADER]
     for lst in lists:
+        if lst.get("kind") == "personal":     # only their person sees those (Greg, 28 Nov): never in a shared page
+            continue
         out.append(f"\n## {lst.get('list') or 'List'}\n\n")
         if lst.get("id"):                     # which Home Assistant list it is, for the dashboard's links
             out.append(f"<!-- {lst['id']} -->\n")
