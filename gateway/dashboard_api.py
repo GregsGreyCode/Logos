@@ -247,8 +247,18 @@ async def handle_me(request: web.Request) -> web.Response:
     look, prefs, colours = await asyncio.gather(asyncio.to_thread(look_of, user["id"]), asyncio.to_thread(prefs_of, user["id"]),
                                                 asyncio.to_thread(agent_colours))
     matrix = await asyncio.to_thread(matrix_id_of, request, user["username"])
+    admins = await asyncio.to_thread(_admin_names)
     return web.json_response({**user, "look": look, "prefs": prefs, "agent_colours": colours, "matrix_id": matrix,
-                              "version": version()})
+                              "admins": admins, "version": version()})
+
+
+def _admin_names() -> List[str]:
+    """Who manages Logos, by name: a page that someone else cannot change says "Ask Greg" (Settings)."""
+    try:
+        rows, _total = auth_db.list_users(limit=10, role="admin", status="active")
+    except Exception:
+        return []
+    return [str(r.get("display_name") or r.get("username") or "") for r in sorted(rows, key=lambda r: r.get("created_at") or 0) if r]
 
 
 async def handle_agent_colour(request: web.Request) -> web.Response:

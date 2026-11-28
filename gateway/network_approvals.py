@@ -554,6 +554,63 @@ class Approvals:
         self.audit(user_id, "network_removed", "agent", name, {"host": host, "port": port})
         return 200, {"ok": True}
 
+    def add_always(self, name: str, host: Any, port: Any, username: str,
+                   user_id: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
+        """Allow a site from now on without waiting to be asked (People › Sites, Edit). The same checks as
+        answering a question: only the agent's own people, never a private, tailnet or household address
+        (its model server, its Matrix server, network-never.txt), and the live sandbox takes it at once."""
+        agent = self._definition(name)
+        if not agent:
+            return 404, {"error": "not_found"}
+        if (username or "").lower() not in approvers(agent):
+            return 403, {"error": "forbidden", "message": "Only the agent's own people can allow a site for it."}
+        h = normalise(host)
+        try:
+            p = int(port)
+        except (TypeError, ValueError):
+            return 400, {"error": "refused", "message": "That is not a port number."}
+        reason = check_host(h, p, never_hosts(agent, self.env), self.resolve)
+        if reason:
+            return 400, {"error": "refused", "message": f"{h or 'That'} cannot be allowed: {reason}."}
+        with _LOCK:
+            if _active(_agent(load(self.env), name)["always"], h, p, self.clock()):
+                return 200, {"ok": True, "already": True, "agent": name, "host": h, "port": p}
+        ok, text = self.apply_live(name, h, p, [])
+        if not ok:
+            logger.warning("network: could not allow %s:%s for %s: %s", h, p, name, text[-300:])
+            return 502, {"error": "openshell", "message": "The sandbox did not take the change. Try again in a minute."}
+        now = self.clock()
+        with _LOCK:
+            data = load(self.env)
+            a = _agent(data, name)
+            for k in ("always", "once", "deny"):
+                a[k] = [e for e in a[k] if not (e.get("host") == h and int(e.get("port") or 0) == p)]
+            a["always"].append({"host": h, "port": p, "by": username, "at": now, "binaries": []})
+            data["log"].append({"ts": now, "agent": name, "host": h, "port": p, "decision": "added", "by": username})
+            save(self.env, data)
+        self.audit(user_id, "network_added", "agent", name, {"host": h, "port": p})
+        return 200, {"ok": True, "agent": name, "host": h, "port": p}
+
+    def lift_deny(self, name: str, host: Any, port: Any, username: str,
+                  user_id: Optional[str] = None) -> Tuple[int, Dict[str, Any]]:
+        """End a Deny early (its own people): the agent may be asked about the site again."""
+        agent = self._definition(name)
+        if not agent:
+            return 404, {"error": "not_found"}
+        if (username or "").lower() not in approvers(agent):
+            return 403, {"error": "forbidden", "message": "Only the agent's own people can change this."}
+        h, p = normalise(host), int(port)
+        with _LOCK:
+            data = load(self.env)
+            a = _agent(data, name)
+            if not any(e.get("host") == h and int(e.get("port") or 0) == p for e in a["deny"]):
+                return 404, {"error": "not_found"}
+            a["deny"] = [e for e in a["deny"] if not (e.get("host") == h and int(e.get("port") or 0) == p)]
+            data["log"].append({"ts": self.clock(), "agent": name, "host": h, "port": p, "decision": "undenied", "by": username})
+            save(self.env, data)
+        self.audit(user_id, "network_undenied", "agent", name, {"host": h, "port": p})
+        return 200, {"ok": True}
+
     # ── reading ──
 
     def pending(self) -> List[Dict[str, Any]]:
