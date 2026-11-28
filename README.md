@@ -36,6 +36,7 @@ https://claude.ai/artifact/JpSGvsY25zM7VHPdce6v6P
 | Voice | [gateway/voice.py](gateway/voice.py), [docs/voice.md](docs/voice.md) | One speech-to-text service for every agent: a voice note becomes text, nothing is kept |
 | House | [gateway/house_service.py](gateway/house_service.py), [docs/house.md](docs/house.md) | The household agent works the lights and scenes through Home Assistant; it never holds the login, and only lights and scenes can be touched |
 | Brain rules | [infra/brain-template/](infra/brain-template/), [infra/agent-jobs/](infra/agent-jobs/) | Vault layout, nightly consolidation, brain index, git history inside the vault |
+| Secrets | [gateway/agent_secrets.py](gateway/agent_secrets.py), [scripts/logos-rotate](scripts/logos-rotate), [docs/secrets.md](docs/secrets.md) | Agents see their service and chat tokens only as OpenShell placeholders; an inventory of every secret and a rotation runbook |
 | Brain sync | [scripts/logos-sync](scripts/logos-sync), [docs/brain-sync.md](docs/brain-sync.md) | One Syncthing container; each brain is a folder shared only with its own devices and opens as an Obsidian vault |
 | Gateway and web chat | [gateway/](gateway/), [logos_cli/](logos_cli/) | Login, account setup, trimmed dashboard. With `LOGOS_SANDBOX_BACKEND=openshell` it lists the defined agents and chats with them ([docs/architecture/web-chat.md](docs/architecture/web-chat.md)) |
 | Checks | [evals/](evals/) | Brain-write and brain-rule checks that run inside a sandbox |

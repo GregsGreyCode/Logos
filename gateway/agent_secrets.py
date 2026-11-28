@@ -54,7 +54,7 @@ SECRETS: Dict[str, str] = {
 #: On unless an agent (or agents/all.local.yaml) says otherwise: the ones proven end to end on the
 #: dev machine (docs/secrets.md, "Placeholders"). The others are ready but wait for a check on the
 #: machine that has the service (Home Assistant, a mailbox, the advisor): switch them on per agent.
-DEFAULT_ON = frozenset({"matrix", "model", "noticeboard", "voice", "calendar", "web", "changes", "alert"})
+DEFAULT_ON = frozenset({"matrix", "model", "noticeboard", "voice", "calendar", "web", "alert"})
 
 #: Host-only: values Logos needs and the agent never does (moved out of the home volume's .env).
 HOST_ONLY = ("LOGOS_MATRIX_PASSWORD", "LOGOS_MATRIX_ACCESS_TOKEN")

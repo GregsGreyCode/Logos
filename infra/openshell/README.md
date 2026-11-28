@@ -75,4 +75,5 @@ sent to another host is refused (`credential_endpoint_mismatch`).
 | --- | --- |
 | Anthropic | OpenShell provider `anthropic` (header placement). The sandbox holds a placeholder. |
 | LM Studio | No credential. Reached through the `lm_studio` network rule only. |
+| Logos services, the model gateway, Matrix (per agent) | OpenShell providers `logos-<agent>-<secret>`, made by `scripts/logos-agent up` (story E7, `docs/secrets.md`): bearer placement, stable placeholder, bound to the agent's own sandbox rules for that service. Real values on the host only (`~/.config/logos/agent-secrets/`). |
 | Telegram | **Not** a provider. OpenShell 0.1.8 path placement matches one exact URL path per credential, and the Bot API puts the token in the path of every method (`/bot<token>/<method>`). The token lives in the agent's private home volume (`/opt/data/.env`, mode 0600) and the network policy limits it to `api.telegram.org`. Revisit when OpenShell supports wildcard path templates (S7.3). |
