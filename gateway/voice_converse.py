@@ -85,6 +85,8 @@ INSTRUCTIONS = (
     "the person to go on, end with one short question. Answer promptly; don't deliberate at length."
 )
 IN_FRENCH = "They spoke French: reply in French."
+#: A language switched off for this agent in Settings › Speaker: the answer comes in its main language.
+ANSWER_IN = "They spoke {heard}, which you do not speak at the speaker: reply in {lang}."
 
 
 def _config_dir(env: Mapping[str, str]) -> Path:
@@ -310,7 +312,8 @@ async def handle_converse(request: "Any") -> "Any":
     stats: Stats = request.app["voice_stats"]
     measured: dict = {}
 
-    lang = speech_lang.detect(text)            # V3.4: Home Assistant's "language" is the pipeline's
+    heard = speech_lang.detect(text)           # V3.4: Home Assistant's "language" is the pipeline's
+    lang = speaker_voice.answer_language(agent, heard)       # a language switched off: the agent's main one
 
     def answer(outcome: str, words: str) -> "web.Response":
         said = spoken(presence.spoken_part(words)) or FAILED
@@ -364,10 +367,17 @@ async def handle_converse(request: "Any") -> "Any":
     # D2: private details out loud only while the speaker's own phone is home (gateway/presence.py).
     private_ok = await presence.at_home(who.username if who is not None and who.known else None)
     instructions = " ".join(p for p in (voice_id.instructions(INSTRUCTIONS, who), presence.rule(private_ok), extra,
-                                        IN_FRENCH if lang == "fr" else "") if p)
+                                        language_rule(heard, lang)) if p)
     outcome, words = await collect(client, voice_id.tagged(without_wake(text, agent, definition), who),
                                    session_id=session_id, instructions=instructions)
     return answer(outcome, words)
+
+
+def language_rule(heard: str, lang: str) -> str:
+    """What to tell the agent about the language of its answer."""
+    if heard != lang:
+        return ANSWER_IN.format(heard=speech_lang.name(heard), lang=speech_lang.name(lang))
+    return IN_FRENCH if lang == "fr" else ""
 
 
 def probe_time(env: Optional[Mapping[str, str]] = None) -> Optional[tuple[int, int]]:

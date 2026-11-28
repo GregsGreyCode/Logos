@@ -524,6 +524,11 @@ def _run_migrations() -> None:
             conn.execute("ALTER TABLE agent_voices ADD COLUMN voice_fr TEXT")
         except sqlite3.OperationalError:
             pass  # column already exists
+        # Settings › Speaker (28 Nov): the languages an agent does not speak at the speaker ("fr", comma separated).
+        try:
+            conn.execute("ALTER TABLE agent_voices ADD COLUMN langs_off TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         # Voice VO.2: each person's voice print (speaker embeddings and their strictness, never audio),
         # made in Settings › Your voice and managed only by that person (gateway/voice_id.py).
         conn.execute("""
@@ -1642,11 +1647,23 @@ def set_agent_colour(name: str, colour: str, set_by: str) -> None:
 
 
 def get_agent_voices() -> dict:
-    """``{agent name: {"voice", "voice_fr", "set_by"}}`` for every agent someone chose a speaker voice
-    for (Voice V1.2; French V3.4). "" or None: the definition's."""
+    """``{agent name: {"voice", "voice_fr", "set_by", "langs_off"}}`` for every agent someone chose a speaker
+    voice or languages for (Voice V1.2; French V3.4; languages 28 Nov). "" or None: the definition's."""
     with _conn() as conn:
-        return {r["name"]: {"voice": r["voice"] or None, "voice_fr": r["voice_fr"] or None, "set_by": r["set_by"]}
-                for r in conn.execute("SELECT name, voice, voice_fr, set_by FROM agent_voices")}
+        return {r["name"]: {"voice": r["voice"] or None, "voice_fr": r["voice_fr"] or None, "set_by": r["set_by"],
+                            "langs_off": [x for x in (r["langs_off"] or "").split(",") if x]}
+                for r in conn.execute("SELECT name, voice, voice_fr, set_by, langs_off FROM agent_voices")}
+
+
+def set_agent_languages(name: str, off: list, set_by: str) -> None:
+    """The languages ``name`` does not speak at the speaker (codes, e.g. ["fr"]); [] = all it can."""
+    with _conn() as conn:
+        conn.execute("INSERT OR IGNORE INTO agent_voices (name, voice, voice_fr, set_by, updated_at) VALUES (?, '', '', ?, ?)",
+                     (name, set_by, int(time.time() * 1000)))
+        conn.execute("UPDATE agent_voices SET langs_off = ?, set_by = ?, updated_at = ? WHERE name = ?",
+                     (",".join(off), set_by, int(time.time() * 1000), name))
+        conn.execute("DELETE FROM agent_voices WHERE name = ? AND COALESCE(voice, '') = '' AND COALESCE(voice_fr, '') = '' "
+                     "AND COALESCE(langs_off, '') = ''", (name,))
 
 
 def set_agent_voice(name: str, voice: str, set_by: str, lang: str = "en") -> None:
@@ -1657,8 +1674,8 @@ def set_agent_voice(name: str, voice: str, set_by: str, lang: str = "en") -> Non
                      (name, set_by, int(time.time() * 1000)))
         conn.execute(f"UPDATE agent_voices SET {column} = ?, set_by = ?, updated_at = ? WHERE name = ?",
                      (voice or "", set_by, int(time.time() * 1000), name))
-        conn.execute("DELETE FROM agent_voices WHERE name = ? AND COALESCE(voice, '') = '' AND COALESCE(voice_fr, '') = ''",
-                     (name,))
+        conn.execute("DELETE FROM agent_voices WHERE name = ? AND COALESCE(voice, '') = '' AND COALESCE(voice_fr, '') = '' "
+                     "AND COALESCE(langs_off, '') = ''", (name,))
 
 
 def get_voice_prints() -> dict:

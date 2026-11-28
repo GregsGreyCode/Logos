@@ -20,7 +20,12 @@ container who said what:
 
     GET  /api/v2/speaker                       the voices and your agents' choices
     PUT  /api/v2/agents/<name>/speaker-voice   {"voice": id} or {"voice_fr": id} ("" = back to the definition's)
+    PUT  /api/v2/agents/<name>/speaker-languages {"off": ["fr"]}: the languages it does not speak there
     GET  /api/v2/speaker/sample?voice=<id>     a short sample, as WAV, for the play buttons
+
+- **Which languages (28 Nov).** Each agent speaks every language Logos has voices for (English and
+  French) unless one is switched off in Settings › Speaker. Someone speaking a language that is off
+  is answered in the agent's main language (English, else the first one still on), in that voice.
 
 The samples are asked for over Wyoming like Home Assistant does, with a few lines of stdlib here
 (the gateway itself has no Wyoming or Piper; they live in the container).
@@ -50,6 +55,35 @@ MAX_AUDIO = 20 * 1024 * 1024
 _said: List[dict] = []
 _cache: Dict[str, Tuple[str, float]] = {}
 _samples: Dict[str, bytes] = {}
+_last_used: Dict[str, float] = {}        # agent -> when it last answered at the speaker (since the gateway started)
+
+#: Languages the speech to text understands (Parakeet v3: 25 European languages) and Logos could speak
+#: once a voice is installed in the speaker voices container (infra/tts/Dockerfile, gateway/tts.VOICES).
+UNDERSTOOD = {"de": "German", "es": "Spanish", "it": "Italian", "nl": "Dutch", "pt": "Portuguese", "pl": "Polish"}
+NAMES = {"en": "English", "fr": "French", **UNDERSTOOD}
+
+
+def installed() -> List[str]:
+    """The languages there is at least one voice for, English first."""
+    out: List[str] = []
+    for vid in tts.VOICES:
+        lang = tts.language(vid)
+        if lang not in out:
+            out.append(lang)
+    return sorted(out, key=lambda l: (l != "en", l))
+
+
+def languages_of(agent: str) -> List[str]:
+    """The languages ``agent`` speaks at the speaker: every installed one not switched off (at least one)."""
+    off = set((_choices().get(agent) or {}).get("langs_off") or [])
+    on = [l for l in installed() if l not in off]
+    return on or installed()[:1]
+
+
+def answer_language(agent: str, heard: str) -> str:
+    """The language to answer in: the one heard when the agent speaks it, else its main one."""
+    on = languages_of(agent)
+    return heard if heard in on else on[0]
 
 
 def english(vid: Any) -> bool:
@@ -139,8 +173,9 @@ def said(app: Mapping, agent: str, text: str, env: Optional[Mapping[str, str]] =
     by hash for a container that meets the words without their mark. Never raises: the answer
     matters more than its voice (the words come back unmarked)."""
     try:
-        voice = voice_of(app, agent, speech_lang.detect(text))
+        voice = voice_of(app, agent, answer_language(agent, speech_lang.detect(text)))
         now = time.time()
+        _last_used[agent] = now
         _said[:] = [r for r in _said if r["until"] >= now][-(MAX_SAID - 1):]
         _said.append({"key": tts.key(text), "agent": agent, "voice": voice, "until": now + TTL_S})
     except Exception as e:
@@ -236,8 +271,34 @@ async def handle_speaker(request: "Any") -> "Any":
                     "voice": voice, "default": default,
                     "voice_fr": chosen.get("voice_fr") if french(chosen.get("voice_fr")) else default_fr,
                     "default_fr": default_fr,
-                    "set_by": chosen.get("set_by") if english(chosen.get("voice")) or french(chosen.get("voice_fr")) else None})
-    return web.json_response({"on": conf is not None, "problem": problem, "voices": voice_list(), "agents": out})
+                    "set_by": chosen.get("set_by") if english(chosen.get("voice")) or french(chosen.get("voice_fr")) else None,
+                    "languages": languages_of(name), "last_used": _last_used.get(name)})
+    return web.json_response({"on": conf is not None, "problem": problem, "voices": voice_list(), "agents": out,
+                              "installed": [{"code": l, "name": NAMES.get(l, l)} for l in installed()],
+                              "more": [{"code": c, "name": n} for c, n in UNDERSTOOD.items()]})
+
+
+async def handle_agent_languages(request: "Any") -> "Any":
+    """PUT /api/v2/agents/<name>/speaker-languages {"off": [codes]}: only the people who may use the agent.
+    Only installed languages; at least one stays on."""
+    from aiohttp import web
+    import gateway.auth.db as auth_db
+    from gateway import dashboard_api as d
+    name, _info, user = await d._agent_or_404(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    off = (body or {}).get("off") if isinstance(body, dict) else None
+    have = installed()
+    if not isinstance(off, list) or any(l not in have for l in off):
+        return web.json_response({"error": "unknown_language", "message": "Only a language Logos has a voice for."}, status=400)
+    off = [l for l in have if l in off]
+    if len(off) >= len(have):
+        return web.json_response({"error": "one_needed", "message": "At least one language stays on."}, status=400)
+    await asyncio.to_thread(auth_db.set_agent_languages, name, off, user["username"])
+    _forget(name)
+    return web.json_response({"name": name, "languages": [l for l in have if l not in off]})
 
 
 async def handle_agent_voice(request: "Any") -> "Any":
@@ -300,4 +361,5 @@ def register(app: "Any") -> None:
     app.router.add_get("/api/v2/speaker", handle_speaker)
     app.router.add_get("/api/v2/speaker/sample", handle_sample)
     app.router.add_put("/api/v2/agents/{name}/speaker-voice", require_csrf(handle_agent_voice))
+    app.router.add_put("/api/v2/agents/{name}/speaker-languages", require_csrf(handle_agent_languages))
     app.on_startup.append(_clear)

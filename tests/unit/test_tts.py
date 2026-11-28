@@ -350,11 +350,17 @@ def api(monkeypatch, gw):
     monkeypatch.setattr(auth_db, "set_agent_voice", lambda n, v, by, *lang: stored.append((n, v, by, *lang)), raising=False)
     monkeypatch.setattr(sv, "_settings", lambda: (None, ""))
 
+    def set_langs(n, off, by):
+        stored.append((n, "langs_off", list(off), by))
+        choices.setdefault(n, {})["langs_off"] = list(off)
+    monkeypatch.setattr(auth_db, "set_agent_languages", set_langs, raising=False)
+
     async def run(steps):
         app = web.Application()
         app.router.add_get("/api/v2/speaker", sv.handle_speaker)
         app.router.add_get("/api/v2/speaker/sample", sv.handle_sample)
         app.router.add_put("/api/v2/agents/{name}/speaker-voice", sv.handle_agent_voice)
+        app.router.add_put("/api/v2/agents/{name}/speaker-languages", sv.handle_agent_languages)
         async with TestClient(TestServer(app)) as c:
             return await steps(c)
     return run, stored, choices
@@ -414,3 +420,57 @@ def test_a_sample_says_when_the_speaker_is_off(api):
         bad = await c.get("/api/v2/speaker/sample?voice=nope")
         return off.status, (await off.json())["error"], bad.status
     assert asyncio.run(run(steps)) == (503, "speaker_off", 400)
+
+
+# ── languages (Settings › Speaker, 28 Nov) ──────────────────────────────────
+
+def test_languages_are_those_with_a_voice_and_each_can_be_switched_off(api):
+    run, stored, choices = api
+
+    async def steps(c):
+        listed = await (await c.get("/api/v2/speaker")).json()
+        off = await c.put("/api/v2/agents/greg/speaker-languages", json={"off": ["fr"]})
+        after = await (await c.get("/api/v2/speaker")).json()
+        both = await c.put("/api/v2/agents/greg/speaker-languages", json={"off": ["en", "fr"]})
+        unknown = await c.put("/api/v2/agents/greg/speaker-languages", json={"off": ["de"]})
+        other = await c.put("/api/v2/agents/bere/speaker-languages", json={"off": ["fr"]})
+        return listed, off.status, (await off.json()), after, both.status, unknown.status, other.status
+    listed, ok, body, after, both, unknown, other = asyncio.run(run(steps))
+    assert [l["code"] for l in listed["installed"]] == ["en", "fr"]
+    assert "de" in {l["code"] for l in listed["more"]}                 # understood, but no voice installed
+    assert listed["agents"][1]["languages"] == ["en", "fr"]
+    assert (ok, body["languages"]) == (200, ["en"])
+    assert after["agents"][1]["languages"] == ["en"]
+    assert (both, unknown, other) == (400, 400, 404)                   # one stays on; only installed; only your agents
+    assert stored == [("greg", "langs_off", ["fr"], "greg")]
+
+
+def test_a_language_switched_off_is_answered_in_the_main_one(gw):
+    app, env, choices, _ = gw
+    choices["finn"] = {"langs_off": ["fr"]}
+    assert sv.answer_language("finn", "fr") == "en"
+    assert tts.unmark(sv.said(app, "finn", "C'est fait, la lumière est éteinte.", env))[1] == "en_US-ryan-medium"
+    choices["finn"] = {"langs_off": ["en"]}
+    sv._cache.clear()
+    assert sv.answer_language("finn", "en") == "fr" and sv.answer_language("finn", "fr") == "fr"
+    choices["finn"] = {"langs_off": ["en", "fr"]}                       # never none: the first installed one
+    assert sv.languages_of("finn") == ["en"]
+
+
+def test_the_speaker_says_which_language_to_answer_in():
+    from gateway import voice_converse as vc
+    assert vc.language_rule("fr", "fr") == vc.IN_FRENCH
+    assert vc.language_rule("en", "en") == ""
+    assert vc.language_rule("fr", "en") == "They spoke French, which you do not speak at the speaker: reply in English."
+
+
+def test_languages_are_kept_with_the_voices(tmp_path):
+    import gateway.auth.db as auth_db
+    auth_db.init_db(tmp_path)
+    auth_db.set_agent_languages("finn", ["fr"], "greg")
+    assert auth_db.get_agent_voices()["finn"]["langs_off"] == ["fr"]
+    auth_db.set_agent_voice("finn", "en_GB-alan-medium", "greg")
+    auth_db.set_agent_languages("finn", [], "greg")
+    assert auth_db.get_agent_voices()["finn"] == {"voice": "en_GB-alan-medium", "voice_fr": None, "set_by": "greg", "langs_off": []}
+    auth_db.set_agent_voice("finn", "", "greg")
+    assert "finn" not in auth_db.get_agent_voices()
