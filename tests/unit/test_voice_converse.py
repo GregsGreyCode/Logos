@@ -233,3 +233,13 @@ def test_a_spoken_turn_is_measured(home):
     assert _post(app, {"Authorization": f"Bearer {vc.token()}"}, {"text": "hi", "device_id": "pe1"})[0] == 200
     (key, row), = seen["stats"].turns.items()
     assert key[0] == "household" and key[3] == "ok" and row[-1] == 1
+
+
+def test_the_speaker_listens_again_after_an_answer_unless_the_person_closed():
+    """Greg, 28 Nov: after "Clapham" there was no chance to say "no, Clacton"."""
+    assert vc.keep_listening("What's the weather in Clacton?", "Sunny and nine degrees in Clapham.")
+    assert vc.keep_listening("Add milk", "Done.")
+    for closing in ("Thanks", "thank you!", "That's all", "no thanks", "Never mind.", "OK thanks", "merci", "c'est tout", "Bye"):
+        assert not vc.keep_listening(closing, "You're welcome."), closing
+    assert vc.keep_listening("Thanks", "Anything else?")         # a question still waits for the answer
+    assert "never say you will look something up" in vc.INSTRUCTIONS

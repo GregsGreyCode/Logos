@@ -82,7 +82,11 @@ INSTRUCTIONS = (
     "Markdown, lists, tables, emoji, links or code. Say numbers and times the way a person "
     "would. If the request needs long work or a long answer, do it, say in one sentence that "
     "the details are in the chat, and keep the spoken part short. If you need something from "
-    "the person to go on, end with one short question. Answer promptly; don't deliberate at length."
+    "the person to go on, end with one short question. Answer promptly; don't deliberate at length. "
+    "Your reply is the whole answer: nothing is said after it, so never say you will look something up, "
+    "check or come back later; look it up now, with your tools, and say what you found, or say plainly "
+    "that you cannot. Speech-to-text mishears names and places: if a word looks wrong (a place that does "
+    "not fit), say what you understood in the answer so the person can correct you."
 )
 IN_FRENCH = "They spoke French: reply in French."
 #: A language switched off for this agent in Settings › Speaker: the answer comes in its main language.
@@ -200,8 +204,21 @@ def without_wake(text: str, agent: str, definition: Mapping[str, Any]) -> str:
 
 
 def expects_reply(text: str) -> bool:
-    """Keep listening when the answer ends by asking something."""
+    """The answer ends by asking something."""
     return text.rstrip().rstrip('"\'”’)').endswith("?")
+
+
+#: What people say to end a conversation with the speaker (then it stops listening).
+CLOSINGS = re.compile(r"^\W*(no,? )?(thanks|thank you|cheers|that'?s (all|it|everything|fine|great)|"
+                      r"no thanks|nothing( else)?|never ?mind|stop|cancel|goodbye|bye|good ?night|ok(ay)?,? thanks|"
+                      r"merci|non merci|c'est tout|rien|au revoir|bonne nuit|laisse tomber)\b[\W]*$", re.I)
+
+
+def keep_listening(heard: str, said: str) -> bool:
+    """Listen again after an answer (Greg, 28 Nov: Béré could not say "no, Clacton" after Mira heard
+    "Clapham"): after every answer, so a person can correct it or go on, unless they have just closed
+    the conversation ("thanks", "that's all"). Silence then ends it by itself."""
+    return expects_reply(said) or not CLOSINGS.match(str(heard or "").strip())
 
 
 class Stats:
@@ -329,7 +346,7 @@ async def handle_converse(request: "Any") -> "Any":
             stats.observe(agent, measured["model"], measured["turn"], outcome, time.monotonic() - started)
         logger.info("voice: %s via %s: %s in %.1fs (%s)", agent, device[:12], outcome, time.monotonic() - started, lang)
         return web.json_response({"speech": speech, "conversation_id": session_id, "agent": agent,
-                                  "continue": outcome == "ok" and expects_reply(said)})
+                                  "continue": outcome == "ok" and keep_listening(text, said)})
 
     links = request.app.get("agent_links")
     if links is None:
