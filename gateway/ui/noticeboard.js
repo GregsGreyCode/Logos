@@ -73,7 +73,8 @@ export function requestCard(m, doing, reload) {
   }
   // When it expires only matters once it is close (within a day).
   const soon = m.expires_at && (new Date(m.expires_at).getTime() - Date.now()) < 86400000;
-  el.append(result, soon ? h('div', { class: 'when' }, `Expires ${when(m.expires_at).toLowerCase()}`) : null);
+  el.append(result);                 // (append writes a null as the word "null": only what is there)
+  if (soon) el.append(h('div', { class: 'when' }, `Expires ${when(m.expires_at).toLowerCase()}`));
   return el;
 }
 

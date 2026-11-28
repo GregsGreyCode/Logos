@@ -5,7 +5,7 @@ phone, the states they share, desktop Home). Server: `gateway/widgets.py`. Page:
 
 ## Using them
 
-Home › the pencil › **Add** lists the widgets. One that is not set up shows a dashed card saying what
+Home › **Edit** › **Add** lists the widgets. One that is not set up shows a dashed card saying what
 it shows. Whoever manages Logos taps **Set it up**, fills in the sheet, taps **Test**, then **Save**
 (Save also tests first: nothing is saved that does not work).
 
@@ -19,7 +19,7 @@ it shows. Whoever manages Logos taps **Set it up**, fills in the sheet, taps **T
 | **Now playing** | everyone at home | Jellyfin (an API key) or Plex (an X-Plex-Token), and the address. |
 | **Downloads** | everyone at home | Sonarr and/or Radarr: address and API key (Settings › General). A stalled download needs you. |
 | **Agents today** | everyone at home | Nothing: Logos counts itself. Messages each of your agents sent today and when the last went, and whether the AI computer is on. Never what was said. Also exposed to Prometheus: see [metrics.md](metrics.md). |
-| **Las Vegas sign** | everyone at home | Text that scrolls across the top of Home, between the date and the pencil, on a wide screen (not shown on a phone). Your own lines, one per line, and RSS or Atom feeds, one address per line, up to 5; each feed item's title scrolls past, so a stock or crypto price feed works as a ticker ("BTC $64,210 (+1.2%)"). Speed: slow, medium or fast. Pauses when pointed at. A feed that fails is skipped, the rest still scroll. Feeds are fetched by the Logos server, never by a browser. |
+| **Las Vegas sign** | everyone at home | Text that scrolls across the top of Home, between the date and Edit, on a wide screen (not shown on a phone). Your own lines, one per line, and RSS or Atom feeds, one address per line, up to 5; each feed item's title scrolls past, so a stock or crypto price feed works as a ticker ("BTC $64,210 (+1.2%)"). Speed: slow, medium or fast. Pauses when pointed at. A feed that fails is skipped, the rest still scroll. Feeds are fetched by the Logos server, never by a browser. |
 | **Bookmarks** | everyone at home | One per line: `Name, address`. |
 | **Energy** | everyone at home | Which Home Assistant sensors: power now, energy today, and optionally a price and the UPS (battery, status, time left). Uses the Home Assistant account Logos already has for the lights; Test lists sensors when one is not found. On battery needs you. |
 | **Network** | whoever manages Logos | Speedtest Tracker's address and a read-only API token. Under half the usual download speed needs you. |
@@ -59,12 +59,30 @@ another's alongside its own (`extra={"with": "servers"}`: Backups), or need none
 
 ## Lists: Compact, Full, and ticking things off
 
-Edit (the pencil) shows **Compact / Full** in the Lists widget's bar, each person's own choice. Compact is a tile
+**Edit** shows **Compact / Full** in the Lists widget's bar, each person's own choice. Compact is a tile
 per list. Full shows each list's things one under another, with when they are due. In Full each thing has a box:
 tap it and the item is ticked off in Home Assistant (through the house service, as the household agent), with
 **Undo** for a few seconds. The lists are read live from Home Assistant; if it cannot be reached the copy the
 household agent keeps (refreshed every 15 minutes) shows instead, to read only. `GET /api/v2/home/lists`,
 `POST /api/v2/home/lists/tick {list, item, done?}`.
+
+## Starting and ending Edit
+
+**Edit** (a pencil and the word) is at the right of Home's title band, where the other screens keep their actions and
+where Home Assistant has *Edit dashboard* (Greg, 28 Nov: the pencil used to sit at the end of Home on a phone, out of
+sight until you scrolled down). On a phone the date is in the top bar, so the band is a slim row with only Edit at its
+right, like Notifications' *Mark all read*. A long press on any widget also starts Edit on a phone. While arranging,
+**Done** takes Edit's place; on a desktop **Tidy up** and **Reset layout** sit beside it, and the band stays at the top
+as you scroll.
+
+## Moving a widget
+
+While arranging, the whole widget is what you pick up, not only its ⠿ handle: anywhere on it except its own controls
+(Compact/Full, Places and the places editor, ✕, the resize corner, any button, link or box). Its outline is dashed in
+the accent colour, solid under the mouse, and the pointer is a hand. A mouse picks it up once it moves a few pixels, so
+a plain click moves nothing; a finger picks it up after a short press without moving (about 0.4 s), so swiping over Home
+still scrolls. A click on a control never starts a drag, and the end of a drag never presses anything. The keyboard
+still works on the handle: arrows move it (on a desktop, with Alt they resize it).
 
 ## Arranging Home on a phone
 
@@ -72,7 +90,7 @@ While you arrange Home, the bar at the bottom (where Ask is) becomes one big **D
 
 ## Arranging Home on a desktop (F49)
 
-On a wide screen (1100 px and up) Home is a 12-column grid. In Edit (the pencil): drag a widget by its handle to anywhere,
+On a wide screen (1100 px and up) Home is a 12-column grid. In Edit: drag a widget (from anywhere on it) to anywhere,
 resize it by its corner (double-click the corner: as tall as its content again), and the others make room and pack upward.
 The layout is each person's own (`widget_grid`); the phone's order follows it, reading down then across. A phone keeps its
 single column, in that order.
@@ -83,7 +101,7 @@ single column, in that order.
 
   | Widget | Compact |
   |---|---|
-  | Next | the word "Next"; "40 min" instead of "in 40 min" |
+  | Next | one line: the calendar's colour dot, the time and title (cut with …), "40 min" at the end; when today has nothing more, tomorrow's first event ("Tomorrow 09:00 Standup") or "Nothing more today" instead of disappearing (Greg, 28 Nov: it used to say "null") |
   | Weather | a line a place: now, the town, tomorrow's high |
   | Calendar | today only, what is still to come, without whose and where |
   | Messages | who and when, not the message's first words |

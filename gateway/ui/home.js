@@ -58,20 +58,40 @@ export async function homeView(root, rest, state) {
       h('span', { class: 'home-msg-head' }, h('strong', {}, i.title), h('span', { class: 'when' }, when(i.ts))),
       compact ? null : h('span', { class: 'home-msg-text' }, i.text))));
   }
-  // "Next · 15:00 Call Maman · in 40 min": the next timed event today, while it is still to come. Compact leaves out
-  // "Next" and says how long in a word ("40 min").
+  // "Next · 15:00 Call Maman · in 40 min": the next timed event today, while it is still to come.
+  // Compact (Greg, 28 Nov: it showed "null" and was not a good compact version) is one line: the event's calendar colour,
+  // the time, the title (cut short with … if it must be) and how long in a word ("40 min"). When today has nothing more,
+  // Compact says what is next instead of disappearing: tomorrow's first event ("Tomorrow 09:00 Standup"), else "Nothing
+  // more today". Full keeps its own look and stays out of the way when nothing is coming.
   function showNext(today) {
     const now = new Date();
-    const next = (today && !today.error ? today.events : []).filter((e) => !e.all_day && String(e.start).startsWith(today.date))
-      .map((e) => ({ e, at: new Date(String(e.start).replace(' ', 'T')) })).filter((x) => x.at > now)
+    const events = today && !today.error && Array.isArray(today.events) ? today.events : [];
+    const at = (e) => new Date(String(e.start).replace(' ', 'T'));
+    const next = events.filter((e) => !e.all_day && String(e.start).startsWith(today.date))
+      .map((e) => ({ e, at: at(e) })).filter((x) => x.at > now)
       .sort((a, b) => a.at - b.at)[0];
-    nextUp.hidden = !next;
-    if (!next) return;
+    const compact = compactOf('next');
+    nextUp.classList.toggle('compact', compact);
+    const dot = (e) => h('span', { class: `dot ${e.calendar === 'personal' ? (data && data.me) || '' : e.calendar || ''}`, 'aria-hidden': 'true' });
+    if (!next) {
+      const tomorrow = compact && today && !today.error ? events.filter((e) => !String(e.start).startsWith(today.date) && at(e) > now)
+        .sort((a, b) => String(a.start).localeCompare(String(b.start)))[0] : null;
+      nextUp.hidden = !compact || !today || !!today.error;
+      if (nextUp.hidden) return;
+      nextUp.replaceChildren(...(tomorrow
+        ? [dot(tomorrow), h('span', { class: 'home-next-what' }, h('span', { class: 'when' }, 'Tomorrow'), ' ', h('strong', {}, timeOf(tomorrow)), ' ', tomorrow.title || '')]
+        : [h('span', { class: 'home-next-what when' }, 'Nothing more today')]));
+      return;
+    }
+    nextUp.hidden = false;
     const mins = Math.round((next.at - now) / 60000);
     const inWords = mins < 60 ? `in ${mins} min` : mins < 120 ? 'in an hour' : `in ${Math.round(mins / 60)} hours`;
-    const compact = compactOf('next');
-    nextUp.replaceChildren(compact ? null : h('span', { class: 'label' }, 'Next'), h('strong', {}, `${timeOf(next.e)} ${next.e.title}`),
-      h('span', { class: 'when' }, compact ? inWords.replace(/^in /, '').replace('an hour', '1 h').replace(/ hours$/, ' h') : inWords));
+    if (compact) {
+      nextUp.replaceChildren(dot(next.e), h('span', { class: 'home-next-what' }, h('strong', {}, timeOf(next.e)), ' ', next.e.title || ''),
+        h('span', { class: 'when' }, inWords.replace(/^in /, '').replace('an hour', '1 h').replace(/ hours$/, ' h')));
+      return;
+    }
+    nextUp.replaceChildren(h('span', { class: 'label' }, 'Next'), h('strong', {}, `${timeOf(next.e)} ${next.e.title || ''}`), h('span', { class: 'when' }, inWords));
   }
 
   let data = null;
@@ -635,14 +655,22 @@ export async function homeView(root, rest, state) {
   wide.addEventListener('change', pack);
   let editing = false;
   const tray = h('div', { class: 'home-tray', hidden: true });
-  // A pencil at the top right of Home (Greg, 23 Nov: "Edit Home" as text at the bottom was lame); while
-  // arranging it is Done, and stays at the top as you scroll.
-  const editBtn = h('button', { type: 'button', class: 'home-edit-link', 'aria-label': 'Arrange Home', title: 'Arrange Home',
-    onclick: () => setEditing(!editing) }, icon(ICONS.pencil));
-  const SHOW = { next: () => showNext(data && data.today), weather: () => showWeather(), messages: () => showMessages(), coming: () => showComing(),
+  // Edit, at the right of Home's title band (Greg, 28 Nov: "the edit pen should maybe be in a better position"): where the
+  // other screens keep their actions (Notifications' Mark all read) and where Home Assistant has Edit dashboard. On a phone
+  // the date is in the top bar, so the band is a slim row with only Edit at its right (Greg, 23 Nov: not in the top bar).
+  // A pencil and the word, so it says what it does. While arranging it is Done, in the same place, with Tidy up and Reset
+  // layout beside it on a desktop; the band stays at the top as you scroll (wide screens).
+  const editBtn = h('button', { type: 'button', class: 'home-edit-link', 'aria-label': 'Edit Home', title: 'Arrange Home',
+    onclick: () => setEditing(!editing) });
+  const drawEditBtn = () => editBtn.replaceChildren(...(editing ? ['Done'] : [icon(ICONS.pencil), h('span', { class: 'home-edit-words' }, 'Edit')]));
+  drawEditBtn();
+  const headTools = h('span', { class: 'home-grid-tools', hidden: true },
+    h('button', { type: 'button', class: 'btn quiet small home-tidy', title: 'Pack everything neatly, in the same order', onclick: () => grid.tidy() }, 'Tidy up'),
+    h('button', { type: 'button', class: 'linkish small home-reset', onclick: () => grid.reset() }, 'Reset layout'));
+  const SHOW = { next: () => { showNext(data && data.today); nextSec.hidden = nextUp.hidden; }, weather: () => showWeather(), messages: () => showMessages(), coming: () => showComing(),
     lights: () => showLights(), lists: () => showLists(), calendar: () => {}, month: () => month.show(state && state.me && state.me.username) };
   // Drawn again from what is already here, when its size changes: nothing is asked again.
-  const REDRAW = { next: () => showNext(data && data.today), weather: () => weatherData && drawWeather(weatherData), calendar: () => data && showToday(data.today),
+  const REDRAW = { next: () => { showNext(data && data.today); nextSec.hidden = nextUp.hidden; }, weather: () => weatherData && drawWeather(weatherData), calendar: () => data && showToday(data.today),
     messages: () => drawMessages(), coming: () => comingData && drawComing(comingData), lights: () => lightsData && drawLights(lightsData),
     lists: () => listsData && drawListsData(listsData),
     month: () => month.redraw() };
@@ -691,10 +719,8 @@ export async function homeView(root, rest, state) {
   }
   function drawTray() {
     const hidden = Object.keys(WIDGETS).filter((id) => !on(id) && (!KINDS[id] || KINDS[id].set_up || KINDS[id].can_set_up));
+    headTools.hidden = !editing || !grid.on();         // Tidy up and Reset layout: the desktop grid's, beside Done
     tray.replaceChildren(h('span', { class: 'label' }, hidden.length ? 'Add' : 'Every widget is on Home'),
-      grid.on() ? h('span', { class: 'home-grid-tools' },
-        h('button', { type: 'button', class: 'btn quiet small home-tidy', title: 'Pack everything neatly, in the same order', onclick: () => grid.tidy() }, 'Tidy up'),
-        h('button', { type: 'button', class: 'linkish small home-reset', onclick: () => grid.reset() }, 'Reset layout')) : '',     // not null: replaceChildren would write "null" (it did, on a phone)
       ...hidden.map((id) => h('button', { type: 'button', class: 'chip home-add', onclick: async () => {
         save([...orderNow(), id]); applyWidgets(); decorate(); SHOW[id](); grid.apply();
       } }, `+ ${WIDGETS[id]}`)));
@@ -751,8 +777,8 @@ export async function homeView(root, rest, state) {
     requestAnimationFrame(() => requestAnimationFrame(() => grid.syncGrips()));
     board.classList.toggle('editing', v);
     tray.hidden = !v;
-    editBtn.replaceChildren(v ? 'Done' : icon(ICONS.pencil));
-    editBtn.setAttribute('aria-label', v ? 'Done arranging' : 'Arrange Home'); editBtn.title = v ? 'Done' : 'Arrange Home';
+    drawEditBtn();
+    editBtn.setAttribute('aria-label', v ? 'Done arranging' : 'Edit Home'); editBtn.title = v ? 'Done' : 'Arrange Home';
     editBtn.classList.toggle('done', v);
     askForm.classList.toggle('editing', v);
     if (!v) for (const el of board.querySelectorAll('.home-places-edit')) el.remove();
@@ -777,6 +803,58 @@ export async function homeView(root, rest, state) {
     const cancel = (ev) => { if (!ev || ev.type !== 'pointermove' || Math.hypot(ev.clientX - x, ev.clientY - y) > 10) { clearTimeout(pressT); off(); } };
     const off = () => { board.removeEventListener('pointermove', cancel); board.removeEventListener('pointerup', cancel); board.removeEventListener('pointercancel', cancel); };
     board.addEventListener('pointermove', cancel); board.addEventListener('pointerup', cancel); board.addEventListener('pointercancel', cancel);
+  });
+
+  // While arranging, the whole widget picks up, not only its handle (Greg, 28 Nov: "we should be able to grab it from almost
+  // anywhere in its boundary"). Its own controls stay controls: Compact/Full, Places and its editor, ✕, any button, link or
+  // box (the resize corner is in a layer of its own). A mouse picks it up once it moves a few pixels (a plain click moves
+  // nothing); a finger after a short press without moving, so a swipe over Home still scrolls the page. While one is held,
+  // the page does not scroll under the finger, and the click that ends a drag is swallowed: a drag never presses anything.
+  const CONTROLS = 'button, a, input, select, textarea, label, [contenteditable], .widget-size, .home-place';
+  const LIFT_MS = 380, TOUCH_SLOP = 10, MOUSE_SLOP = 4;
+  let lifted = false;
+  board.addEventListener('touchmove', (e) => { if (lifted && e.cancelable) e.preventDefault(); }, { passive: false });
+  board.addEventListener('contextmenu', (e) => { if (editing && !e.target.closest(CONTROLS)) e.preventDefault(); });   // a long press: no menu
+  board.addEventListener('pointerdown', (e) => {
+    if (!editing || e.button > 0 || lifted || e.target.closest(CONTROLS)) return;
+    const el = e.target.closest('.home-widget');
+    if (!el || el.parentElement !== board) return;
+    const touch = e.pointerType === 'touch', pid = e.pointerId, x0 = e.clientX, y0 = e.clientY;
+    if (!touch) e.preventDefault();                       // no words selected by a mouse drag
+    let timer = null;
+    const off = () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointermove', watch); window.removeEventListener('pointerup', quit); window.removeEventListener('pointercancel', quit);
+    };
+    const lift = () => {
+      off();
+      lifted = true;
+      el.classList.add('lifted');
+      document.documentElement.classList.add('widget-moving');
+      if (touch) navigator.vibrate?.(10);
+      // Picked up where it was first touched: the widget keeps the same spot under the pointer.
+      (grid.on() ? grid.move : drag)(el, { pointerId: pid, clientX: x0, clientY: y0, preventDefault() {}, stopPropagation() {} });
+      const end = (u) => {
+        if (u.pointerId !== pid) return;
+        window.removeEventListener('pointerup', end); window.removeEventListener('pointercancel', end);
+        lifted = false;
+        el.classList.remove('lifted');
+        document.documentElement.classList.remove('widget-moving');
+        const eat = (c) => { c.preventDefault(); c.stopPropagation(); };
+        window.addEventListener('click', eat, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 80);
+      };
+      window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+    };
+    const watch = (m) => {
+      if (m.pointerId !== pid) return;
+      const far = Math.hypot(m.clientX - x0, m.clientY - y0);
+      if (touch) { if (far > TOUCH_SLOP) off(); }          // moved before the press was long enough: a scroll
+      else if (far > MOUSE_SLOP) lift();
+    };
+    const quit = (u) => { if (u.pointerId === pid) off(); };
+    if (touch) timer = setTimeout(lift, LIFT_MS);
+    window.addEventListener('pointermove', watch); window.addEventListener('pointerup', quit); window.addEventListener('pointercancel', quit);
   });
 
   // Dragging: the widget follows the pointer; it swaps places with the widget it is moved over (a list on a
@@ -901,7 +979,7 @@ export async function homeView(root, rest, state) {
 
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
-      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), bandSlot, editBtn), statusWords),
+      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), bandSlot, headTools, editBtn), statusWords),
     waitingSec,
     board,
     tray,
@@ -921,15 +999,7 @@ export async function homeView(root, rest, state) {
   await load();
   setTimeout(() => { if (alive) warmAgents(); }, 300);   // the Agents tab, ready before the swipe
   timer = setInterval(() => { if (document.visibilityState === 'visible') load(); }, 60000);
-  // On a phone the pencil sits at the end of Home, under the last widget (Greg, 23 Nov: not in the top
-  // bar), and Done floats above the Ask box while arranging; on a wide screen it is in Home's title band.
-  // It moves when the window crosses that width.
-  const phone = matchMedia('(max-width: 599px)');
-  const dateRow = editBtn.parentElement;
-  const placeEdit = () => { if (phone.matches) tray.after(editBtn); else dateRow.append(editBtn); };
-  placeEdit();
-  phone.addEventListener('change', placeEdit);
-  return () => { alive = false; clearInterval(timer); phone.removeEventListener('change', placeEdit); editBtn.remove(); voice.destroy(); };
+  return () => { alive = false; clearInterval(timer); editBtn.remove(); voice.destroy(); };
 }
 
 // Chat calls this when it opens: a question asked on Home, still to be sent.
