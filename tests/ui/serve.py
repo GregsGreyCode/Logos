@@ -99,6 +99,8 @@ class H(http.server.BaseHTTPRequestHandler):
         if p == "/ui/__fake-mx.js": return self.send(200, open(os.path.join(HERE, 'fake-mx.js'), 'rb').read(), 'text/javascript')
         # A check slows the API by leaving a file named slow here or in $OUT (run.sh's screenshot folder).
         if p.startswith('/api/') and any(os.path.exists(os.path.join(d, 'slow')) for d in (HERE, os.environ.get('OUT', HERE))): import time as _t; _t.sleep(1.2)
+        # ...or only the calendar, as slow as the real one was on 28 Nov (1.6 s a range): a file named slow-calendar.
+        if p == '/api/v2/calendar' and any(os.path.exists(os.path.join(d, 'slow-calendar')) for d in (HERE, os.environ.get('OUT', HERE))): import time as _t; _t.sleep(1.6)
         if p == '/api/v2/speaker/sample': return self.send(200, SAMPLE, 'audio/wav')
         if p == '/api/v2/calendar':
             import urllib.parse as _u

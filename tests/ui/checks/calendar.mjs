@@ -42,7 +42,7 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
   ok(cells === 35 || cells === 42 || cells === 28, `a month grid of whole weeks (${cells} days)`);
   ok(await page.locator(`.cal-day.today[data-day="${today}"][aria-current="date"]`).count() === 1, 'today is marked');
   ok(calls.filter((c) => c === calls[0]).length === 1, `one call for the month shown (${calls.join(', ')})`);
-  ok(calls.length === 3, `then the months either side, fetched ahead (${calls.length})`);
+  ok(calls.length === 5, `then two months either side, fetched ahead (${calls.length})`);
   const chips = await page.$$eval('.cal-legend .cal-chip', (els) => els.map((e) => e.textContent.trim()));
   ok(JSON.stringify(chips) === JSON.stringify(['Yours', 'Household', 'Béré']), `a switch per calendar, yours first: ${chips}`);
   ok(await page.locator('.cal-day.today .cal-dots .dot').count() >= 2, 'a phone month shows dots for the day\'s events');

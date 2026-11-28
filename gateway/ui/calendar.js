@@ -7,7 +7,7 @@
 //   #/calendar                         this month
 //   #/calendar/<month|week|day|list>/<YYYY-MM-DD>[/<event id>]
 import { h, api, getJSON, none, loading, icon, ICONS, reveal, focusIfKeyboard, ask } from './util.js';
-import { swr, peek, keep, forget, forgetWhere } from './cache.js';
+import { peek, keep, forget, forgetWhere } from './cache.js';
 import { draftFor } from './home.js';
 
 const MIN = 60000;
@@ -39,6 +39,29 @@ export function rangeOf(view, day) {
   return [d, add(d, LIST_DAYS - 1)];
 }
 const urlOf = ([a, b]) => `/api/v2/calendar?start=${iso(a)}&end=${iso(b)}`;
+// What is fetched is always whole months as the month view shows them (Greg, 28 Nov: "takes a long time to open from day
+// to month"): a week and a day are inside their month's, so switching views never waits; a list's four weeks take one
+// month or two. Home's Month widget asks for the same, so the two share what is kept.
+const monthOf = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
+const monthsFor = (view, day) => {
+  const b = rangeOf(view, day)[1];
+  const out = [monthOf(parse(day))];
+  if (view === 'list' && monthOf(b).getTime() !== out[0].getTime()) out.push(monthOf(b));
+  return out.map((m) => urlOf(rangeOf('month', iso(m))));
+};
+// Several months' answers as one: events once each (a repeating one once per start), busy times once each.
+function merged(list) {
+  if (list.length === 1) return list[0];
+  const bad = list.find((d) => !d || d.error);
+  if (bad) return bad;
+  const seen = new Set(), key = (e) => `${e.id || e.title}|${e.start}`;
+  const events = [], busy = [];
+  for (const d of list) {
+    for (const e of d.events || []) if (!seen.has(key(e))) { seen.add(key(e)); events.push(e); }
+    for (const b of d.busy || []) { const k = `busy|${b.who}|${b.busy_from}`; if (!seen.has(k)) { seen.add(k); busy.push(b); } }
+  }
+  return { ...list[0], start: list[0].start, end: list[list.length - 1].end, events, busy };
+}
 
 // The days an event covers: an all-day one ends the day before its end; a timed one ending at midnight, the day before.
 export function daysOf(e) {
@@ -118,6 +141,16 @@ function fetchRange(url) {
   }
   return inflight.get(url);
 }
+
+function aheadOf(d, span = 2) {
+  for (let n = -span; n <= span; n++) {
+    const url = urlOf(rangeOf('month', iso(new Date(d.getFullYear(), d.getMonth() + n, 1))));
+    const k = peek(url);
+    if (!k || Date.now() - k.t >= 5 * MIN) fetchRange(url).catch(() => { /* asked again when shown */ });
+  }
+}
+// This month and the ones either side, fetched quietly soon after the app opens, so the Calendar opens at once.
+export function warmCalendar() { aheadOf(new Date(), 1); }
 
 export async function calendarView(root, rest, state) {
   let alive = true;
@@ -270,6 +303,7 @@ export async function calendarView(root, rest, state) {
       ? (document.activeElement.dataset.day ? `[data-day="${document.activeElement.dataset.day}"]` : document.activeElement.dataset.id ? `[data-id="${CSS.escape(document.activeElement.dataset.id)}"]` : '') : '';
     // The key goes under the calendar (Greg, 27 Nov): under the month grid, else under the days.
     const keyed = (el) => h('div', { class: 'cal-keyed' }, el, legend);
+    body.dataset.drawn = `${view}/${day}`;
     body.replaceChildren(view === 'month' ? drawMonth(map, pal)
       : view === 'week' ? keyed(drawDays(days, map, pal))
         : view === 'day' ? keyed(h('div', { class: 'cal-dayview card' }, dayList(map.get(day), pal, day, 'Nothing on this day.', true)))
@@ -283,22 +317,24 @@ export async function calendarView(root, rest, state) {
   // placeholder. Once drawn, the range before and after are fetched quietly, so Earlier and Later are instant.
   async function load(fresh = false) {
     keepAddress();
-    const mine = ++asked, url = urlOf(range());
-    if (fresh) forget(url);
+    const mine = ++asked, urls = monthsFor(view, day);
+    if (fresh) urls.forEach(forget);
     if (view !== 'month') selected = day;
     else if (selected < iso(range()[0]) || selected > iso(range()[1]) || parse(selected).getMonth() !== parse(day).getMonth()) selected = day;
     drawTitle();
-    const kept = peek(url);
-    if (kept) { data = kept.v; draw(); }
+    const kept = urls.map(peek);
+    const whole = kept.every(Boolean);
+    if (whole) { data = merged(kept.map((k) => k.v)); draw(); }
     else if (!fresh || !data) {
       data = null;
+      body.dataset.drawn = '';
       body.replaceChildren(h('div', { class: 'cal-wait' }, loading(view === 'month' ? 'card' : 'rows', view === 'month' ? 1 : 4)));
     }
-    if (!kept || Date.now() - kept.t >= 5 * MIN) {
+    if (!whole || kept.some((k) => Date.now() - k.t >= 5 * MIN)) {
       let d;
-      try { d = await fetchRange(url); } catch (e) { d = kept ? null : { error: 'calendar_unavailable' }; }
+      try { d = merged(await Promise.all(urls.map(fetchRange))); } catch (e) { d = whole ? null : { error: 'calendar_unavailable' }; }
       if (!alive || mine !== asked) return;
-      if (d && !(kept && JSON.stringify(d) === JSON.stringify(kept.v))) {
+      if (d && !(whole && JSON.stringify(d) === JSON.stringify(data))) {
         const wasWaiting = !data;
         data = d; draw();
         if (wasWaiting) reveal(body.firstElementChild);
@@ -313,14 +349,9 @@ export async function calendarView(root, rest, state) {
     }
     if (data && !data.error) ahead();
   }
-  // The ranges either side of the one shown, if this device has no fresh copy of them.
-  function ahead() {
-    for (const n of [1, -1]) {
-      const url = urlOf(rangeOf(view, stepped(n)));
-      const k = peek(url);
-      if (!k || Date.now() - k.t >= 5 * MIN) fetchRange(url).catch(() => { /* asked again when shown */ });
-    }
-  }
+  // Two months either side of the one shown, if this device has no fresh copy of them: Earlier and Later, even
+  // pressed quickly, and a day stepped over a month's end, are drawn from what is here.
+  function ahead() { aheadOf(parse(day)); }
 
   const stepped = (n) => {
     const d = parse(day);
@@ -526,7 +557,11 @@ export function monthWidget({ compact = () => false } = {}) {
     show(username) {
       me = username || me;
       if (!box.childElementCount) box.replaceChildren(loading('rows', 3));
-      return swr(urlOf(rangeOf('month', iso(new Date()))), 5 * MIN, draw, { error: 'calendar_unavailable' }); },
+      const url = urlOf(rangeOf('month', iso(new Date()))), k = peek(url);
+      if (k) draw(k.v);
+      if (k && Date.now() - k.t < 5 * MIN) return Promise.resolve();
+      return fetchRange(url).then((d) => { if (!k || JSON.stringify(d) !== JSON.stringify(k.v)) draw(d); })
+        .catch(() => { if (!k) draw({ error: 'calendar_unavailable' }); }); },
     // Drawn again from what it last had (the size switch); asks only if it has nothing yet.
     redraw() { if (last) draw(last); else this.show(); },
   };

@@ -3,7 +3,7 @@
 import { chatView } from './chat.js';
 import { homeView } from './home.js';
 import { brainView } from './brain.js';
-import { calendarView } from './calendar.js';
+import { calendarView, warmCalendar } from './calendar.js';
 import { agentsView } from './agents.js';
 import { peopleView } from './people.js';
 import { modelsView } from './models.js';
@@ -213,6 +213,8 @@ state.me = await getJSON('/api/v2/me').catch((e) => {
 // and redrawing it would lose what is being typed).
 reach.onBack(() => { badge(); if (!location.hash.startsWith('#/chat')) route(); });
 cacheOwner(state.me.username);
+// The Calendar's months (this one and those either side) quietly, once the first screen has had its turn, so it opens at once.
+setTimeout(() => { if (!location.hash.startsWith('#/calendar')) warmCalendar(); }, 400);
 mx.bind(state.me.matrix_id);
 // An installed web app reopened from the recents list keeps running the code it loaded days ago (23 Nov:
 // a phone still had the old chat, without the fixes made since). So when the app comes back to the screen,

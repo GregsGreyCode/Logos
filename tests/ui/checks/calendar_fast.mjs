@@ -43,12 +43,11 @@ const box = (page, sel) => page.locator(sel).first().boundingBox();
   const ctx = await browser.newContext({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const page = await ctx.newPage(); const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   const calls = []; page.on('request', (r) => { const u = new URL(r.url()); if (u.pathname === '/api/v2/calendar') calls.push(u.search); });
-  await page.goto(BASE + '#/home'); await page.waitForTimeout(1500);
   fs.writeFileSync(OUT + '/slow', '1');
   try {
-    // First visit: nothing kept.
-    await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.includes('/api/v2/calendar')) localStorage.removeItem(k); location.hash = '#/calendar/month'; });
-    await page.waitForTimeout(400);
+    // First visit, straight to the Calendar: nothing kept, so a placeholder (Home would have fetched it ahead).
+    await page.goto(BASE + '#/calendar/month');
+    await page.locator('.cal-body .loading').waitFor({ timeout: 4000 }).catch(() => {});
     ok(await page.locator('.cal-body .loading').count() === 1 && await page.locator('.cal-month').count() === 0, 'a first visit: a placeholder while it loads');
     await page.screenshot({ path: `${OUT}/calendar-fast-wait.png` });
     await page.waitForTimeout(2000);
