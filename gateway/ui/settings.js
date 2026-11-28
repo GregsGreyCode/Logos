@@ -1,7 +1,8 @@
 // Settings (ST1): one screen for everything you set for yourself. Sections on the left (a row of
 // tabs on a phone): Appearance, Your account, Chat, Matrix device, and Updates for whoever
 // manages Logos. Each section is its own address (#/settings/devices…), so it can be linked to.
-import { h, api, getJSON, when, loading, revealable, ask, icon, ICONS } from './util.js';
+import { h, api, getJSON, when, loading, revealable, ask, icon, ICONS, emptyState, subpage, sheet, adminName, isAdmin } from './util.js';
+import { moods, MOODS } from './agents-void.js';
 import * as mx from './mx.js';
 import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion, setAnimations, LOOKS, current as currentLook } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
@@ -13,17 +14,20 @@ import { createRecorder } from './voice.js';
 // F45 (Greg, 23 Nov: "more inspired by Element X's settings"): a list, not a row of tabs. Grouped,
 // each row with its icon and what it is set to now; on a phone a row opens its page (with a back
 // arrow), on a wider screen the list stays on the left beside the page.
+// One name each (28 Nov): the row's name is its page's title.
 const SECTIONS = [
-  { id: 'appearance', name: 'Look', full: 'Look', icon: 'palette', group: 'You' },
-  { id: 'notifications', name: 'Phone alerts', full: 'Phone alerts', icon: 'bell', group: 'You' },
-  { id: 'email', name: 'Email', full: 'Email', icon: 'mail', group: 'You' },
-  { id: 'speaker', name: 'Speaker', full: 'House speaker', icon: 'speaker', group: 'You' },
-  { id: 'voice', name: 'Your voice', full: 'Your voice', icon: 'mic', group: 'You' },
-  { id: 'tips', name: 'Tips', full: 'Tips', icon: 'bulb', group: 'You' },
-  { id: 'matrix', name: 'Chats & devices', full: 'Chats & devices', icon: 'shield', group: 'This device' },
-  { id: 'updates', name: 'Updates', full: 'Updates', icon: 'update', group: 'Logos', admin: true },
-  { id: 'metrics', name: 'Metrics', full: 'Prometheus metrics', icon: 'chart', group: 'Logos', admin: true },
-  { id: 'account', name: 'Your account', full: 'Your account', icon: 'user', group: null },
+  { id: 'appearance', name: 'Look', icon: 'palette', group: 'You' },
+  { id: 'notifications', name: 'Phone alerts', icon: 'bell', group: 'You' },
+  { id: 'email', name: 'Email', icon: 'mail', group: 'You' },
+  { id: 'speaker', name: 'Speaker', icon: 'speaker', group: 'You' },
+  { id: 'voice', name: 'Your voice', icon: 'mic', group: 'You' },
+  { id: 'tips', name: 'Tips', icon: 'bulb', group: 'You' },
+  { id: 'matrix', name: 'Chats & devices', icon: 'shield', group: 'This device' },
+  { id: 'updates', name: 'Updates', icon: 'update', group: 'Logos', admin: true },
+  { id: 'metrics', name: 'Metrics', icon: 'chart', group: 'Logos', admin: true },
+  { id: 'account', name: 'Your account', icon: 'user', group: null },
+  // In the Agents group (drawn once the agents are known), and linked from People.
+  { id: 'sites', name: 'Sites', icon: 'globe', group: null },
 ];
 // Screens of their own, listed here too so a phone reaches them from Settings (admin only).
 const ELSEWHERE = [
@@ -88,7 +92,7 @@ function appearance() {
   const motionSays = h('p', { class: 'when' }, MOTION_SAYS[motion] || '');
   const animSays = h('p', { class: 'when' }, ANIM_SAYS[anim] || '');
   return [
-    h('section', { 'aria-label': 'Look' }, heading('Look'), looksBox),
+    h('section', { 'aria-label': 'Look' }, looksBox),
     h('section', { 'aria-label': 'Light or dark' }, heading('Light or dark'), modeBox, note),
     // Colours are set once: folded away behind one line (Greg, 21 Nov).
     h('details', { class: 'colours-more' }, h('summary', {}, h('span', {}, 'Colours'), h('span', { class: 'when' }, 'Yours and the agents\'')),
@@ -123,7 +127,7 @@ function appearance() {
 function tips() {
   const note = savedNote();
   // F41: the first-visit tips, once more (each screen shows its tips again next time it opens).
-  return [h('section', { 'aria-label': 'Tips' }, heading('Tips'),
+  return [h('section', { 'aria-label': 'Tips' },
     h('p', { class: 'when' }, 'Each screen shows a few tips the first time you open it.'),
     h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => say(note, resetTips()) }, 'Show the tips again')), note)];
 }
@@ -148,13 +152,14 @@ function metricsPage() {
     try { await navigator.clipboard.writeText(text); msg.textContent = `${what} copied.`; } catch (e) { msg.textContent = 'Could not copy: select it instead.'; }
   } }, `Copy ${what}`) : '';
   function showOff() {
-    box.replaceChildren(h('p', {}, 'Off. Turn it on to let Prometheus or Grafana at home read how your agents are doing: which are running, how many messages each sent today, and whether the AI computer answers.'),
-      h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: async () => {
+    box.replaceChildren(emptyState({ icon: 'chart', heading: 'Metrics are off',
+      text: 'Turn them on to let Prometheus or Grafana at home read how your agents are doing: which are running, how many messages each sent today, and whether the AI computer answers.',
+      action: { label: 'Turn on', admin: true, ask: 'to turn them on', onclick: async () => {
         msg.textContent = 'Turning it on…';
         const d = await put({ enabled: true });
         if (!d) { msg.textContent = 'Could not turn it on just now.'; return; }
         msg.textContent = ''; showOn(d.token);
-      } }, 'Turn on')), msg, about());
+      } } }), msg, about());
   }
   function about() {
     return h('details', { class: 'colours-more' }, h('summary', {}, h('span', {}, 'What it shares'), h('span', { class: 'when' }, 'Numbers only')),
@@ -181,8 +186,8 @@ function metricsPage() {
     box.replaceChildren(...parts);
   }
   getJSON('/api/v2/metrics').then((d) => (d.enabled ? showOn(null) : showOff()))
-    .catch(() => box.replaceChildren(h('p', { class: 'none' }, 'Only whoever manages Logos can set this.')));
-  return [heading('Prometheus metrics'), box];
+    .catch(() => box.replaceChildren(emptyState({ icon: 'lock', heading: 'Only whoever manages Logos can set this', action: { admin: true } })));
+  return [box];
 }
 
 function account(state) {
@@ -194,7 +199,7 @@ function account(state) {
   const [cl, cur] = field('acc-cur', 'Current password', 'password', { autocomplete: 'current-password' });
   const [pl, next] = field('acc-new', 'New password', 'password', { autocomplete: 'new-password', placeholder: 'At least 8 characters' });
   const note = h('p', { class: 'result when', role: 'status' });
-  return [heading('Your account'), h('form', { class: 'settings-form form', 'aria-label': 'Your account', onsubmit: async (e) => {
+  return [h('form', { class: 'settings-form form', 'aria-label': 'Your account', onsubmit: async (e) => {
     e.preventDefault();
     const body = { display_name: name.value.trim() };
     if (next.value) { body.current_password = cur.value; body.new_password = next.value; }
@@ -240,7 +245,7 @@ function chat() {
 function matrix(state, redraw) {
   const box = h('div', { class: 'settings-body-inner' }, loading());
   const me = state.me.matrix_id;
-  if (!me) return [h('p', { class: 'none' }, 'Chat is not set up on this Logos.')];
+  if (!me) return [emptyState({ icon: 'chat', heading: 'Chat is not set up on this Logos', text: 'Chats come from Element X, through the chat server Logos sets up.', action: { admin: true, ask: 'to set it up', label: 'See People', href: '#/people' } })];
   const steps = (n) => h('div', { class: 'mx-steps', role: 'list' }, ['Connect', 'Unlock', 'Done'].map((t, i) =>
     h('span', { role: 'listitem', class: `mx-step${i === n ? ' now' : ''}${i < n ? ' done' : ''}` }, `${i < n ? '✓ ' : ''}${t}`)));
   const field = (id, label, input) => [h('label', { for: id, class: 'field-label' }, label), input];
@@ -349,10 +354,10 @@ function notifications(state) {
   const box = h('div', { class: 'settings-body-inner' }, loading());
   const msg = h('p', { class: 'when', role: 'status' });
   async function show() {
-    if (!state.me.matrix_id) { box.replaceChildren(h('p', { class: 'none' }, 'Chat is not set up on this Logos.')); return; }
+    if (!state.me.matrix_id) { box.replaceChildren(emptyState({ icon: 'bell', heading: 'Chat is not set up on this Logos', text: 'Phone alerts come from your chats.', action: { admin: true, ask: 'to set it up', label: 'See People', href: '#/people' } })); return; }
     if (!mx.saved()) {
-      box.replaceChildren(h('p', {}, 'Connect this device to your chats first (Settings › Chats & devices): notifications come from them.'),
-        h('a', { href: '#/settings/matrix', class: 'btn' }, 'Settings › Chats & devices'));
+      box.replaceChildren(emptyState({ icon: 'bell', heading: 'Connect this device to your chats first', text: 'Phone alerts come from them.',
+        action: { label: 'Chats & devices', href: '#/settings/matrix' } }));
       return;
     }
     const st = await push.status().catch(() => 'off');
@@ -391,7 +396,7 @@ function notifications(state) {
         h('input', { type: 'radio', name: 'alerts', value: v, checked: choice === v,
           onchange: () => { says.textContent = SAYS[v]; say(cNote, setPref('alerts', v)); } }), label))),
     says, cNote);
-  return [h('section', { 'aria-label': 'Phone alerts' }, heading('Phone alerts'), box), privacy];
+  return [h('section', { 'aria-label': 'Phone alerts' }, box), privacy];
 }
 
 // F40 Email (Greg, 23 Nov): connect your own mailbox here, no server commands. Gmail with an app password
@@ -403,7 +408,7 @@ function email(body) {
   const openPrivate = new Set();            // the mailboxes whose private senders are unfolded
   const box = h('div', { class: 'mail-box' }, loading('rows', 2));
   const msg = h('p', { class: 'when', role: 'status' });
-  body.replaceChildren(h('section', { 'aria-label': 'Email' }, heading('Email'),
+  body.replaceChildren(h('section', { 'aria-label': 'Email' },
     h('p', { class: 'when' }, 'Your agent can read your email to tell you what needs a reply and find things for you. '
       + 'It can never send, delete or move mail, and no other agent can see it.'), box, msg));
   const step = (n, ...kids) => h('li', { class: 'mail-step' }, h('span', { class: 'mail-n', 'aria-hidden': 'true' }, String(n)), h('div', {}, ...kids));
@@ -416,7 +421,7 @@ function email(body) {
     let d;
     try { d = await getJSON('/api/v2/mail'); } catch (e) { box.replaceChildren(h('p', { class: 'none' }, 'Email settings could not be loaded just now.')); return; }
     if (!alive) return;
-    if (!d.agent) { box.replaceChildren(h('p', { class: 'none' }, 'Your agent is not set up to read email yet. Ask whoever manages Logos to turn it on.')); return; }
+    if (!d.agent) { box.replaceChildren(emptyState({ icon: 'mail', heading: 'Your agent does not read email yet', text: 'It is set up for each person, with their own agent.', action: { admin: true, ask: 'to turn it on', label: 'Set it up', href: '#/people' } })); return; }
     if (d.signin && d.signin.state === 'waiting') return showCode(d);
     const boxes = d.mailboxes || [];
     if (boxes.length && !adding) return connected(d, boxes);
@@ -498,7 +503,7 @@ function email(body) {
 
   function outlook(d) {
     if (!d.outlook_ready && !d.is_admin) {
-      box.replaceChildren(h('p', { class: 'none' }, 'Outlook is not set up on this Logos yet. Whoever manages Logos adds it once, then you can connect here.'),
+      box.replaceChildren(emptyState({ icon: 'mail', heading: 'Outlook is not set up on this Logos yet', text: 'It is added once for everyone, then you can connect here.', action: { admin: true, ask: 'to add it' } }),
         h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn quiet', onclick: () => load() }, 'Back')));
       return;
     }
@@ -556,77 +561,230 @@ function email(body) {
   return () => { alive = false; clearTimeout(timer); };
 }
 
-// The house speaker (Voice V1.2): each agent answers in its own voice, chosen here by its people (for the
-// household agent, either of you). Every voice has a play button; the sample comes from the speaker's own Piper.
-// V3.4: and a French voice for each agent, used when it answers in French (Béré speaks French to the speaker).
+// The house speaker (Voice V1.2; reworked 28 Nov: settings, not a status page). For each agent the person may
+// use: the languages it speaks there, each on or off (one at least: a language that is off is answered in
+// the agent's main one), and each language's voice, shown with ▶ and "Change", which opens the full list
+// grouped by language in a sheet (phone) or a dialog (desktop). How the speaker is doing is one small line.
+const LANG_NAMES = { en: 'English', fr: 'French' };
 function speaker(body) {
-  let alive = true, playing = null;
+  let alive = true, playing = null, data = null;
   const player = new Audio();
   const msg = h('p', { class: 'when', role: 'status' });
-  const box = h('div', { class: 'settings-body-inner' }, loading('rows', 3));
-  body.replaceChildren(h('section', { 'aria-label': 'House speaker' }, heading('House speaker'),
-    h('p', { class: 'when' }, 'When an agent answers through the speaker it uses the voice chosen here. The change applies from its next answer.'),
+  const top = h('div', { class: 'speaker-top' });
+  const box = h('div', { class: 'settings-body-inner speaker-agents' }, loading('rows', 3));
+  body.replaceChildren(h('section', { 'aria-label': 'Speaker' }, top,
+    h('p', { class: 'when' }, 'Each agent answers the house speaker in the languages switched on here, in the voice chosen for each. A change applies from its next answer.'),
     box, msg));
   const urls = {};
   const stop = () => { player.pause(); if (playing) { playing.replaceChildren(icon(ICONS.play)); playing.setAttribute('aria-label', playing.dataset.label); } playing = null; };
   player.addEventListener('ended', stop);
-  async function play(btn, voice) {
+  async function play(btn, voice, note = msg) {
     if (playing === btn) { stop(); return; }
-    stop(); msg.textContent = '';
+    stop(); note.textContent = '';
     btn.disabled = true;
     try {
       if (!urls[voice]) {
         const r = await api(`/api/v2/speaker/sample?voice=${encodeURIComponent(voice)}`);
-        if (!r.ok) { const d = await r.json().catch(() => ({})); msg.textContent = d.message || 'The sample could not be played just now.'; return; }
+        if (!r.ok) { const d = await r.json().catch(() => ({})); note.textContent = d.message || 'The sample could not be played just now.'; return; }
         urls[voice] = URL.createObjectURL(await r.blob());
       }
       if (!alive) return;
       player.src = urls[voice]; await player.play();
       playing = btn; btn.replaceChildren(icon(ICONS.stop)); btn.setAttribute('aria-label', 'Stop the sample');
-    } catch (e) { msg.textContent = 'The sample could not be played just now.'; } finally { btn.disabled = false; }
+    } catch (e) { note.textContent = 'The sample could not be played just now.'; } finally { btn.disabled = false; }
   }
-  function choiceList(a, voices, fr, note) {
-    const key = fr ? 'voice_fr' : 'voice', usual = fr ? a.default_fr : a.default;
-    return h('div', { class: 'settings-choices voice-list', role: 'radiogroup', 'aria-label': `${a.display_name}: ${fr ? 'French voice' : 'voice'}` },
-      voices.map((v) => {
-        const label = `Play a sample of ${v.name}`;
-        const btn = h('button', { type: 'button', class: 'icon-btn voice-play', 'aria-label': label, 'data-label': label, title: 'Play a sample',
-          onclick: () => play(btn, v.id) }, icon(ICONS.play));
-        return h('div', { class: 'voice-row' },
-          h('label', { class: 'appearance-mode choice' },
-            h('input', { type: 'radio', name: `${fr ? 'voice-fr' : 'voice'}-${a.name}`, value: v.id, checked: v.id === a[key], onchange: async () => {
-              const r = await api(`/api/v2/agents/${a.name}/speaker-voice`, { method: 'PUT', body: { [key]: v.id === usual ? '' : v.id } }).catch(() => null);
-              note.textContent = r && r.ok ? `Saved: ${a.display_name} speaks${fr ? ' French' : ''} as ${v.name} from its next answer.` : 'That could not be saved just now.';
-            } }),
-            h('span', {}, h('strong', {}, v.name), h('span', { class: 'when' }, `${v.accent} ${v.who}${v.id === usual ? ' · its usual voice' : ''}`))),
-          btn);
-      }));
+  const playBtn = (v, note) => {
+    const label = `Play a sample of ${v.name}`;
+    const btn = h('button', { type: 'button', class: 'icon-btn voice-play', 'aria-label': label, 'data-label': label, title: 'Play a sample',
+      onclick: () => play(btn, v.id, note) }, icon(ICONS.play));
+    return btn;
+  };
+  const keyOf = (lang) => (lang === 'fr' ? ['voice_fr', 'default_fr'] : ['voice', 'default']);
+  // The full list for one language, as radio buttons, each with its sample.
+  function choiceList(a, voices, lang, note, after) {
+    const [key, def] = keyOf(lang), usual = a[def];
+    return h('div', { class: 'settings-choices voice-list', role: 'radiogroup', 'aria-label': `${a.display_name}: ${lang === 'fr' ? 'French voice' : 'voice'}` },
+      voices.map((v) => h('div', { class: 'voice-row' },
+        h('label', { class: 'appearance-mode choice' },
+          h('input', { type: 'radio', name: `voice-${lang}-${a.name}`, value: v.id, checked: v.id === a[key], onchange: async () => {
+            const r = await api(`/api/v2/agents/${a.name}/speaker-voice`, { method: 'PUT', body: { [key]: v.id === usual ? '' : v.id } }).catch(() => null);
+            note.textContent = r && r.ok ? `Saved: ${a.display_name} speaks${lang === 'fr' ? ' French' : ''} as ${v.name} from its next answer.` : 'That could not be saved just now.';
+            if (r && r.ok) { a[key] = v.id; after(); }
+          } }),
+          h('span', {}, h('strong', {}, v.name), h('span', { class: 'when' }, `${v.accent} ${v.who}${v.id === usual ? ' · its usual voice' : ''}`))),
+        playBtn(v, note))));
   }
-  function agentBlock(a, voices) {
+  function picker(a, first, redraw) {
     const note = h('p', { class: 'when appearance-note', role: 'status' });
-    const english = voices.filter((v) => (v.lang || 'en') === 'en'), french = voices.filter((v) => v.lang === 'fr');
-    const list = choiceList(a, english, false, note);
-    const frNote = h('p', { class: 'when appearance-note', role: 'status' });
-    const frBlock = french.length ? [h('h3', { class: 'label voice-lang' }, 'In French'),
-      h('p', { class: 'when' }, 'When it answers in French (to someone who spoke French to it).'),
-      choiceList(a, french, true, frNote), frNote] : [];
-    const where = a.speaks ? (a.shared ? 'Answers the speaker. Shared: either of you can change it' : 'Answers the speaker')
-      : 'Not on the speaker yet: this is the voice it will have';
-    const section = h('section', { 'aria-label': `${a.display_name}'s voice` },
-      h('h2', { class: 'label' }, a.display_name), h('p', { class: 'when' }, where), list, note, ...frBlock);
-    if (a.speaks) return section;
-    // An agent not on the speaker yet: folded away behind one line, so Home's list is not lost below it.
-    const now = (voices.find((v) => v.id === a.voice) || {}).name || '';
-    return h('details', { class: 'colours-more' }, h('summary', {}, h('span', {}, a.display_name), h('span', { class: 'when' }, now)), section);
+    const groups = (data.installed || []).map((l) => {
+      const voices = (data.voices || []).filter((v) => (v.lang || 'en') === l.code);
+      return h('section', { class: 'pick-group', 'aria-label': l.name, 'data-lang': l.code }, h('h3', { class: 'label' }, l.name),
+        choiceList(a, voices, l.code, note, redraw));
+    });
+    sheet({ title: `${a.display_name}'s voice`, body: [note, ...groups], onClose: stop });
+    const at = document.querySelector(`.pick-group[data-lang="${first}"]`);
+    if (at && first !== 'en') at.scrollIntoView({ block: 'start' });
+  }
+  async function setLanguages(a, on, note) {
+    const off = (data.installed || []).map((l) => l.code).filter((c) => !on.includes(c));
+    const r = await api(`/api/v2/agents/${a.name}/speaker-languages`, { method: 'PUT', body: { off } }).catch(() => null);
+    if (r && r.ok) { a.languages = (await r.json()).languages; note.textContent = 'Saved: from its next answer.'; return true; }
+    const d = r ? await r.json().catch(() => ({})) : {};
+    note.textContent = d.message || 'That could not be saved just now.';
+    return false;
+  }
+  function addLanguage(a) {
+    const more = data.more || [];
+    const admin = isAdmin();
+    sheet({ title: 'Add a language', body: [
+      h('p', { class: 'when' }, `${a.display_name} can speak every language listed on its card: switch one on there. `
+        + 'The speech to text understands these too, but Logos has no voice for them yet:'),
+      h('div', { class: 'rows' }, more.map((l) => h('div', { class: 'row-item lang-more' }, h('strong', {}, l.name),
+        h('span', { class: 'when' }, 'Needs a voice installed first')))),
+      admin ? h('p', { class: 'when' }, 'To add one: a Piper voice for it in the speaker voices image (infra/tts/Dockerfile) and gateway/tts.py, then rebuild the image. It then shows here with its own switch.')
+        : h('p', { class: 'empty-ask' }, `Ask ${adminName()} to add a voice for one.`),
+    ] });
+  }
+  function agentCard(a) {
+    const card = h('section', { class: 'card speaker-agent', 'aria-label': `${a.display_name}'s voice` });
+    const note = h('p', { class: 'when appearance-note', role: 'status' });
+    function draw() {
+      const on = a.languages || ['en'];
+      const status = [a.speaks ? 'Answers the speaker' : 'Not on the speaker yet: this is how it will sound',
+        a.shared ? 'shared: either of you can change it' : '', a.last_used ? `last answered ${when(a.last_used).toLowerCase()}` : ''].filter(Boolean).join(' · ');
+      const main = on[0];
+      const rows = (data.installed || []).map((l) => {
+        const [key] = keyOf(l.code);
+        const v = (data.voices || []).find((x) => x.id === a[key]) || { id: a[key], name: a[key], accent: '', who: '' };
+        const isOn = on.includes(l.code);
+        const sw = h('input', { type: 'checkbox', id: `lang-${a.name}-${l.code}`, checked: isOn ? '' : null,
+          disabled: isOn && on.length === 1 ? '' : null, 'aria-label': `${a.display_name} speaks ${l.name}`, onchange: async (e) => {
+            const want = e.target.checked ? [...on, l.code] : on.filter((c) => c !== l.code);
+            e.target.disabled = true;
+            if (!await setLanguages(a, want, note)) e.target.checked = !e.target.checked;
+            draw();
+          } });
+        return h('div', { class: `speaker-lang${isOn ? '' : ' off'}`, 'data-lang': l.code },
+          h('label', { class: 'switch' }, sw, h('span', { class: 'switch-track', 'aria-hidden': 'true' })),
+          h('div', { class: 'speaker-lang-text' }, h('strong', {}, l.name),
+            h('span', { class: 'when' }, isOn ? v.name : `Off: answered in ${LANG_NAMES[main] || main} instead`)),
+          isOn ? playBtn(v, note) : null,
+          isOn ? h('button', { type: 'button', class: 'btn quiet small voice-change', 'aria-label': `Change ${a.display_name}'s ${l.name} voice`,
+            onclick: () => picker(a, l.code, draw) }, 'Change') : null);
+      });
+      card.replaceChildren(h('div', { class: 'speaker-agent-head' }, h('h2', {}, a.display_name), h('p', { class: 'when speaker-status' }, status)),
+        h('h3', { class: 'label' }, 'Languages'), h('div', { class: 'speaker-langs' }, ...rows),
+        h('button', { type: 'button', class: 'linkish speaker-add', onclick: () => addLanguage(a) }, '+ Add a language'), note);
+    }
+    draw();
+    return card;
+  }
+  function serviceLine(d) {
+    if (d.on) return h('p', { class: 'when speaker-service' }, h('span', { class: 'status up', 'aria-hidden': 'true' }), ' Speaker voices on');
+    return emptyState({ icon: 'speaker', heading: d.problem ? 'The speaker voices are not working' : 'The speaker voices are off',
+      text: d.problem || 'Home Assistant reads answers in its own voice until they are switched on. What you choose here is kept for then.',
+      action: { label: 'How to turn them on', admin: true, ask: 'to switch them on', onclick: (e) => {
+        e.target.replaceWith(h('p', { class: 'when' }, 'On the Logos machine, put TTS_BIND=<its address on the home network> in ~/.config/logos/speaker, then restart the household agent (docs/voice.md).'));
+      } } });
   }
   getJSON('/api/v2/speaker').then((d) => {
     if (!alive) return;
+    data = { installed: [{ code: 'en', name: 'English' }, { code: 'fr', name: 'French' }], more: [], ...d };
     const agents = d.agents || [];
-    if (!agents.length) { box.replaceChildren(h('p', { class: 'none' }, 'You have no agents yet.')); return; }
-    box.replaceChildren(...(d.on ? [] : [h('p', { class: 'none' }, 'The speaker voices are not switched on on this Logos yet. What you choose is kept for when they are.')]),
-      ...agents.map((a) => agentBlock(a, d.voices || [])));
+    top.replaceChildren(serviceLine(data));
+    if (!agents.length) { box.replaceChildren(emptyState({ icon: 'agents', heading: 'You have no agents yet', action: { admin: true, ask: 'for one', label: 'People', href: '#/people' } })); return; }
+    box.replaceChildren(...agents.map((a) => agentCard({ languages: ['en', 'fr'], ...a })));
   }).catch(() => box.replaceChildren(h('p', { class: 'none' }, 'The voices could not be loaded just now.')));
   return () => { alive = false; stop(); Object.values(urls).forEach((u) => URL.revokeObjectURL(u)); };
+}
+
+// Sites the agents may reach (E6; its own page since 28 Nov, Greg: "weird to see without paging, as that's
+// going to become a lot over time"). By agent, folded; a search; ten rows each, then "Show more". Edit
+// takes a site away, lifts a Deny early, or adds a site by hand (the server checks it as it checks an answer).
+const SITES_PAGE = 10;
+function sitesPage(body) {
+  let alive = true, editing = false, data = null, query = '';
+  const shown = {};                    // agent -> how many rows are unfolded
+  const openAgents = new Set();
+  const msg = h('p', { class: 'when', role: 'status' });
+  const list = h('div', { class: 'sites-agents' }, loading('rows', 3));
+  const search = h('input', { type: 'search', placeholder: 'Search sites', 'aria-label': 'Search sites', autocomplete: 'off',
+    oninput: (e) => { query = e.target.value.trim().toLowerCase(); draw(); } });
+  const edit = h('button', { type: 'button', class: 'btn quiet small sites-edit', 'aria-pressed': 'false', onclick: () => {
+    editing = !editing; edit.textContent = editing ? 'Done' : 'Edit'; edit.setAttribute('aria-pressed', String(editing)); draw();
+  } }, 'Edit');
+  body.replaceChildren(h('section', { 'aria-label': 'Sites' },
+    h('p', { class: 'when' }, 'What the agents may reach beyond Logos itself. An agent asks its people when a site is refused; they choose Allow once, Always allow or Deny.'),
+    h('div', { class: 'sites-tools' }, h('label', { class: 'set-search' }, icon(ICONS.search), search), edit), list, msg));
+  const site = (e) => (Number(e.port) === 443 ? e.host : `${e.host}:${e.port}`);
+  const until = (e) => new Date(e.until * 1000).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const post = async (path, body2) => {
+    const r = await api(path, { method: 'POST', body: body2 }).catch(() => null);
+    const out = r ? await r.json().catch(() => ({})) : {};
+    msg.textContent = r && r.ok ? '' : (out.message || 'That did not work just now.');
+    if (r && r.ok) load();
+    return r && r.ok;
+  };
+  function agentBlock(a) {
+    const rows = [...a.always.map((e) => ['always', e]), ...a.once.map((e) => ['once', e]), ...a.deny.map((e) => ['deny', e])]
+      .filter(([, e]) => !query || site(e).toLowerCase().includes(query));
+    const n = shown[a.name] || SITES_PAGE;
+    const WHAT = { always: 'Always allowed', once: 'Allowed once', deny: 'Denied' };
+    const line = ([kind, e]) => h('div', { class: `row-item site-row site-${kind}` },
+      h('span', { class: 'row-main' }, h('span', { class: 'site-name' }, site(e)),
+        h('span', { class: 'when block' }, kind === 'always' ? `${WHAT[kind]}${e.by ? ` · by ${e.by}` : ''}` : `${WHAT[kind]} · until ${until(e)}`)),
+      editing && kind !== 'deny' ? h('button', { type: 'button', class: 'btn small quiet danger', 'aria-label': `Remove ${site(e)} from ${a.display_name}`, onclick: async (ev) => {
+        ev.target.disabled = true;
+        if (!await post(`/api/v2/network-sites/${encodeURIComponent(a.name)}/remove`, { host: e.host, port: e.port })) ev.target.disabled = false;
+      } }, 'Remove') : null,
+      editing && kind === 'deny' && a.yours ? h('button', { type: 'button', class: 'btn small quiet', 'aria-label': `Lift the deny on ${site(e)} for ${a.display_name}`, onclick: async (ev) => {
+        ev.target.disabled = true;
+        if (!await post(`/api/v2/network-sites/${encodeURIComponent(a.name)}/undeny`, { host: e.host, port: e.port })) ev.target.disabled = false;
+      } }, 'Lift') : null);
+    const add = editing && a.yours ? (() => {
+      const input = h('input', { type: 'text', placeholder: 'example.org', 'aria-label': `A site ${a.display_name} may always reach`,
+        autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false' });
+      return h('form', { class: 'mail-add site-add', onsubmit: async (e) => {
+        e.preventDefault();
+        const [host, port] = input.value.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').split(':');
+        if (host) await post(`/api/v2/network-sites/${encodeURIComponent(a.name)}/add`, { host, port: Number(port) || 443 });
+      } }, input, h('button', { type: 'submit', class: 'btn quiet small' }, 'Add'));
+    })() : null;
+    const counts = `${a.always.length + a.once.length} allowed${a.deny.length ? `, ${a.deny.length} denied` : ''}`;
+    const d = h('details', { class: 'colours-more site-agent', 'data-agent': a.name, open: openAgents.has(a.name) || !!query },
+      h('summary', {}, h('span', {}, a.display_name), h('span', { class: 'when' }, counts)),
+      rows.length ? h('div', { class: 'rows' }, rows.slice(0, n).map(line))
+        : h('p', { class: 'none' }, query ? 'No site matches.' : 'Only Logos itself.'),
+      rows.length > n ? h('button', { type: 'button', class: 'btn ghost small sites-more', onclick: () => { shown[a.name] = n + SITES_PAGE * 3; draw(); } },
+        `Show ${Math.min(rows.length - n, SITES_PAGE * 3)} more`) : null,
+      add);
+    d.addEventListener('toggle', () => { if (d.open) openAgents.add(a.name); else openAgents.delete(a.name); });
+    return d;
+  }
+  function draw() {
+    if (!data) return;
+    const agents = data.agents || [];
+    if (!agents.length) { list.replaceChildren(emptyState({ icon: 'globe', heading: 'No agents of yours ask for sites' })); return; }
+    list.replaceChildren(...agents.map(agentBlock));
+  }
+  async function load() {
+    try { data = await getJSON('/api/v2/network'); } catch (e) { list.replaceChildren(h('p', { class: 'none' }, 'The sites could not be loaded just now.')); return; }
+    if (!alive) return;
+    if (!openAgents.size && (data.agents || []).length === 1) openAgents.add(data.agents[0].name);
+    draw();
+  }
+  load();
+  return () => { alive = false; };
+}
+
+// "7 allowed, 2 denied": the summary on the Sites row (Settings › Agents, and People).
+export async function sitesSummary() {
+  const n = await getJSON('/api/v2/network');
+  const agents = n.agents || [];
+  if (!agents.length) return null;
+  const allowed = agents.reduce((t, a) => t + (a.always || []).length + (a.once || []).length, 0);
+  const denied = agents.reduce((t, a) => t + (a.deny || []).length, 0);
+  return `${allowed} allowed${denied ? `, ${denied} denied` : ''}`;
 }
 
 // Your voice (Voice VO.2): about 25 seconds of reading (the whole text; the recorder stops by itself at 45 s) makes a voice print, so the house speaker can tell who
@@ -650,7 +808,7 @@ function yourVoice(body) {
     onWords: () => {}, onAudio: (blob) => upload(blob) });
   const label = (t) => { rec.mic.setAttribute('aria-label', t); rec.mic.title = t; };
   body.replaceChildren(
-    h('section', { 'aria-label': 'Your voice' }, heading('Your voice'), intro, printBox),
+    h('section', { 'aria-label': 'Your voice' }, intro, printBox),
     h('section', { 'aria-label': 'Record' }, heading('Record'), what, prompt,
       h('form', { class: 'voiceprint-form', onsubmit: (e) => e.preventDefault() }, rec.mic, rec.bar), status),
     testBox, speakerBox, peopleBox, deleteBox);
@@ -787,63 +945,156 @@ function yourVoice(body) {
   return () => { alive = false; rec.destroy(); };
 }
 
-// What each row says it is set to now; a promise where it has to be asked for.
-function valueOf(id, state) {
+// What each row says it is set to now, and whether something there is wrong: {value, problem}. A promise
+// where it has to be asked for. "Not set up yet" is not a problem; broken is (28 Nov).
+function statusOf(id, state) {
+  const v = (value, problem = null) => ({ value, problem });
   if (id === 'appearance') {
     const { look, mode } = currentLook();
     const name = (LOOKS.find((l) => l.id === look) || {}).name || look;
-    return `${{ glass: 'Glass', hud: 'HUD', warm: 'Warm' }[look] || name} · ${{ dark: 'Dark', light: 'Light', auto: 'Auto' }[mode] || mode}`;
+    return v(`${{ glass: 'Glass', hud: 'HUD', warm: 'Warm' }[look] || name} · ${{ dark: 'Dark', light: 'Light', auto: 'Auto' }[mode] || mode}`);
   }
-  if (id === 'matrix') return state.me.matrix_id ? (mx.saved() ? 'Connected' : 'Not connected') : '';
+  if (id === 'matrix') return v(state.me.matrix_id ? (mx.saved() ? 'Connected' : 'Not connected') : '');
   if (id === 'notifications') return push.status().then((st) => (st === 'on'
-    ? (getPref('alerts', 'who') === 'private' ? 'On · private' : 'On') : { blocked: 'Blocked', unsupported: '' }[st] ?? 'Off'));
+    ? v(getPref('alerts', 'who') === 'private' ? 'On · private' : 'On')
+    : st === 'blocked' ? v('Blocked', 'Phone alerts are blocked in this browser') : v(st === 'unsupported' ? '' : 'Off')));
   if (id === 'email') return getJSON('/api/v2/mail').then((d) => {
     const b = d.mailboxes || [];
-    return b.length > 1 ? `${b.length} mailboxes` : b.length ? ({ gmail: 'Gmail', outlook: 'Outlook' }[b[0].kind] || 'Connected') : 'Not connected';
+    const failed = b.filter((m) => m.health && m.health.error);
+    const value = b.length > 1 ? `${b.length} mailboxes` : b.length ? ({ gmail: 'Gmail', outlook: 'Outlook' }[b[0].kind] || 'Connected') : 'Not connected';
+    return v(failed.length ? 'Not refreshing' : value, failed.length ? `Email: ${failed[0].address || 'a mailbox'} is not refreshing` : null);
   });
-  if (id === 'metrics') return getJSON('/api/v2/metrics').then((d) => (d.enabled ? 'On' : 'Off'));
+  if (id === 'metrics') return getJSON('/api/v2/metrics').then((d) => v(d.enabled ? 'On' : 'Off'));
   if (id === 'speaker') return getJSON('/api/v2/speaker').then((d) => {
     const a = (d.agents || []).find((x) => x.speaks) || (d.agents || [])[0];
-    return a ? ((d.voices || []).find((v) => v.id === a.voice) || {}).name || '' : '';
+    const name = a ? ((d.voices || []).find((x) => x.id === a.voice) || {}).name || '' : '';
+    return d.problem ? v('Not working', 'The speaker voices are not working') : v(name);
   });
-  if (id === 'voice') return getJSON('/api/v2/voiceprint').then((d) => (!d.enrolled ? 'Not set up' : (d.summary || {}).state === 'active' ? 'Recognising' : 'Learning'));
+  if (id === 'voice') return getJSON('/api/v2/voiceprint').then((d) => v(!d.enrolled ? 'Not set up' : (d.summary || {}).state === 'active' ? 'Recognising' : 'Learning'));
   if (id === 'updates') return getJSON('/api/v2/updates?check=1').then((d) => {
     const n = ((d.plan || {}).commits || []).length;
-    return n ? `${n} to install` : 'Up to date';
+    return n ? v(`${n} to install`, `${n} update${n === 1 ? '' : 's'} waiting to install`) : v('Up to date');
   });
-  return '';
+  return v('');
 }
 
-function row({ href, name, glyph, value, current, cls = '' }) {
+function row({ href, name, glyph, value, current, cls = '', dot = null }) {
   const val = h('span', { class: 'set-value' });
-  Promise.resolve(value).then((v) => { val.textContent = v || ''; if (/to install|Not connected|Off|Blocked/.test(v || '')) val.classList.add('attention'); })
-    .catch(() => {});
+  Promise.resolve(value).then((s) => {
+    const text = typeof s === 'string' ? s : (s || {}).value || '';
+    val.textContent = text;
+    if (/to install|Not connected|Off|Blocked|Not working|Not refreshing|Not running|Unplugged/.test(text)) val.classList.add('attention');
+  }).catch(() => {});
   return h('a', { href, class: `set-row${cls}`, 'aria-current': current ? 'page' : null },
-    h('span', { class: 'set-icon' }, icon(ICONS[glyph])), h('span', { class: 'set-name' }, name), val,
+    h('span', { class: 'set-icon' }, dot || icon(ICONS[glyph])), h('span', { class: 'set-name' }, name), val,
     h('span', { class: 'set-chevron' }, icon(ICONS.chevron)));
 }
 
-function index(state, id) {
+// "Needs attention" (28 Nov, after Home Assistant's repairs card): only when something is wrong. Each line
+// opens its page; Dismiss hides that line for a day.
+const DISMISSED = 'logos.settings.dismissed';
+const DAY = 86400000;
+function dismissed() {
+  try { return JSON.parse(localStorage.getItem(DISMISSED) || '{}'); } catch (e) { return {}; }
+}
+function dismiss(key) {
+  const d = dismissed();
+  d[key] = Date.now();
+  for (const k of Object.keys(d)) if (Date.now() - d[k] > DAY) delete d[k];
+  try { localStorage.setItem(DISMISSED, JSON.stringify(d)); } catch (e) { /* shown again next time */ }
+}
+function attentionCard(problems) {
+  const card = h('section', { class: 'card set-attention', 'aria-label': 'Needs attention', hidden: true });
+  const items = [];
+  const draw = () => {
+    const gone = dismissed();
+    const live = items.filter((p) => !(gone[p.key] && Date.now() - gone[p.key] < DAY));
+    card.hidden = !live.length;
+    card.replaceChildren(h('h2', { class: 'set-attention-title' }, icon(ICONS.alert), 'Needs attention'),
+      ...live.map((p) => h('div', { class: 'set-attention-row' },
+        h('a', { href: p.href, class: 'set-attention-link' }, h('span', {}, p.text), icon(ICONS.chevron)),
+        h('button', { type: 'button', class: 'linkish set-dismiss', 'aria-label': `Dismiss "${p.text}" for a day`,
+          onclick: () => { dismiss(p.key); draw(); } }, 'Dismiss'))));
+  };
+  for (const p of problems) {
+    Promise.resolve(p).then((got) => {
+      for (const one of [got].flat()) if (one && one.text) items.push(one);
+      draw();
+    }).catch(() => {});
+  }
+  return card;
+}
+
+// The Agents group: one row per agent you may use, in the words the Agents screen uses for its state.
+function agentsGroup(agentsP, sitesP, id = null) {
+  const sec = h('section', { class: 'set-group', 'aria-label': 'Agents' }, h('h2', { class: 'set-group-title' }, 'Agents'), loading('rows', 2));
+  Promise.all([agentsP, sitesP.catch(() => null)]).then(async ([d, sites]) => {
+    const agents = (d && d.agents) || [];
+    if (!agents.length && !sites) { sec.remove(); return; }
+    const mood = await moods(agents).catch(() => ({}));
+    sec.replaceChildren(sec.firstChild, ...agents.map((a) => row({ href: `#/agents/${encodeURIComponent(a.name)}/settings`, name: a.display_name,
+      dot: h('span', { class: `dot ${a.name}`, style: `background: var(--agent-${a.name}, var(--${a.name}, var(--accent)))` }),
+      value: MOODS[mood[a.name]] || (a.running === false ? MOODS.off : a.model_up === false ? MOODS.unplugged : MOODS.asleep), cls: ' set-agent' })),
+    ...(sites ? [row({ href: '#/settings/sites', name: 'Sites', glyph: 'globe', value: sites, cls: ' set-sites', current: id === 'sites' })] : []));
+    filterIndex(sec.closest('.set-index'));
+  }).catch(() => sec.remove());
+  return sec;
+}
+
+// The search at the top of the list: rows whose name or value has the words; empty groups fold away.
+let lastQuery = '';
+function filterIndex(nav) {
+  if (!nav) return;
+  const q = lastQuery.trim().toLowerCase();
+  let any = false;
+  for (const r of nav.querySelectorAll('.set-row, .set-profile')) {
+    const hit = !q || r.textContent.toLowerCase().includes(q);
+    r.hidden = !hit;
+    any = any || hit;
+  }
+  for (const g of nav.querySelectorAll('.set-group')) {
+    g.hidden = !!q && ![...g.querySelectorAll('.set-row')].some((r) => !r.hidden);
+  }
+  for (const el of nav.querySelectorAll('.set-version')) el.hidden = !!q;
+  const none = nav.querySelector('.set-nomatch');
+  if (none) none.hidden = !q || any;
+}
+
+function index(state, id, extra = {}) {
   const isAdmin = state.me.role === 'admin';
   const shown = (g) => SECTIONS.filter((s) => s.group === g && (!s.admin || isAdmin));
   const shownName = state.me.display_name || state.me.username;
   const group = (title, rows) => (rows.length ? h('section', { class: 'set-group', 'aria-label': title },
     h('h2', { class: 'set-group-title' }, title), ...rows) : '');
-  const sectionRow = (s) => row({ href: `#/settings/${s.id}`, name: s.name, glyph: s.icon, value: valueOf(s.id, state), current: s.id === id });
-  return h('nav', { class: 'set-index', 'aria-label': 'Settings' },
+  const st = extra.status || {};
+  const sectionRow = (s) => row({ href: `#/settings/${s.id}`, name: s.name, glyph: s.icon, value: st[s.id], current: s.id === id });
+  const search = h('input', { type: 'search', placeholder: 'Search settings', 'aria-label': 'Search settings', autocomplete: 'off', value: lastQuery,
+    oninput: (e) => { lastQuery = e.target.value; filterIndex(nav); },
+    onkeydown: (e) => {
+      if (e.key === 'Escape') { e.target.value = ''; lastQuery = ''; filterIndex(nav); }
+      if (e.key === 'Enter') { const first = [...nav.querySelectorAll('.set-row')].find((r) => !r.hidden && r.href); if (first) first.click(); }
+    } });
+  const nav = h('nav', { class: 'set-index', 'aria-label': 'Settings' },
+    h('label', { class: 'set-search' }, icon(ICONS.search), search,
+      h('kbd', { class: 'set-kbd wide-only', 'aria-hidden': 'true' }, /Mac/.test(navigator.platform) ? '⌘K' : 'Ctrl K')),
+    extra.attention || '',
     h('a', { href: '#/settings/account', class: 'set-profile', 'aria-current': id === 'account' ? 'page' : null },
       h('span', { class: 'set-avatar', 'aria-hidden': 'true' }, (shownName || '?').trim().charAt(0).toUpperCase()),
       h('span', { class: 'set-who' }, h('strong', {}, shownName),
         h('span', { class: 'when' }, `${state.me.username} · ${isAdmin ? 'Manages Logos' : 'Member'}`)),
       h('span', { class: 'set-chevron' }, icon(ICONS.chevron))),
     group('You', shown('You').map(sectionRow)),
+    extra.agents || '',
     group('This device', shown('This device').map(sectionRow)),
     isAdmin ? group('Logos', [...shown('Logos').map(sectionRow),
       ...ELSEWHERE.map((e) => row({ href: e.href, name: e.name, glyph: e.icon, cls: ' set-elsewhere' }))]) : '',
+    h('p', { class: 'none set-nomatch', hidden: true }, 'No setting matches.'),
     h('section', { class: 'set-group set-end' },
       h('button', { type: 'button', class: 'set-row set-danger', onclick: () => { const b = document.querySelector('.logout-btn'); if (b) b.click(); } },
         h('span', { class: 'set-icon' }, icon(ICONS.logout)), h('span', { class: 'set-name' }, 'Sign out'))),
     versionLine(state));
+  filterIndex(nav);
+  return nav;
 }
 
 // The end of the list, as in Element X: which Logos this is (the commit, and when it was made).
@@ -852,6 +1103,29 @@ function versionLine(state) {
   if (!v.commit) return '';
   const day = v.date ? new Date(v.date * 1000).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : '';
   return h('p', { class: 'set-version' }, `Logos ${v.commit}${day ? ` · ${day}` : ''}`);
+}
+
+// Everything the list and its "Needs attention" card ask for, asked once.
+function gather(state) {
+  const isAdmin = state.me.role === 'admin';
+  const status = {};
+  for (const s of SECTIONS) if (!s.admin || isAdmin) status[s.id] = Promise.resolve(statusOf(s.id, state)).catch(() => ({ value: '' }));
+  const agentsP = getJSON('/api/v2/agents').catch(() => null);
+  const sitesP = sitesSummary();
+  const fromRow = (id, href) => status[id] && status[id].then((s) => (s && s.problem ? { key: id, text: s.problem, href } : null));
+  const problems = [
+    fromRow('updates', '#/settings/updates'), fromRow('notifications', '#/settings/notifications'),
+    fromRow('email', '#/settings/email'), fromRow('speaker', '#/settings/speaker'),
+    // The AI computer off, and an agent that is not running.
+    agentsP.then((d) => {
+      const all = (d && d.agents) || [];
+      const out = [];
+      if (all.some((a) => a.model_up === false)) out.push({ key: 'model', text: 'The AI computer is off: the agents reply when it is back', href: isAdmin ? '#/models' : '#/chat' });
+      for (const a of all.filter((x) => x.running === false)) out.push({ key: `agent-${a.name}`, text: `${a.display_name} is not running`, href: `#/agents/${encodeURIComponent(a.name)}/settings` });
+      return out;
+    }),
+  ].filter(Boolean);
+  return { status, agentsP, sitesP, problems };
 }
 
 export async function settingsView(root, [section], state) {
@@ -865,18 +1139,29 @@ export async function settingsView(root, [section], state) {
   const body = h('div', { class: 'settings-body' });
   let done = null;
   const sec = SECTIONS.find((s) => s.id === id);
+  const listParts = () => {
+    const g = gather(state);
+    const attention = attentionCard(g.problems);
+    return { status: g.status, attention, agents: agentsGroup(g.agentsP, g.sitesP, id) };
+  };
   if (!wide && id) {
-    // The top bar names the page (as on every screen); the back link sits above it, Element X style.
-    const name = document.getElementById('screen-name');
-    if (name) name.textContent = sec.full;
-    page.append(h('header', { class: 'set-head' },
-      h('a', { href: '#/settings', class: 'set-back' }, icon(ICONS.back), h('span', {}, 'Settings'))), body);
+    // One header (28 Nov, as Home Assistant's sub-pages): the back arrow and the page's name in the top bar.
+    page.append(subpage({ title: sec.name, back: '#/settings', backLabel: 'Settings' }), body);
   } else if (!wide) {
-    page.append(index(state, null));
+    page.append(index(state, null, listParts()));
   } else {
-    page.append(h('header', {}, h('h1', {}, 'Settings')), h('div', { class: 'settings-layout' }, index(state, id), body));
+    // A desktop: Settings › the page, over the list and the page beside it.
+    page.append(h('header', { class: 'set-crumbs' }, h('h1', {}, h('span', { class: 'set-crumb-root' }, 'Settings'),
+      h('span', { class: 'set-crumb-sep', 'aria-hidden': 'true' }, ' › '), h('span', { class: 'set-crumb-page' }, sec.name))),
+    h('div', { class: 'settings-layout' }, index(state, id, listParts()), body));
   }
   root.replaceChildren(page);
+  try {
+    if (sessionStorage.getItem('logos.settings.search')) {
+      sessionStorage.removeItem('logos.settings.search');
+      const box = page.querySelector('.set-search input'); if (box) box.focus();
+    }
+  } catch (e) { /* no memory: no focus */ }
   if (id === 'appearance') body.replaceChildren(...appearance(), ...chat());
   else if (id === 'account') body.replaceChildren(...account(state));
   else if (id === 'matrix') body.replaceChildren(...matrix(state));
@@ -885,6 +1170,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'metrics') body.replaceChildren(...metricsPage());
   else if (id === 'email') done = email(body);
   else if (id === 'speaker') done = speaker(body);
+  else if (id === 'sites') done = sitesPage(body);
   else if (id === 'voice') done = yourVoice(body);
   else if (id === 'updates') done = await updatesView(body, [], state, true);
   // Turning a foldable or resizing across the line: the other layout.

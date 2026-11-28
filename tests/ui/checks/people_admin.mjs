@@ -19,6 +19,8 @@ ok(/^Until /.test(await page.locator('section[aria-label="Invited"] .set-value')
 ok(/Restorable until/.test(await page.locator('section[aria-label="Removed"] .set-row', { hasText: 'Dan' }).textContent()), 'someone removed: restorable until a date');
 ok(await page.locator('section[aria-label="Admin actions"] .audit-row').count() === 3, 'the admin actions are listed');
 const form = page.locator('form[aria-label="Add a person"]');
+ok(!(await form.isVisible()), 'the form waits behind a button');
+await page.getByRole('button', { name: 'Add a person' }).tap(); await page.waitForTimeout(300);
 ok(await form.locator('.tick').count() === 4, 'chat, calendar, household and email can each be ticked');
 await form.locator('#np-name').fill('Ella Martin');
 ok(await form.locator('#np-user').inputValue() === 'ella', 'the username follows the name');
@@ -44,7 +46,7 @@ await rm.getByRole('button', { name: 'Remove them' }).tap(); await page.waitForT
 ok(/Type “ann” first/.test(await rm.locator('.result').textContent()), 'and needs their username typed first');
 ok(await fits(page), 'their page fits the phone');
 await page.screenshot({ path: `${OUT}/people-person-phone.png`, fullPage: true });
-await page.locator('.set-back').tap(); await page.waitForTimeout(1000);
+await page.locator('.topbar .topbar-back').tap(); await page.waitForTimeout(1000);
 ok(page.url().endsWith('#/people'), '← People goes back');
 
 await page.goto(`${BASE}/#/people/cleo`); await page.waitForTimeout(1500);
@@ -58,7 +60,8 @@ await page.close();
 page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on('pageerror', (e) => errs.push(e.message));
 await page.goto(`${BASE}/#/people`); await page.waitForTimeout(2500);
-ok(await page.locator('.two-col form[aria-label="Add a person"]').isVisible(), 'desktop: the form beside the admin actions');
+await page.getByRole('button', { name: 'Add a person' }).click(); await page.waitForTimeout(300);
+ok(await page.locator('.people-add form[aria-label="Add a person"]').isVisible(), 'desktop: the form opens from its button');
 await page.screenshot({ path: `${OUT}/people-desktop.png`, fullPage: true });
 await page.goto(`${BASE}/#/people/ann`); await page.waitForTimeout(1500);
 await page.screenshot({ path: `${OUT}/people-person-desktop.png`, fullPage: true });

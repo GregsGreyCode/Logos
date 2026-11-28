@@ -7,6 +7,9 @@
 * ``POST /api/v2/network/{rid}/{once|always|deny}``: only one of the agent's own people. ``rid`` may be
   a group (one site asked by several agents at once): each of this person's agents in it is decided.
 * ``POST /api/v2/network-sites/{agent}/remove`` ``{host, port}``: its people, or an admin.
+* ``POST /api/v2/network-sites/{agent}/add`` ``{host, port}``: always allow a site, by hand (its people
+  only; the same checks as answering a question).
+* ``POST /api/v2/network-sites/{agent}/undeny`` ``{host, port}``: end a Deny early (its people only).
 * Notifications: :func:`notification_items` (called by dashboard_api.handle_notifications).
 """
 from __future__ import annotations
@@ -241,9 +244,34 @@ async def handle_remove(request: web.Request) -> web.Response:
     return web.json_response(out, status=status)
 
 
+async def _site_change(request: web.Request, what: str) -> web.Response:
+    user = _me(request)
+    net = approvals_of(request.app)
+    if net is None:
+        return web.json_response({"error": "no_backend"}, status=503)
+    try:
+        body = await request.json()
+        host, port = str(body["host"]), int(body.get("port") or 443)
+    except (ValueError, KeyError, TypeError):
+        return web.json_response({"error": "bad_request", "message": "Give a site name, like example.org."}, status=400)
+    fn = net.add_always if what == "add" else net.lift_deny
+    status, out = await asyncio.to_thread(fn, request.match_info["agent"], host, port, user["username"], user["id"] or None)
+    return web.json_response(out, status=status)
+
+
+async def handle_add(request: web.Request) -> web.Response:
+    return await _site_change(request, "add")
+
+
+async def handle_undeny(request: web.Request) -> web.Response:
+    return await _site_change(request, "undeny")
+
+
 def register(app: web.Application) -> None:
     from gateway.auth.middleware import require_csrf
     app.router.add_get("/api/v2/network", handle_list)
     app.router.add_post("/api/v2/network/{rid}/{decision}", require_csrf(handle_decide))
     app.router.add_post("/api/v2/network-sites/{agent}/remove", require_csrf(handle_remove))
+    app.router.add_post("/api/v2/network-sites/{agent}/add", require_csrf(handle_add))
+    app.router.add_post("/api/v2/network-sites/{agent}/undeny", require_csrf(handle_undeny))
     app.on_startup.append(_watch)

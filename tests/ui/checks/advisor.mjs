@@ -10,7 +10,7 @@ for (const [w, hgt, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
   ok(await page.locator('.card .actions select').evaluate((e) => getComputedStyle(e).appearance === 'none'), `${n}: the model picker is styled like the app's`);
   const log = await page.$$eval('.advisor-log > details', (els) => els.length > 1 ? els[1].getBoundingClientRect().top - els[0].getBoundingClientRect().bottom : 0);
   ok(log > 0 && log <= 12, `${n}: the log's entries sit close together (${Math.round(log)}px)`);
-  const row = await page.locator('.budget-row', { hasText: 'Wedding' }).evaluate((e) => { const who = e.querySelector('.budget-who').getBoundingClientRect(); return who.width / e.getBoundingClientRect().width; });
+  const row = await page.locator('.budget-row', { hasText: 'Holiday' }).evaluate((e) => { const who = e.querySelector('.budget-who').getBoundingClientRect(); return who.width / e.getBoundingClientRect().width; });
   ok(row > (mob ? 0.8 : 0.4), `${n}: a budget's words keep the width (${Math.round(row * 100)}%)`);
   ok(errs.length === 0, `${n}: no page errors ${errs.join('|')}`);
   await page.close();

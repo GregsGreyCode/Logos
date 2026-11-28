@@ -31,6 +31,8 @@ def call(net, monkeypatch, uid, method, path, body=None):
         app.router.add_get("/api/v2/network", network_api.handle_list)
         app.router.add_post("/api/v2/network/{rid}/{decision}", network_api.handle_decide)
         app.router.add_post("/api/v2/network-sites/{agent}/remove", network_api.handle_remove)
+        app.router.add_post("/api/v2/network-sites/{agent}/add", network_api.handle_add)
+        app.router.add_post("/api/v2/network-sites/{agent}/undeny", network_api.handle_undeny)
         async with TestClient(TestServer(app)) as client:
             r = await (client.get(path) if method == "GET" else client.post(path, json=body or {}))
             return r.status, await r.json()
@@ -173,3 +175,35 @@ def test_a_job_says_what_it_does_and_a_shared_agents_chat_stays_private(tmp_path
     assert {r["site"]["domain"] for r in body["requests"]} == {"example.org"}
     assert network_api.job_about("") == "A scheduled job"
     assert network_api.job_about("pay rent · Nov 28 09:00") == "Scheduled job “pay rent” (one the agent set up)"
+
+
+def test_a_site_added_by_hand_passes_the_same_checks_and_only_for_its_people(tmp_path, monkeypatch):
+    # People › Sites › Edit (28 Nov): add a site to an agent's always-allowed list without waiting to be asked.
+    net, shell = make(tmp_path)
+    audit = []
+    net.audit = lambda *a: audit.append(a)
+    site = {"host": "Example.org", "port": 443}
+    assert call(net, monkeypatch, "u-bere", "POST", "/api/v2/network-sites/finn/add", site)[0] == 403     # not her agent
+    assert call(net, monkeypatch, "u-admin", "POST", "/api/v2/network-sites/finn/add", site)[0] == 403    # owners only
+    status, body = call(net, monkeypatch, "u-greg", "POST", "/api/v2/network-sites/finn/add", site)
+    assert status == 200 and body["host"] == "example.org"
+    assert shell.did("openshell", "policy", "update", "finn")
+    assert [e["host"] for e in net.allowed("finn")["finn"]["always"]] == ["example.org"]
+    assert audit[-1][1:] == ("network_added", "agent", "finn", {"host": "example.org", "port": 443})
+    # Never: a home-network name, an address, the agent's model server or its people's own domain.
+    for bad in ("nas.local", "192.0.2.117", "home.example.net", "*.example.org", "not a site"):
+        status, body = call(net, monkeypatch, "u-greg", "POST", "/api/v2/network-sites/finn/add", {"host": bad, "port": 443})
+        assert status == 400 and "cannot be allowed" in body["message"], bad
+    assert [e["host"] for e in net.allowed("finn")["finn"]["always"]] == ["example.org"]
+
+
+def test_a_deny_can_be_lifted_early_by_the_agents_people(tmp_path, monkeypatch):
+    net, shell = make(tmp_path)
+    shell.rules["finn"] = PENDING
+    [req] = net.poll(["finn"])
+    assert call(net, monkeypatch, "u-greg", "POST", f"/api/v2/network/{req['id']}/deny")[0] == 200
+    site = {"host": "example.org", "port": 443}
+    assert call(net, monkeypatch, "u-admin", "POST", "/api/v2/network-sites/finn/undeny", site)[0] == 403
+    assert call(net, monkeypatch, "u-greg", "POST", "/api/v2/network-sites/finn/undeny", site)[0] == 200
+    assert net.allowed("finn")["finn"]["deny"] == []
+    assert call(net, monkeypatch, "u-greg", "POST", "/api/v2/network-sites/finn/undeny", site)[0] == 404

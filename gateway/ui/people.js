@@ -1,7 +1,8 @@
 // People screen: who can sign in, who can use which agent, and your own account. An admin also adds
 // people by invitation (F38), opens each person's page (what was set up, who can see what), removes
 // and restores them, and sees the list of admin actions. The server checks every one of these again.
-import { h, api, getJSON, loading, icon, ICONS } from './util.js';
+import { h, api, getJSON, loading, icon, ICONS, subpage } from './util.js';
+import { sitesSummary } from './settings.js';
 
 export const slug = (name) => name.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
   .split(/\s+/)[0].replace(/[^a-z0-9-]+/g, '-').replace(/^[^a-z]+|-+$/g, '').slice(0, 31);
@@ -19,11 +20,13 @@ const ACTIONS = {
   update_user: 'changed the account of', admin_set_password: 'set a new password for', setup_wipe: 'removed all accounts',
 };
 
-function personRow(href, name, value, attention = false) {
-  return h('a', { href, class: 'set-row person-link' },
-    h('span', { class: 'set-icon' }, icon(ICONS.user)), h('span', { class: 'set-name' }, name),
-    h('span', { class: `set-value${attention ? ' attention' : ''}` }, value || ''),
-    h('span', { class: 'set-chevron' }, icon(ICONS.chevron)));
+// Everyone in one row style (28 Nov): icon, name, a status line under it, and a chevron when it opens a page.
+function personRow(href, name, value, attention = false, glyph = 'user') {
+  return h(href ? 'a' : 'div', { href, class: `set-row person-link two-line${href ? '' : ' no-link'}` },
+    h('span', { class: 'set-icon' }, icon(ICONS[glyph])),
+    h('span', { class: 'set-text' }, h('span', { class: 'set-name' }, name),
+      h('span', { class: `set-value${attention ? ' attention' : ''}` }, value || '')),
+    href ? h('span', { class: 'set-chevron' }, icon(ICONS.chevron)) : null);
 }
 
 // The link to hand over, shown once (the server keeps only its hash).
@@ -44,39 +47,28 @@ function linkBox(token, expires) {
 export async function peopleView(root, [who], state) {
   if (who) return personView(root, who, state);
   let alive = true;
-  const table = h('div', { class: 'table-box wide-only' }, loading());
-  const phoneList = h('div', { class: 'rows phone-only' }, loading());
+  // On a phone People is reached from Settings: its back arrow goes there (28 Nov).
+  if (!matchMedia('(min-width: 820px)').matches) subpage({ title: 'People', back: '#/settings', backLabel: 'Settings' });
+  const everyone = h('section', { class: 'set-group people-list', 'aria-label': 'People' }, loading('rows', 2));
   const pending = h('div', { class: 'stack' });
+  const sites = h('div', { class: 'people-sites' });
   const admin = h('div', { class: 'stack' });
   const log = h('div', { class: 'stack' });
+  const addBox = h('div', { class: 'people-add' });
 
   async function load() {
     let d;
     try { d = await getJSON('/api/v2/people'); } catch (e) {
-      table.replaceChildren(h('div', { class: 'notice' }, 'Could not load people.'));
-      phoneList.replaceChildren();
+      everyone.replaceChildren(h('div', { class: 'notice' }, 'Could not load people.'));
       return;
     }
     if (!alive) return;
     const page = (p) => (d.is_admin || p.is_you ? `#/people/${encodeURIComponent(p.username)}` : null);
-    const nameOf = (p) => (page(p) ? h('a', { href: page(p), class: 'person-name' }, p.display_name) : p.display_name);
-    const stateOf = (p) => (STATE[p.state] ? h('span', { class: 'chip-pill attn' }, STATE[p.state]) : null);
-    // A phone (P3): each person on one row with chips for the agents they can use; the desktop keeps the table.
-    phoneList.replaceChildren(...d.people.map((p) => h('div', { class: 'row-item person-row' },
-      h('span', { class: 'row-main' }, h('strong', {}, nameOf(p)), ' ',
-        h('span', { class: 'when' }, `@${p.username}${p.is_you ? ' · you' : p.signed_in_before ? '' : ' · not signed in yet'}`)),
-      h('span', { class: 'chip-row' },
-        d.agents.filter((a) => p.agents[a.name]).map((a) => h('span', { class: 'chip-pill' }, h('span', { class: `dot ${a.name}`, 'aria-hidden': 'true' }), a.display_name)),
-        p.is_admin ? h('span', { class: 'chip-pill', title: 'Manages Logos' }, 'Admin') : null, stateOf(p),
-        d.agents.some((a) => p.agents[a.name]) ? null : h('span', { class: 'when' }, 'No agents')))));
-    table.replaceChildren(h('table', {},
-      h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Person'),
-        d.agents.map((a) => h('th', { scope: 'col' }, a.display_name)), h('th', { scope: 'col' }, 'Can manage Logos'))),
-      h('tbody', {}, d.people.map((p) => h('tr', {},
-        h('td', {}, h('strong', {}, nameOf(p)), ' ', stateOf(p),
-          h('span', { class: 'when block' }, p.is_you ? 'You' : p.signed_in_before ? `Signs in as ${p.username}` : `Has not signed in yet · ${p.username}`)),
-        d.agents.map((a) => h('td', { class: p.agents[a.name] ? 'ok' : 'when', title: p.agents[a.name] ? 'Can chat with it and read its brain' : 'No access' }, p.agents[a.name] ? '✓' : '·')),
-        h('td', {}, p.is_admin ? 'Yes' : 'No'))))));
+    const line = (p) => [`@${p.username}`, p.is_you ? 'you' : p.signed_in_before ? '' : 'not signed in yet', p.is_admin ? 'manages Logos' : '',
+      STATE[p.state] || '', (() => { const uses = d.agents.filter((a) => p.agents && p.agents[a.name]).map((a) => a.display_name); return uses.length ? `uses ${uses.join(', ')}` : 'no agents'; })()]
+      .filter(Boolean).join(' · ');
+    everyone.replaceChildren(h('h2', { class: 'set-group-title' }, 'People'),
+      ...d.people.map((p) => personRow(page(p), p.display_name, line(p), !!STATE[p.state])));
     if (!d.is_admin) return;
     const invited = d.invited || [], removed = d.removed || [];
     pending.replaceChildren(...[
@@ -87,37 +79,26 @@ export async function peopleView(root, [who], state) {
         ...removed.map((p) => personRow(`#/people/${encodeURIComponent(p.username)}`, p.display_name,
           p.state === 'removing' ? 'Removing…' : (p.delete_after ? `Restorable until ${day(p.delete_after)}` : 'Removed')))) : null,
     ].filter(Boolean));
-    if (!admin.children.length) admin.replaceChildren(addPerson(d.offers), startAgain());
+    if (!addBox.children.length) {
+      const form = addPerson(d.offers);
+      form.hidden = true;
+      const open = h('button', { type: 'button', class: 'btn people-add-btn', 'aria-expanded': 'false', onclick: () => {
+        form.hidden = !form.hidden; open.setAttribute('aria-expanded', String(!form.hidden));
+        open.textContent = form.hidden ? 'Add a person' : 'Close the form';
+        if (!form.hidden) form.querySelector('#np-name').focus();
+      } }, 'Add a person');
+      addBox.replaceChildren(open, form);
+    }
+    if (!admin.children.length) admin.replaceChildren(startAgain());
     if (!log.children.length) log.replaceChildren(auditCard());
-    drawSites();
   }
 
-  // E6: the sites beyond Logos each agent may reach, as its people allowed them (docs/network-approvals.md).
-  const sites = h('section', { class: 'card network-sites', 'aria-label': 'Sites the agents may reach', hidden: true });
-  async function drawSites() {
-    let n;
-    try { n = await getJSON('/api/v2/network'); } catch (e) { return; }
-    if (!alive) return;
-    const site = (e) => (Number(e.port) === 443 ? e.host : `${e.host}:${e.port}`);
-    const until = (e) => new Date(e.until * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-    const note = h('div', { class: 'result when' });
-    const rows = (n.agents || []).map((a) => {
-      const line = (e, kind) => h('li', { class: 'site-row' }, h('span', { class: 'site-name' }, site(e)),
-        h('span', { class: 'when' }, kind === 'always' ? ` · by ${e.by}` : kind === 'once' ? ` · until ${until(e)}` : ` · denied until ${until(e)}`),
-        kind === 'deny' ? null : h('button', { type: 'button', class: 'btn small quiet', onclick: async (ev) => {
-          ev.target.disabled = true;
-          const r = await api(`/api/v2/network-sites/${encodeURIComponent(a.name)}/remove`, { method: 'POST', body: { host: e.host, port: e.port } });
-          if (r.ok) drawSites(); else { ev.target.disabled = false; note.textContent = 'Could not remove it just now.'; }
-        } }, 'Remove'));
-      const all = [...a.always.map((e) => line(e, 'always')), ...a.once.map((e) => line(e, 'once')), ...a.deny.map((e) => line(e, 'deny'))];
-      return h('div', { class: 'site-agent' }, h('strong', {}, a.display_name),
-        all.length ? h('ul', { class: 'site-list' }, ...all) : h('p', { class: 'when' }, 'Only Logos itself.'));
-    });
-    sites.replaceChildren(h('h2', {}, 'Sites the agents may reach'),
-      h('p', { class: 'when' }, 'Besides Logos itself. An agent asks its people when a site is refused; they choose Allow once, Always allow or Deny.'),
-      ...rows, note);
-    sites.hidden = !rows.length;
-  }
+  // E6: what the agents may reach beyond Logos, as one row (28 Nov): its own page in Settings has the list.
+  sitesSummary().then((v) => {
+    if (!alive || !v) return;
+    sites.replaceChildren(h('section', { class: 'set-group', 'aria-label': 'Sites' },
+      personRow('#/settings/sites', 'Sites', `${v} · what the agents may reach beyond Logos`, false, 'globe')));
+  }).catch(() => {});
 
   function field(id, label, type, extra = {}) {
     const input = h('input', { id, type, ...extra });
@@ -198,11 +179,11 @@ export async function peopleView(root, [who], state) {
       } }, 'Start again')), note);
   }
 
-  root.replaceChildren(h('div', { class: 'page' },
+  root.replaceChildren(h('div', { class: 'page people-page' },
     h('header', {}, h('h1', {}, 'People', h('span', { class: 'beta-tag' }, 'Beta')),
-      h('p', { class: 'when lead' }, 'Who can use which agent.')),
-    table, phoneList, pending, sites,
-    h('div', { class: 'two-col' }, admin, log)));
+      h('p', { class: 'when lead' }, 'Who can sign in, and which agents each one uses.')),
+    addBox, everyone, pending, sites,
+    h('div', { class: 'two-col' }, log, admin)));
   await load();
   return () => { alive = false; };
 }
@@ -316,9 +297,9 @@ async function personView(root, username, state) {
     if (['setting_up', 'removing'].includes(p.state) || p.busy) timer = setTimeout(() => { if (alive) load(); }, 3000);
   }
 
-  root.replaceChildren(h('div', { class: 'page person-page' },
-    h('header', { class: 'set-head' }, h('a', { href: '#/people', class: 'set-back' }, icon(ICONS.back), h('span', {}, 'People'))),
-    h('header', {}, title, sub), body));
+  const head = subpage({ title: '', back: '#/people', backLabel: 'People' });
+  head.replaceChild(title, head.querySelector('h1'));
+  root.replaceChildren(h('div', { class: 'page person-page' }, head, sub, body));
   await load();
   return () => { alive = false; clearTimeout(timer); };
 }

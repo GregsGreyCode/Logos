@@ -14,7 +14,7 @@ import { adoptPrefs } from './prefs.js';
 import * as tips from './tips.js';
 import { clearAll as clearCache, owner as cacheOwner } from './cache.js';
 import { noticeboardView, setBadge } from './noticeboard.js';
-import { h, api, getJSON, working, aiState, labelTables, icon, ICONS, wouldLose } from './util.js';
+import { h, api, getJSON, working, aiState, labelTables, icon, ICONS, wouldLose, setViewer, leaveSubpage } from './util.js';
 import { adopt } from './appearance.js';
 import * as mx from './mx.js';
 import * as push from './push.js';
@@ -58,6 +58,16 @@ function toggleSheet(opener, sheet) {
 }
 scrim.addEventListener('click', closeSheet);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openSheet) closeSheet(); });
+// Ctrl/Cmd+K (28 Nov): the search at the top of Settings, from anywhere on a desktop but a chat.
+document.addEventListener('keydown', (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'k' || e.altKey || e.shiftKey) return;
+  if (document.querySelector('.mark-bar')) return;      // in a chat Ctrl+K switches agent (agents-void.js)
+  e.preventDefault();
+  const box = document.querySelector('.set-search input');
+  if (box) { box.focus(); box.select(); return; }
+  try { sessionStorage.setItem('logos.settings.search', '1'); } catch (err) { /* opens without focus */ }
+  location.hash = '#/settings';
+});
 const acctBtn = document.getElementById('acct-btn');
 acctBtn.addEventListener('click', () => toggleSheet(acctBtn, document.getElementById('acct-sheet')));
 // Leaving the screen (a link in the panel, the Back button) closes an open panel.
@@ -128,6 +138,7 @@ async function route() {
   try { sessionStorage.setItem(`logos.last.${name}`, location.hash); } catch (e) { /* private window: no memory */ }
   dropSheet();
   tips.hide();
+  leaveSubpage();                        // a sub-page's back arrow leaves the top bar with it
   if (cleanup) { cleanup(); cleanup = null; }
   for (const a of document.querySelectorAll('.nav-links a, .tabbar a, .sheet a')) {
     const on = a.dataset.view === name || (a.closest('.tabbar') && (a.dataset.also || '').split(' ').includes(name));
@@ -213,6 +224,7 @@ state.me = await getJSON('/api/v2/me').catch((e) => {
 // and redrawing it would lose what is being typed).
 reach.onBack(() => { badge(); if (!location.hash.startsWith('#/chat')) route(); });
 cacheOwner(state.me.username);
+setViewer(state.me);
 // The Calendar's months (this one and those either side) quietly, once the first screen has had its turn, so it opens at once.
 setTimeout(() => { if (!location.hash.startsWith('#/calendar')) warmCalendar(); }, 400);
 mx.bind(state.me.matrix_id);

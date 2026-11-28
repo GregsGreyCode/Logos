@@ -2861,3 +2861,104 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 @media (max-width: 599px) { .apply-card .row .btn { flex: 1 1 100%; } }
 /* Agent switchers list your groups after the agents (Greg, 28 Nov). */
 .switch-head { padding: 8px 12px 4px; font-size: var(--t-xs); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+
+/* ── Settings and People, after the Home Assistant review (28 Nov) ─────────────────────────────── */
+/* One sub-page header: on a phone the back arrow takes the logo's place in the top bar, beside the title;
+   on a wider screen the arrow and the title head the page. */
+.topbar-back { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px;
+  margin-left: -8px; border-radius: 12px; flex: none; color: var(--ink); }
+.topbar-back svg, .subpage-back svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.topbar-back:focus-visible, .subpage-back:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+.has-back .topbar .logo-link { display: none; }
+.page > header.subpage-head { display: flex; flex-direction: row; align-items: center; gap: 4px; }
+.page > header.subpage-head > h1 { flex: 1; min-width: 0; }
+.subpage-back { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; flex: none;
+  border-radius: 50%; color: var(--ink); }
+.subpage-back:hover { background: var(--chip); }
+@media (min-width: 600px) {
+  .page > header.subpage-head { margin: -32px -40px 0; padding: 0 40px 0 28px; min-height: 68px; border-bottom: 1px solid var(--line); }
+  .page > header.subpage-head > h1 { margin: 0; padding: 0; border: 0; min-height: 0; background: none; }
+}
+@media (max-width: 599px) { .page > header.subpage-head { display: none; } }
+.settings .set-crumbs h1 { gap: 0; }
+.set-crumb-sep { color: var(--muted); margin: 0 10px; font-weight: 400; }
+.set-crumb-root { color: var(--muted); font-weight: 500; }
+
+/* Empty and blocked states: an icon, what is going on, one way on. */
+.empty-state { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 20px; border: 1px dashed var(--line);
+  border-radius: var(--r-card); }
+.empty-state p { margin: 0; }
+.empty-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--chip); color: var(--muted); }
+.empty-icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.empty-heading { margin: 4px 0 0; font: 600 var(--t-lg, 17px) var(--font-display); }
+.empty-ask { margin: 4px 0 0; padding: 6px 12px; border-radius: var(--r-pill); background: var(--chip); color: var(--ink); font-size: var(--t-sm); }
+.empty-state .btn { margin-top: 4px; }
+
+/* Search at the top of the list. */
+.set-search { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border: 1px solid var(--line);
+  border-radius: var(--r-pill); background: var(--surface); color: var(--muted); }
+.set-search:focus-within { border-color: var(--accent-text); }
+.set-search svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.set-search input { flex: 1; min-width: 0; min-height: 40px; border: 0; background: none; color: var(--ink); font: inherit; outline: 0; }
+.set-search input::-webkit-search-cancel-button { cursor: pointer; }
+.set-kbd { flex: none; padding: 1px 6px; border: 1px solid var(--line); border-radius: 6px; font: 500 11px var(--font-mono, monospace); color: var(--muted); }
+.set-nomatch { padding: 0 12px; }
+
+/* Needs attention: only when something is wrong. */
+.set-attention { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-color: var(--warn-ink, var(--line));
+  background: var(--warn-bg, var(--raised)); }
+.set-attention[hidden] { display: none; }
+.set-attention-title { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font: 600 var(--t-sm) var(--font-body); color: var(--warn-ink, var(--ink)); }
+.set-attention-title svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.set-attention-row { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+.set-attention-link { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  color: var(--ink); text-decoration: none; font-size: var(--t-sm); }
+.set-attention-link:hover span { text-decoration: underline; }
+.set-attention-link svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
+.set-dismiss { flex: none; font-size: var(--t-xs, 12px); color: var(--muted); }
+
+/* An agent's row: its colour as the icon. */
+.set-agent .set-icon .dot { width: 14px; height: 14px; border-radius: 50%; display: block; }
+
+/* People in one row style: name, and a status line under it. */
+.set-row.two-line { min-height: 60px; padding-top: 8px; padding-bottom: 8px; }
+.set-row.two-line .set-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.set-row.two-line .set-value { max-width: none; white-space: normal; }
+.set-row.no-link { cursor: default; }
+.set-row.no-link:hover { background: none; }
+.people-page .set-group, .people-page .people-add { max-width: 760px; }
+.people-add { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+.people-add form { align-self: stretch; }
+
+/* Speaker: each agent a card; its languages with a switch, the voice, ▶ and Change. */
+.speaker-agents { gap: 14px; }
+.speaker-agent { display: flex; flex-direction: column; gap: 10px; }
+.speaker-agent-head h2 { margin: 0; font-size: 18px; }
+.speaker-agent-head p { margin: 2px 0 0; }
+.speaker-langs { display: flex; flex-direction: column; gap: 6px; }
+.speaker-lang { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 4px 0; border-top: 1px solid var(--line); }
+.speaker-lang:first-child { border-top: 0; }
+.speaker-lang .switch { flex: none; }
+.speaker-lang-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.speaker-lang.off .speaker-lang-text strong { color: var(--muted); }
+.speaker-add { align-self: flex-start; }
+.speaker-service { display: flex; align-items: center; gap: 6px; margin: 0; }
+.lang-more { display: flex; justify-content: space-between; gap: 10px; }
+/* The voice picker: a sheet on a phone, a dialog on a desktop. */
+.pick-panel { max-height: min(86vh, 760px); padding-bottom: 12px; }
+.pick-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pick-body { overflow-y: auto; display: flex; flex-direction: column; gap: 14px; margin: 0 -4px; padding: 0 4px; overscroll-behavior: contain; }
+.pick-group { display: flex; flex-direction: column; gap: 8px; }
+@media (min-width: 600px) { .pick-panel { max-width: 560px; } }
+
+/* Sites the agents may reach. */
+.sites-tools { display: flex; gap: 10px; align-items: center; }
+.sites-tools .set-search { flex: 1; }
+.sites-agents { display: flex; flex-direction: column; gap: 6px; }
+.site-agent .rows { margin-top: 8px; }
+.sites-agents .site-row { flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 10px; }
+.sites-agents .site-row .row-main { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; }
+.sites-agents .site-row .btn.small { margin-left: 0; flex: none; }
+.site-deny .site-name { color: var(--muted); }
+.sites-more { margin-top: 6px; }
+.site-add { margin-top: 10px; }

@@ -57,6 +57,11 @@ class FakeDb:
     def get_user_by_id(self, uid):
         return USERS.get(uid)
 
+    def list_users(self, limit=20, role=None, status=None, **_):
+        rows = [{"username": "greg", "display_name": "Greg", "role": "admin", "created_at": 1},
+                {"username": "bere", "display_name": "Béré", "role": "user", "created_at": 2}]
+        return [r for r in rows if not role or r["role"] == role], 2
+
     def get_agent_by_name(self, name):
         return {"id": f"agent_{name}", "name": name, "model": "m", "description": DEFS[name].get("display_name", "")}
 
@@ -121,6 +126,11 @@ def test_me_and_agents_are_per_user(run):
     assert [(a["name"], a["running"], a["shared"]) for a in body["agents"]] == [
         ("greg", True, False), ("household", False, True)]
     assert [a["name"] for a in run("u-bere", "/api/v2/agents")[1]["agents"]] == ["household"]
+
+
+def test_me_names_who_manages_logos(run):
+    # A page someone cannot change themselves says whom to ask (Settings, 28 Nov).
+    assert run("u-bere", "/api/v2/me")[1]["admins"] == ["Greg"]
 
 
 def test_someone_elses_agent_is_a_404(run):

@@ -64,6 +64,9 @@ export const ICONS = {
   user: ['M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z', 'M4 21v-1a7 7 0 0 1 16 0v1'],
   chevron: ['M9 6l6 6-6 6'],
   back: ['M19 12H5', 'M11 6l-6 6 6 6'],
+  search: ['M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14z', 'M20 20l-4-4'],
+  globe: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z'],
+  alert: ['M12 4l9 16H3z', 'M12 10v4', 'M12 17h.01'],
   advisor: ['M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z', 'M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'],
 };
 
@@ -324,4 +327,69 @@ export function revealable(input) {
       btn.replaceChildren(icon(show ? ICONS.eyeOff : ICONS.eye));
     } }, icon(ICONS.eye));
   return h('div', { class: 'reveal' }, input, btn);
+}
+
+// Who is looking (app.js sets it once /api/v2/me answers): whether they manage Logos, and who does.
+let viewer = { admin: false, admins: [] };
+export function setViewer(me) {
+  viewer = { admin: (me || {}).role === 'admin', admins: (me || {}).admins || [] };
+}
+export const isAdmin = () => viewer.admin;
+// The name to ask, for someone who cannot change it themselves: the first person who manages Logos.
+export const adminName = () => viewer.admins[0] || 'whoever manages Logos';
+
+// An empty or blocked page (28 Nov, after Home Assistant's ha-empty-state): an icon, what is going on, and
+// one way on that suits who is looking. `action` {label, href | onclick, admin}: with admin true only
+// whoever manages Logos gets the button; anyone else is told whom to ask ("Ask Greg") instead.
+export function emptyState({ icon: glyph = 'bulb', heading, text = '', action = null }) {
+  let foot = null;
+  if (action && action.admin && !viewer.admin) {
+    foot = h('p', { class: 'empty-ask' }, `Ask ${adminName()}${action.ask ? ` ${action.ask}` : ''}.`);
+  } else if (action && action.href) {
+    foot = h('a', { class: 'btn', href: action.href }, action.label);
+  } else if (action && action.onclick) {
+    foot = h('button', { type: 'button', class: 'btn', onclick: action.onclick }, action.label);
+  }
+  return h('div', { class: 'empty-state', role: 'status' },
+    h('span', { class: 'empty-icon', 'aria-hidden': 'true' }, icon(ICONS[glyph] || ICONS.bulb)),
+    heading ? h('h3', { class: 'empty-heading' }, heading) : null,
+    text ? h('p', { class: 'when' }, text) : null, foot);
+}
+
+// One header for a page under another (28 Nov, after Home Assistant's hass-subpage): the back arrow and
+// the page's name. On a phone both go into the top bar (in place of the logo), so nothing is repeated
+// under it; on a desktop they head the page. Returns the desktop header; app.js clears the top bar on
+// every route change.
+export function subpage({ title, back, backLabel }) {
+  const name = document.getElementById('screen-name');
+  if (name) name.textContent = title;
+  const bar = document.querySelector('.topbar');
+  if (bar) {
+    for (const old of bar.querySelectorAll('.topbar-back')) old.remove();
+    bar.prepend(h('a', { href: back, class: 'topbar-back', 'aria-label': `Back to ${backLabel}`, title: `Back to ${backLabel}` }, icon(ICONS.back)));
+    document.documentElement.classList.add('has-back', 'title-centred');
+  }
+  return h('header', { class: 'subpage-head' },
+    h('a', { href: back, class: 'subpage-back', 'aria-label': `Back to ${backLabel}`, title: `Back to ${backLabel}` }, icon(ICONS.back)),
+    h('h1', {}, title));
+}
+export function leaveSubpage() {
+  for (const old of document.querySelectorAll('.topbar .topbar-back')) old.remove();
+  document.documentElement.classList.remove('has-back');
+}
+
+// A sheet from the bottom on a phone, a dialog in the middle on a desktop (28 Nov): `body` is what it
+// holds. Closes with its ✕, Escape or a tap outside; returns close().
+export function sheet({ title, body, onClose = null }) {
+  const layer = h('div', { class: 'ask-layer sheet-layer' });
+  const close = () => { layer.remove(); document.removeEventListener('keydown', key); if (onClose) onClose(); };
+  const key = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', key);
+  layer.append(h('div', { class: 'ask-scrim', onclick: close }),
+    h('div', { class: 'ask-panel pick-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      h('div', { class: 'pick-head' }, h('h2', {}, title),
+        h('button', { type: 'button', class: 'icon-btn pick-close', 'aria-label': 'Close', onclick: close }, '✕')),
+      h('div', { class: 'pick-body' }, ...[body].flat())));
+  document.body.append(layer);
+  return close;
 }

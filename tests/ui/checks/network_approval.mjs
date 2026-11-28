@@ -98,11 +98,16 @@ for (const [w, hgt, mobile, tag] of [[412, 915, true, 'phone'], [1280, 860, fals
     { name: 'household', display_name: 'Household agent', yours: false, people: ['greg', 'bere'], always: [], once: [], deny: [] }] } }));
   await page.route('**/api/v2/network-sites/*/remove', (r) => { removed.push(r.request().postData()); r.fulfill({ json: { ok: true } }); });
   await page.goto(`${base}/#/people`); await page.waitForTimeout(2000);
-  const sites = page.locator('.network-sites');
-  ok(await sites.isVisible(), 'people: the admin sees the sites each agent may reach');
+  // One row on People (28 Nov), opening its own page.
+  const row = page.locator('section[aria-label="Sites"] .set-row');
+  ok(/2 allowed/.test(await row.textContent()), 'people: the admin sees the sites the agents may reach, summed up');
+  await row.tap(); await page.waitForTimeout(1500);
+  await page.locator('details[data-agent="greg"] summary').tap(); await page.locator('details[data-agent="household"] summary').tap(); await page.waitForTimeout(200);
+  const sites = page.locator('.sites-agents');
   const text = await sites.textContent();
   ok(text.includes('pypi.org') && text.includes('example.org:8443') && text.includes('Only Logos itself.'), 'people: per agent, with the port when not 443');
-  await sites.getByRole('button', { name: 'Remove' }).first().click(); await page.waitForTimeout(300);
+  await page.locator('.sites-edit').tap(); await page.waitForTimeout(200);
+  await sites.getByRole('button', { name: /^Remove/ }).first().tap(); await page.waitForTimeout(300);
   ok(removed[0] && removed[0].includes('pypi.org'), `people: Remove takes it away (${removed[0]})`);
   await page.screenshot({ path: `${process.argv[2]}/network-people.png` });
   ok(errs.length === 0, `people: no page errors ${errs.join(' | ')}`);
