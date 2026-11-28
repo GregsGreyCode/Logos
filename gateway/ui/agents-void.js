@@ -416,56 +416,84 @@ export async function voidView(root, agents, others = []) {
 }
 
 
-// Groups for the agent switchers (Greg, 28 Nov: from Household Group you could switch to an agent but not back):
-// every switcher lists the agents first, then your groups. Needs this browser's chat connection; none, no groups.
+
+// Groups for the agent switcher (Greg, 28 Nov: from Household Group you could switch to an agent but not back):
+// it lists the agents first, then your groups. Needs this browser's chat connection; none, no groups.
 async function groupRows(agents) {
   try {
     const [{ conversationsOf }, c] = await Promise.all([import('./chat-mx.js'), mx.get()]);
     return c ? conversationsOf(c, agents).filter((r) => r.kind === 'group') : [];
   } catch (e) { return []; }
 }
-function groupItems(rows) {
+const tick = () => h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓');
+function groupItems(rows, here) {
   if (!rows.length) return [];
   return [h('div', { class: 'switch-head', role: 'presentation' }, 'Groups'),
-    ...rows.map((r) => h('a', { href: r.link, role: 'option', class: 'switch-item', 'aria-selected': 'false', 'data-group': r.link },
-      groupAvatar(r.agent), h('span', { class: 'switch-text' }, h('strong', {}, r.name), h('span', { class: 'switch-mood' }, 'Group'))))];
+    ...rows.map((r) => h('a', { href: r.link, role: 'option', class: `switch-item${r.link === here ? ' on' : ''}`, 'aria-selected': String(r.link === here), 'data-group': r.link },
+      groupAvatar(r.agent), h('span', { class: 'switch-text' }, h('strong', {}, r.name), h('span', { class: 'switch-mood' }, 'Group')),
+      r.link === here ? tick() : null))];
 }
 
-// In a conversation: the agent switcher (Greg, 23 Nov: "a smoother, cooler switching mechanism that can
-// accommodate more agents"). One button, the agent's mark, its name and ▾, opens a list of every agent with
-// its mark and what it is doing, the one you are in ticked; a search box once there are more than five;
-// arrows and Enter to move and pick, Escape to close, and Ctrl+K (⌘K) opens it from anywhere in a chat.
-export function markBar(agents, current) {
-  const list = h('div', { class: 'switch-list', role: 'listbox', 'aria-label': 'Switch agent' });
+// The views of an agent, in the pill on the right (Greg, 21 Nov): it names where you are and opens to the others.
+const LABELS = { chat: 'Chat', brain: 'Brain', about: 'Routines', settings: 'Settings' };
+// Picking another agent keeps you where you are (Greg, 23 Nov): its chat, brain, routines or settings.
+const PLACE = { chat: (n) => `#/chat/${n}`, brain: (n) => `#/brain/${n}`, about: (n) => `#/agents/${n}`, settings: (n) => `#/agents/${n}/settings` };
+const phone = () => window.matchMedia('(max-width: 599px)').matches;
+
+// One header for every agent screen (UI review, recommendation 6, Greg, 28 Nov: each screen had its own name switch and
+// view pill, and the group's header was another again). As Home Assistant's one top bar: ‹ back to all agents and chats;
+// the name with ▾, which lists the agents (with what each is doing), then your groups, the one you are in ticked, with a
+// search once there are more than five agents; and on the right the view pill (Chat, Brain, Routines, Settings) where the
+// screen has views. The same control in the same place in an agent's chat, its Brain, Routines and Settings, and in a
+// group (its picture and who is in it in the name; no views). `tools` are the screen's own buttons, just before the pill.
+// In a chat Ctrl+K (⌘K) opens the switcher (Greg, 23 Nov); arrows and Enter move and pick, Escape closes.
+// No logo beside the name (Greg, 28 Nov); the group keeps its picture.
+export function agentBar(agent, active, agents = [], { group = null, tools = [], hotkey = false } = {}) {
+  const here = group ? group.link : null;
+  const go = PLACE[active] || PLACE.chat;
+  const list = h('div', { class: 'switch-list', role: 'listbox', 'aria-label': 'Switch agent or group' });
   const search = agents.length > 5 ? h('input', { type: 'search', class: 'switch-search', placeholder: 'Find an agent…', 'aria-label': 'Find an agent', autocomplete: 'off' }) : null;
-  const pop = h('div', { class: 'switch-pop', hidden: true },
+  const pop = h('div', { class: `switch-pop agent-bar-pop${group ? ' group-pop' : ''}`, hidden: true },
     search, list, h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
-  const btn = h('button', { type: 'button', class: 'switch-btn', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
-    title: 'Switch agent (Ctrl+K)' },
-  h('span', { class: 'mark-name' }, current.display_name),   // no logo in the chat header (Greg, 28 Nov)
-  h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
-  const row = (a) => h('a', { href: `#/chat/${a.name}`, class: `switch-item${a.name === current.name ? ' on' : ''}`, role: 'option',
-    'aria-selected': String(a.name === current.name), 'data-agent': a.name },
-  mark(a, { size: 'tiny' }), h('span', { class: 'switch-text' }, h('strong', {}, a.display_name), h('span', { class: 'switch-mood' }, 'Asleep')),
-  a.name === current.name ? h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓') : null);
-  const items = agents.map(row);
+  const items = agents.map((a) => {
+    const on = !group && a.name === agent.name;
+    return h('a', { href: go(a.name), class: `switch-item${on ? ' on' : ''}`, role: 'option', 'aria-selected': String(on), 'data-agent': a.name },
+      mark(a, { size: 'tiny', mood: baseMood(a) }), h('span', { class: 'switch-text' }, h('strong', {}, a.display_name), h('span', { class: 'switch-mood' }, MOODS[baseMood(a)])),
+      on ? tick() : null);
+  });
   list.replaceChildren(...items);
-  const shown = () => items.filter((el) => !el.hidden);
   let groupsShown = false;
   const addGroups = async () => {
-    const extra = groupItems(await groupRows(agents));
+    const extra = groupItems(await groupRows(agents), here);
     if (!extra.length || groupsShown) return;
     groupsShown = true; list.append(...extra);
     items.push(...extra.filter((el) => el.matches('a')));
   };
   addGroups();
+  const btn = h('button', { type: 'button', class: `switch-btn agent-bar-switch${group ? ' group-switch' : ''}`, 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+    title: hotkey ? 'Switch agent or group (Ctrl+K)' : 'Switch agent or group' },
+  group ? groupAvatar(agent) : null,
+  group ? h('span', { class: 'group-title' }, group.title, group.who) : h('span', { class: 'mark-name' }, agent.display_name),
+  h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
+  const shown = () => items.filter((el) => !el.hidden);
+  const filter = () => { const q = (search?.value || '').trim().toLowerCase(); for (const el of items) el.hidden = !!q && !el.textContent.toLowerCase().includes(q); };
+  // What each agent is doing, fresh each time the list opens.
+  const freshen = async () => {
+    const m = await moods(agents).catch(() => ({}));
+    for (const el of items) {
+      if (!el.dataset.agent) continue;
+      const md = m[el.dataset.agent] || 'asleep';
+      el.querySelector('.switch-mood').textContent = MOODS[md];
+      const mk = el.querySelector('.agent-mark'); if (mk) mk.className = mk.className.replace(/mood-\w+/, `mood-${md}`);
+    }
+  };
   const open = () => {
     if (!groupsShown) addGroups();
     pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); bar.classList.add('open');
     if (search) { search.value = ''; filter(); search.focus(); } else (items.find((el) => el.classList.contains('on')) || items[0])?.focus();
+    freshen();
   };
   const close = (refocus) => { if (pop.hidden) return; pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); bar.classList.remove('open'); if (refocus) btn.focus(); };
-  const filter = () => { const q = (search?.value || '').trim().toLowerCase(); for (const el of items) el.hidden = !!q && !el.textContent.toLowerCase().includes(q); };
   btn.addEventListener('click', () => (pop.hidden ? open() : close(true)));
   search?.addEventListener('input', filter);
   pop.addEventListener('keydown', (e) => {
@@ -476,95 +504,43 @@ export function markBar(agents, current) {
     else if (e.key === 'Enter' && document.activeElement === search && vis[0]) { e.preventDefault(); vis[0].click(); }
   });
   pop.addEventListener('click', (e) => { if (e.target.closest('a')) close(false); });
-  const outside = (e) => { if (!bar.isConnected) { document.removeEventListener('pointerdown', outside, true); return; } if (!bar.contains(e.target)) close(false); };
+  const outside = (e) => { if (!bar.isConnected) { document.removeEventListener('pointerdown', outside, true); return; } if (!who.contains(e.target)) close(false); };
   document.addEventListener('pointerdown', outside, true);
-  const hotkey = (e) => {
-    if (!bar.isConnected) { document.removeEventListener('keydown', hotkey); return; }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); pop.hidden ? open() : close(true); }
-  };
-  document.addEventListener('keydown', hotkey);
-  const bar = h('div', { class: 'mark-bar switch', role: 'navigation', 'aria-label': 'Agents' },
-    h('a', { href: '#/chat', class: 'mark-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'), btn, pop);
-  let alive = true;
-  const tick = async () => {
-    if (!alive || !bar.isConnected) return;
-    const m = await moods(agents);
-    for (const el of bar.querySelectorAll('.agent-mark')) {
-      const mood = m[el.dataset.agent] || 'asleep';
-      el.className = el.className.replace(/mood-\w+/, `mood-${mood}`);
-      const a = agents.find((x) => x.name === el.dataset.agent);
-      el.setAttribute('aria-label', `${a.display_name}: ${MOODS[mood]}`); el.title = `${a.display_name} · ${MOODS[mood]}`;
-    }
-    for (const el of items) { const w = el.querySelector('.switch-mood'); if (w) w.textContent = MOODS[m[el.dataset.agent] || 'asleep']; }
-  };
-  tick();
-  const t = setInterval(() => { if (!bar.isConnected) { alive = false; clearInterval(t); } else tick(); }, 8000);
-  return bar;
-}
-
-// Phone (Greg, 21 Nov): inside an agent, one bar: ‹ back to all agents, its name, and one pill naming
-// where you are (Chat, About) that opens to Chat | Brain | About, so the name has the room (Greg, 21 Nov).
-const LABELS = { chat: 'Chat', brain: 'Brain', about: 'Routines', settings: 'Settings' };
-// The name is the phone's agent switcher (Greg, 23 Nov): a tap lists every agent with its mark and what it is
-// doing, and picking one keeps you where you are (its chat, brain or routines).
-const PLACE = { chat: (n) => `#/chat/${n}`, brain: (n) => `#/brain/${n}`, about: (n) => `#/agents/${n}`, settings: (n) => `#/agents/${n}/settings` };
-// The agent's name as a switcher (the chat's, on the phone's bar and on the Brain page): a tap lists every agent.
-export function agentSwitch(agent, active, agents = []) {
-  let name = h('strong', { class: 'agent-bar-name' }, agent.display_name);
-  if (agents.length > 1) {
-    const go = PLACE[active] || PLACE.chat;
-    const pop = h('div', { class: 'switch-pop agent-bar-pop', role: 'listbox', 'aria-label': 'Switch agent', hidden: true },
-      ...agents.map((a) => h('a', { href: go(a.name), role: 'option', class: `switch-item${a.name === agent.name ? ' on' : ''}`, 'data-agent': a.name,
-        'aria-selected': String(a.name === agent.name) },
-      mark(a, { size: 'tiny' }), h('span', { class: 'switch-text' }, h('strong', {}, a.display_name), h('span', { class: 'switch-mood' }, '')),
-      a.name === agent.name ? h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓') : null)),
-      h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
-    groupRows(agents).then((rows) => { const all = pop.querySelector('.switch-all'); for (const el of groupItems(rows)) pop.insertBefore(el, all); });
-    const btn = h('button', { type: 'button', class: 'agent-bar-name agent-bar-switch', 'aria-haspopup': 'listbox', 'aria-expanded': 'false' },
-      agent.display_name, h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
-    const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
-    btn.addEventListener('click', async () => {
-      if (!pop.hidden) return close();
-      pop.hidden = false; btn.setAttribute('aria-expanded', 'true');
-      const m = await moods(agents).catch(() => ({}));
-      for (const el of pop.querySelectorAll('.switch-item')) {
-        const md = m[el.dataset.agent] || 'asleep';
-        el.querySelector('.switch-mood').textContent = MOODS[md];
-        const mk = el.querySelector('.agent-mark'); if (mk) mk.className = mk.className.replace(/mood-\w+/, `mood-${md}`);
-      }
-    });
-    pop.addEventListener('click', (e) => { if (e.target.closest('a')) close(); });
-    const away = (e) => { if (!btn.isConnected) { document.removeEventListener('pointerdown', away, true); return; } if (!pop.hidden && !pop.contains(e.target) && !btn.contains(e.target)) close(); };
-    document.addEventListener('pointerdown', away, true);
-    name = h('span', { class: 'agent-bar-who' }, btn, pop);
+  if (hotkey) {
+    const key = (e) => {
+      if (!bar.isConnected) { document.removeEventListener('keydown', key); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); pop.hidden ? open() : close(true); }
+    };
+    document.addEventListener('keydown', key);
   }
-  return name;
-}
+  const who = h('span', { class: 'agent-bar-who' }, btn, pop);
 
-const phone = () => window.matchMedia('(max-width: 599px)').matches;
-export function agentBar(agent, active, agents = []) {
-  const item = (key, href, extra = {}) => h('a', { href, class: `agent-tab${key === active ? ' on' : ''}`, role: 'menuitem',
-    'aria-current': key === active ? 'page' : null, ...extra }, LABELS[key],
-    key === 'brain' && phone() ? h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗') : null);
-  const menu = h('details', { class: 'agent-menu' },
-    h('summary', { class: 'agent-tab on', 'aria-label': `${LABELS[active] || 'Chat'}: switch to Chat, Brain, Routines or Settings` },
-      LABELS[active] || 'Chat', h('span', { class: 'agent-menu-caret', 'aria-hidden': 'true' }, '▾')),
-    h('div', { class: 'agent-menu-list', role: 'menu' },
-      item('chat', `#/chat/${agent.name}`),
-      // On a phone Brain opens the agent's vault straight in Obsidian (Greg, 21 Nov); a desktop has no
-      // Obsidian, so there it is the reader in Logos (the desktop never shows this bar).
-      phone() ? item('brain', `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}&file=README.md`,
-        { title: 'Open this brain in Obsidian' }) : item('brain', `#/brain/${agent.name}`),
-      item('about', `#/agents/${agent.name}`),
-      item('settings', `#/agents/${agent.name}/settings`)));
-  menu.addEventListener('click', (e) => { if (e.target.closest('a')) menu.open = false; });
-  const shut = (e) => {
-    if (!menu.isConnected) { document.removeEventListener('pointerdown', shut, true); return; }
-    if (menu.open && !menu.contains(e.target)) menu.open = false;
-  };
-  document.addEventListener('pointerdown', shut, true);
-  const name = agentSwitch(agent, active, agents);
-  return h('nav', { class: 'agent-bar', 'aria-label': agent.display_name },
-    h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents', title: 'All agents' }, '‹'),
-    name, menu);
+  // The view pill.
+  let menu = null;
+  if (LABELS[active]) {
+    const item = (k, href, extra = {}) => h('a', { href, class: `agent-tab${k === active ? ' on' : ''}`, role: 'menuitem',
+      'aria-current': k === active ? 'page' : null, ...extra }, LABELS[k],
+      k === 'brain' && phone() ? h('span', { class: 'agent-tab-out', 'aria-hidden': 'true' }, ' ↗') : null);
+    menu = h('details', { class: 'agent-menu' },
+      h('summary', { class: 'agent-tab on', 'aria-label': `${LABELS[active]}: switch to Chat, Brain, Routines or Settings` },
+        LABELS[active], h('span', { class: 'agent-menu-caret', 'aria-hidden': 'true' }, '▾')),
+      h('div', { class: 'agent-menu-list', role: 'menu' },
+        item('chat', `#/chat/${agent.name}`),
+        // On a phone Brain opens the agent's vault straight in Obsidian (Greg, 21 Nov); a desktop has no Obsidian, so
+        // there it is the reader in Logos.
+        phone() ? item('brain', `obsidian://open?vault=${encodeURIComponent(agent.obsidian_vault || `brain-${agent.name}`)}&file=README.md`,
+          { title: 'Open this brain in Obsidian' }) : item('brain', `#/brain/${agent.name}`),
+        item('about', `#/agents/${agent.name}`),
+        item('settings', `#/agents/${agent.name}/settings`)));
+    menu.addEventListener('click', (e) => { if (e.target.closest('a')) menu.open = false; });
+    const shut = (e) => {
+      if (!menu.isConnected) { document.removeEventListener('pointerdown', shut, true); return; }
+      if (menu.open && !menu.contains(e.target)) menu.open = false;
+    };
+    document.addEventListener('pointerdown', shut, true);
+  }
+  const bar = h('nav', { class: `agent-bar one-bar${group ? ' group-bar' : ''}${hotkey ? ' has-hotkey' : ''}`, 'aria-label': group ? 'Group' : agent.display_name },
+    h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents and chats', title: 'All agents and chats' }, '‹'),
+    who, ...tools.filter(Boolean), menu);
+  return bar;
 }

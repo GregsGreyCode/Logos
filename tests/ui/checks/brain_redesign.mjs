@@ -9,11 +9,12 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const errs = []; page.on('pageerror', (e) => errs.push(e.message));
 await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/brain/greg`); await page.waitForTimeout(2500);
-ok(await page.locator('.brain-head h1').innerText() === 'Brain' && await page.locator('.brain-head .agent-bar-switch').isVisible(), 'band: the title and the chat\'s agent switcher');
-ok(await page.locator('.brain-head select, .brain-head input[type="search"]:visible').count() === 0, 'band: no dropdown and no search crowding it');
+// The band is the one agent bar (UI review, 28 Nov): ‹, the agent's name switch, and the pill saying Brain.
+ok(await page.locator('.brain > .agent-bar .agent-bar-switch').isVisible() && (await page.locator('.brain > .agent-bar .agent-menu > summary').innerText()).startsWith('Brain'), 'band: the chat\'s agent switcher and a pill saying Brain');
+ok(await page.locator('.brain > .agent-bar select, .brain > .agent-bar input[type="search"]:visible, .brain-head:visible').count() === 0, 'band: no dropdown and no search crowding it');
 ok(await page.locator('.brain > .agent-bar .agent-menu > summary').isVisible(), 'band: the Chat | Brain | Routines pill');
-await page.locator('.brain-head .agent-bar-switch').click(); await page.waitForTimeout(400);
-const pop = await page.locator('.brain-head .agent-bar-pop:not([hidden])').boundingBox();
+await page.locator('.brain > .agent-bar .agent-bar-switch').click(); await page.waitForTimeout(400);
+const pop = await page.locator('.brain > .agent-bar .agent-bar-pop:not([hidden])').boundingBox();
 ok(pop && pop.x >= 216 && pop.width > 250, 'the switcher opens as a popover beside the name (not full screen)');
 await page.keyboard.press('Escape'); await page.mouse.click(900, 500); await page.waitForTimeout(300);
 ok(await page.locator('.tree .tree-top input[type="search"]').isVisible(), 'page list: search at the top');

@@ -14,7 +14,7 @@ import { voiceNote, imageThumb, fileCard, prepareFile, sendPrepared, fileSize } 
 import { stepsView } from './chat.js';
 import { takeAskFull, takeDraft } from './home.js';
 import { createRecorder, voiceBar } from './voice.js';
-import { markBar, agentBar, groupAvatar, mark } from './agents-void.js';
+import { agentBar, mark } from './agents-void.js';
 import { getPref } from './prefs.js';
 
 const ARCHIVE_DAYS = 30;
@@ -245,65 +245,19 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   syncSend();
   off.push(() => voice.destroy());
 
-  // In a group: the agent chat's header (Greg, 28 Nov: "the Household Group UI is different from the agent UIs"):
-  // ‹ back, the group's picture, its name with ▾ (a list of your chats to switch to) and who is in it underneath;
-  // ≡ on the right opens its panel (members, invite, leave). Above the box, the agents to ask: agents answer in a
-  // group only when asked (an @mention), so the message says whom it is for.
+  // In a group: the agent chat's header (Greg, 28 Nov: "the Household Group UI is different from the agent UIs"), the one
+  // agent bar (agents-void.js agentBar): ‹ back, the group's picture, its name with ▾ (the agents, then your groups) and who
+  // is in it underneath; ≡ on the right opens its panel (members, invite, leave). Above the box, the agents to ask: agents
+  // answer in a group only when asked (an @mention), so the message says whom it is for.
   const groupTitle = h('span', { class: 'mark-name' }, 'Group');
   const groupWho = h('span', { class: 'when group-who' });
-  const groupHead = group ? groupBar() : null;
-  function groupBar() {
-    const list = h('div', { class: 'switch-list', role: 'listbox', 'aria-label': 'Switch chat' });
-    const pop = h('div', { class: 'switch-pop group-pop', hidden: true }, list, h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
-    const btn = h('button', { type: 'button', class: 'switch-btn group-switch', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
-      title: 'Switch chat (Ctrl+K)' }, groupAvatar(agent), h('span', { class: 'group-title' }, groupTitle, groupWho),
-    h('span', { class: 'switch-caret', 'aria-hidden': 'true' }, '▾'));
-    const bar = h('nav', { class: 'group-bar', 'aria-label': 'Group' },
-      h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents and chats', title: 'All agents and chats' }, '‹'), btn, pop);
-    // Your chats, as in the Chats list: each agent's chat and each group, this one ticked.
-    const fill = () => {
-      if (!c) return [];
-      // Agents first, then groups (Greg, 28 Nov), as in the agent switchers.
-      const all = conversationsOf(c, agents);
-      const rank = (r) => (r.kind === 'agent' ? agents.findIndex((a) => a.name === r.agent?.name) : 1000);
-      const rows = [...all.filter((r) => r.kind === 'agent').sort((a, b) => rank(a) - rank(b)), ...all.filter((r) => r.kind !== 'agent')];
-      const items = rows.map((r) => {
-        const on = r.kind === 'group' && r.link === main;
-        return h('a', { href: r.link, role: 'option', class: `switch-item${on ? ' on' : ''}`, 'aria-selected': String(on) },
-          r.kind === 'agent' ? mark(r.agent, { size: 'tiny' }) : groupAvatar(r.agent),
-          h('span', { class: 'switch-text' }, h('strong', {}, r.name), h('span', { class: 'switch-mood' }, r.kind === 'group' ? 'Group' : 'Agent')),
-          on ? h('span', { class: 'switch-tick', 'aria-hidden': 'true' }, '✓') : null);
-      });
-      list.replaceChildren(...items);
-      return items;
-    };
-    let items = [];
-    const open = () => {
-      items = fill(); pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); bar.classList.add('open');
-      (items.find((el) => el.classList.contains('on')) || items[0])?.focus();
-    };
-    const close = (refocus) => { if (pop.hidden) return; pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); bar.classList.remove('open'); if (refocus) btn.focus(); };
-    btn.addEventListener('click', () => (pop.hidden ? open() : close(true)));
-    pop.addEventListener('keydown', (e) => {
-      const i = items.indexOf(document.activeElement);
-      if (e.key === 'Escape') { e.preventDefault(); close(true); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); (items[i + 1] || items[0])?.focus(); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); (items[i - 1] || items[items.length - 1])?.focus(); }
-    });
-    pop.addEventListener('click', (e) => { if (e.target.closest('a')) close(false); });
-    const outside = (e) => { if (!bar.contains(e.target)) close(false); };
-    const hotkey = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); pop.hidden ? open() : close(true); } };
-    document.addEventListener('pointerdown', outside, true);
-    document.addEventListener('keydown', hotkey);
-    off.push(() => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', hotkey); });
-    return bar;
-  }
+  const mxAgents = agents.filter((a) => a.matrix_id);
+  // The chat's own buttons (≡: the chats panel) sit in the bar, just before the view pill (UI review, 28 Nov).
+  const tools = [sideBits.reopen, sideBits.viewMenu, sideBits.convBtn];
+  const headBar = threadId ? null : group
+    ? agentBar(agent, null, mxAgents, { group: { link: main, title: groupTitle, who: groupWho }, tools, hotkey: true })
+    : agentBar(agent, 'chat', mxAgents, { tools, hotkey: true });
   const pageTitle = h('h1', { class: 'visually-hidden' }, agent.display_name);
-  // On a phone the agent's mark sits after ‹ too (Greg, 28 Nov: it pulses with the thinking row; the desktop has the switcher's).
-  function withPhoneMark(bar) {
-    bar.querySelector('.agent-back')?.after(h('span', { class: 'phone-mark', 'aria-hidden': 'true' }, mark(agent, { size: 'tiny' })));
-    return bar;
-  }
   // While the agent works, its mark in the header and the one in the thinking row pulse together (Greg, 28 Nov): one
   // class on the chat starts both, and both animations are given the same start time so they stay in step.
   let pulseFrom = null;
@@ -331,12 +285,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
 
   root.replaceChildren(
     h('section', { class: 'chat', 'aria-label': 'Conversation' },
-      h('header', { class: `chat-head${group ? ' group-head' : ''}` },
-        // M4: the agents' marks replace the agent tabs; inside a thread, its title; in a group, its name.
-        group ? groupHead : threadId ? null : markBar(agents.filter((a) => a.matrix_id), agent),
-        threadId || group ? null : agentBar(agent, 'chat', agents.filter((a) => a.matrix_id)),
-        crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : pageTitle,
-        sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null),
+      h('header', { class: `chat-head${group ? ' group-head' : ''}${headBar ? ' with-bar' : ''}` },
+        // The one agent bar (UI review, 28 Nov); inside a thread, its title with a way back.
+        headBar || crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : pageTitle,
+        ...(headBar ? [] : [sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null])),
       group ? null : chipsRow, log, thinkingRow, note, modelLine, pending, form),
     sideBits.side, sideBits.sideScrim || null);
 
@@ -657,11 +609,12 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       h('span', { class: 'conv-title' }, title), h('span', { class: 'when' }, last ? when(last / 1000) : ''));
     convList.replaceChildren(link(main, 'Main conversation', 0, !threadId),
       ...list.map((t) => link(`${main}/thread/${encodeURIComponent(t.id)}`, t.title, t.last, t.id === threadId)));
-    const chip = (href, label, on, extra) => h('a', { href, class: `mx-chip${on ? ' on' : ''}${extra || ''}`, role: 'tab', 'aria-selected': String(!!on), title: label }, h('span', { class: 'chip-text' }, label));
-    // On a phone the conversations panel (☰) opens from the end of this row; the header has the agent bar.
+    const chip = (href, label, on, extra, title = label) => h('a', { href, class: `mx-chip${on ? ' on' : ''}${extra || ''}`, role: 'tab', 'aria-selected': String(!!on), title }, h('span', { class: 'chip-text' }, label));
+    // On a phone the conversations panel (☰) opens from the end of this row; the header has the agent bar. + and ☰ say what
+    // they are (UI review, 28 Nov: "+, Main and ≡ without labels: a lot to decode").
     const panel = sideBits.convBtn ? h('button', { type: 'button', class: 'mx-chip panel', 'aria-label': 'All conversations', title: 'All conversations',
-      onclick: () => sideBits.convBtn.click() }, '☰') : null;
-    chipsRow.replaceChildren(chip(`${main}/thread/new`, '+', isNew, ' add'), chip(main, 'Main', !threadId),
+      onclick: () => sideBits.convBtn.click() }, h('span', { 'aria-hidden': 'true' }, '☰'), ' Chats') : null;
+    chipsRow.replaceChildren(chip(`${main}/thread/new`, '+ New', isNew, ' add', 'New conversation'), chip(main, 'Main', !threadId, '', 'Main conversation'),
       ...list.map((t) => chip(`${main}/thread/${encodeURIComponent(t.id)}`, t.title, t.id === threadId)), panel);
   }
 

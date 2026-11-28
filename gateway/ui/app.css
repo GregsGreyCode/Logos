@@ -1029,7 +1029,6 @@ a.btn.mx-new { justify-content: center; }
 @media (prefers-reduced-motion: reduce) { .mark-fx, .mark-fy, .mark-glow { animation: none !important; } }
 
 /* In a conversation: the marks in the header */
-.mark-bar { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .mark-name { font: 600 20px/24px var(--font-display); color: var(--ink); text-decoration: none; white-space: nowrap; }
 .mark-name:hover { color: var(--accent-text); }
 .mark-others { display: flex; align-items: center; gap: 10px; margin-left: 8px; padding-left: 12px; border-left: 1px solid var(--line); }
@@ -1197,10 +1196,7 @@ a.btn.mx-new { justify-content: center; }
   .in-conv .mx-chips { padding-top: 0; }
   .in-conv .chat { touch-action: pan-y; }   /* the pinch goes back instead of zooming the page */
 }
-.mark-back { display: none; }
 @media (max-width: 599px) {
-  .in-conv .mark-back { display: inline-flex; align-items: center; justify-content: center; width: 32px; min-height: 44px;
-    margin-right: -6px; font: 400 32px/1 var(--font-body); color: var(--ink); text-decoration: none; }
   .gesture-tip { position: absolute; left: 16px; right: 16px; bottom: 84px; z-index: 5; padding: 12px 16px; border-radius: 14px;
     background: var(--surface-2, var(--surface)); border: 1px solid var(--line); color: var(--ink); font-size: var(--t-sm);
     box-shadow: 0 8px 24px rgba(0,0,0,.25); transition: opacity .5s ease; text-align: center; }
@@ -1296,11 +1292,6 @@ form.recording > :not(.rec-bar) { display: none !important; }
   .brain.is-searching .brain-side .changes:not(.results) { display: none; }
   .brain-side .hit { display: flex; flex-direction: column; gap: 2px; padding: 12px 0; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
 }
-@media (max-width: 599px) {
-  /* In a conversation the header is just ‹ and the agent's name (Greg, 21 Nov): no mark beside it. */
-  .in-conv .mark-bar .agent-mark.current { display: none; }
-  .in-conv .mark-bar { gap: 4px; }
-}
 
 /* Floating agents you cannot talk to: dimmed, a padlock under the name, not a link. */
 .agent-mark.private { cursor: default; opacity: .42; }
@@ -1373,7 +1364,6 @@ form.recording > :not(.rec-bar) { display: none !important; }
   .agent-tab { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 600;
     color: var(--muted); text-decoration: none; }
   .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
-  .in-agent .chat-head .mark-bar { display: none; }
   .in-agent .chat > .chat-head { padding: 0; min-height: 0; }
 }
 @media (max-width: 599px) {
@@ -1607,14 +1597,10 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 /* F36 groups (Greg, 22 Nov): who said it, the agents to ask, and the groups under the floating agents. */
 /* A group's header is the agent chat's header (Greg, 28 Nov): ‹ back, its picture, its name ▾ with who is in it
    underneath, and ≡ on the right (its panel: members, invite, leave). On a phone, as in an agent chat, no picture. */
-.group-bar { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; }
 .group-switch { min-width: 0; max-width: 100%; text-align: left; }
 .group-title { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
 .group-title .mark-name { font: 600 20px/24px var(--font-display); max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .group-who { max-width: 100%; font-size: var(--t-xs); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.group-bar.open .group-switch { background: var(--chip); border-color: var(--line); }
-.group-bar.open .switch-caret { transform: rotate(180deg); }
-.chat-head.group-head .side-reopen { margin-left: auto; }
 .group-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .group-actions > .btn { margin: 0; }
 .group-actions > .group-invite { align-self: stretch; }
@@ -1624,19 +1610,9 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
 .group-invite[hidden] { display: none; }
 .group-invite-pick { width: 100%; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
 .group-invite-pick:hover { color: var(--accent-text); }
-@media (min-width: 600px) {
-  .group-bar .agent-back { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; min-height: 40px;
-    margin-left: -8px; font: 400 30px/1 var(--font-body); color: var(--ink); text-decoration: none; border-radius: 10px; }
-  .group-bar .agent-back:hover { background: var(--chip, var(--raised)); }
-}
 @media (max-width: 599px) {
-  .in-agent .chat > .chat-head.group-head { display: flex; align-items: center; gap: 6px; min-height: 60px; padding: env(safe-area-inset-top) 12px 4px 4px;
-    border-bottom: 1px solid var(--line); }
-  .group-head .group-bar { flex: 1; }
-  .group-head .group-switch { min-height: 44px; padding: 0 10px 0 6px; gap: 6px; }
   .group-title .mark-name { font: 600 17px/1.2 var(--font-display); }
-  .in-agent .chat-head.group-head .conv-btn { display: flex; margin-left: auto; }
-  .group-pop { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 56px); width: auto; z-index: 60; }
+  .in-agent .chat-head.group-head .conv-btn { display: flex; }
 }
 /* The agent working (Greg, 28 Nov): its mark in the header and in the thinking row pulse together, one animation
    started at the same moment (chat-mx.js syncWorking). The phone's header has the mark after ‹ (the desktop's is the switcher's). */
@@ -2190,13 +2166,11 @@ html.dialog-open, html.dialog-open body { overflow: hidden; }
 }
 
 /* The agent switcher in a chat's header (Greg, 23 Nov). */
-.mark-bar.switch { position: relative; gap: 6px; }
 .switch-btn { display: inline-flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 12px 4px 6px; border: 1px solid transparent;
   border-radius: 999px; background: transparent; color: var(--ink); cursor: pointer; font: inherit; transition: background .15s, border-color .15s; }
-.switch-btn:hover, .mark-bar.switch.open .switch-btn { background: var(--chip); border-color: var(--line); }
+.switch-btn:hover { background: var(--chip); border-color: var(--line); }
 .switch-btn .mark-name { font: 600 20px/24px var(--font-display); }
 .switch-caret { color: var(--muted); font-size: 12px; transition: transform .2s ease; }
-.mark-bar.switch.open .switch-caret { transform: rotate(180deg); }
 .switch-pop { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: 320px; max-height: min(70vh, 520px); overflow-y: auto;
   padding: 6px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 16px 40px rgb(0 0 0 / .4);
   transform-origin: top left; animation: switch-in .16s cubic-bezier(.2, .8, .2, 1) both; }
@@ -2607,14 +2581,6 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
    messages so the switcher is never drawn under a bubble. */
 @media (min-width: 600px) {
   .chat-head { position: relative; z-index: 35; }
-  .chat-head > .agent-bar { display: contents; }
-  .chat-head > .agent-bar .agent-bar-who { display: none; }
-  .chat-head > .agent-bar .agent-back { order: -1; display: inline-flex; align-items: center; justify-content: center; width: 36px; min-height: 40px;
-    margin-left: -8px; font: 400 30px/1 var(--font-body); color: var(--ink); text-decoration: none; border-radius: 10px; }
-  .chat-head > .agent-bar .agent-back:hover { background: var(--chip, var(--raised)); }
-  .chat-head > .agent-bar .agent-menu { margin-left: auto; }
-  .chat-head > .agent-bar .agent-tab { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
-  .chat-head > .agent-bar .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
   .chat-head .side-reopen { padding: 0 10px; }
   .chat-head .side-reopen svg { width: 20px; height: 20px; }
   .switch-pop { background: var(--surface); }
@@ -2625,18 +2591,6 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
 @media (min-width: 600px) and (max-width: 1099px) {
   /* In the narrow rail Beta sits in the item's corner, so it does not add a row. */
   .nav-links a .beta-tag { position: absolute; top: 2px; right: 0; margin: 0; padding: 0 4px; font-size: 8px; line-height: 1.5; }
-}
-
-/* Desktop (Greg, 23 Nov): an agent's Brain and Routines carry the chat's Chat | Brain | Routines pill, in the title band's right
-   corner (the title stays in the band, as on every screen), so you can go back and forth between its three views. */
-@media (min-width: 600px) {
-  .brain, .agents-page { position: relative; }
-  .brain > .agent-bar, .agents-page > .agent-bar { display: block; position: absolute; top: 17px; right: 24px; z-index: 36; margin: 0; padding: 0; border: 0; width: auto; }
-  .brain > .agent-bar .agent-bar-who, .brain > .agent-bar .agent-bar-name, .brain > .agent-bar .agent-back,
-  .agents-page > .agent-bar .agent-bar-who, .agents-page > .agent-bar .agent-bar-name, .agents-page > .agent-bar .agent-back { display: none; }
-  .brain > .agent-bar .agent-tab, .agents-page > .agent-bar .agent-tab { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
-  .brain > .agent-bar .agent-tab.on, .agents-page > .agent-bar .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
-  .brain .chat-head { padding-right: 150px; }
 }
 
 /* The Terminal HUD menu (Greg, 23 Nov): its wide monospace labels were cut by the unread badge ("Notificatio…" with the
@@ -2708,11 +2662,7 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
    as one segmented control. */
 .brain-phone-search { flex: 1 1 100%; min-height: 40px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--chip); color: var(--ink); }
 @media (min-width: 600px) {
-  .brain-head { gap: 16px; }
-  .brain-head .agent-bar-who { flex: none; }
-  .brain-head .agent-bar-pop { position: absolute; left: 0; right: auto; top: calc(100% + 6px); width: 320px; }
-  .brain-head .agent-bar-switch { min-height: 36px; padding: 0 12px 0 8px; border: 1px solid var(--line); background: var(--chip); font: 600 14px/1.2 var(--font-body); }
-  .brain-head h1 { font-size: 22px; }
+  .brain > .brain-head { display: none; }   /* only the phone's search is in it; the agent bar is the band (UI review, 28 Nov) */
   .tree-top { margin-bottom: 14px; }
   .tree-top input[type="search"] { width: 100%; min-height: 40px; padding: 0 14px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--chip); color: var(--ink); font: inherit; }
   .brain-new { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; margin-bottom: 14px; }
@@ -2742,7 +2692,7 @@ h1 .beta-tag { font-size: 11px; margin-left: 12px; }
    second copy), one styled search (the band's; the page list's bare one was a second, unstyled copy), and the "ask the agent"
    box docked at the bottom of the page above the tabs, its hint on one line, as on the desktop and in the chat. */
 @media (max-width: 599px) {
-  .brain-head .agent-bar-who, .brain .tree-top { display: none; }
+  .brain .tree-top { display: none; }
   .brain .chat-head.brain-head { padding: 4px 16px 12px; min-height: 0; }
   .brain .brain-side:not(.searching):has(> .changes.few) { display: none; }
   .brain .doc { display: flex; flex-direction: column; padding-bottom: 0; min-height: calc(100dvh - 52px - 56px - var(--tabbar-h) - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
@@ -2991,3 +2941,45 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 .site-add { margin-top: 10px; }
 /* A long placeholder ("Message Household Group") ends in … on one line instead of a cut second line. */
 .composer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* One agent bar on every agent screen (UI review, recommendation 6, Greg, 28 Nov; agents-void.js agentBar): as Home Assistant's
+   one top bar, the same ‹ back, name ▾ (agents, then groups) and view pill in the same place in an agent's chat, Brain,
+   Routines and Settings and in a group, on a desktop and a phone. The chat's own buttons (≡) sit just before the pill, so
+   the pill is always at the right end; a group has no views, so its ≡ is there. */
+.agent-bar.one-bar { position: relative; display: flex; align-items: center; gap: 6px; flex: 1 1 100%; min-width: 0; width: 100%; box-sizing: border-box; }
+.one-bar .agent-back { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 40px; min-height: 44px;
+  font: 400 32px/1 var(--font-body); color: var(--ink); text-decoration: none; border-radius: 10px; }
+.one-bar .agent-bar-who { position: relative; flex: 0 1 auto; min-width: 0; display: flex; margin-right: auto; }
+.one-bar .agent-bar-switch { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; min-height: 44px; padding: 0 10px 0 6px;
+  border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.one-bar .agent-bar-switch:hover, .one-bar.open .agent-bar-switch { background: var(--chip); border-color: var(--line); }
+.one-bar .agent-bar-switch > .mark-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 17px/1.2 var(--font-display); }
+.one-bar.open .switch-caret { transform: rotate(180deg); }
+.one-bar > .side-reopen, .one-bar > .conv-btn, .one-bar > .view-menu, .one-bar > .agent-menu { flex: none; margin-left: 0; }
+.one-bar .agent-menu > summary.agent-tab { display: inline-flex; align-items: center; min-height: 34px; padding: 0 12px; border-radius: 999px; font-size: 13px;
+  font-weight: 600; background: var(--accent-soft); color: var(--accent-text); text-decoration: none; }
+.one-bar .agent-menu-list .agent-tab { display: flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 12px; font-size: 15px; font-weight: 600;
+  color: var(--ink); background: none; text-decoration: none; }
+.one-bar .agent-menu-list .agent-tab.on { background: var(--accent-soft); color: var(--accent-text); }
+.chat-head.with-bar { flex-wrap: nowrap; padding: 0; gap: 0; min-height: 0; border-bottom: 0; background: transparent; }
+@media (min-width: 600px) {
+  .agent-bar.one-bar { min-height: 68px; padding: 0 24px 0 16px; background: var(--surface); border-bottom: 1px solid var(--line); z-index: 35; }
+  .one-bar .agent-back { width: 36px; min-height: 40px; font-size: 30px; }
+  .one-bar .agent-back:hover { background: var(--chip, var(--raised)); }
+  .one-bar .agent-bar-switch { padding: 4px 12px 4px 8px; }
+  .one-bar .agent-bar-switch > .mark-name, .one-bar .group-title .mark-name { font-size: 20px; line-height: 24px; }
+  .one-bar .agent-bar-pop { position: absolute; left: 0; right: auto; top: calc(100% + 6px); width: 320px; z-index: 60; }
+  .agents-page > .one-bar { flex: none; margin: -32px -40px 0; width: calc(100% + 80px); }
+  .brain > .one-bar { flex: none; }
+}
+@media (max-width: 599px) {
+  .agent-bar.one-bar { min-height: 52px; padding: env(safe-area-inset-top) 12px 0 4px; }
+  .one-bar .agent-bar-pop { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 56px); width: auto; z-index: 60; }
+  .chat-head.group-head.with-bar .one-bar { min-height: 60px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+  .agents-page > .one-bar { flex: none; }
+}
+@media (max-width: 599px) {
+  /* The phone chat's + and ☰ chips with their words (UI review, 28 Nov). */
+  .mx-chips .mx-chip.add { width: auto; padding: 0 14px; font-size: 14px; font-weight: 600; }
+  .mx-chips .mx-chip.panel { gap: 6px; padding: 0 14px; font-size: 14px; font-weight: 600; }
+}

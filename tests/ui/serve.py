@@ -120,6 +120,10 @@ FAKE['/api/v2/agents/greg/settings'] = {'name': 'greg', 'display_name': "Greg's 
                         {'id': 'google/gemma-3-12b', 'vision': True, 'max_context': 131072, 'loaded': False, 'loaded_context': None}]},
   'chat': {'display_name': {'value': "Greg's agent", 'default': "Greg's agent", 'locked': None},
            'voice_echo': {'value': False, 'default': False, 'locked': None}}}
+# The Household agent's settings too (one agent bar, 28 Nov: switching agent on Settings keeps you on Settings).
+FAKE['/api/v2/agents/household/settings'] = {**FAKE['/api/v2/agents/greg/settings'], 'name': 'household', 'display_name': 'Household agent', 'shared': True,
+  'chat': {'display_name': {'value': 'Household agent', 'default': 'Household agent', 'locked': None},
+           'voice_echo': {'value': False, 'default': False, 'locked': None}}}
 FAKE['/api/v2/agents/greg/settings/soul/20261127T101500Z-ab12'] = {'text': SOUL + "\nKeep it short.\n"}
 FAKE['/api/v2/agents/greg/settings/apply'] = {'state': 'done', 'message': "Greg's agent is back, with the new settings.", 'seconds': 58, 'started': 1, 'finished': 59,
   'by': 'greg', 'lines': ['model: not checked or loaded (--no-model-load)', 'greg: Ready']}

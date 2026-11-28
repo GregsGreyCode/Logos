@@ -23,8 +23,9 @@ for (const [tag, opts, menuSel] of [
   const ctx = await browser.newContext(opts); const page = await ctx.newPage();
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/household`); await page.waitForTimeout(2500);
-  // The agent chat's ≡ on a phone is at the end of its chips row; its right-hand control in the header is the Chat pill.
-  const agent = await parts(page, menuSel || '.chat-head .agent-menu > summary');
+  // The agent chat's right-hand control in the header is its Chat pill (one agent bar, UI review 28 Nov: the pill at the right
+  // end of every agent screen, the chat's ≡ just before it); a group has no views, so its ≡ is there.
+  const agent = await parts(page, '.chat-head .agent-menu > summary');
   await page.evaluate((h) => { location.hash = h; }, GROUP); await page.waitForTimeout(2500);
   const grp = await parts(page, menuSel || '.chat-head .conv-btn');
   ok(grp.back && agent.back && Math.abs(grp.back.l - agent.back.l) <= 2, `${tag}: ‹ back in the same place as in an agent chat (${grp.back?.l} / ${agent.back?.l})`);

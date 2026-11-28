@@ -61,7 +61,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && openShee
 // Ctrl/Cmd+K (28 Nov): the search at the top of Settings, from anywhere on a desktop but a chat.
 document.addEventListener('keydown', (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'k' || e.altKey || e.shiftKey) return;
-  if (document.querySelector('.mark-bar')) return;      // in a chat Ctrl+K switches agent (agents-void.js)
+  if (document.querySelector('.agent-bar.has-hotkey')) return;      // in a chat Ctrl+K switches agent (agents-void.js agentBar)
   e.preventDefault();
   const box = document.querySelector('.set-search input');
   if (box) { box.focus(); box.select(); return; }

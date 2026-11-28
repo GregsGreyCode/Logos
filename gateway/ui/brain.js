@@ -1,6 +1,6 @@
 // Brain screen: browse what an agent has written down, add to it by asking, and edit pages by hand.
 import { h, api, getJSON, when, markdown, none, loading, icon, ICONS, noteTitle, focusIfKeyboard } from './util.js';
-import { agentBar, agentSwitch } from './agents-void.js';
+import { agentBar } from './agents-void.js';
 
 const FOLDERS = [['projects', 'Projects'], ['people', 'People'], ['topics', 'Topics'], ['daily', 'Daily'],
   ['inbox', 'Inbox'], ['', 'General']];
@@ -308,8 +308,11 @@ export async function brainView(root, [agentArg, ...pathParts]) {
     h('select', { onchange: (e) => { location.hash = `#/brain/${e.target.value}`; } },
       agents.map((a) => h('option', { value: a.name, selected: a.name === agent.name }, a.display_name)))) : null;
 
+  // The one agent bar names the agent and the view (UI review, 28 Nov), so the band keeps only the phone's search; the title
+  // is for screen readers.
   root.replaceChildren(h('div', { class: 'brain' }, agentBar(agent, 'brain', agents),
-    h('header', { class: 'chat-head brain-head' }, h('h1', {}, 'Brain'), agents.length > 1 ? agentSwitch(agent, 'brain', agents) : null, phoneSearch),
+    h('h1', { class: 'visually-hidden' }, `${agent.display_name}: brain`),
+    h('header', { class: 'chat-head brain-head' }, phoneSearch),
     conflictsBox,
     h('div', { class: 'brain-body' }, tree, article, side)));
 

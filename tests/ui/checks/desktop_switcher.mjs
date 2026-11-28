@@ -18,13 +18,13 @@ ok(await chats.isVisible() && (await chats.getAttribute('aria-pressed')) === pre
 await page.screenshot({ path: process.argv[2] + '/switch-head.png', clip: { x: 0, y: 0, width: 1440, height: 120 } });
 // switcher
 await page.locator('.switch-btn').click(); await page.waitForTimeout(300);
-const names = await page.$$eval('.mark-bar .switch-item .switch-text strong', (els) => els.map((e) => e.textContent));
-ok(names.length >= 2 && await page.locator('.mark-bar .switch-item.on', { hasText: "Greg's agent" }).count() === 1, `the switcher lists the agents, yours ticked (${names})`);
+const names = await page.$$eval('.chat-head .agent-bar .switch-item .switch-text strong', (els) => els.map((e) => e.textContent));
+ok(names.length >= 2 && await page.locator('.chat-head .agent-bar .switch-item.on', { hasText: "Greg's agent" }).count() === 1, `the switcher lists the agents, yours ticked (${names})`);
 await page.screenshot({ path: process.argv[2] + '/switch-open.png', clip: { x: 200, y: 0, width: 600, height: 360 } });
 await page.keyboard.press('Escape'); await page.waitForTimeout(200);
-ok(await page.locator('.mark-bar .switch-pop').isHidden(), 'Escape closes it');
+ok(await page.locator('.chat-head .agent-bar .switch-pop').isHidden(), 'Escape closes it');
 await page.keyboard.press('Control+k'); await page.waitForTimeout(200);
-ok(await page.locator('.mark-bar .switch-pop').isVisible(), 'Ctrl+K opens it');
+ok(await page.locator('.chat-head .agent-bar .switch-pop').isVisible(), 'Ctrl+K opens it');
 await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter'); await page.waitForTimeout(1500);
 ok(await page.evaluate(() => location.hash) !== '#/chat/greg', `arrows and Enter switch agent (${await page.evaluate(() => location.hash)})`);
 ok(errs.length === 0, `no page errors ${errs.join('|')}`);

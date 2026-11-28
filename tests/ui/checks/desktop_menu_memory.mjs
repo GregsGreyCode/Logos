@@ -30,6 +30,7 @@ await page.locator('.brain > .agent-bar .agent-menu-list a', { hasText: 'Chat' }
 ok((await hash()) === '#/chat/greg', `Brain › Chat opens the agent's chat (${await hash()})`);
 await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/agents/greg`); await page.waitForTimeout(1800);
 ok(await page.locator('.agents-page > .agent-bar .agent-menu > summary').isVisible(), 'Routines: the pill on a desktop, in the title band');
-const pill = await page.locator('.agents-page > .agent-bar .agent-menu > summary').boundingBox(), t = await page.locator('#view h1').first().boundingBox();
-ok(pill.y < 60 && t.y < 60, `Routines: the pill and the title share the band (pill y=${Math.round(pill.y)}, title y=${Math.round(t.y)})`);
+// The band is the one agent bar (UI review, 28 Nov): the agent's name and the pill share it.
+const pill = await page.locator('.agents-page > .agent-bar .agent-menu > summary').boundingBox(), t = await page.locator('.agents-page > .agent-bar .agent-bar-switch').boundingBox();
+ok(pill.y < 60 && t.y < 60, `Routines: the pill and the agent's name share the band (pill y=${Math.round(pill.y)}, name y=${Math.round(t.y)})`);
 await browser.close();

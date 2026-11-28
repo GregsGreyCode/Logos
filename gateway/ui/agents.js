@@ -244,7 +244,8 @@ export async function agentsView(root, [agentArg, sub]) {
   }
 
   root.replaceChildren(h('div', { class: 'page agents-page' }, agent ? agentBar(agent, 'about', data.agents) : null,
-    h('h1', { class: 'agents-title' }, agent ? `${agent.display_name}: routines` : 'Routines'),
+    // Inside an agent the agent bar names it and the view (UI review, 28 Nov): the title is for screen readers.
+    h('h1', { class: `agents-title${agent ? ' visually-hidden' : ''}` }, agent ? `${agent.display_name}: routines` : 'Routines'),
     data.agents.length ? cards : none('No agents are set up yet.'), detail));
   detail.replaceChildren(loading('cards', 3));
   await load();

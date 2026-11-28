@@ -273,7 +273,7 @@ export async function agentSettingsView(root, name) {
   for (const el of [pick, windowPick, dn, echo, spk].filter(Boolean)) if (el.disabled) el.dataset.off = '1';
   ready = true;
   drawSoul(); recount();
-  const title = h('h1', { class: 'agents-title' }, `${v.display_name}: settings`);
+  const title = h('h1', { class: 'agents-title visually-hidden' }, `${v.display_name}: settings`);   // the agent bar says it (UI review, 28 Nov)
   root.replaceChildren(h('div', { class: 'page agents-page agent-settings' }, agentBar(agent, 'settings', agents), title,
     h('p', { class: 'routines-intro' }, v.shared ? 'Shared: everyone it belongs to can change these.' : `What ${v.display_name} is like, and how it answers.`),
     h('div', { class: 'settings-cards' }, personality, model, chat, apply)));
