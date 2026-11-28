@@ -1079,7 +1079,7 @@ network_policies:
                       "base_url": "http://10.0.0.5:1234/v1", "context_length": 65536},
             "agent": {"auto_recovery_cycles": 0, "disabled_toolsets": ["web", "browser"]},
             "tools": {"tool_search": {"enabled": "off"}},
-            "context_file_max_chars": 40000,                                   # SOUL.md is never cut
+            "context_file_max_chars": 60000,                                   # SOUL.md is never cut
             "cron": {"wrap_response": False, "mirror_delivery": True},         # no header; agent sees its own jobs
             "updates": {"check": False}, "model_catalog": {"enabled": False},   # no calling home
             "models_dev": {"url": "http://172.17.0.1:8091/api/v2/models-dev/api.json"},  # Logos's copy of the catalogue

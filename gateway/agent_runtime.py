@@ -54,7 +54,7 @@ RESET_PLUGIN = "hermes-session-reset-policy"
 MAIL_TOOLS = ("mail_new", "mail_needs_reply", "mail_search", "mail_read", "mail_thread")
 #: The advisor tools let through the sandbox rule (gateway/advisor_service.py TOOL_NAMES).
 ADVISOR_TOOLS = ("ask_advisor", "advisor_answer", "advisor_budget", "request_more_budget")
-SOUL_MAX_CHARS = 40_000            # hermes context_file_max_chars; `up` refuses a SOUL.md longer than this
+SOUL_MAX_CHARS = 60_000            # hermes context_file_max_chars (40,000 until 28 Nov: about 15k tokens at most, a small share of the 135k window); `up` refuses a SOUL.md longer than this
 LOGOS_PLUGINS = ("logos-waitlist", "logos-voice", "logos-verified-only", "logos-matrix-flat", "logos-turn-time",
                  "logos-reactions", "logos-job-limits", "logos-media-batch", "logos-alert-text", "logos-vault", "logos-voice-tag",
                  "logos-speaker-chat", "logos-speaker-say", "logos-rename", "logos-household-words")
