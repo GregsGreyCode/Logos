@@ -11,6 +11,21 @@ const fresh = () => page.locator('.notifications .feed-item.fresh').count();
 const n0 = await fresh();
 ok(n0 >= 3, `starts with new items (${n0})`);
 ok(!posts.some((p) => p.includes('/seen')), 'opening the tab no longer marks everything seen');
+// UI review (28 Nov): no "Needs you" chip under the Needs you heading; titles may wrap to two lines; the bell's number matches
+// the filled dots (what needs you and unread messages) and says what it counts; a new update has a ring instead.
+const needsRows = page.locator('section[aria-label="Needs you"] .feed-item');
+ok(await needsRows.count() >= 1 && await needsRows.locator('.feed-type.type-needs').count() === 0, 'no "Needs you" chip on rows under Needs you');
+const wraps = await page.locator('.notifications .feed-title').evaluateAll((els) => els.map((el) => {
+  const cs = getComputedStyle(el); return { ws: cs.whiteSpace, lines: Math.round(el.getBoundingClientRect().height / parseFloat(cs.lineHeight || 20)) }; }));
+ok(wraps.every((w) => w.ws === 'normal') && wraps.every((w) => w.lines <= 2), `titles wrap, two lines at most (${JSON.stringify(wraps.map((w) => w.lines))})`);
+const bell = page.locator('.tab-badge');
+const filled = await page.locator('.notifications .feed-item.fresh').evaluateAll((els) => els.filter((el) => getComputedStyle(el.querySelector('.feed-dot')).backgroundColor !== 'rgba(0, 0, 0, 0)').length);
+const waitingCards = await page.locator('section[aria-label="Needs you"] .cards > .card').count();
+const notFresh = await needsRows.evaluateAll((els) => els.filter((el) => !el.classList.contains('fresh')).length);
+ok(Number(await bell.innerText()) === filled + waitingCards + notFresh, `the bell (${await bell.innerText()}) matches the filled dots (${filled}) plus requests (${waitingCards + notFresh})`);
+ok(/need|unread/.test(await bell.getAttribute('aria-label') || '') && (await bell.getAttribute('title')) === (await bell.getAttribute('aria-label')), `the bell says what it counts ("${await bell.getAttribute('aria-label')}")`);
+await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(300);
+await page.screenshot({ path: process.argv[2] + '/nr-390.png' });
 const brain = page.locator('.notifications .feed-item', { hasText: 'pages changed' }).first();
 await brain.tap(); await page.waitForTimeout(400);
 ok(await brain.getAttribute('aria-expanded') === 'true' && await brain.locator('.feed-go').isVisible(), 'a tap opens it, with an Open button');

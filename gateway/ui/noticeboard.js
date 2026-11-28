@@ -14,12 +14,19 @@ export function outcome(m) {
 }
 
 export function setBadge(n) {
-  // What waits on you plus what is new (notify.js): the number alone, in the side menu as in the tab bar
-  // (Greg, 23 Nov: "1 new" wrapped into a lump on the desktop).
+  // What waits on you plus your agents' messages you have not read (notify.js countNew): the number alone, in the side menu
+  // as in the tab bar (Greg, 23 Nov: "1 new" wrapped into a lump on the desktop). New updates (brain changes and the like)
+  // are not counted, so the badge says in its tooltip and label what it counts (UI review, 28 Nov: it read as "unread").
+  const c = typeof n === 'number' ? { total: n } : (n || { total: 0 });
+  const total = c.total ?? ((c.needs || 0) + (c.messages || 0));
+  const parts = [c.needs ? `${c.needs} need${c.needs === 1 ? 's' : ''} you` : '',
+    c.messages ? `${c.messages} unread message${c.messages === 1 ? '' : 's'}` : ''].filter(Boolean);
+  const words = parts.length ? parts.join(', ') : `${total} to look at`;
   for (const el of document.querySelectorAll('.nb-badge')) {
-    el.textContent = n ? (n > 99 ? '99+' : String(n)) : '';
-    el.setAttribute('aria-label', n ? `${n} new` : '');
-    el.hidden = !n;
+    el.textContent = total ? (total > 99 ? '99+' : String(total)) : '';
+    el.setAttribute('aria-label', total ? words : '');
+    el.title = total ? words : '';
+    el.hidden = !total;
   }
 }
 
@@ -180,8 +187,9 @@ function feedRow(i, TYPES, onOpen) {
   // A message's title already says who wrote it, so its second line is just the words.
   const source = i.source || (i.kind === 'brain' ? `${i.who}'s brain` : i.kind === 'chat' ? '' : KIND_LABEL[i.kind] || '');
   const type = i.type || 'update';
-  // Only a type that asks something of you shows (Needs you, Problem, Message); an Update needs no label.
-  const chip = type !== 'update' ? h('span', { class: `feed-type type-${type}` }, TYPES[type] || type) : null;
+  // Only Problem and Message carry a label: an Update needs none, and every "needs" row sits under the Needs you heading,
+  // so a "Needs you" chip on it only repeated the heading (UI review, 28 Nov).
+  const chip = type === 'problem' || type === 'message' ? h('span', { class: `feed-type type-${type}` }, TYPES[type] || type) : null;
   const time = i.kind === 'agent_down' || i.kind === 'sync' ? 'Now' : i.dayOnly ? '' : hhmm(i.ts);
   const detail = i.kind === 'sync' ? `Last synced ${i.last_seen ? when(i.last_seen).toLowerCase() : 'never'} · `
     + `${i.missing} change${i.missing === 1 ? '' : 's'} waiting. ${i.text}` : (i.text || '');
@@ -266,7 +274,7 @@ export async function noticeboardView(root, rest, state) {
       if (!shown) { shown = true; reveal(days); }
       days.replaceChildren(...(groups.length ? groups.map(([d, list]) => h('section', { 'aria-label': d },
         h('h2', { class: 'label' }, d), h('div', { class: 'feed' }, ...list.map(row)))) : [none('Nothing this week.')]));
-      setBadge(toDo + items.filter((i) => urgent(i) ? false : i.type === 'message' && i.fresh).length);
+      setBadge({ needs: toDo, messages: items.filter((i) => !urgent(i) && i.type === 'message' && i.fresh).length });
     }
   }
 

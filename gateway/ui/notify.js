@@ -136,10 +136,13 @@ export async function feed() {
   return { items, waiting: nb.waiting || [], seen, read };
 }
 
-// The number on the bell: what waits on you, plus what is new.
+// The number on the bell: what waits on you, plus your agents' messages you have not read. New updates get a ring on the
+// screen but no number (they need nothing from you). Split, so the badge can say what it counts.
 export async function countNew() {
   const { items, waiting } = await feed();
-  return waiting.length + items.filter((i) => urgent(i) || (i.type === 'message' && i.fresh)).length;
+  const needs = waiting.length + items.filter(urgent).length;
+  const messages = items.filter((i) => !urgent(i) && i.type === 'message' && i.fresh).length;
+  return { needs, messages, total: needs + messages };
 }
 
 export const markSeen = () => api('/api/v2/notifications/seen', { method: 'POST' }).catch(() => {});

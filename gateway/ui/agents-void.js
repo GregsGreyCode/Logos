@@ -12,8 +12,12 @@ import * as mx from './mx.js';
 // Moods (Greg, 21 Nov): unplugged when the AI computer (LM Studio) is off; asleep when it is on but the
 // agent's model is not loaded; waking while it loads (words that suit the Motion setting, rotating);
 // awake when loaded; thinking while it replies; waiting when it needs you; off when the agent is stopped.
+// These are the words for an agent's state everywhere (UI review, 28 Nov: Routines said "Running" where the Agents screen said
+// "Asleep" for the same agent): "Running" only told that its sandbox was up, which an asleep or awake agent always is.
 export const MOODS = { unplugged: 'Unplugged', asleep: 'Asleep', waking: 'Waking up', awake: 'Awake',
   thinking: 'Thinking…', waiting: 'Waiting on you', off: 'Not running' };
+// The mood the agent list alone tells (no Matrix or Noticeboard): off, unplugged, awake or asleep.
+export const baseMood = (a) => (a.running === false ? 'off' : a.model_up === false ? 'unplugged' : a.model_loaded === true ? 'awake' : 'asleep');
 const WAKING = {
   calm: ['Meditating', 'Stretching', 'Yawning', 'Brewing tea', 'Opening one eye', 'Breathing in'],
   full: ['Bouncing off the walls', 'Doing star jumps', 'Revving up', 'Cartwheeling', 'Chugging espresso', 'Warming up'],
@@ -55,8 +59,7 @@ export async function moods(agents) {
     const live = Object.fromEntries(((await getJSON('/api/v2/agents')).agents || []).map((a) => [a.name, a]));
     agents = agents.map((a) => (live[a.name] ? { ...a, running: live[a.name].running, model_up: live[a.name].model_up, model_loaded: live[a.name].model_loaded } : a));
   } catch (e) { /* keep what we had */ }
-  const out = Object.fromEntries(agents.map((a) => [a.name,
-    a.running === false ? 'off' : a.model_up === false ? 'unplugged' : a.model_loaded === true ? 'awake' : 'asleep']));
+  const out = Object.fromEntries(agents.map((a) => [a.name, baseMood(a)]));
   try {
     const nb = await getJSON('/api/v2/noticeboard');
     for (const m of nb.waiting || []) if (out[m.from] && !['off', 'unplugged'].includes(out[m.from])) out[m.from] = 'waiting';
