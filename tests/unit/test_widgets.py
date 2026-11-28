@@ -557,3 +557,17 @@ def test_the_looks_and_the_desktop_widget_layout_are_validated_by_the_server():
                 {"lists": {"x": "0", "y": 0, "w": 6, "h": 0}}, {"lists": {"x": True, "y": 0, "w": 6, "h": 0}},
                 [], "x", {"lists": None}):
         assert not d._pref_ok("widget_grid", bad), bad
+
+
+def test_the_phone_layout_and_its_own_list_are_validated_by_the_server():
+    from gateway import dashboard_api as d
+    assert d._pref_ok("phone_layout", "same") and d._pref_ok("phone_layout", "own")
+    assert not d._pref_ok("phone_layout", "mine") and not d._pref_ok("phone_layout", True)
+    ok = [{"id": "weather", "size": "compact"}, {"id": "lists", "size": "full"}, {"id": "marquee", "size": "full"}]
+    assert d._pref_ok("widget_phone", ok) and d._pref_ok("widget_phone", [])
+    for bad in ([{"id": "weather", "size": "big"}],                                   # not a size
+                [{"id": "nonsense", "size": "full"}],                                 # not a widget
+                [{"id": "weather", "size": "full"}, {"id": "weather", "size": "compact"}],   # twice
+                [{"id": "weather"}], [{"id": "weather", "size": "full", "x": 1}], ["weather"],
+                {"weather": "full"}, "x", None, [{"id": "weather", "size": "full"}] * 41):
+        assert not d._pref_ok("widget_phone", bad), bad

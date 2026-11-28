@@ -138,7 +138,9 @@ PREFS = {"panel": ("slide", "open"), "thinking": (True, False), "jobs": (True, F
          # Animations of the screens (slides, swipes, fades, loading), apart from the agents' movement (motion)
          "animations": ("on", "off"),
          # What a phone alert shows (Greg, 23 Nov): who wrote it, or nothing but "Logos · New message"
-         "alerts": ("who", "private")}
+         "alerts": ("who", "private"),
+         # Home on a phone (Greg, 28 Nov): the desktop's widgets in its order ("same"), or a list of its own ("own": widget_phone)
+         "phone_layout": ("same", "own")}
 # ST2: your own colours, any "#rrggbb" (the page keeps text readable whatever is picked); "" = the look's own
 COLOUR_PREFS = ("primary", "attention")
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -189,6 +191,13 @@ def _pref_ok(key: str, value: Any) -> bool:
             return (isinstance(c, dict) and set(c) == {"x", "y", "w", "h"} and all(isinstance(c[k], int) and not isinstance(c[k], bool) for k in c)
                     and 0 <= c["x"] <= 11 and 1 <= c["w"] <= 12 and c["x"] + c["w"] <= 12 and 0 <= c["y"] <= 1_000_000 and 0 <= c["h"] <= 1_000_000)      # no practical limit: a widget may go as far down as you like
         return (isinstance(value, dict) and len(value) <= 40 and all((w in WIDGETS or w in KINDS) and cell(c) for w, c in value.items()))
+    if key == "widget_phone":
+        # Home's own phone list (phone_layout "own"): [{id, size}] in its order, each widget once
+        from gateway.widgets import KINDS
+        return (isinstance(value, list) and len(value) <= 40
+                and all(isinstance(i, dict) and set(i) == {"id", "size"} and isinstance(i["id"], str)
+                        and (i["id"] in WIDGETS or i["id"] in KINDS) and i["size"] in SIZE_NAMES for i in value)
+                and len({i["id"] for i in value}) == len(value))
     if key in COLOUR_PREFS:
         return isinstance(value, str) and (value == "" or bool(_HEX.match(value)))
     return key in PREFS and value in PREFS[key]
@@ -288,7 +297,8 @@ async def handle_set_prefs(request: web.Request) -> web.Response:
                                                                    **{k: "#rrggbb" for k in COLOUR_PREFS},
                                                                    "widgets": list(WIDGETS), "tips_seen": list(TIP_SCREENS), "weather_place": "{name, lat, lon}",
                                                                    "weather_places": f"[{{name, lat, lon}}], up to {MAX_WEATHER_PLACES}",
-                                                                   "widget_sizes": {"<widget>": list(SIZE_NAMES)}}},
+                                                                   "widget_sizes": {"<widget>": list(SIZE_NAMES)},
+                                                                   "widget_phone": [{"id": "<widget>", "size": list(SIZE_NAMES)}]}},
                                  status=400)
     merged = {**await asyncio.to_thread(prefs_of, user["id"]), **body}
     seen = await asyncio.to_thread(_seen_until, user["id"])           # kept alongside, not settings

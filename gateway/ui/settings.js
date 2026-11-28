@@ -6,6 +6,7 @@ import { moods, MOODS } from './agents-void.js';
 import * as mx from './mx.js';
 import { lookControls, SWATCHES, setMine, myColours, setAgentColour, agentColour, setMotion, setAnimations, LOOKS, current as currentLook } from './appearance.js';
 import { getPref, setPref } from './prefs.js';
+import { phoneMode, setPhoneMode } from './phone-layout.js';
 import { reset as resetTips } from './tips.js';
 import { updatesView } from './updates.js';
 import * as push from './push.js';
@@ -18,6 +19,7 @@ import { householdWordsPage, householdWordsSummary } from './household-words.js'
 // One name each (28 Nov): the row's name is its page's title.
 const SECTIONS = [
   { id: 'appearance', name: 'Look', icon: 'palette', group: 'You' },
+  { id: 'home', name: 'Home', icon: 'home', group: 'You' },               // the phone's layout (28 Nov)
   { id: 'notifications', name: 'Phone alerts', icon: 'bell', group: 'You' },
   { id: 'email', name: 'Email', icon: 'mail', group: 'You' },
   { id: 'speaker', name: 'Speaker', icon: 'speaker', group: 'You' },
@@ -124,6 +126,25 @@ function appearance() {
           .map(([v, label, tip]) => h('label', { class: 'appearance-mode', title: tip },
             h('input', { type: 'radio', name: 'names', value: v, checked: names === v, onchange: () => pickNames(v) }), label))), mNote),
   ];
+}
+
+// Home on a phone (Greg, 28 Nov): the desktop's layout, or one of its own. The same switch as in Home's Edit (phone-layout.js).
+const HOME_SAYS = { same: 'Same on phone', own: 'Phone: its own' };
+function homePage() {
+  const note = savedNote();
+  const now = phoneMode();
+  const choice = (value, label, help) => h('label', { class: 'appearance-mode choice' },
+    h('input', { type: 'radio', name: 'phone_layout', value, checked: now === value, onchange: () => {
+      say(note, setPhoneMode(value));
+      const row = document.querySelector('.set-row[href="#/settings/home"] .set-value');      // the list beside, on a desktop
+      if (row) row.textContent = HOME_SAYS[value];
+    } }),
+    h('span', {}, h('strong', {}, label), h('span', { class: 'when block' }, help)));
+  return [h('section', { 'aria-label': 'Phone layout' }, heading('Phone layout'),
+    h('div', { class: 'settings-choices', role: 'radiogroup', 'aria-label': 'Phone layout' },
+      choice('same', 'Same as desktop', "The phone shows the desktop's widgets, at the same sizes, in its order (down, then across)."),
+      choice('own', 'Its own', 'The phone keeps its own widgets, order and sizes. Change them with Edit on Home, on the phone. The desktop stays as it is.')),
+    note)];
 }
 
 function tips() {
@@ -956,6 +977,7 @@ function statusOf(id, state) {
     const name = (LOOKS.find((l) => l.id === look) || {}).name || look;
     return v(`${{ glass: 'Glass', hud: 'HUD', warm: 'Warm' }[look] || name} · ${{ dark: 'Dark', light: 'Light', auto: 'Auto' }[mode] || mode}`);
   }
+  if (id === 'home') return v(HOME_SAYS[phoneMode()]);
   if (id === 'matrix') return v(state.me.matrix_id ? (mx.saved() ? 'Connected' : 'Not connected') : '');
   if (id === 'notifications') return push.status().then((st) => (st === 'on'
     ? v(getPref('alerts', 'who') === 'private' ? 'On · private' : 'On')
@@ -1170,6 +1192,7 @@ export async function settingsView(root, [section], state) {
   else if (id === 'matrix') body.replaceChildren(...matrix(state));
   else if (id === 'notifications') body.replaceChildren(...notifications(state));
   else if (id === 'tips') body.replaceChildren(...tips());
+  else if (id === 'home') body.replaceChildren(...homePage());
   else if (id === 'metrics') body.replaceChildren(...metricsPage());
   else if (id === 'email') done = email(body);
   else if (id === 'speaker') done = speaker(body);

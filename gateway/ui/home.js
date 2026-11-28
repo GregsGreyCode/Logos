@@ -7,6 +7,7 @@ import { createRecorder } from './voice.js';
 import * as mx from './mx.js';
 import { h, api, getJSON, when, none, loading, aiState, reveal, icon, ICONS } from './util.js';
 import { getPref, setPref } from './prefs.js';
+import { phoneMode, setPhoneMode, desktopOrder, desktopSize, ownList, saveOwn, PHONE_MAX } from './phone-layout.js';
 import { requestCard } from './noticeboard.js';
 import { warmAgents } from './chat.js';
 import { unreadFromAgents } from './notify.js';
@@ -125,7 +126,11 @@ export async function homeView(root, rest, state) {
   // Every widget comes Compact or Full (Greg, 23 Nov for Lists; 24 Nov: every widget), chosen in Edit, each person's own.
   // Each decides what Compact leaves out. A widget nobody has chosen for stays as it always looked: Lists compact, the rest full.
   const SIZES = [['compact', 'Compact'], ['full', 'Full']];
-  const sizeOf = (id) => { const v = (getPref('widget_sizes', {}) || {})[id]; return v === 'compact' || v === 'full' ? v : id === 'lists' ? 'compact' : 'full'; };
+  // A phone with a layout of its own (Greg, 28 Nov; phone-layout.js) keeps its own sizes too: below the desktop grid, Home
+  // shows and edits that list, and the desktop's is left alone (and the other way round).
+  const phoneScreen = matchMedia(`(max-width: ${PHONE_MAX}px)`);
+  const phoneOwn = () => phoneScreen.matches && phoneMode() === 'own';
+  const sizeOf = (id) => { if (phoneOwn()) { const it = (ownList() || []).find((i) => i.id === id); if (it) return it.size; } return desktopSize(id); };
   const compactOf = (id) => sizeOf(id) === 'compact';
   function drawLists(page) {              // the copy in the brain: the same lists, to read
     if (!alive || !page || !page.text) return;
@@ -253,15 +258,9 @@ export async function homeView(root, rest, state) {
 
   // ── Home is yours to arrange (Greg, 22 Nov): widgets in your order, dragged into place in Edit ──
   const WIDGETS = { next: 'Next', weather: 'Weather', calendar: 'Calendar', messages: 'Messages', coming: 'Coming up', lights: 'Lights', lists: 'Lists', month: 'Month' };
-  // Everyone starts with Greg's own arrangement (23 Nov), then moves things as they like.
-  const DEFAULT_WIDGETS = ['weather', 'calendar', 'messages', 'next', 'lists', 'lights', 'coming'];
-  const chosen = () => {
-    const w = getPref('widgets', null);
-    if (!Array.isArray(w)) return DEFAULT_WIDGETS;
-    // Chosen before the calendar became a widget: it stays, after Next.
-    if (!w.includes('calendar') && !getPref('widgets_v2', false)) { const i = w.indexOf('next'); return [...w.slice(0, i + 1), 'calendar', ...w.slice(i + 1)]; }
-    return w.filter((x) => x in WIDGETS);
-  };
+  // Everyone starts with Greg's own arrangement (23 Nov), then moves things as they like (phone-layout.js DEFAULT_WIDGETS).
+  // A phone with its own layout shows its own list.
+  const chosen = () => (phoneOwn() ? (ownList() || []).map((i) => i.id) : desktopOrder()).filter((x) => x in WIDGETS);
   const on = (id) => chosen().includes(id);
   // Weather: one card, now and today, then tomorrow (Open-Meteo, through Logos; only the place's rounded position goes out).
   const SKY = (c) => (c === 0 ? ['☀️', 'Clear'] : c <= 2 ? ['⛅', 'Partly cloudy'] : c === 3 ? ['☁️', 'Cloudy'] : c <= 48 ? ['🌫️', 'Fog']
@@ -689,6 +688,7 @@ export async function homeView(root, rest, state) {
     drawTray();
   }
   async function save(order) {
+    if (phoneOwn()) return saveOwn(order.map((id) => ({ id, size: sizeOf(id) })));       // the phone's own list; the desktop's untouched
     await setPref('widgets', order);
     if (!getPref('widgets_v2', false)) await setPref('widgets_v2', true).catch(() => {});
   }
@@ -733,7 +733,8 @@ export async function homeView(root, rest, state) {
     return h('div', { class: 'widget-size', role: 'group', 'aria-label': `${WIDGETS[id]} size` }, ...SIZES.map(([k, label]) => h('button', {
       type: 'button', class: k === now ? 'on' : '', 'aria-pressed': String(k === now), onclick: () => {
         if (k === sizeOf(id)) return;
-        setPref('widget_sizes', { ...(getPref('widget_sizes', {}) || {}), [id]: k });     // kept in the background; the page at once
+        if (phoneOwn()) saveOwn(orderNow().map((x) => ({ id: x, size: x === id ? k : sizeOf(x) })));
+        else setPref('widget_sizes', { ...(getPref('widget_sizes', {}) || {}), [id]: k });     // kept in the background; the page at once
         markSize(id); REDRAW[id]?.(); decorate();
         if (grid.on()) { grid.apply(id); grid.persist(); }
       } }, label)));
@@ -758,10 +759,13 @@ export async function homeView(root, rest, state) {
         if (grid.on()) { if (grid.key(el, e)) handle.focus(); return; }
         if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
         e.preventDefault();
-        const sib = e.key === 'ArrowUp' ? el.previousElementSibling : el.nextElementSibling;
-        if (sib && !sib.classList.contains('off')) { if (e.key === 'ArrowUp') sib.before(el); else sib.after(el); save(orderNow()); handle.focus(); }
+        if (moveBy(el, e.key === 'ArrowUp' ? -1 : 1)) handle.focus();
       });
+      // On the phone's list, Up and Down too (Greg, 28 Nov): moving without dragging.
+      const step = (up) => h('button', { type: 'button', class: 'widget-step', 'aria-label': `Move ${WIDGETS[id]} ${up ? 'up' : 'down'}`, title: up ? 'Move up' : 'Move down',
+        onclick: (e) => { const b = e.currentTarget; if (moveBy(el, up ? -1 : 1)) b.focus(); } }, up ? '↑' : '↓');
       el.prepend(h('div', { class: 'widget-bar' }, handle, h('span', { class: 'widget-name' }, WIDGETS[id]),
+        grid.on() ? null : h('span', { class: 'widget-steps' }, step(true), step(false)),
         sizeSwitch(id),
         id === 'weather' ? h('button', { type: 'button', class: 'linkish small', 'aria-expanded': String(!!el.querySelector('.home-places-edit')), onclick: (e) => {
           const open = el.querySelector('.home-places-edit');
@@ -769,10 +773,39 @@ export async function homeView(root, rest, state) {
           e.currentTarget.setAttribute('aria-expanded', String(!open));
         } }, 'Places') : null,
         h('button', { type: 'button', class: 'widget-remove', 'aria-label': `Take ${WIDGETS[id]} off Home`, title: 'Take off Home', onclick: async () => {
+          if (phoneOwn()) { save(orderNow().filter((w) => w !== id)); applyWidgets(); decorate(); return; }   // the phone's own list only
           grid.forget(id); save(orderNow().filter((w) => w !== id)); applyWidgets(); decorate(); grid.apply(); grid.persist();   // the page first, the saving after
         } }, '✕')));
     }
   }
+  // One place up or down the phone's list; false at either end.
+  function moveBy(el, by) {
+    const sib = by < 0 ? el.previousElementSibling : el.nextElementSibling;
+    if (!sib || sib.classList.contains('off')) return false;
+    if (by < 0) sib.before(el); else sib.after(el);
+    save(orderNow());
+    return true;
+  }
+  // Phone layout (Greg, 28 Nov): "Same as desktop" or "Its own", in the edit bar on a phone and on a desktop alike (and in
+  // Settings › Home). Home redraws at once on a phone; on a desktop nothing there changes.
+  const phoneSeg = h('div', { class: 'home-phone-mode', role: 'group', 'aria-label': 'Phone layout', hidden: true },
+    h('span', { class: 'home-phone-label' }, 'Phone:'),
+    h('span', { class: 'widget-size' }, ...[['same', 'Same as desktop'], ['own', 'Its own']].map(([k, label]) => h('button', {
+      type: 'button', 'data-mode': k, title: k === 'own' ? 'The phone keeps its own widgets, order and sizes' : 'The phone shows the desktop\'s widgets, in its order',
+      onclick: () => { if (phoneMode() === k) return; setPhoneMode(k); drawPhoneSeg(); if (phoneScreen.matches) relayout(); } }, label))));
+  const drawPhoneSeg = () => {
+    phoneSeg.hidden = !editing;
+    for (const b of phoneSeg.querySelectorAll('button')) { const on = b.dataset.mode === phoneMode(); b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+  };
+  // The phone's list or the desktop's: again, as it should be now (the switch, or the window across 1100 px).
+  function relayout() {
+    applyWidgets();
+    if (editing) decorate();
+    REDRAW.calendar();
+    for (const id of chosen()) if (id !== 'calendar' && SHOW[id]) SHOW[id]();
+    requestAnimationFrame(pack);
+  }
+  phoneScreen.addEventListener('change', () => { if (alive && phoneMode() === 'own') relayout(); else if (alive && editing) decorate(); });
   function setEditing(v) {
     editing = v;
     requestAnimationFrame(() => requestAnimationFrame(() => grid.syncGrips()));
@@ -783,7 +816,7 @@ export async function homeView(root, rest, state) {
     editBtn.classList.toggle('done', v);
     askForm.classList.toggle('editing', v);
     if (!v) for (const el of board.querySelectorAll('.home-places-edit')) el.remove();
-    decorate(); drawTray();
+    decorate(); drawTray(); drawPhoneSeg();
   }
   // The calendar lines open the Calendar (Greg, 27 Nov). They are not links, so a long press on one still starts Edit;
   // while arranging, a tap does nothing.
@@ -980,7 +1013,7 @@ export async function homeView(root, rest, state) {
 
   root.replaceChildren(h('div', { class: 'page home' },
     h('header', { class: 'home-head' },
-      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), bandSlot, headTools, editBtn), statusWords),
+      h('div', { class: 'home-date-row' }, h('h1', { class: 'home-date' }, new Date().toLocaleDateString([], DAY)), bandSlot, phoneSeg, headTools, editBtn), statusWords),
     waitingSec,
     board,
     tray,
