@@ -474,6 +474,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       .filter((q) => q.length > 8 && q.length < 300);
     return [...new Set(found)].slice(-3);
   }
+  let prevShownId = null;                    // the message drawn just above the one being drawn (draw())
   function bubbleFor(ev, edits, reactions, inMain, showTime = true, showName = false) {
     const mine = ev.getSender() === me;
     const fromAgent = agentIds.has(ev.getSender());
@@ -521,7 +522,10 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       body = mine ? [plainBody] : markdown(plainBody);
     }
     const inReplyTo = content['m.relates_to']?.['m.in_reply_to']?.event_id;
-    if (inReplyTo) {
+    // An agent marks every answer as a reply to the message it answers: a quote of the message just above
+    // says nothing, so only a reply to something further up shows one (28 Nov).
+    const justAbove = prevShownId === inReplyTo;
+    if (inReplyTo && !justAbove) {
       const orig = room.findEventById(inReplyTo);
       const what = orig ? snippet((edits.get(inReplyTo) || orig.getContent()).body) : 'an earlier message';
       body.unshift(h('button', { type: 'button', class: 'mx-quote', title: 'Show that message', onclick: (e) => {
@@ -621,7 +625,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       // Reply, Copy and Fold together, in one style, apart from the emoji (Greg, 28 Nov: on a phone Reply wrapped
       // onto a line of its own, in another colour from Copy).
       h('span', { class: 'mx-picker-actions' },
-        h('button', { type: 'button', role: 'menuitem', class: 'mx-act mx-reply', onclick: () => { closePicker(); setReply({ id: ev.getId(), name: name || 'them', text: snippet(text) || 'a message' }); } }, 'Reply'),
+        h('button', { type: 'button', role: 'menuitem', class: 'mx-act mx-reply', onclick: () => { closePicker(); setReply({ id: ev.getId(), sender: ev.getSender(), name: name || 'them', text: snippet(text) || 'a message', full: stripReplyFallback(text).trim().slice(0, 1000) }); } }, 'Reply'),
         text && navigator.clipboard ? h('button', { type: 'button', role: 'menuitem', class: 'mx-act mx-copy', onclick: async () => {
           closePicker();
           try { await navigator.clipboard.writeText(text.trim()); note.textContent = 'Copied.'; } catch { note.textContent = 'Could not copy.'; }
@@ -758,6 +762,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       // In a group, who said it: once at the start of each run of someone else's messages.
       const prev = shown[i - 1];
       const showName = !!group && ev.getSender() !== me && (!prev || cronJob(prev) || prev.getSender() !== ev.getSender() || ev.getTs() - prev.getTs() > 5 * 60000);
+      prevShownId = prev ? prev.getId() : null;
       return bubbleFor(ev, edits, reactions, inMain, showTime, showName);
     }) : [none('Nothing said here yet.')]), ...(voicingTurn ? [voicingTurn] : []));
     // Read: tell Matrix this chat has been read up to its newest message (as Element X does), so it
@@ -854,9 +859,13 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     // A voice message carries its length and shape beside the words (agents ignore it; Element X shows plain text).
     const extra = spoken && spoken.seconds > 0 ? { 'org.logos.voice': { seconds: spoken.seconds, wave: spoken.wave || [] } } : {};
     const quoting = replyTo;
+    // The quote as Matrix writes it, "> <@user:server> …" line by line: hermes reads the author and the whole quote
+    // from it and tells the agent "[Replying to your previous message: …]" (28 Nov: with a name and a cut quote,
+    // Mira could not tell what "this" was).
+    const fallback = (q) => (q.full || q.text).split('\n').map((l, i) => `> ${i ? '' : `<${q.sender}> `}${l}`).join('\n');
     if (quoting) {
       extra['m.relates_to'] = { 'm.in_reply_to': { event_id: quoting.id } };
-      text = `> <${quoting.name}> ${quoting.text}\n\n${text}`;
+      text = `${fallback(quoting)}\n\n${text}`;
       setReply(null);
     }
     input.value = ''; grow();
@@ -873,8 +882,8 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text, ...extra });
       else if (group) {
         // The quote goes before the names in a group, so the agents' "@Name:" prefix stays first after it.
-        const g = groupMessage(quoting ? text.slice(text.indexOf('\n\n') + 2) : text);
-        if (quoting) g.body = `> <${quoting.name}> ${quoting.text}\n\n${g.body}`;
+        const g = groupMessage(quoting ? stripReplyFallback(text) : text);
+        if (quoting) g.body = `${fallback(quoting)}\n\n${g.body}`;
         await c.sendMessage(room.roomId, { ...g, ...extra });
       }
       else await c.sendMessage(room.roomId, { msgtype: 'm.text', body: text, ...extra });

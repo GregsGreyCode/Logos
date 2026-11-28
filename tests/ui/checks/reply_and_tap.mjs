@@ -28,8 +28,9 @@ for (const [tag, opts] of [['desktop', { viewport: { width: 1440, height: 900 } 
   }
   await page.locator('.mx-reply-x').click(); await page.waitForTimeout(200);
   ok(await bar.isHidden(), `${tag}: ✕ drops the reply`);
-  // Send a reply and see its quote.
-  await msg.click({ position: { x: 20, y: 12 } }); await page.waitForTimeout(300);
+  // Send a reply to an earlier message (not the one just above) and see its quote.
+  const earlier = page.locator('.log .msg.user').first();
+  await earlier.click({ position: { x: 10, y: 10 } }); await page.waitForTimeout(300);
   await page.locator('.mx-picker .mx-reply').click(); await page.waitForTimeout(200);
   await page.locator('.composer textarea').first().fill('answering that one');
   await page.locator('.composer textarea').first().press('Enter'); await page.waitForTimeout(1200);
@@ -37,6 +38,17 @@ for (const [tag, opts] of [['desktop', { viewport: { width: 1440, height: 900 } 
   ok(await mine.locator('.mx-quote').isVisible(), `${tag}: the reply shows a quote of the message it answers`);
   ok((await mine.innerText()).includes('answering that one') && !(await mine.innerText()).includes('> <'), `${tag}: no "> <name>" text in the reply`);
   ok(await bar.isHidden(), `${tag}: the strip goes once sent`);
+  // As Matrix writes a reply, so hermes tells the agent which message: "> <@user:server> the whole quote".
+  const sent = await page.evaluate(() => window.__mx.sent[window.__mx.sent.length - 1][1]);
+  ok(/^> <@[^>]+:[^>]+> /.test(sent.body) && sent.body.endsWith('\n\nanswering that one') && !sent.body.includes('…'),
+    `${tag}: sent with the author's Matrix id and the whole quote (${JSON.stringify(sent.body).slice(0, 80)})`);
+  ok(sent['m.relates_to']?.['m.in_reply_to']?.event_id, `${tag}: and m.in_reply_to`);
+  // A reply to the message just above (an agent marks every answer so) shows no quote: it would say nothing.
+  await page.locator('.log .msg.user').last().click({ position: { x: 10, y: 10 } }); await page.waitForTimeout(300);
+  await page.locator('.mx-picker .mx-reply').click(); await page.waitForTimeout(200);
+  await page.locator('.composer textarea').first().fill('and this one');
+  await page.locator('.composer textarea').first().press('Enter'); await page.waitForTimeout(1200);
+  ok(!(await page.locator('.log .msg.user').last().locator('.mx-quote').count()), `${tag}: no quote of the message just above`);
   if (tag === 'desktop') await page.screenshot({ path: `${out}/desk/reply_and_tap.png` });
   ok(!errs.length, `${tag}: no page errors (${errs.join('; ').slice(0, 120)})`);
 }
