@@ -750,5 +750,6 @@ def test_preferred_country_comes_from_the_location_file():
 def test_weather_instructions_and_policy_name_the_tool():
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
-    assert "use the `weather` tool (it says which place it found)" in (root / "souls/_shared/weather.md").read_text()
+    text = (root / "souls/_shared/weather.md").read_text()
+    assert "`weather`" in text and "(it says which place it found)" in text and 'place: "home"' in text
     assert "weather," in (root / "infra/agent-image/policy.yaml").read_text()
