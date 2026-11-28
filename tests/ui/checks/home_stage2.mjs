@@ -115,7 +115,7 @@ for (const [vw, vh, mob, n] of [[412, 915, true, 'phone'], [1440, 900, false, 'd
     await edit(page);
     const rs = await rects(page);
     ok(await page.locator('.home-widgets.free').count() === 0 && Object.values(rs).every((r) => Math.abs(r.w - Object.values(rs)[0].w) < 2), `${n}: one column, every widget the full width`);
-    ok(await page.locator('.home-tidy').count() === 0 && await page.locator('.guide-layer:visible').count() === 0, `${n}: no Tidy up and no guides on a phone`);
+    ok(await page.locator('.home-tidy:visible').count() === 0 && await page.locator('.guide-layer:visible').count() === 0, `${n}: no Tidy up and no guides on a phone`);
     ok(!/null/.test(await page.locator('.home-tray').textContent()), `${n}: the Add tray says no stray "null"`);
     const hb = await page.locator('[data-widget="lights"] .widget-handle').boundingBox();
     await page.mouse.move(hb.x + 10, hb.y + 10); await page.mouse.down(); await page.mouse.move(hb.x + 10, hb.y + 80, { steps: 5 });

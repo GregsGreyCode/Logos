@@ -1517,7 +1517,6 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
   /* The date in the top bar, between the logo and your initial; the Ask box at the bottom, above the tabs. */
   .title-centred .topbar-sep { display: none; }
   .title-centred .screen-name { color: var(--ink); font: 600 17px/1.2 var(--font-display); }
-  .on-home .home-date-row { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .home { display: flex; flex-direction: column; padding-bottom: 6px; min-height: calc(100dvh - var(--topbar-h) - var(--tabbar-h) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 6px); }
   .home > .home-ask { margin-top: auto; position: sticky; bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + var(--below-visible, 0px)); padding: 10px 0; background: var(--ground); z-index: 5; }
   .hud-cell { padding: 10px 12px; }
@@ -1643,6 +1642,11 @@ a.feed-item:hover .feed-title { color: var(--accent-text); }
   background: var(--accent-soft); color: var(--ink); }
 .home-next .label { margin: 0; color: var(--accent-text); }
 .home-next strong { font-weight: 600; }
+/* Next, Compact (Greg, 28 Nov): one line, the calendar's colour, the time and title (cut with …), how long at the end. */
+.home-next.compact { flex-wrap: nowrap; align-items: center; min-width: 0; }
+.home-next.compact .home-next-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-next.compact > .when { flex: none; }
+.home-next.compact .dot { width: 8px; height: 8px; }
 .home-msgs { display: flex; flex-direction: column; }
 .home-msg { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--ink); text-decoration: none; user-select: none; }
 .home-msg:last-child { border-bottom: 0; }
@@ -1732,7 +1736,17 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 /* Home is yours to arrange (Greg, 22 Nov): Edit Home, drag by the handle, ✕ to take off, Add to put back. */
 .home-widgets { display: flex; flex-direction: column; gap: 22px; }
 .home-widget.off { display: none !important; }
-.home-widgets.editing > .home-widget { position: relative; outline: 1px dashed var(--line); outline-offset: 6px; border-radius: var(--r-card); }
+.home-widgets.editing > .home-widget { position: relative; outline: 1.5px dashed color-mix(in srgb, var(--accent) 55%, var(--line)); outline-offset: 6px; border-radius: var(--r-card); }
+/* The whole widget picks up while arranging (Greg, 28 Nov): a hand to grab it with, a solid outline under the pointer; its
+   own controls keep their pointer. No text selected and no callout menu by a press. */
+.home-widgets.editing > .home-widget { cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.home-widgets.editing > .home-widget :is(button, a, label, .widget-size) { cursor: pointer; }
+.home-widgets.editing > .home-widget :is(input, textarea, select) { cursor: auto; -webkit-user-select: text; user-select: text; }
+@media (hover: hover) {
+  .home-widgets.editing > .home-widget:hover:not(.dragging) { outline-style: solid; outline-color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+}
+.home-widget.lifted { outline-style: solid !important; outline-color: var(--accent) !important; }
+html.widget-moving, html.widget-moving * { cursor: grabbing !important; }
 .home-widgets.editing > .home-widget[hidden]:not(.off) { display: block !important; }
 .home-widgets.editing > .home-widget[hidden]:not(.off) .widget-name::after { content: ' · shows when there is something'; font-weight: 400; color: var(--muted); font-size: var(--t-sm); }
 /* While editing, each widget keeps what it shows, dimmed and not tappable, so the spacing you arrange
@@ -2035,19 +2049,22 @@ html.sheet-open, html.sheet-open body { overflow: hidden; }
 .home-widgets.editing > .home-widget > h2.label, .home-widgets.editing > .home-widget > .home-sec-head > h2.label { display: none; }
 .home-widgets.editing > .home-widget.dragging { background: var(--surface) !important; opacity: 1; }
 .home-widgets.editing > .home-widget.dragging > :not(.widget-bar) { opacity: .8; }
-/* Arrange Home: a round pencil at the end of Home's title row; Done while arranging, kept in view. */
-.home-date-row { justify-content: space-between; }
-.home-edit-link { flex: none; display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line);
-  border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; }
-.home-edit-link:hover, .home-edit-link:focus-visible { color: var(--ink); background: var(--chip); }
-.home-edit-link .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.home-edit-link.done { width: auto; padding: 0 18px; border-radius: 999px; color: #fff; background: var(--accent); border-color: var(--accent); font: 600 15px/1 var(--font-body, inherit); }
-.home-edit-link.done .icon { stroke-width: 2.4; }
+/* Edit Home (Greg, 28 Nov): a pencil and the word at the right of Home's title band, where the other screens keep their actions
+   (and Home Assistant its Edit dashboard); Done in the same place while arranging, Tidy up and Reset layout beside it. */
+.home-date-row { justify-content: space-between; gap: 12px; }
+.home-edit-link { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; min-width: 36px; padding: 0 14px 0 12px;
+  border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink); cursor: pointer; font: 600 14px/1 var(--font-body, inherit); }
+.home-edit-link:hover, .home-edit-link:focus-visible { background: var(--chip); }
+.home-edit-link .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.home-edit-link.done { padding: 0 20px; color: #fff; background: var(--accent); border-color: var(--accent); font-size: 15px; }
+.home-grid-tools[hidden] { display: none !important; }
+@media (max-width: 1099px) { .home-grid-tools { display: none !important; } }
+/* On a phone the date is in the top bar: Home's band is a slim row with only Edit (or Done) at its right, like
+   Notifications' Mark all read. (Greg, 23 Nov: not in the top bar itself.) */
 @media (max-width: 599px) {
-  /* On a phone: the pencil at the end of Home, centred; while arranging, Done is a block of its own under the Add chips
-     (Greg, 23 Nov: floating over them, it looked out of place). */
-  .home > .home-edit-link { align-self: center; margin: 4px 0 8px; }
-  .home > .home-edit-link.done { align-self: stretch; width: auto; height: 50px; margin: 20px 0 12px; border-radius: var(--r-card); font-size: 16px; }
+  .home > .home-head, .home > .home-head:has(> .home-status[hidden]) { display: flex; }
+  .home > .home-head .home-date { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .home > .home-head .home-date-row { position: static; width: auto; height: auto; overflow: visible; clip: auto; justify-content: flex-end; margin: -8px 0 -10px; }
 }
 /* While arranging on a wide screen, the title band (with Done) stays at the top as you scroll. */
 @media (min-width: 600px) { .home > .home-head:has(.home-edit-link.done) { position: sticky; top: 0; z-index: 6; background: var(--ground); } }
@@ -2462,7 +2479,6 @@ button.home-list-box.tick:hover:not(:disabled) { border-color: var(--accent); }
 .home-ask.editing > :not(.ask-done) { display: none !important; }
 .home-ask.editing .ask-done { display: block; flex: 1 0 100%; min-height: 52px; border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink);
   font: 600 17px var(--font-body); cursor: pointer; box-shadow: 0 6px 18px rgb(0 0 0 / .3); }
-@media (max-width: 599px) { .home > .home-edit-link.done { display: none; } }
 
 /* The Las Vegas sign (Greg, 23 Nov): text scrolling across the top of Home, between the date and the pencil. Wide screens only. */
 .home-band { display: none; }
