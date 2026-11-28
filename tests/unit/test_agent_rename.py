@@ -477,3 +477,13 @@ def test_matrix_login_kept_on_the_host_wins_over_a_placeholder(setup, env):
     held.mkdir(parents=True)
     (held / "alpha.env").write_text("LOGOS_MATRIX_ACCESS_TOKEN=real\n")
     assert rn._matrix_name(r, "alpha", r.load("alpha")) is True and named[-1][1] == "real"
+
+
+def test_a_personal_agent_speaks_while_the_speakers_wake_words_are_on(monkeypatch):
+    """Greg, 28 Nov ("should we have it be dynamic"): a renamed agent gets its name as its wake word."""
+    from gateway import agent_settings_api as api, wake_host
+    mira = {"name": "bere", "owners": ["bere"]}
+    monkeypatch.setattr(wake_host, "settings", lambda env=None: {"bind": "127.0.0.1", "port": 10400})
+    assert api._speaks(mira) and not api._speaks({"name": "x"}) and not api._speaks({**mira, "sandbox": False})
+    monkeypatch.setattr(wake_host, "settings", lambda env=None: None)
+    assert not api._speaks(mira) and api._speaks({**mira, "speaker_name": "Mira"})

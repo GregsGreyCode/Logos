@@ -120,8 +120,18 @@ def _others(runtime: Any, name: str) -> Dict[str, Mapping[str, Any]]:
 
 
 def _speaks(definition: Mapping[str, Any]) -> bool:
+    """Whether the agent may answer on the house speaker: one set up for it, or (Greg, 28 Nov: "should we
+    have it be dynamic") any agent with people of its own while the speaker's wake words are on, so a name
+    chosen in Logos (Settings or the agent's own set_my_name) becomes its wake word too."""
     from gateway import tts_host, wake_host
-    return wake_host.uses_wake(definition) or tts_host.uses_speaker(definition)
+    if wake_host.uses_wake(definition) or tts_host.uses_speaker(definition):
+        return True
+    owners = definition.get("owners")
+    try:
+        on = wake_host.settings() is not None
+    except Exception:                    # a broken speaker file: as if off
+        on = False
+    return bool(on and owners and definition.get("sandbox", True) is not False)
 
 
 def _taken_wake_words(runtime: Any, name: str, people: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
