@@ -305,3 +305,31 @@ def test_quiet_speech_is_raised_and_silence_is_left_alone():
     g4 = wake.Gain(on=False)
     x = tone(-45)
     assert g4(x, rate, 0.0) is x
+
+
+# ── the second check (28 Nov) ───────────────────────────────────────────────
+
+def test_the_name_is_found_in_what_speech_to_text_heard():
+    from gateway import wake
+    assert wake.name_words("Hey Finn") == ["finn"] and wake.name_words("Hey Home") == ["home"]
+    assert wake.name_words("Finn") == ["finn"]
+    for heard in ("Hey Finn.", "hey fin", "Hey, Finn's", "Finn", "hey fynn"):
+        assert wake.says_name(heard, "Hey Finn"), heard
+    for heard in ("", "Hey.", "the fun bit", "I'm in", "been there", "Hey, how are you?"):
+        assert not wake.says_name(heard, "Hey Finn"), heard
+    assert wake.says_name("hey home", "Hey Home") and not wake.says_name("hey hello", "Hey Home")
+    assert wake.says_name("hey ad am", "Hey Adam")                    # a name heard as two words
+
+
+def test_the_check_address_and_audio_for_it():
+    from gateway import wake
+    assert wake.check_address({"WAKE_CHECK": "192.0.2.5:10300"}) == ("192.0.2.5", 10300)
+    assert wake.check_address({"WAKE_CHECK": ""}) is None and wake.check_address({"WAKE_CHECK": "x:no"}) is None
+    pcm = wake.float_to_pcm([0.0, 0.5, -1.0, 2.0])
+    assert len(pcm) == 8 and list(wake.pcm_to_float(pcm))[1] > 0.49
+
+
+def test_the_wake_container_is_told_where_speech_to_text_is(tmp_path, monkeypatch):
+    from gateway import wake_host
+    src = open(wake_host.__file__).read()
+    assert "WAKE_CHECK=" in src and "stt_host.settings" in src

@@ -294,8 +294,15 @@ class WakeHost:
         write_names(self.rt, self.env, create=True)
         folder = state_dir(self.env)
         dockerfile = (BUILD_DIR / "Dockerfile").read_text()
+        # The second check goes to Logos speech-to-text, when it is on (gateway/wake.py, gateway/stt.py).
+        try:
+            from gateway import stt_host
+            stt = stt_host.settings(self.env)
+        except Exception:
+            stt = None
+        check = f"{'172.17.0.1' if stt and stt['bind'] in ('0.0.0.0', '::') else (stt or {}).get('bind')}:{stt['port']}" if stt else ""
         stamp = hashlib.sha256((json.dumps(conf, sort_keys=True) + self.user + SERVER_FILE.read_text()
-                                + dockerfile).encode()).hexdigest()[:16]
+                                + dockerfile + check).encode()).hexdigest()[:16]
         if self.running() and self._label() == stamp:
             return False
         self.ensure_image()
@@ -309,6 +316,7 @@ class WakeHost:
                      "-p", f"{conf['bind']}:{conf['port']}:{PORT}",
                      "-v", f"{folder}:/state", "-v", f"{SERVER_FILE}:/app/wake.py:ro",
                      "-e", "WAKE_STATE=/state", "-e", f"WAKE_PORT={PORT}", "-e", "HOME=/tmp",
+                     *(["-e", f"WAKE_CHECK={check}"] if check else []),
                      IMAGE, "python", "/app/wake.py"])
         self.wait(conf)
         return True

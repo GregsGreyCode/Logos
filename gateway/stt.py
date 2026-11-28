@@ -46,6 +46,7 @@ KEEP_S = 1800                            # 30 min: the words reach voice/convers
                                          # Settings › Your voice can say "That was me" for half an hour
 MAX_HEARD = 100
 MAX_AUDIO_S = 30                         # a spoken command; Home Assistant stops listening well before
+CHECK_NAME = "logos-wake-check"          # gateway/wake.py's second check: words only, nothing kept
 MAX_UPLOAD = 4 * 1024 * 1024             # an enrolment recording: 15 s of browser audio is about 60 KB
 
 
@@ -135,6 +136,12 @@ class Ears:
             take = vp.analyse(audio.tolist())
             emb = self.embed(take.audio) if take.speech >= vp.MIN_HEARD_S else None
         return text, emb, take.quality()
+
+    def words_only(self, pcm: bytes, rate: int, width: int, channels: int) -> str:
+        """Just the words (the wake words' second check): no embedding, nothing kept."""
+        audio = to_float(pcm, rate, width, channels)
+        with self._lock:
+            return self.transcribe(audio)
 
     def from_recording(self, path: str) -> dict:
         """A recording from Settings: its quality, the embedding of the whole and of each piece."""
@@ -267,6 +274,7 @@ def make_handler(ears: Ears, heard: Heard):
             super().__init__(*a, **kw)
             self.pcm = bytearray()
             self.fmt = (vp.RATE, 2, 1)
+            self.check = False                            # the wake words' second check (gateway/wake.py)
 
         async def handle_event(self, event) -> bool:
             if Describe.is_type(event.type):
@@ -276,7 +284,10 @@ def make_handler(ears: Ears, heard: Heard):
                 await self.write_event(Pong().event())
                 return True
             if Transcribe.is_type(event.type):
-                return True                               # the model hears the language itself
+                # The model hears the language itself. The wake words' second check names itself: words only,
+                # nothing kept, no voice sample (it never reaches the voice prints).
+                self.check = Transcribe.from_event(event).name == CHECK_NAME
+                return True
             if AudioStart.is_type(event.type):
                 s = AudioStart.from_event(event)
                 self.pcm, self.fmt = bytearray(), (s.rate, s.width, s.channels)
@@ -289,6 +300,16 @@ def make_handler(ears: Ears, heard: Heard):
             if AudioStop.is_type(event.type):
                 started = time.monotonic()
                 pcm, self.pcm = bytes(self.pcm), bytearray()
+                if self.check:
+                    try:
+                        text = await asyncio.to_thread(ears.words_only, pcm, *self.fmt)
+                    except Exception as e:
+                        print(f"wake check: could not transcribe ({type(e).__name__})", flush=True)
+                        text = ""
+                    await self.write_event(Transcript(text=text).event())
+                    print(f"wake check: {len(pcm) / max(1, self.fmt[0] * self.fmt[1] * self.fmt[2]):.1f} s "
+                          f"in {time.monotonic() - started:.2f} s", flush=True)
+                    return False
                 try:
                     text, emb, q = await asyncio.to_thread(ears.hear, pcm, *self.fmt)
                 except Exception as e:

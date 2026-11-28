@@ -41,6 +41,16 @@ QUIET_S = 1.5                # one call of a name is one detection
 THRESHOLD = 0.25             # sherpa-onnx's default: lower wakes more readily
 BOOST = 1.0                  # keywords_score: higher favours the name over other paths
 MIN_THRESHOLD, MAX_THRESHOLD = 0.05, 0.95
+# The second check (Greg, 28 Nov: a name said across the room was missed). A second, far more willing spotter
+# runs beside the first; what only it hears is sent to Logos speech-to-text (WAKE_CHECK=host:port), and the
+# speaker wakes only if the words have the name in them. The audio is sent marked as a check, so nothing of it
+# is kept there and it never reaches the voice prints.
+LENIENT_THRESHOLD, LENIENT_BOOST = 0.05, 2.5
+CHECK_S = 2.0                # the audio sent: the name ends about now
+CHECK_TIMEOUT_S = 2.5
+CHECK_NAME = "logos-wake-check"   # Wyoming transcribe name: gateway/stt.py answers words only
+NAME_LIKE = 0.75             # how alike a heard word must be to the name (difflib ratio)
+FILLERS = {"HEY", "HI", "OK", "OKAY", "HELLO", "YO", "ALRIGHT"}
 
 
 def spell(phrase: str) -> str:
@@ -99,6 +109,66 @@ def wanted(names: Optional[Sequence[str]], phrases: Sequence[Mapping]) -> List[M
     return [p for p in phrases if p["id"] in asked]
 
 
+def name_words(phrase: str) -> List[str]:
+    """The words of a wake phrase that are the name ("Hey Finn" -> ["finn"])."""
+    words = spell(phrase).split()
+    return [w.lower() for w in words if w not in FILLERS] or [w.lower() for w in words]
+
+
+def says_name(text: str, phrase: str) -> bool:
+    """Whether the words speech-to-text heard have the wake phrase's name in them, allowing for spelling
+    ("Fin", "Finn's"). Each word of the name must match a heard word (or two heard words run together)."""
+    import difflib
+    heard = [w.strip("'").lower() for w in spell(text).split() if w.strip("'")]
+    heard = [w[:-2] if w.endswith("'s") else w for w in heard]
+    pairs = heard + [a + b for a, b in zip(heard, heard[1:])]
+    return bool(heard) and all(any(difflib.SequenceMatcher(None, n, h).ratio() >= NAME_LIKE for h in pairs)
+                               for n in name_words(phrase))
+
+
+def float_to_pcm(samples) -> bytes:
+    out = array.array("h", (int(max(-1.0, min(1.0, x)) * 32767) for x in samples))
+    if sys.byteorder == "big":
+        out.byteswap()
+    return out.tobytes()
+
+
+async def check(address: tuple, pcm: bytes, rate: int, timeout: float = CHECK_TIMEOUT_S) -> Optional[str]:
+    """The words Logos speech-to-text hears in ``pcm`` (16-bit mono), or None when it does not answer."""
+    import asyncio
+    from wyoming.asr import Transcribe, Transcript
+    from wyoming.audio import AudioChunk, AudioStart, AudioStop
+    from wyoming.client import AsyncTcpClient
+
+    async def ask() -> Optional[str]:
+        async with AsyncTcpClient(*address) as client:
+            await client.write_event(Transcribe(name=CHECK_NAME).event())
+            await client.write_event(AudioStart(rate=rate, width=2, channels=1).event())
+            step = rate * 2 // 10
+            for i in range(0, len(pcm), step):
+                await client.write_event(AudioChunk(rate=rate, width=2, channels=1, audio=pcm[i:i + step]).event())
+            await client.write_event(AudioStop().event())
+            while True:
+                event = await client.read_event()
+                if event is None:
+                    return None
+                if Transcript.is_type(event.type):
+                    return Transcript.from_event(event).text or ""
+    try:
+        return await asyncio.wait_for(ask(), timeout)
+    except (OSError, asyncio.TimeoutError, ValueError):
+        return None
+
+
+def check_address(env: Optional[Mapping[str, str]] = None) -> Optional[tuple]:
+    raw = (os.environ if env is None else env).get("WAKE_CHECK", "").strip()
+    host, _, port = raw.rpartition(":")
+    try:
+        return (host, int(port)) if host and 1 <= int(port) <= 65535 else None
+    except ValueError:
+        return None
+
+
 def reported_name(names: Optional[Sequence[str]], pid: str) -> str:
     """The name to report: Home Assistant drops a detection whose name is not the one it asked for,
     so when it asked for logos_any that is the answer (who was called goes in heard.json)."""
@@ -145,10 +215,17 @@ class Gain:
     pumped. It also reports the loudest speech of each stretch of sound (levels only, never sound)."""
 
     TARGET_DB, MAX_DB, FLOOR_DB, STEP_DB = -24.0, 18.0, -58.0, 3.0
-    WINDOW_S = 2.0
+    WINDOW_S, ROOM_S = 2.0, 10.0
 
     def __init__(self, on: bool = True) -> None:
-        self.on, self.db, self.peaks, self.burst = on, 0.0, [], None   # peaks: (time s, dBFS) of 100 ms frames
+        self.on, self.db, self.peaks, self.room = on, 0.0, [], []   # (time s, dBFS) of 100 ms frames
+        self.loud = -120.0
+
+    def levels(self) -> str:
+        """The name's loudness against the room's, for the log (levels only)."""
+        room = sorted(db for _, db in self.room)
+        quiet = room[len(room) // 5] if room else -120.0
+        return f"loudest {self.loud:.0f} dBFS, room {quiet:.0f} dBFS, raised {self.db:.0f} dB"
 
     @staticmethod
     def level(frame) -> float:
@@ -161,15 +238,12 @@ class Gain:
     def __call__(self, samples, rate: int, t: float):
         n = max(1, rate // 10)
         for i in range(0, len(samples), n):
-            self.peaks.append((t + i / rate, self.level(samples[i:i + n])))
+            frame = (t + i / rate, self.level(samples[i:i + n]))
+            self.peaks.append(frame)
+            self.room.append(frame)
         self.peaks = [p for p in self.peaks if p[0] >= t - self.WINDOW_S]
-        loud = max((db for _, db in self.peaks), default=-120.0)
-        # A stretch of sound: its loudest level, said once it ends.
-        if loud > self.FLOOR_DB + 10:
-            self.burst = max(self.burst or -120.0, loud)
-        elif self.burst is not None:
-            print(f"sound: loudest {self.burst:.0f} dBFS, raised {self.db:.0f} dB", flush=True)
-            self.burst = None
+        self.room = [p for p in self.room if p[0] >= t - self.ROOM_S]
+        loud = self.loud = max((db for _, db in self.peaks), default=-120.0)
         if not self.on:
             return samples
         want = 0.0 if loud < self.FLOOR_DB else min(max(self.TARGET_DB - loud, 0.0), self.MAX_DB)
@@ -188,6 +262,8 @@ class Spotter:
         self._mtime: Optional[float] = None
         self.phrases: List[dict] = []
         self.kws = None
+        self.lenient = None          # the willing spotter of the second check (None without WAKE_CHECK)
+        self.check_address = check_address()
         import sentencepiece
         self._sp = sentencepiece.SentencePieceProcessor(model_file=os.path.join(model_dir, "bpe.model"))
 
@@ -214,13 +290,26 @@ class Spotter:
         with open(kfile, "w") as f:
             f.write("\n".join(lines) + "\n")
         m = self.model_dir
-        self.kws = sherpa_onnx.KeywordSpotter(
-            tokens=os.path.join(m, "tokens.txt"), encoder=os.path.join(m, "encoder.onnx"),
-            decoder=os.path.join(m, "decoder.onnx"), joiner=os.path.join(m, "joiner.onnx"),
-            keywords_file=kfile, num_threads=self.threads, keywords_score=BOOST,
-            keywords_threshold=THRESHOLD, num_trailing_blanks=1, provider="cpu")
+
+        def spotter(path):
+            return sherpa_onnx.KeywordSpotter(
+                tokens=os.path.join(m, "tokens.txt"), encoder=os.path.join(m, "encoder.onnx"),
+                decoder=os.path.join(m, "decoder.onnx"), joiner=os.path.join(m, "joiner.onnx"),
+                keywords_file=path, num_threads=self.threads, keywords_score=BOOST,
+                keywords_threshold=THRESHOLD, num_trailing_blanks=1, provider="cpu")
+        self.kws = spotter(kfile)
+        self.lenient = None
+        if self.check_address:
+            willing = [dict(p, threshold=min(p["threshold"], LENIENT_THRESHOLD), boost=max(p["boost"], LENIENT_BOOST))
+                       for p in self.phrases]
+            lfile = os.path.join(self.tmp_dir, "keywords-willing.txt")
+            with open(lfile, "w") as f:
+                f.write("\n".join(keyword_lines(willing, self.encode)) + "\n")
+            self.lenient = spotter(lfile)
         print("wake words: " + ", ".join(f"{p['phrase']} -> {p['agent']} (#{p['threshold']:g})"
-                                          for p in self.phrases), flush=True)
+                                          for p in self.phrases)
+              + (f"; second check through {self.check_address[0]}:{self.check_address[1]}" if self.lenient else ""),
+              flush=True)
 
 
 def info_event(phrases: Sequence[Mapping]):
@@ -254,12 +343,39 @@ def make_handler(spotter: Spotter, heard_path: str):
             self.quiet_until = 0.0
             self.detected = False
             self.gain = Gain(os.environ.get("WAKE_GAIN", "1") != "0")
+            self.lstream = None
+            self.willing = None
+            self.recent: list = []    # the last CHECK_S of audio (after the gain), for the second check
+            self.recent_n = 0
+            self.lquiet_until = 0.0
 
         def _start(self) -> None:
             spotter.refresh()
             self.kws, self.samples, self.detected = spotter.kws, 0, False
             self.listen = {p["id"]: p for p in wanted(self.names, spotter.phrases)}
             self.stream = self.kws.create_stream() if self.kws is not None and self.listen else None
+            self.willing = spotter.lenient if self.stream is not None else None
+            self.lstream = self.willing.create_stream() if self.willing is not None else None
+            self.recent, self.recent_n = [], 0
+
+        def _keep(self, audio, rate: int) -> None:
+            self.recent.append(audio)
+            self.recent_n += len(audio)
+            while self.recent and self.recent_n - len(self.recent[0]) >= CHECK_S * rate:
+                self.recent_n -= len(self.recent.pop(0))
+
+        async def _detect(self, pid: str, p: Mapping, rate: int, how: str) -> None:
+            now = time.monotonic()
+            self.quiet_until = self.lquiet_until = now + QUIET_S
+            self.detected = True
+            at_ms = int(self.samples * 1000 / rate)
+            try:
+                note_heard(heard_path, {"agent": p["agent"], "id": pid, "phrase": p["phrase"]})
+            except OSError as e:
+                print(f"wake words: could not write {HEARD_FILE}: {e}", flush=True)
+            print(f"heard {p['phrase']!r} -> {p['agent']} ({how}) at {at_ms / 1000:.2f} s into the stream; "
+                  f"{self.gain.levels()}", flush=True)
+            await self.write_event(Detection(name=reported_name(self.names, pid), timestamp=at_ms).event())
 
         async def handle_event(self, event) -> bool:
             if Describe.is_type(event.type):
@@ -288,27 +404,43 @@ def make_handler(spotter: Spotter, heard_path: str):
                 rate = chunk.rate or self.rate
                 t = self.samples / rate
                 self.samples += len(chunk.audio) // 2
-                self.stream.accept_waveform(rate, self.gain(pcm_to_float(chunk.audio), rate, t))
+                audio = self.gain(pcm_to_float(chunk.audio), rate, t)
+                self.stream.accept_waveform(rate, audio)
+                sure = False
                 while self.kws.is_ready(self.stream):
                     self.kws.decode_stream(self.stream)
                     pid = self.kws.get_result(self.stream)
                     if not pid:
                         continue
                     self.kws.reset_stream(self.stream)
-                    now = time.monotonic()
                     p = self.listen.get(pid)
-                    if p is None or now < self.quiet_until:
+                    if p is None or time.monotonic() < self.quiet_until:
                         continue
-                    self.quiet_until, self.detected = now + QUIET_S, True
-                    at_ms = int(self.samples * 1000 / (chunk.rate or self.rate))
-                    try:
-                        note_heard(heard_path, {"agent": p["agent"], "id": pid, "phrase": p["phrase"]})
-                    except OSError as e:
-                        print(f"wake words: could not write {HEARD_FILE}: {e}", flush=True)
-                    print(f"heard {p['phrase']!r} -> {p['agent']} (threshold {p['threshold']:g}) "
-                          f"at {at_ms / 1000:.2f} s into the stream; loudest {self.gain.burst or -120:.0f} dBFS, "
-                          f"raised {self.gain.db:.0f} dB", flush=True)
-                    await self.write_event(Detection(name=reported_name(self.names, pid), timestamp=at_ms).event())
+                    sure = True
+                    await self._detect(pid, p, rate, f"threshold {p['threshold']:g}")
+                if self.lstream is None:
+                    return True
+                # The second check: what only the willing spotter heard goes to speech-to-text.
+                self._keep(audio, rate)
+                self.lstream.accept_waveform(rate, audio)
+                while self.willing.is_ready(self.lstream):
+                    self.willing.decode_stream(self.lstream)
+                    pid = self.willing.get_result(self.lstream)
+                    if not pid:
+                        continue
+                    self.willing.reset_stream(self.lstream)
+                    p = self.listen.get(pid)
+                    if sure or p is None or time.monotonic() < self.lquiet_until:
+                        continue
+                    self.lquiet_until = time.monotonic() + QUIET_S
+                    started = time.monotonic()
+                    words = await check(spotter.check_address, float_to_pcm([x for a in self.recent for x in a]), rate)
+                    took = time.monotonic() - started
+                    if words is not None and says_name(words, p["phrase"]):
+                        await self._detect(pid, p, rate, f"second check, {took:.2f} s")
+                    else:
+                        print(f"maybe {p['phrase']!r}: {'no answer from speech-to-text' if words is None else 'not the name'} "
+                              f"({took:.2f} s); {self.gain.levels()}", flush=True)
                 return True
             if AudioStop.is_type(event.type):
                 if not self.detected:
