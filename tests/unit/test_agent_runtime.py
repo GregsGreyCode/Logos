@@ -124,6 +124,7 @@ class FakeRunner:
     def run_env(self, argv, env):
         argv = list(argv)
         self.calls.append(argv)
+        self.inputs.append(None)
         self.env_calls.append((argv, dict(env)))
         if argv[:3] == ["openshell", "provider", "create"]:
             self.providers[argv[argv.index("--name") + 1]] = argv[argv.index("--type") + 1]

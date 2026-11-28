@@ -46,9 +46,14 @@ def _config_dir(env: Mapping[str, str]) -> Path:
     return Path(base) / "logos"
 
 
+def key_path(env: Optional[Mapping[str, str]] = None) -> Path:
+    return _config_dir(env if env is not None else os.environ) / KEY_FILE
+
+
 def key(env: Optional[Mapping[str, str]] = None) -> bytes:
-    """Made once, kept beside Logos's other keys, owner-only."""
-    path = _config_dir(env if env is not None else os.environ) / KEY_FILE
+    """Made once, kept beside Logos's other keys, owner-only. ``scripts/logos-rotate alert-key``
+    replaces it (docs/secrets.md)."""
+    path = key_path(env)
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -58,7 +63,12 @@ def key(env: Optional[Mapping[str, str]] = None) -> bytes:
         else:
             with os.fdopen(fd, "w") as f:
                 f.write(secrets.token_urlsafe(32) + "\n")
-    return path.read_text().strip().encode()
+    value = path.read_text().strip().encode()
+    if len(value) < 16:
+        # Never sign with an empty or cut-short key (a crash between creating and writing the file):
+        # anyone could work the tokens out. Refuse until the file is fixed (logos-rotate alert-key).
+        raise RuntimeError(f"{path} is empty or too short; run scripts/logos-rotate alert-key")
+    return value
 
 
 def token_for(agent: str, env: Optional[Mapping[str, str]] = None) -> str:
@@ -66,7 +76,12 @@ def token_for(agent: str, env: Optional[Mapping[str, str]] = None) -> str:
 
 
 def valid(agent: str, token: str, env: Optional[Mapping[str, str]] = None) -> bool:
-    return bool(agent) and bool(token) and hmac.compare_digest(token_for(agent, env), token)
+    try:
+        expected = token_for(agent, env)
+    except RuntimeError:
+        logger.warning("alert text: the alert key is unusable; refusing every token")
+        return False
+    return bool(agent) and bool(token) and hmac.compare_digest(expected, token)
 
 
 def request_token(request: Any, body: Mapping[str, Any]) -> str:

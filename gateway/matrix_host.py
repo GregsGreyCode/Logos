@@ -309,6 +309,21 @@ class MatrixHost:
             raise MatrixError(f"@{localpart} could not sign in: {out.get('error') or out.get('errcode') or 'refused'}")
         return out
 
+    def relogin(self, user_id: str, password: str, device_id: str) -> str:
+        """A new access token for an agent's existing device (E7 rotation, docs/secrets.md). Signing in
+        with the same ``device_id`` keeps the device and its encryption keys, and the server ends
+        that device's old token. Returns the new token or raises MatrixError."""
+        if not (user_id and password and device_id):
+            raise MatrixError("no stored Matrix password or device for this agent")
+        out = self._call("/_matrix/client/v3/login", {"type": "m.login.password",
+                                                      "identifier": {"type": "m.id.user", "user": user_id},
+                                                      "password": password, "device_id": device_id})
+        if "access_token" not in out:
+            raise MatrixError(f"{user_id} could not sign in: {out.get('error') or out.get('errcode') or 'refused'}")
+        if out.get("device_id") and out["device_id"] != device_id:
+            raise MatrixError(f"{user_id}: the server gave a new device ({out['device_id']}), not {device_id}")
+        return out["access_token"]
+
     def logout(self, token: str) -> None:
         self._call("/_matrix/client/v3/logout", {}, token=token)
 

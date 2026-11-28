@@ -1,5 +1,6 @@
 """aiohttp middleware and decorators for auth and RBAC."""
 
+import hmac
 import logging
 import os
 import time
@@ -74,7 +75,7 @@ def get_user_from_request(request: web.Request) -> Optional[dict]:
         or ""
     )
     auth_header = request.headers.get("Authorization", "")
-    if internal_token and auth_header == f"Bearer {internal_token}":
+    if internal_token and hmac.compare_digest(auth_header.encode(), f"Bearer {internal_token}".encode()):
         return {"sub": "system", "email": "system@internal", "role": "admin"}
 
     token = request.cookies.get("access_token")
@@ -181,7 +182,7 @@ def require_csrf(handler):
                 or ""
             )
             auth_header = request.headers.get("Authorization", "")
-            if internal_token and auth_header == f"Bearer {internal_token}":
+            if internal_token and hmac.compare_digest(auth_header.encode(), f"Bearer {internal_token}".encode()):
                 return await handler(request)
 
             cookie_token = request.cookies.get("csrf_token")

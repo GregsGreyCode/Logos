@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""Rotate the secrets Logos makes itself (story E7). The full runbook, and the secrets that come from
+outside (Home Assistant, mail, GitHub, Anthropic), are in docs/secrets.md.
+
+Usage:
+  scripts/logos-rotate status [agent...]       where each agent's secrets are kept (never the values)
+  scripts/logos-rotate <agent> <secret>...     rotate one or more of an agent's secrets:
+        noticeboard voice calendar web changes house mail advisor model
+                                               its token for that Logos service (or its model-gateway key)
+        matrix                                 its Matrix access token (same device: keys and
+                                               verification stay)
+        api                                    its own API key (the agent is recreated)
+        all                                    every one of the above it has
+  scripts/logos-rotate alert-key               the key behind every agent's phone-alert and speaker
+                                               tokens (all running agents get the new tokens)
+
+A secret the agent holds as an OpenShell placeholder is changed live: the host store and the agent's
+provider get the new value and only the service that checks it restarts. A secret in the agent's .env
+is changed there and the agent is recreated (with --no-model-load: LM Studio is left alone).
+Nothing here prints a secret.
+"""
+import importlib.util
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+
+def _runtime_module():
+    spec = importlib.util.spec_from_file_location("logos_agent_runtime", REPO / "gateway" / "agent_runtime.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def main(argv, art=None) -> int:
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    art = art or _runtime_module()
+    rt = art.AgentRuntime(REPO)
+    rot = art._sibling("secret_rotation")
+    r = rot.Rotator(rt)
+    try:
+        if argv[0] == "status":
+            for name in argv[1:] or rt.defined():
+                print(name)
+                for secret, where in r.status(name):
+                    print(f"  {secret:20} {where}")
+            return 0
+        if argv[0] == "alert-key":
+            r.rotate_alert_key()
+            return 0
+        name, wanted = argv[0], argv[1:]
+        if not wanted:
+            print("say which secret: " + ", ".join(rot.AGENT_SECRETS) + " or all", file=sys.stderr)
+            return 2
+        if wanted == ["all"]:
+            have = {s for s, where in r.status(name) if where != "-"}
+            wanted = [s for s in rot.SERVICE_SECRETS if s in have] + ["matrix" if "matrix" in have else None, "api"]
+            wanted = [w for w in wanted if w]
+        for secret in wanted:
+            r.rotate(name, secret)
+        return 0
+    except (rot.RotateError, art.AgentRuntimeError) as e:
+        print(f"logos-rotate: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

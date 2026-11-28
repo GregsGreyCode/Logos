@@ -785,7 +785,9 @@ class AgentRuntime:
                     cur[k] = host[k]
                 else:
                     del cur[k]
-        for k in sec.HOST_ONLY:
+        # Also a secret with no line at all (moved to the host, the sandbox not started since), so a
+        # placeholder secret keeps its value across `up`s instead of being made anew.
+        for k in (*sec.HOST_ONLY, *sec.SECRETS.values()):
             if host.get(k) and not cur.get(k):
                 cur[k] = host[k]
         # Telegram is no longer used: drop anything an older `up` stored, the bot token included.

@@ -130,6 +130,10 @@ def export(out: Path) -> dict:
         with tarfile.open(out / "people-agents.tar.gz", "w:gz") as t:
             t.add(people, arcname="agents")
         os.chmod(out / "people-agents.tar.gz", 0o600)
+    # E7 (docs/secrets.md): the Matrix database holds every account's sessions and auth.db the
+    # dashboard's: owner-only, like everything else here.
+    for f in out.iterdir():
+        os.chmod(f, 0o600)
     files = {}
     for f in sorted(out.iterdir()):
         files[f.name] = {"bytes": f.stat().st_size, "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
@@ -147,6 +151,7 @@ def main(argv):
     stage = Path.home() / ".cache" / "logos-backup-export"
     shutil.rmtree(stage, ignore_errors=True)
     stage.mkdir(parents=True)
+    os.chmod(stage, 0o700)                # copied with its mode: DIR/latest is owner-only too
     work = base / f".new-{os.getpid()}"
     shutil.rmtree(work, ignore_errors=True)
     try:

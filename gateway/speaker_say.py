@@ -95,7 +95,11 @@ def token_for(agent: str, env: Optional[Mapping[str, str]] = None, key: Optional
 
 
 def valid(agent: str, token: str, env: Optional[Mapping[str, str]] = None) -> bool:
-    return bool(agent) and bool(token) and hmac.compare_digest(token_for(agent, env), token)
+    try:
+        expected = token_for(agent, env)
+    except RuntimeError:                 # the alert key is unusable (gateway/alert_text.key): refuse
+        return False
+    return bool(agent) and bool(token) and hmac.compare_digest(expected, token)
 
 
 def speaks(definition: Mapping[str, Any]) -> bool:
