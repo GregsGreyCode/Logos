@@ -2,7 +2,7 @@
 // words. The built-in ones (morning briefing, weekly digest, what changed) are switched and timed here,
 // kept by Logos through every deploy; the ones you asked your agent for can be paused or deleted (to
 // add or change one, ask the agent); the rest work behind the scenes. Its model and reach fold away.
-import { modelName, h, api, getJSON, none, loading, icon, ICONS, shortName, when, ask, reveal, focusIfKeyboard } from './util.js';
+import { modelName, h, api, getJSON, none, loading, icon, ICONS, shortName, when, ask, dialog, reveal, focusIfKeyboard } from './util.js';
 import * as mx from './mx.js';
 import { agentBar, baseMood, MOODS } from './agents-void.js';
 
@@ -131,10 +131,7 @@ export async function agentsView(root, [agentArg, sub]) {
       });
       rec.start(); mic.classList.add('recording'); mic.textContent = '■'; msg.textContent = 'Listening… tap ■ to stop.';
     } }, '🎤');
-    const layer = h('div', { class: 'ask-layer' });
-    const close = () => { if (rec) rec.stop(); layer.remove(); };
-    layer.append(h('div', { class: 'ask-scrim', onclick: close }),
-      h('form', { class: 'ask-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New routine', onsubmit: async (e) => {
+    const { layer, close } = dialog({ label: 'New routine', form: true, onClose: () => { if (rec) rec.stop(); }, onsubmit: async (e) => {
         e.preventDefault();
         const what = text.value.trim();
         if (!what) { msg.textContent = 'Say or type what it should do, and when.'; return; }
@@ -157,8 +154,7 @@ export async function agentsView(root, [agentArg, sub]) {
       } },
       h('h2', {}, 'New routine'), h('p', {}, `What should ${agent.display_name} do, and when?`),
       h('label', { for: 'nr-text', class: 'sr' }, 'What and when'), h('div', { class: 'nr-row' }, text, mic), msg,
-      h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: close }, 'Cancel'))));
-    document.body.append(layer);
+      h('div', { class: 'row' }, go, h('button', { type: 'button', class: 'btn quiet', onclick: () => close() }, 'Cancel')));
     focusIfKeyboard(text);
   }
 

@@ -1859,18 +1859,35 @@ html.widget-moving, html.widget-moving * { cursor: grabbing !important; }
 .tab-glow[hidden] { display: none; }
 @media (min-width: 600px) { .tab-glow { display: none; } }
 [data-anim="off"] .tab-glow { transition: none; }
-/* Asking before something that cannot be undone, or for a password: Logos's own sheet, not the browser's box. */
+/* Logos's one dialog (util.js dialog(), Home Assistant review rec. 8; Greg, 28 Nov): asking before something
+   that cannot be undone, a password, a list to pick from, a small form. A sheet from the bottom with a handle
+   at 870 px wide or less or 500 px tall or less (SHEET_MEDIA in util.js); in the middle of a wider screen. */
 .ask-layer { position: fixed; inset: 0; z-index: 80; display: flex; align-items: flex-end; justify-content: center; }
 .ask-scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, .55); animation: scrim-in .2s ease both; }
-.ask-panel { position: relative; width: 100%; max-width: 480px; display: flex; flex-direction: column; gap: 10px;
-  padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--surface);
-  border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -12px 40px rgba(0, 0, 0, .4); animation: sheet-up .3s cubic-bezier(.16, 1, .3, 1) both; }
+.ask-panel { position: relative; width: 100%; max-width: 560px; max-height: calc(100dvh - 24px - env(safe-area-inset-top));
+  overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px;
+  padding: 20px max(16px, env(safe-area-inset-right)) calc(20px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  border-radius: 22px 22px 0 0; background: var(--surface);
+  border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -12px 40px rgba(0, 0, 0, .4); animation: sheet-up .3s cubic-bezier(.16, 1, .3, 1) both;
+  transition: transform .2s cubic-bezier(.16, 1, .3, 1); }
+.ask-panel:focus { outline: none; }
+.ask-panel.dragging { transition: none; }
 .ask-panel h2 { margin: 0; font-size: 18px; }
 .ask-panel p { margin: 0; }
-.ask-panel .row { display: flex; gap: 8px; margin-top: 6px; }
-@media (min-width: 600px) { .ask-layer { align-items: center; } .ask-panel { border-radius: 22px; border-bottom: 1px solid var(--line); } }
-[data-anim="off"] .ask-panel, [data-anim="off"] .ask-scrim { animation: none; }
-@media (prefers-reduced-motion: reduce) { .ask-panel, .ask-scrim { animation: none; } }
+.ask-panel .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+/* The handle: a short bar to pull the sheet down by, with room round it for a thumb. */
+.dialog-grip { flex: none; display: flex; justify-content: center; align-items: center; height: 22px; margin: -18px 0 -8px; cursor: grab; touch-action: none; }
+.dialog-grip::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: var(--muted); opacity: .45; }
+@media (min-width: 871px) and (min-height: 501px) {
+  .ask-layer { align-items: center; padding: 24px; }
+  .ask-panel { max-width: 480px; max-height: calc(100dvh - 48px); padding: 20px; border-radius: 22px; border-bottom: 1px solid var(--line);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .45); animation-name: dialog-in; animation-duration: .2s; }
+  .dialog-grip { display: none; }
+}
+@keyframes dialog-in { from { transform: scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
+[data-anim="off"] .ask-panel, [data-anim="off"] .ask-scrim { animation: none; transition: none; }
+@media (prefers-reduced-motion: reduce) { .ask-panel, .ask-scrim { animation: none; transition: none; } }
+html.dialog-open, html.dialog-open body { overflow: hidden; }
 
 /* Voice notes, images and files in a chat, and 📎 to send one (Greg, 22 Nov). */
 .mx-voice { display: flex; align-items: center; gap: 10px; min-width: 220px; }
@@ -2955,11 +2972,11 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 .speaker-service { display: flex; align-items: center; gap: 6px; margin: 0; }
 .lang-more { display: flex; justify-content: space-between; gap: 10px; }
 /* The voice picker: a sheet on a phone, a dialog on a desktop. */
-.pick-panel { max-height: min(86vh, 760px); padding-bottom: 12px; }
+.pick-panel { max-height: min(86vh, 760px); overflow: hidden; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 .pick-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .pick-body { overflow-y: auto; display: flex; flex-direction: column; gap: 14px; margin: 0 -4px; padding: 0 4px; overscroll-behavior: contain; }
 .pick-group { display: flex; flex-direction: column; gap: 8px; }
-@media (min-width: 600px) { .pick-panel { max-width: 560px; } }
+@media (min-width: 871px) and (min-height: 501px) { .pick-panel { max-width: 560px; } }
 
 /* Sites the agents may reach. */
 .sites-tools { display: flex; gap: 10px; align-items: center; }

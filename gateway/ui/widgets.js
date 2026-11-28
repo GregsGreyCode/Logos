@@ -4,7 +4,7 @@
 // Every kind comes Compact or Full (Greg, 24 Nov), each person's choice: DRAW[id](data, expand, compact), where Compact
 // keeps what the widget is for and leaves out the rest (said beside each one).
 import { swr, forget } from './cache.js';
-import { h, api, when } from './util.js';
+import { h, api, when, dialog } from './util.js';
 import { agentColour } from './appearance.js';
 
 const SECOND = 1000;
@@ -291,10 +291,6 @@ export function setupSheet(kind, done) {
       f.help ? h('p', { class: 'when' }, f.help) : '');
   });
   const values = () => Object.fromEntries(Object.entries(inputs).map(([k, get]) => [k, get()]));
-  const layer = h('div', { class: 'ask-layer' });
-  const close = () => { layer.remove(); document.removeEventListener('keydown', key); };
-  const key = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', key);
   const send = async (method, path) => {
     msg.textContent = method === 'POST' ? 'Trying it…' : 'Trying it, then saving…';
     const r = await api(path, { method, body: { fields: values() } }).catch(() => null);
@@ -309,8 +305,8 @@ export function setupSheet(kind, done) {
     await api(`/api/v2/widgets/${kind.id}`, { method: 'DELETE' }).catch(() => null);
     kind.set_up = false; close(); done?.();
   } }, 'Remove its setup') : '';
-  layer.append(h('div', { class: 'ask-scrim', onclick: close }),
-    h('form', { class: 'ask-panel w-setup', role: 'dialog', 'aria-modal': 'true', 'aria-label': `Set up ${kind.name}`, onsubmit: async (e) => {
+  // Logos's one dialog (util.js, 28 Nov): a sheet from the bottom on a phone.
+  const { panel, close } = dialog({ label: `Set up ${kind.name}`, form: true, cls: 'w-setup', onsubmit: async (e) => {
       e.preventDefault();
       const d = await send('PUT', `/api/v2/widgets/${kind.id}`);
       if (!d.ok) { msg.textContent = d.error || 'It could not be saved just now.'; return; }
@@ -323,7 +319,6 @@ export function setupSheet(kind, done) {
     h('p', { class: 'when' }, 'Kept on the Logos server only: never in a browser, never with an agent.'),
     msg,
     h('div', { class: 'row' }, h('button', { type: 'submit', class: 'btn' }, 'Save'), test,
-      h('button', { type: 'button', class: 'btn quiet', onclick: close }, 'Cancel'), remove)));
-  document.body.append(layer);
-  layer.querySelector('input, textarea')?.focus();
+      h('button', { type: 'button', class: 'btn quiet', onclick: () => close() }, 'Cancel'), remove));
+  panel.querySelector('input, textarea')?.focus();
 }

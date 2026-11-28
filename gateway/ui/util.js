@@ -220,6 +220,95 @@ export function when(ts) {
 export const noteTitle = (t) => (/^\d{4}-\d{2}-\d{2}$/.test(String(t))
   ? `Notes of ${new Date(`${t}T12:00:00`).toLocaleDateString([], { day: 'numeric', month: 'short' })}` : t);
 
+// One dialog for every small task: add, confirm, pick (Home Assistant review, rec. 8; Greg, 28 Nov). In the
+// middle of the screen on a wide one; a sheet from the bottom at 870 px wide or less, or 500 px tall or
+// less, with a handle to pull it down. Either way it sits on top of the page you were on. It closes with
+// Escape, a tap outside it, or (as a sheet) a swipe down; Tab stays inside it, and when it closes the
+// focus goes back to what opened it. `form` makes the panel a <form> (Enter sends it). Returns
+// { layer, panel, close }; close() runs onClose once.
+export const SHEET_MEDIA = '(max-width: 870px), (max-height: 500px)';
+const openDialogs = [];
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const stillMotion = () => document.documentElement.dataset.anim === 'off' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+export function dialog({ label, form = false, cls = '', onsubmit = null, onClose = null, opener = document.activeElement }, ...children) {
+  const grip = h('div', { class: 'dialog-grip', 'aria-hidden': 'true' });
+  const panel = h(form ? 'form' : 'div', { class: `ask-panel${cls ? ` ${cls}` : ''}`, role: 'dialog', 'aria-modal': 'true',
+    'aria-label': label, tabindex: '-1', onsubmit }, grip, ...children);
+  const scrim = h('div', { class: 'ask-scrim' });
+  const layer = h('div', { class: 'ask-layer' }, scrim, panel);
+  const me = { layer, panel };
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    layer.remove();
+    openDialogs.splice(openDialogs.indexOf(me), 1);
+    document.removeEventListener('keydown', key, true);
+    document.removeEventListener('focusin', keepIn);
+    if (!openDialogs.length) document.documentElement.classList.remove('dialog-open');
+    if (opener && opener.isConnected && opener !== document.body) opener.focus({ preventScroll: true });
+    if (onClose) onClose();
+  };
+  me.close = close;
+  const top = () => openDialogs[openDialogs.length - 1] === me;
+  const stops = () => [...panel.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length);
+  function key(e) {
+    if (!top()) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
+    if (e.key !== 'Tab') return;
+    const all = stops();
+    if (!all.length) { e.preventDefault(); panel.focus(); return; }
+    const i = all.indexOf(document.activeElement);
+    if (e.shiftKey && i <= 0) { e.preventDefault(); all[all.length - 1].focus(); }
+    else if (!e.shiftKey && (i === -1 || i === all.length - 1)) { e.preventDefault(); all[0].focus(); }
+  }
+  function keepIn(e) { if (top() && !panel.contains(e.target)) panel.focus({ preventScroll: true }); }
+  scrim.addEventListener('click', close);
+  // A swipe down closes the sheet: from its handle or title at any time, from the rest once whatever
+  // scrolls inside it is at its top. A short pull springs back.
+  let drag = null;
+  panel.addEventListener('touchstart', (e) => {
+    drag = null;
+    if (e.touches.length !== 1 || !window.matchMedia(SHEET_MEDIA).matches || e.target.closest('input, textarea, select')) return;
+    let s = e.target;
+    while (s && s !== panel && !(s.scrollHeight > s.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(s).overflowY))) s = s.parentElement;
+    if (s === panel && !(panel.scrollHeight > panel.clientHeight + 1)) s = null;
+    drag = { y: e.touches[0].clientY, t: Date.now(), dy: 0, scroller: s, on: false };
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (!drag) return;
+    const dy = e.touches[0].clientY - drag.y;
+    if (!drag.on) {
+      if (dy < 8) { if (dy < -8) drag = null; return; }
+      if (drag.scroller && drag.scroller.scrollTop > 0) { drag = null; return; }
+      drag.on = true; panel.classList.add('dragging');
+    }
+    drag.dy = Math.max(0, dy);
+    panel.style.transform = `translateY(${drag.dy}px)`;
+    e.preventDefault();
+  }, { passive: false });
+  const release = () => {
+    if (!drag || !drag.on) { drag = null; return; }
+    const { dy, t } = drag; drag = null;
+    panel.classList.remove('dragging');
+    const fast = dy > 30 && dy / Math.max(1, Date.now() - t) > 0.6;
+    if (dy > Math.min(100, panel.offsetHeight / 3) || fast) {
+      if (stillMotion()) { close(); return; }
+      panel.style.transform = 'translateY(100%)';
+      setTimeout(close, 180);
+    } else panel.style.transform = '';
+  };
+  panel.addEventListener('touchend', release, { passive: true });
+  panel.addEventListener('touchcancel', release, { passive: true });
+  openDialogs.push(me);
+  document.addEventListener('keydown', key, true);
+  document.addEventListener('focusin', keepIn);
+  document.documentElement.classList.add('dialog-open');
+  document.body.append(layer);
+  panel.focus({ preventScroll: true });
+  return me;
+}
+
 // Asking before something that cannot be undone, or for a password, in Logos's own sheet (Greg, 22 Nov:
 // not the browser's grey boxes, whose password prompt showed what was typed). Resolves to true (or the
 // password typed) when confirmed, null when cancelled.
@@ -227,21 +316,17 @@ export function ask({ title, text = '', yes = 'OK', danger = false, password = '
   return new Promise((done) => {
     const pw = password ? h('input', { type: 'password', id: 'ask-pw', autocomplete: 'current-password' }) : null;
     const msg = h('p', { class: 'when', role: 'status' });
-    const layer = h('div', { class: 'ask-layer' });
-    const close = (v) => { layer.remove(); document.removeEventListener('keydown', key); done(v); };
-    const key = (e) => { if (e.key === 'Escape') close(null); };
-    document.addEventListener('keydown', key);
-    layer.append(h('div', { class: 'ask-scrim', onclick: () => close(null) }),
-      h('form', { class: 'ask-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, onsubmit: (e) => {
-        e.preventDefault();
-        if (pw && !pw.value) { msg.textContent = 'Enter the password to go on.'; return; }
-        close(pw ? pw.value : true);
-      } },
-      h('h2', {}, title), text ? h('p', {}, text) : null,
-      pw ? h('label', { for: 'ask-pw', class: 'field-label' }, password) : null, pw ? revealable(pw) : null, msg,
-      h('div', { class: 'row' }, h('button', { type: 'submit', class: `btn${danger ? ' danger' : ''}` }, yes),
-        h('button', { type: 'button', class: 'btn quiet', onclick: () => close(null) }, 'Cancel'))));
-    document.body.append(layer);
+    let answer = null;
+    const d = dialog({ label: title, form: true, onClose: () => done(answer), onsubmit: (e) => {
+      e.preventDefault();
+      if (pw && !pw.value) { msg.textContent = 'Enter the password to go on.'; return; }
+      answer = pw ? pw.value : true;
+      d.close();
+    } },
+    h('h2', {}, title), text ? h('p', {}, text) : null,
+    pw ? h('label', { for: 'ask-pw', class: 'field-label' }, password) : null, pw ? revealable(pw) : null, msg,
+    h('div', { class: 'row' }, h('button', { type: 'submit', class: `btn${danger ? ' danger' : ''}` }, yes),
+      h('button', { type: 'button', class: 'btn quiet', onclick: () => d.close() }, 'Cancel')));
     if (pw) focusIfKeyboard(pw);
   });
 }
@@ -378,18 +463,12 @@ export function leaveSubpage() {
   document.documentElement.classList.remove('has-back');
 }
 
-// A sheet from the bottom on a phone, a dialog in the middle on a desktop (28 Nov): `body` is what it
-// holds. Closes with its ✕, Escape or a tap outside; returns close().
+// A list to pick from (the voice picker): the dialog above, with its title and ✕ on top and `body`
+// scrolling under them (28 Nov). Returns close().
 export function sheet({ title, body, onClose = null }) {
-  const layer = h('div', { class: 'ask-layer sheet-layer' });
-  const close = () => { layer.remove(); document.removeEventListener('keydown', key); if (onClose) onClose(); };
-  const key = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', key);
-  layer.append(h('div', { class: 'ask-scrim', onclick: close }),
-    h('div', { class: 'ask-panel pick-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
-      h('div', { class: 'pick-head' }, h('h2', {}, title),
-        h('button', { type: 'button', class: 'icon-btn pick-close', 'aria-label': 'Close', onclick: close }, '✕')),
-      h('div', { class: 'pick-body' }, ...[body].flat())));
-  document.body.append(layer);
-  return close;
+  const d = dialog({ label: title, cls: 'pick-panel', onClose },
+    h('div', { class: 'pick-head' }, h('h2', {}, title),
+      h('button', { type: 'button', class: 'icon-btn pick-close', 'aria-label': 'Close', onclick: () => d.close() }, '✕')),
+    h('div', { class: 'pick-body' }, ...[body].flat()));
+  return d.close;
 }

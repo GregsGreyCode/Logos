@@ -6,7 +6,7 @@
 // agent, "Ask your agent" puts the words in its chat instead.
 //   #/calendar                         this month
 //   #/calendar/<month|week|day|list>/<YYYY-MM-DD>[/<event id>]
-import { h, api, getJSON, none, loading, icon, ICONS, reveal, focusIfKeyboard, ask } from './util.js';
+import { h, api, getJSON, none, loading, icon, ICONS, reveal, focusIfKeyboard, ask, dialog } from './util.js';
 import { peek, keep, forget, forgetWhere } from './cache.js';
 import { draftFor } from './home.js';
 
@@ -517,20 +517,12 @@ export async function calendarView(root, rest, state) {
 
   // ── A panel: an event in full, or the form ──────────────────────────────────────────────────
   // Its title, and in the top-right corner the one way to close it, ✕ (Greg, 28 Nov: "the close button is weird").
-  // Escape, a tap outside it, or on a phone a swipe down on its top close it too.
+  // Escape, a tap outside it, or on a phone a swipe down close it too: Logos's one dialog (util.js, 28 Nov).
   function layer(label, opener, ...head) {
-    const box = h('div', { class: 'ask-layer cal-layer' });
-    const close = () => { box.remove(); document.removeEventListener('keydown', key); if (opener && opener.isConnected) opener.focus({ preventScroll: true }); };
-    const key = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', key);
-    const x = h('button', { type: 'button', class: 'cal-x', 'aria-label': 'Close', title: 'Close', onclick: close }, icon(CLOSE_ICON));
-    const top = h('div', { class: 'cal-panel-head' }, h('div', { class: 'cal-panel-title' }, head), x);
-    const panel = h('div', { class: 'ask-panel cal-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': label }, top);
-    let y0 = null;
-    top.addEventListener('touchstart', (e) => { y0 = e.touches.length === 1 ? e.touches[0].clientY : null; }, { passive: true });
-    top.addEventListener('touchend', (e) => { if (y0 != null && e.changedTouches[0].clientY - y0 > 60) close(); y0 = null; }, { passive: true });
-    box.append(h('div', { class: 'ask-scrim', onclick: close }), panel);
-    document.body.append(box);
+    const x = h('button', { type: 'button', class: 'cal-x', 'aria-label': 'Close', title: 'Close', onclick: () => close() }, icon(CLOSE_ICON));
+    const { layer: box, panel, close } = dialog({ label, cls: 'cal-panel', opener },
+      h('div', { class: 'cal-panel-head' }, h('div', { class: 'cal-panel-title' }, head), x));
+    box.classList.add('cal-layer');
     return { panel, close };
   }
   function details(e, opener) {
