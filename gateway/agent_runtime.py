@@ -1188,7 +1188,7 @@ class AgentRuntime:
             domains = hh.agent_settings(agent)["domains"]
             tools = ([t for t in ("list_lights", "set_lights") if "light" in domains]
                      + [t for t in ("list_scenes", "activate_scene") if "scene" in domains]
-                     + [t for t in ("list_items", "add_items", "change_item", "tick_items", "remove_items") if "todo" in domains])
+                     + [t for t in ("list_items", "add_items", "change_item", "tick_items", "remove_items", "create_list") if "todo" in domains])
             for e in rules["house"].get("endpoints") or []:
                 e["rules"] = [{"allow": {"method": m}} for m in
                               ("initialize", "notifications/initialized", "ping", "tools/list")] + [

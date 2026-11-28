@@ -17,6 +17,13 @@ be limited to some devices):
 The shared lists (shopping, to-do) are Home Assistant to-do lists (``todo.*``), so Greg and Béré
 see the same list in the Home Assistant app and every agent with the ``todo`` domain works on it.
 
+Creating a list (``create_list``) is the one thing that needs a Home Assistant ADMIN: a new list
+is a new "Local To-do" config entry. When the optional admin login is configured
+(``ha_admin_url``/``ha_admin_token``), :class:`ListMaker` holds it and can do exactly one thing
+with it: run the ``local_todo`` config flow with a checked name. It never reads states or calls
+services; everything else, including finding the new list afterwards, uses the non-admin login.
+The admin token is never logged or returned. At most ``CREATE_PER_DAY`` lists per agent a day.
+
 Rooms come from Home Assistant itself: a light whose state lists member lights (a Hue room or
 zone, or a Home Assistant light group) is a room, and Hue scenes carry their room's name.
 
@@ -30,6 +37,7 @@ import hmac
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -49,6 +57,13 @@ NEVER = ("lock", "alarm_control_panel", "climate", "cover", "camera", "siren", "
 MAX_TARGETS = 40
 SETTLE_SECONDS = 1.5            # Hue reports the new state about a second after the command
 EVERYWHERE = {"all", "everything", "everywhere", "whole house", "house", "home", "all lights"}
+LIST_NAME_MAX = 40
+LIST_NAME_RE = re.compile(r"(?:[^\W_]|[ '\u2019&-])+")      # letters (any language), digits, spaces, ' & -
+CREATE_PER_DAY = 5              # new lists per agent in 24 hours
+CREATE_WAIT = 5.0               # seconds to wait for the new list to show up in Home Assistant's states
+NO_ADMIN = ("Creating lists needs Home Assistant admin access: Greg can turn it on (docs/house.md, "
+            "'Creating lists'). Until then, Greg can add one in Home Assistant: Settings > Devices & "
+            "services > Add integration > Local To-do.")
 
 
 class Refused(Exception):
@@ -107,6 +122,48 @@ class HomeAssistant:
             raise Refused("That is not a list.")
         got = self._call("POST", "/api/services/todo/get_items?return_response", {"entity_id": entity_id}) or {}
         return list((((got.get("service_response") or {}).get(entity_id)) or {}).get("items") or [])
+
+
+class ListMaker:
+    """The admin login, good for one thing: a new Local To-do list (Home Assistant's
+    ``local_todo`` config flow). It has no way to read states or call services."""
+
+    def __init__(self, url: str, token: str, http: Optional[Callable] = None):
+        self._ha = HomeAssistant(url, token, http)
+
+    def _call(self, method: str, path: str, payload: Any = None) -> Any:
+        try:
+            return self._ha._call(method, path, payload)
+        except Refused as e:
+            if "login" in str(e):
+                raise Refused("Home Assistant refused the admin login used for creating lists. "
+                              "Tell your people; it needs fixing by hand (docs/house.md).")
+            raise
+
+    def create(self, name: str) -> None:
+        """Run the flow for a list called ``name`` (already checked). Raises Refused if Home
+        Assistant does not make it."""
+        flow = self._call("POST", "/api/config/config_entries/flow",
+                          {"handler": "local_todo", "show_advanced_options": False}) or {}
+        flow_id = str(flow.get("flow_id") or "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", flow_id) or flow.get("type") != "form":
+            raise Refused("Home Assistant would not start a new list "
+                          f"({flow.get('reason') or flow.get('type') or 'no answer'}).")
+        try:
+            done = self._call("POST", f"/api/config/config_entries/flow/{flow_id}", {"todo_list_name": name}) or {}
+        except Refused:
+            self._abandon(flow_id)
+            raise
+        if done.get("type") != "create_entry":
+            self._abandon(flow_id)
+            why = done.get("reason") or ", ".join(str(v) for v in (done.get("errors") or {}).values())
+            raise Refused(f"Home Assistant did not make the list ({why or done.get('type') or 'no answer'}).")
+
+    def _abandon(self, flow_id: str) -> None:
+        try:
+            self._ha._call("DELETE", f"/api/config/config_entries/flow/{flow_id}")
+        except Exception:
+            pass
 
 
 # ── what the house looks like ────────────────────────────────────────────────
@@ -279,6 +336,18 @@ def list_norm(text: Any) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def clean_list_name(text: Any) -> str:
+    """A new list's name: one line, 1-40 letters, digits, spaces and ' & -."""
+    name = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not name:
+        raise Refused("Say what the new list is called.")
+    if len(name) > LIST_NAME_MAX:
+        raise Refused(f"A list name is at most {LIST_NAME_MAX} characters; keep it short (e.g. 'Wedding').")
+    if not LIST_NAME_RE.fullmatch(name):
+        raise Refused("A list name is letters, numbers, spaces and ' & - only.")
+    return name
+
+
 def clean_item(text: Any) -> str:
     """One item as it goes on the list: one line, trimmed, at most 200 characters."""
     item = re.sub(r"\s+", " ", str(text or "")).strip()
@@ -332,8 +401,12 @@ class Service:
     """``agents``: name -> {"token", "domains": [...], "exclude": [entity ids]}."""
 
     def __init__(self, ha: HomeAssistant, agents: Dict[str, Dict[str, Any]], log: Callable[[str], None] = print,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] = time.sleep, lists_admin: Optional[ListMaker] = None,
+                 clock: Callable[[], float] = time.time):
         self.ha, self.agents, self.log, self.sleep = ha, agents, log, sleep
+        self.lists_admin, self.clock = lists_admin, clock
+        self._created: Dict[str, List[float]] = {}     # agent -> when it created lists (rate limit)
+        self._create_lock = threading.Lock()
 
     def agent_for_token(self, token: str) -> Optional[str]:
         for name, a in self.agents.items():
@@ -498,6 +571,56 @@ class Service:
         self.log(f"{agent} list_items {','.join(eids)}")
         return {"lists": lists}
 
+    def create_list(self, agent: str, name: Any) -> Dict[str, Any]:
+        """A new shared list (a Home Assistant Local To-do list). A name that is already a list
+        gives that list back instead. Lists are read fresh from Home Assistant on every call (there
+        is no cache to refresh), so add_items can use the new one at once."""
+        self._need(agent, "todo")
+        name = clean_list_name(name)
+        with self._create_lock:
+            h = self.house(agent)
+            same = self._same_list(h, name)
+            if same:
+                self.log(f"{agent} create_list: '{name}' is already {same}")
+                return {"list": h.name(h.lists[same]), "id": same, "already_existed": True}
+            if self.lists_admin is None:
+                raise Refused(NO_ADMIN)
+            now = self.clock()
+            recent = [t for t in self._created.get(agent, []) if now - t < 86400]
+            if len(recent) >= CREATE_PER_DAY:
+                raise Refused(f"You have made {CREATE_PER_DAY} lists today, the most in a day. "
+                              "Use an existing list, or ask again tomorrow.")
+            self._created[agent] = recent + [now]
+            before = set(h.lists)
+            self.lists_admin.create(name)
+            self.log(f"house: {agent} created list {name}")
+            waited, found = 0.0, None
+            while True:
+                h = self.house(agent)                   # the non-admin login: can it see the new list?
+                new = [e for e in h.lists if e not in before]
+                found = self._same_list(h, name, among=new) or (new[0] if len(new) == 1 else None)
+                if found or waited >= CREATE_WAIT:
+                    break
+                self.sleep(0.5)
+                waited += 0.5
+        if not found:
+            self.log(f"house: {agent} created list {name} but the house service cannot see it")
+            return {"list": name, "created": True,
+                    "note": ("Home Assistant made the list, but it is not showing up for the house service "
+                             "yet. Say so; it may need a moment, or Greg may need to check it.")}
+        self.log(f"house: {agent} list {name} is {found}")
+        return {"list": h.name(h.lists[found]), "id": found, "created": True}
+
+    @staticmethod
+    def _same_list(h: "House", name: str, among: Optional[List[str]] = None) -> Optional[str]:
+        """The list already called ``name`` (case, spacing and words like 'list' ignored)."""
+        want, plain = list_norm(name), re.sub(r"\s+", " ", name).strip().lower()
+        for eid in (among if among is not None else sorted(h.lists)):
+            have = h.name(h.lists[eid])
+            if (want and want == list_norm(have)) or plain == re.sub(r"\s+", " ", have).strip().lower():
+                return eid
+        return None
+
     def add_items(self, agent: str, list_name: str, items: Any) -> Dict[str, Any]:
         self._need(agent, "todo")
         h = self.house(agent)
@@ -642,6 +765,14 @@ TOOLS = [
                    "description": ("One entry per item: a plain title ('2 lemons'), or {item, details, due} when "
                                    "there is more to say than fits a short title.")}},
          "required": ["items"]}},
+    {"name": "create_list",
+     "description": ("Make a new shared list in Home Assistant (e.g. 'Wedding'), when a person asks for one. "
+                     "If a list with that name exists, you get that one back instead. Then add the items "
+                     "with add_items."),
+     "inputSchema": {"type": "object", "properties": {
+         "name": {"type": "string", "description": ("The new list's name, at most 40 characters: letters, "
+                                                    "numbers, spaces and ' & -.")}},
+         "required": ["name"]}},
     {"name": "change_item",
      "description": "Rename an item on a shared list, or set its details or due date ('' clears them).",
      "inputSchema": {"type": "object", "properties": {
@@ -664,7 +795,7 @@ TOOLS = [
          "items": {"type": "array", "items": {"type": "string"}}},
          "required": ["items"]}},
 ]
-LIST_TOOLS = {"list_items", "add_items", "change_item", "tick_items", "remove_items"}
+LIST_TOOLS = {"list_items", "add_items", "change_item", "tick_items", "remove_items", "create_list"}
 
 
 def tools_for(svc: Service, agent: str) -> List[Dict[str, Any]]:
@@ -700,6 +831,7 @@ def handle_rpc(svc: Service, agent: str, req: Dict[str, Any]) -> Optional[Dict[s
             "activate_scene": lambda: svc.activate_scene(agent, args.get("scene") or "", args.get("room") or ""),
             "list_items": lambda: svc.list_items(agent, args.get("list") or "", args.get("done")),
             "add_items": lambda: svc.add_items(agent, args.get("list") or "", args.get("items")),
+            "create_list": lambda: svc.create_list(agent, args.get("name")),
             "change_item": lambda: svc.change_item(agent, args.get("list") or "", args.get("item"),
                                                    args.get("new_title"), args.get("details"), args.get("due")),
             "tick_items": lambda: svc.tick_items(agent, args.get("list") or "", args.get("items")),
@@ -773,10 +905,13 @@ def make_handler(svc: Service):
 def main() -> None:
     config = json.load(open(os.environ.get("HOUSE_CONFIG", "/data/config.json")))
     ha = HomeAssistant(config["ha_url"], config["ha_token"])
-    svc = Service(ha, config["agents"], log=lambda m: print(m, flush=True))
+    admin = (ListMaker(config["ha_admin_url"], config["ha_admin_token"])
+             if config.get("ha_admin_url") and config.get("ha_admin_token") else None)
+    svc = Service(ha, config["agents"], log=lambda m: print(m, flush=True), lists_admin=admin)
     port = int(os.environ.get("HOUSE_PORT", "8098"))
     server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(svc))
-    print(f"house service: {len(config['agents'])} agents, MCP on :{port}", flush=True)
+    print(f"house service: {len(config['agents'])} agents, MCP on :{port}, "
+          f"creating lists {'on' if admin else 'off'}", flush=True)
     server.serve_forever()
 
 

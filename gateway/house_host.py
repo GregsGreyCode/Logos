@@ -14,6 +14,12 @@ Home Assistant's address and token are in ``~/.config/logos/home-assistant`` (mo
 The address must be an IP address: the container has no DNS. The file is copied into the
 service's own volume and never enters a sandbox.
 
+Optionally, ``~/.config/logos/home-assistant-admin`` (same format, mode 0600) holds a token of an
+ADMIN Home Assistant user. It is used for one thing only: creating a new shared list (a "Local
+To-do" config entry, which Home Assistant lets only admins add) when an agent calls
+``create_list``. It goes into the same service-only volume, never into a sandbox, a log or a tool
+answer. Without it, ``create_list`` says plainly that it needs turning on (docs/house.md).
+
 A definition chooses what the agent may control::
 
     house:
@@ -26,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import logging
 import os
 import urllib.parse
 from pathlib import Path
@@ -39,6 +46,7 @@ SERVICE_FILE = Path(__file__).with_name("house_service.py")
 PORT = 8098
 TOKEN_ENV = "LOGOS_HOUSE_TOKEN"
 SETTINGS_FILE = "home-assistant"          # in ~/.config/logos
+ADMIN_SETTINGS_FILE = "home-assistant-admin"   # optional: an admin token, only for creating lists
 DEFAULT_DOMAINS = ["light", "scene"]
 SUPPORTED_DOMAINS = ["light", "scene", "todo"]     # todo: the shared lists (shopping, to-do)
 
@@ -64,13 +72,11 @@ def parse_env(text: str) -> dict:
     return dict(l.strip().split("=", 1) for l in text.splitlines() if "=" in l and not l.strip().startswith("#"))
 
 
-def ha_settings(env: Mapping[str, str]) -> Dict[str, str]:
-    """``{"url", "token"}`` from ~/.config/logos/home-assistant; raises HouseError when unusable."""
-    path = config_dir(env) / SETTINGS_FILE
+def _read_settings(path: Path, missing: str) -> Dict[str, str]:
     try:
         values = parse_env(path.read_text())
     except OSError:
-        raise HouseError(f"no {path}: put HA_URL and HA_TOKEN (a non-admin Home Assistant user) in it")
+        raise HouseError(missing)
     url, token = values.get("HA_URL", "").strip(), values.get("HA_TOKEN", "").strip()
     if not url or not token:
         raise HouseError(f"{path} needs both HA_URL and HA_TOKEN")
@@ -84,6 +90,21 @@ def ha_settings(env: Mapping[str, str]) -> Dict[str, str]:
     return {"url": url.rstrip("/"), "token": token}
 
 
+def ha_settings(env: Mapping[str, str]) -> Dict[str, str]:
+    """``{"url", "token"}`` from ~/.config/logos/home-assistant; raises HouseError when unusable."""
+    path = config_dir(env) / SETTINGS_FILE
+    return _read_settings(path, f"no {path}: put HA_URL and HA_TOKEN (a non-admin Home Assistant user) in it")
+
+
+def ha_admin_settings(env: Mapping[str, str]) -> Dict[str, str]:
+    """``{"url", "token"}`` from ~/.config/logos/home-assistant-admin, or ``{}`` when there is none
+    (creating lists is then off). Raises HouseError when the file is there but unusable."""
+    path = config_dir(env) / ADMIN_SETTINGS_FILE
+    if not path.exists():
+        return {}
+    return _read_settings(path, f"cannot read {path}")
+
+
 def agent_settings(agent: Mapping[str, Any]) -> Dict[str, List[str]]:
     house = agent.get("house") or {}
     domains = [str(d) for d in (house.get("domains") or DEFAULT_DOMAINS)]
@@ -95,9 +116,12 @@ def agent_settings(agent: Mapping[str, Any]) -> Dict[str, List[str]]:
 
 
 def service_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str],
-                   ha: Mapping[str, str]) -> dict:
-    return {"ha_url": ha["url"], "ha_token": ha["token"],
-            "agents": {n: {"token": tokens[n], **agent_settings(a)} for n, a in sorted(agents.items())}}
+                   ha: Mapping[str, str], admin: Mapping[str, str] = None) -> dict:
+    out = {"ha_url": ha["url"], "ha_token": ha["token"],
+           "agents": {n: {"token": tokens[n], **agent_settings(a)} for n, a in sorted(agents.items())}}
+    if admin:                       # only for create_list; see ADMIN_SETTINGS_FILE
+        out.update(ha_admin_url=admin["url"], ha_admin_token=admin["token"])
+    return out
 
 
 class HouseHost:
@@ -141,7 +165,12 @@ class HouseHost:
         if not agents:
             return False
         ha = ha_settings(self.rt.env)
-        config = json.dumps(service_config(agents, tokens, ha), indent=1, sort_keys=True, ensure_ascii=False)
+        try:
+            admin = ha_admin_settings(self.rt.env)
+        except HouseError as e:     # the lights and lists still work; only creating lists stays off
+            logging.getLogger(__name__).warning("house: creating lists is off: %s", e)
+            admin = {}
+        config = json.dumps(service_config(agents, tokens, ha, admin), indent=1, sort_keys=True, ensure_ascii=False)
         stamp = hashlib.sha256((config + SERVICE_FILE.read_text() + IMAGE).encode()).hexdigest()[:16]
         if self.running() and self._label() == stamp:
             return False

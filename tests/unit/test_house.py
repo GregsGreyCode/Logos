@@ -1,6 +1,7 @@
 """gateway/house_service.py and gateway/house_host.py: the household agent's lights (story H1)."""
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -519,3 +520,213 @@ def test_change_item_renames_and_sets_details():
         svc.change_item("household", "to-do", "book appointment")
     with pytest.raises(hs.Refused, match="cannot hold details"):
         svc.change_item("household", "shopping", "peas", details="frozen")
+
+
+# ── creating lists (admin login, local_todo config flow) ─────────────────────
+
+ADMIN = "admin-secret-token"
+
+
+class FakeFlowHA(FakeTodoHA):
+    """Also answers Home Assistant's config-flow API, as an admin would. A new Local To-do list
+    shows up in /api/states after ``appear_after`` reads of the states."""
+
+    def __init__(self, lists, appear_after=0, abort=""):
+        super().__init__(lists)
+        self.appear_after, self.abort = appear_after, abort
+        self.pending, self.flows = None, {}
+
+    def __call__(self, method, url, headers, body):
+        path = "/" + url.split("/", 3)[3]
+        token = headers["Authorization"][7:]
+        if "/api/config/config_entries/flow" in path:
+            assert token == ADMIN                          # only the admin login creates lists
+            self.calls.append((method, path, headers, json.loads(body) if body else None))
+            if self.status != 200:
+                return self.status, b""
+            data = json.loads(body) if body else {}
+            if path == "/api/config/config_entries/flow":
+                assert data["handler"] == "local_todo"
+                self.flows["f1abc"] = True
+                return 200, json.dumps({"type": "form", "flow_id": "f1abc", "handler": "local_todo",
+                                        "step_id": "user", "data_schema": [{"name": "todo_list_name"}]}).encode()
+            flow_id = path.rsplit("/", 1)[1]
+            if method == "DELETE":
+                self.flows.pop(flow_id, None)
+                return 200, b"null"
+            if self.abort:
+                return 200, json.dumps({"type": "abort", "flow_id": flow_id, "reason": self.abort}).encode()
+            self.flows.pop(flow_id)
+            name = data["todo_list_name"]
+            eid = "todo." + re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+            self.lists[eid] = []
+            self.pending = {"entity_id": eid, "state": "0",
+                            "attributes": {"friendly_name": name, "supported_features": 127}}
+            return 200, json.dumps({"type": "create_entry", "flow_id": flow_id, "title": name,
+                                    "result": {"entry_id": "e1"}}).encode()
+        assert token != ADMIN                              # nothing else ever uses the admin login
+        if path == "/api/states" and self.pending:
+            if self.appear_after <= 0:
+                self.states = self.states + [self.pending]
+                self.pending = None
+            self.appear_after -= 1
+        return super().__call__(method, url, headers, body)
+
+
+def creating(lists=None, admin=True, **kw):
+    fake = FakeFlowHA(lists if lists is not None else {"todo.example_list": ("Shopping list", [])}, **kw)
+    logs, clock = [], [1000.0]
+    svc = hs.Service(hs.HomeAssistant("http://ha.example:8123", "ha-token", http=fake),
+                     {"household": {"token": "tok", "domains": ["todo"], "exclude": []}},
+                     log=logs.append, sleep=lambda s: None, clock=lambda: clock[0],
+                     lists_admin=hs.ListMaker("http://ha.example:8123", ADMIN, http=fake) if admin else None)
+    return svc, fake, logs, clock
+
+
+def flow_calls(fake):
+    return [(c[0], c[1], c[3]) for c in fake.calls if "config_entries" in c[1]]
+
+
+def test_create_list_runs_the_flow_and_add_items_works_at_once():
+    svc, fake, logs, _ = creating()
+    got = svc.create_list("household", "  Wedding  ")
+    assert got == {"list": "Wedding", "id": "todo.wedding", "created": True}
+    assert flow_calls(fake) == [
+        ("POST", "/api/config/config_entries/flow", {"handler": "local_todo", "show_advanced_options": False}),
+        ("POST", "/api/config/config_entries/flow/f1abc", {"todo_list_name": "Wedding"})]
+    assert svc.add_items("household", "wedding", ["Rings"])["added"] == ["Rings"]   # no cache to wait for
+    assert "house: household created list Wedding" in logs
+    assert not any(ADMIN in m for m in logs) and ADMIN not in json.dumps(got)
+
+
+def test_create_list_waits_for_the_new_list_to_appear():
+    svc, fake, _, _ = creating(appear_after=3)
+    assert svc.create_list("household", "Garden & DIY")["id"] == "todo.garden_diy"
+    svc, fake, logs, _ = creating(appear_after=100)       # never seen by the non-admin login
+    got = svc.create_list("household", "Garden")
+    assert got["created"] is True and "id" not in got and "not showing up" in got["note"]
+    assert any("cannot see it" in m for m in logs)
+
+
+def test_create_list_gives_back_a_list_that_exists():
+    svc, fake, _, _ = creating({"todo.example_list": ("Wedding", []), "todo.example_todo": ("To-do", [])})
+    for name in ("wedding", "WEDDING ", "the wedding list", "Wedding  list"):
+        assert svc.create_list("household", name) == {"list": "Wedding", "id": "todo.example_list",
+                                                      "already_existed": True}
+    assert svc.create_list("household", "todo")["id"] == "todo.example_todo"
+    assert flow_calls(fake) == []
+    # An existing name needs no admin login either.
+    svc, _, _, _ = creating({"todo.example_list": ("Wedding", [])}, admin=False)
+    assert svc.create_list("household", "Wedding")["already_existed"] is True
+
+
+def test_create_list_checks_the_name():
+    svc, fake, _, _ = creating()
+    for bad in ("", "   ", "x" * 41, "Groceries; rm -rf", "a/b", "<b>", "new\x00list", "under_score", None):
+        with pytest.raises(hs.Refused):
+            svc.create_list("household", bad)
+    assert flow_calls(fake) == []
+    assert svc.create_list("household", "Béré's presents")["list"] == "Béré's presents"
+    assert svc.create_list("household", "x" * 40)["created"] is True
+    svc, _, _, _ = creating()
+    svc.agents["household"]["domains"] = ["light"]
+    with pytest.raises(hs.Refused, match="not set up"):
+        svc.create_list("household", "Wedding")
+
+
+def test_create_list_without_the_admin_file_says_how_to_turn_it_on():
+    svc, fake, _, _ = creating(admin=False)
+    with pytest.raises(hs.Refused, match="needs Home Assistant admin access.*docs/house.md"):
+        svc.create_list("household", "Wedding")
+    answer = hs.handle_rpc(svc, "household", {"id": 1, "method": "tools/call",
+                                              "params": {"name": "create_list", "arguments": {"name": "Wedding"}}})
+    assert answer["result"]["isError"] and "admin access" in answer["result"]["content"][0]["text"]
+
+
+def test_create_list_rate_limit():
+    svc, _, _, clock = creating()
+    for n in range(5):
+        svc.create_list("household", f"List {n}")
+    with pytest.raises(hs.Refused, match="5 lists today"):
+        svc.create_list("household", "List 5")
+    assert svc.create_list("household", "List 1")["already_existed"] is True    # existing ones still answer
+    clock[0] += 86401
+    assert svc.create_list("household", "List 5")["created"] is True
+
+
+def test_create_list_when_home_assistant_says_no():
+    svc, fake, _, _ = creating(abort="single_instance_allowed")
+    with pytest.raises(hs.Refused, match="did not make the list"):
+        svc.create_list("household", "Wedding")
+    assert flow_calls(fake)[-1][0] == "DELETE"            # the half-done flow is cleaned up
+    fake.status = 401
+    with pytest.raises(hs.Refused):
+        svc.create_list("household", "Wedding")
+    maker = hs.ListMaker("http://ha.example:8123", ADMIN, http=lambda *a: (401, b""))
+    with pytest.raises(hs.Refused, match="admin login") as e:
+        maker.create("Wedding")
+    assert ADMIN not in str(e.value)
+    assert not hasattr(maker, "states") and not hasattr(maker, "service")   # the admin login does nothing else
+
+
+def test_create_list_is_offered_with_the_lists():
+    svc, _, _, _ = creating()
+    names = [t["name"] for t in hs.handle_rpc(svc, "household", {"id": 1, "method": "tools/list"})["result"]["tools"]]
+    assert "create_list" in names
+    svc, _ = service(domains=("light",))
+    names = [t["name"] for t in hs.handle_rpc(svc, "household", {"id": 1, "method": "tools/list"})["result"]["tools"]]
+    assert "create_list" not in names
+
+
+def test_create_list_over_real_http():
+    """The real urllib transport against a fake Home Assistant HTTP server."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    fake = FakeFlowHA({"todo.example_list": ("Shopping list", [])})
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _any(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n) if n else None
+            status, raw = fake(self.command, "http://ha.example:8123" + self.path, dict(self.headers), body)
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        do_GET = do_POST = do_DELETE = _any
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}"
+        svc = hs.Service(hs.HomeAssistant(url, "ha-token"),
+                         {"household": {"token": "tok", "domains": ["todo"], "exclude": []}},
+                         log=lambda m: None, sleep=lambda s: None, lists_admin=hs.ListMaker(url, ADMIN))
+        assert svc.create_list("household", "Wedding") == {"list": "Wedding", "id": "todo.wedding", "created": True}
+        assert svc.add_items("household", "Wedding", ["Rings"])["added"] == ["Rings"]
+    finally:
+        server.shutdown()
+
+
+def test_admin_settings_are_optional_and_go_only_to_the_service(tmp_path):
+    env = write_settings(tmp_path, "HA_URL=http://192.0.2.10\nHA_TOKEN=ha-secret\n")
+    assert hh.ha_admin_settings(env) == {}
+    admin = tmp_path / "logos" / "home-assistant-admin"
+    admin.write_text("HA_URL=http://192.0.2.10\nHA_TOKEN=admin-secret\n")
+    admin.chmod(0o644)
+    with pytest.raises(hh.HouseError, match="chmod 600"):
+        hh.ha_admin_settings(env)
+    agents = {"household": {"name": "household", "house": {"enabled": True, "domains": ["todo"]}}}
+    rt = FakeRuntime(env, agents, {"logos-home-household": "LOGOS_HOUSE_TOKEN=tok\n"})
+    assert hh.HouseHost(rt).up() is True                 # a broken admin file leaves the rest working
+    assert "ha_admin_token" not in json.loads([i for i in rt.inputs if i][0])
+    admin.chmod(0o600)
+    assert hh.ha_admin_settings(env) == {"url": "http://192.0.2.10", "token": "admin-secret"}
+    rt = FakeRuntime(env, agents, {"logos-home-household": "LOGOS_HOUSE_TOKEN=tok\n"})
+    assert hh.HouseHost(rt).up() is True
+    cfg = json.loads([i for i in rt.inputs if i][0])
+    assert cfg["ha_admin_token"] == "admin-secret" and cfg["ha_token"] == "ha-secret"
+    assert not any("admin-secret" in part for c in rt.calls for part in c)   # never on a command line

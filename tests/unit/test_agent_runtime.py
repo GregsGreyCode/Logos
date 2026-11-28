@@ -852,8 +852,8 @@ network_policies:
         # The shared lists: the list tools, the house URL for the copy, the lists rules and the copy job.
         lists = {**house, "house": {"enabled": True, "domains": ["light", "scene", "todo"]}}
         ep = yaml.safe_load(r.policy_path("alpha", lists).read_text())["network_policies"]["house"]["endpoints"][0]
-        assert ep["rules"][-1]["allow"]["tool"]["any"][-5:] == [
-            "list_items", "add_items", "change_item", "tick_items", "remove_items"]
+        assert ep["rules"][-1]["allow"]["tool"]["any"][-6:] == [
+            "list_items", "add_items", "change_item", "tick_items", "remove_items", "create_list"]
         assert "LOGOS_HOUSE_URL=http://172.17.0.1:8098/mcp" in r.env_file(lists, "logos-home-alpha")
         assert art.uses_lists(lists) and not art.uses_lists(house)
 
