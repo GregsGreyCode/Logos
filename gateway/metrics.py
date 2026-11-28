@@ -251,6 +251,9 @@ async def handle_metrics(request: web.Request) -> web.Response:
     servers = request.app.get("model_server_metrics")          # the model PC's own numbers (model_server_metrics)
     if servers is not None:
         body += await servers.render(runtime)
+    ledger = request.app.get("local_cost")                    # local vs cloud: energy, cost, tokens (local_cost)
+    if ledger is not None:
+        body += await asyncio.to_thread(ledger.render)
     return web.Response(text=body, content_type="text/plain", charset="utf-8", headers={"Cache-Control": "no-store"})
 
 

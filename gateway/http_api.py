@@ -779,6 +779,8 @@ async def start_http_api(runner: Any, port: int = 8091) -> None:
     _widgets.register(app)
     from gateway import metrics as _metrics             # F42: Prometheus /metrics, off until switched on
     _metrics.register(app)
+    from gateway import local_cost as _local_cost       # Models › Local vs cloud: the usage and energy ledger
+    _local_cost.register(app)
     from gateway import matrix_proxy as _matrix_proxy   # M1: the browser's Matrix device reaches the server here
     _matrix_proxy.register(app)
     from gateway import updates as _updates

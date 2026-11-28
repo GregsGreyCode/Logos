@@ -311,7 +311,7 @@ def test_grafana_dashboard_uses_only_metrics_logos_exports():
     dash = json.loads((root / "docs/grafana/logos-model.json").read_text())
     exprs = [t["expr"] for p in dash["panels"] for t in p["targets"]]
     names = {re.sub(r"_(bucket|sum|count)$", "", n) for e in exprs for n in re.findall(r"\blogos_[a-z0-9_]+", e)}
-    source = "".join((root / f).read_text() for f in ("gateway/model_server_metrics.py", "gateway/metrics.py", "gateway/voice_converse.py"))
+    source = "".join((root / f).read_text() for f in ("gateway/model_server_metrics.py", "gateway/metrics.py", "gateway/voice_converse.py", "gateway/local_cost.py"))
     missing = sorted(n for n in names if f'"{n}' not in source and f"'{n}" not in source and f"{n}_bucket" not in source)
     assert names and not missing, missing
     assert not re.search(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", json.dumps(dash))       # no addresses in a public file

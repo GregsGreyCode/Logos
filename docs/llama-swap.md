@@ -150,3 +150,62 @@ Logos. Panels: model server on/loaded and its settings, GPU memory, temperature 
 second (reading and writing), prompt cache hit rate, context and KV cache in use, the queue (on the PC
 and in the guard), request seconds p50/p95 by who, the guard's wait p95, the house speaker's seconds
 per question (`logos_voice_turn_seconds`, and the nightly check), tokens and loop cuts per hour.
+Below them, *Local vs cloud*: cost per day (electricity, and each Claude model in dollars), GPU
+energy per hour (answering, kept loaded) and tokens per hour (prompt, cached, written).
+
+## Local vs cloud (28 Nov)
+
+Models › *Local vs cloud* (for whoever manages Logos) shows what the agents' model costs to run at
+home against what the same work would cost on Claude: today, this month (with a projected month, from
+the last 7 days' rate) and since tracking began. Code: `gateway/local_cost.py`, prices in
+`gateway/cloud_prices.py`.
+
+**The ledger.** `~/.logos/local-usage.json` (owner-only), one entry per day (Europe/London). The
+dashboard adds to it every 15 s, whether or not anyone has the page open or Prometheus is on. It is
+written at most once a minute and when the dashboard stops; deleting it starts the count again.
+
+- **Tokens and requests** come from the model guard's log: each `{"event": "chat"}` line's
+  `prompt_tokens`, `completion_tokens` and `seconds`, by `who` (person, speaker, scheduled). The file
+  keeps the timestamp of the last line it counted, together with the totals, so each line is counted
+  once even when the dashboard restarts (lines the guard wrote while the dashboard was down are read
+  on its return, as long as the guard container was not re-created meanwhile). Tracking starts when
+  the ledger is first made: older log lines are not counted. The guard's warm-ups for the speaker are
+  not counted as tokens (only their electricity is).
+- **By agent**: the guard cannot tell agents apart (the model gateway calls it with one shared key),
+  so the card's "By agent this month" comes from the model gateway's own records (Bifrost's
+  `logs.db`, the same figures as the rest of the Models page).
+- **Cached tokens**: llama-server counts the prompt tokens it read and those it reused from its cache
+  (`prompt_tokens_total` and `prompt_tokens_cached_total`, needs `--metrics`). Their increase over the
+  day gives the day's cached share, which is applied to the day's prompt tokens. Without those
+  numbers nothing is counted as cached and the card says so (so the cloud price is, if anything,
+  too high).
+- **Energy**: the GPU's power draw from llama-swap's `/metrics` (nvidia-smi), averaged between two
+  looks at most 90 s apart. *Answering*: a request was running at either look (llama-server's
+  `requests_processing`, or the guard's queue) or llama-server's token counters moved in between (so a
+  short request between two looks still counts). *Kept loaded*: a model was ready, nothing running.
+  No model loaded, the PC off, or a longer gap (the dashboard was down): nothing is counted or
+  guessed. Only the GPU is measured: not the CPU, the rest of the PC or the screen.
+- **Idle baseline**: the GPU draws some power just being on. Logos keeps the median of what it draws
+  with no model loaded and subtracts it (per second) from both phases, so the figure is what the
+  model adds. Set your own in the card (0 counts every watt).
+
+**The comparison.** Anthropic's list prices (US dollars per million tokens, dated 2026-11, in
+`gateway/cloud_prices.py`): Claude Haiku 5.5 $0.10 in / $0.50 out ($0.50 / $2.50 for a request whose
+prompt is over 100K tokens, decided per request from the guard's log), Sonnet 5.5 $2 / $10, Opus 5.5
+$4 / $20. Cached prompt tokens are priced at the cache-read rate (Sonnet $0.10, Opus $0.20; Haiku's is
+not published and is **assumed** to be 10 % of its input price). The cache-write premium is left out.
+Dollars are turned into your currency at the rate set in the card (default 0.79 GBP per USD), and the
+electricity at your price per kWh (default £0.25). "Saves" is the cloud price less the electricity;
+when the cloud would have cost less (a quiet day with the model kept loaded, against Haiku) the card
+says "cheaper on …" instead. Only electricity is counted: not the PC, the GPU or their wear.
+
+**Prometheus** (with Settings › Metrics on), totals since tracking began, recomputed at the current
+settings (changing the price or baseline moves them):
+
+| Metric | Meaning |
+|---|---|
+| `logos_local_energy_kwh_total{phase="answering"\|"loaded"}` | GPU energy less the idle baseline |
+| `logos_local_cost_total{currency}` | that energy at the price per kWh |
+| `logos_cloud_equivalent_cost_usd_total{model}` | the same tokens on `haiku-5.5`, `sonnet-5.5`, `opus-5.5` |
+| `logos_tokens_total{kind="prompt"\|"cached"\|"completion"}` | tokens from the guard's log (cached is part of prompt) |
+

@@ -468,6 +468,23 @@ details.card summary { cursor: pointer; font-weight: 600; min-height: 32px; }
   background: var(--raised); color: var(--ink); font: inherit; }
 .gpu-form input[type="number"] { width: 6em; }
 .gpu-form .btn.ghost { margin-top: 0; }
+/* Models › Local vs cloud */
+.cost-periods { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.cost-periods .btn.small { margin-left: 0; background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.cost-periods .btn.small[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+.cost-card .table-box { margin-top: 14px; }
+.cost-table td .ok, .cost-table td .bad { font-weight: 600; }
+.cost-projected { margin: 12px 0 0; }
+.cost-agents h3 { font-size: 14px; margin: 16px 0 6px; }
+.cost-notes { margin: 14px 0 0; font-size: 13px; }
+.cost-settings { margin-top: 12px; }
+.cost-settings > summary { cursor: pointer; color: var(--muted); }
+.cost-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; margin: 10px 0; }
+.cost-form label { display: grid; gap: 4px; }
+.cost-form input { min-height: 40px; padding: 0 10px; border-radius: var(--r-small); border: 1px solid var(--line);
+  background: var(--raised); color: var(--ink); font: inherit; min-width: 0; }
+.cost-form .btn { margin-top: 0; }
+.cost-form [role="status"] { grid-column: 1 / -1; margin: 0; }
 /* Advisor screen */
 .advisor-q { margin: 8px 0; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--raised);
   border-radius: var(--r-small); white-space: pre-wrap; }

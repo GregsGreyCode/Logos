@@ -263,9 +263,106 @@ async function localModel(repaint) {
   return h('div', {}, d.servers.map((srv) => serverBlock(srv, d.can_change, repaint)), speed);
 }
 
+// ── Local vs cloud (28 Nov): the electricity the model PC used, against what Claude would have cost ──
+
+// 4.6M, 159K: the same in every browser language (some write "4.6m").
+function compact(n) {
+  const v = Number(n || 0);
+  for (const [d, u] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'K']]) {
+    if (Math.abs(v) >= d) return `${(v / d).toFixed(v / d >= 100 ? 0 : 1).replace(/\.0$/, '')}${u}`;
+  }
+  return String(Math.round(v));
+}
+function money(n, cur) {
+  const v = Number(n || 0);
+  const f = (x) => { try { return x.toLocaleString([], { style: 'currency', currency: cur }); } catch (e) { return `${x.toFixed(2)} ${cur}`; } };
+  return v !== 0 && Math.abs(v) < 0.005 ? `< ${f(0.01)}` : f(v);
+}
+const hours = (s) => (s >= 3600 ? `${(s / 3600).toFixed(1)} h` : `${Math.round(s / 60)} min`);
+const short = (label) => label.replace(/^Claude /, '');
+
+// What each agent used this month, from the model gateway's own records (the guard cannot tell agents apart).
+function agentShares(agents) {
+  const rows = (agents || []).map((a) => {
+    const local = (a.models || []).filter((m) => m.kind === 'local');
+    return { name: a.display_name, in: local.reduce((s, m) => s + (m.prompt_tokens || 0), 0), out: local.reduce((s, m) => s + (m.completion_tokens || 0), 0) };
+  }).filter((r) => r.in + r.out > 0);
+  const all = rows.reduce((s, r) => s + r.in + r.out, 0);
+  if (!all) return null;
+  return h('div', { class: 'cost-agents' }, h('h3', {}, 'By agent this month'),
+    h('ul', { class: 'plain' }, rows.sort((a, b) => b.in + b.out - a.in - a.out).map((r) => h('li', {},
+      h('strong', {}, r.name), ` ${compact(r.in)} in · ${compact(r.out)} out`,
+      h('span', { class: 'when' }, ` · ${Math.round(((r.in + r.out) / all) * 100)} %`)))),
+    h('p', { class: 'when' }, 'From the model gateway\'s records (the model guard does not know which agent asked).'));
+}
+
+function costSettings(s, repaint) {
+  const field = (label, attrs) => h('label', {}, h('span', { class: 'when' }, label), h('input', attrs));
+  const price = field(`Electricity per kWh (${s.currency})`, { type: 'number', name: 'price', min: 0, max: 10, step: 0.001, value: s.price_per_kwh });
+  const cur = field('Currency', { type: 'text', name: 'currency', maxlength: 3, value: s.currency, autocapitalize: 'characters' });
+  const fx = field(`${s.currency} per US dollar`, { type: 'number', name: 'usd_rate', min: 0.0001, step: 0.0001, value: s.usd_rate });
+  const base = field('GPU idle baseline (watts)', { type: 'number', name: 'baseline', min: 0, max: 2000, step: 1, value: s.baseline_watts ?? '',
+    placeholder: s.idle_measured_watts != null ? `measured ${Math.round(s.idle_measured_watts)}` : '0' });
+  const msg = h('p', { class: 'when', role: 'status' });
+  const form = h('form', { class: 'cost-form', onsubmit: async (ev) => {
+    ev.preventDefault();
+    const v = (n) => form.querySelector(`[name="${n}"]`).value;
+    const r = await api('/api/v2/models/local-cost', { method: 'PUT', body: {
+      price_per_kwh: Number(v('price')), currency: v('currency'), usd_rate: Number(v('usd_rate')), baseline_watts: v('baseline') === '' ? null : Number(v('baseline')) } });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok) { msg.textContent = b.error || 'Could not save.'; return; }
+    msg.textContent = 'Saved.';
+    repaint();
+  } }, price, cur, fx, base, h('button', { type: 'submit', class: 'btn' }, 'Save'), msg);
+  return h('details', { class: 'cost-settings' }, h('summary', {}, 'Prices and settings'), form,
+    h('p', { class: 'when' }, 'The idle baseline is what the GPU draws with no model loaded (the PC would be on anyway). Leave it empty to use the median Logos measured, or set 0 to count every watt.'));
+}
+
+function localVsCloud(c, agents, state, redraw, refresh) {
+  const cur = c.settings.currency;
+  const periods = [['today', 'Today'], ['this_month', 'This month'], ['all', c.since ? `Since ${new Date(c.since).toLocaleDateString([], { day: 'numeric', month: 'short' })}` : 'Since tracking began']];
+  const p = c[state.period] || c.today;
+  const tabs = h('div', { class: 'cost-periods', role: 'group', 'aria-label': 'Period' }, periods.map(([k, label]) => h('button', {
+    type: 'button', class: 'btn small', 'aria-pressed': String(state.period === k), onclick: () => { state.period = k; redraw(); } }, label)));
+  const t = p.tokens, e = p.energy;
+  const cachedPct = t.prompt ? Math.round((t.cached / t.prompt) * 100) : 0;
+  const facts = [
+    ['Tokens in', compact(t.prompt), p.cache_measured ? `${cachedPct} % reused from the cache` : 'cache not measured: counted as not cached'],
+    ['Tokens out', compact(t.completion), ''],
+    ['Requests', count(p.requests), p.busy_s ? `${hours(p.busy_s)} answering` : ''],
+    ['Electricity', money(p.local.total, cur), p.energy_measured
+      ? `${e.answering_kwh.toFixed(2)} kWh answering (${money(p.local.answering, cur)}) · ${e.loaded_kwh.toFixed(2)} kWh kept loaded (${money(p.local.loaded, cur)})`
+      : 'no GPU power readings yet'],
+  ];
+  const verdict = (x) => (x.saved >= 0
+    ? h('span', { class: 'ok' }, `saves ${money(x.saved, cur)}`)
+    : h('span', { class: 'bad' }, `${money(-x.saved, cur)} cheaper on ${short(x.label)}`));
+  const table = h('table', { class: 'plain cost-table' },
+    h('thead', {}, h('tr', {}, h('th', {}, 'On Claude'), h('th', { class: 'num' }, 'Would cost'), h('th', { class: 'num' }, 'Against local'))),
+    h('tbody', {}, p.cloud.map((x) => h('tr', { 'data-model': x.model }, h('td', {}, short(x.label)),
+      h('td', { class: 'num' }, money(x.cost, cur)), h('td', { class: 'num' }, verdict(x))))));
+  const proj = c.projected && state.period === 'this_month' ? h('p', { class: 'cost-projected' },
+    h('strong', {}, `Projected for ${c.month.split(' ')[0]}: `), `electricity ${money(c.projected.local, cur)}; `,
+    c.projected.cloud.map((x) => `${short(x.label)} ${money(x.cost, cur)}`).join(', '),
+    h('span', { class: 'when' }, ` · carries on the last ${c.projected.from_days} days`)) : null;
+  const haiku = (c.prices.models || []).find((m) => (m.assumed || []).includes('cache_read'));
+  const notes = h('ul', { class: 'plain cost-notes when' },
+    h('li', {}, 'Local cost is the GPU\'s electricity only, at your price: not the PC\'s other parts or the hardware itself.'),
+    h('li', {}, `Claude list prices (${c.prices.as_of}), in ${cur} at ${c.settings.usd_rate} per dollar. Cached prompt tokens at the cache-read price; the one-off cache-write premium is left out.`),
+    haiku ? h('li', {}, `${short(haiku.label)}'s cache-read price is not published: assumed 10 % of its input price. Prompts over ${count(haiku.long.over)} tokens use its higher rates.`) : null,
+    c.settings.baseline_used ? h('li', {}, `${Math.round(c.settings.baseline_used)} W of GPU idle draw is left out (${c.settings.baseline_from === 'setting' ? 'set below' : 'measured with no model loaded'}).`) : null);
+  return h('section', { 'aria-label': 'Local vs cloud' }, h('h2', { class: 'label' }, 'Local vs cloud'),
+    h('div', { class: 'card cost-card' }, h('h2', {}, 'What running at home saves'), tabs,
+      h('dl', { class: 'facts' }, facts.flatMap(([k, v, note]) => [h('dt', {}, k),
+        h('dd', {}, v, note ? h('span', { class: 'when' }, ` · ${note}`) : null)])),
+      h('div', { class: 'table-box' }, table), proj, state.period === 'this_month' ? agentShares(agents) : null, notes,
+      costSettings(c.settings, refresh)));
+}
+
 export async function modelsView(root) {
   let alive = true;
   let timer = null;
+  const costState = { period: 'today' };
   root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Models', h('span', { class: 'beta-tag' }, 'Beta')), loading()));
 
   async function paint() {
@@ -331,6 +428,21 @@ export async function modelsView(root) {
           ? 'The projection continues the last 7 days, hour by hour, since paid answers cluster when the local model is off. Costs are the figures the model gateway recorded.'
           : 'The brain stays local: every agent answers with the model on the home server, so nothing is sent anywhere and nothing is spent.')),
     ];
+
+    if (d.all_agents) {                               // whole-household figures: whoever manages Logos
+      let c = null;
+      try { c = await getJSON('/api/v2/models/local-cost'); } catch (e) { c = null; }
+      if (!alive) return;
+      if (c && c.today) {
+        const slot = h('div', {});
+        const draw = () => slot.replaceChildren(localVsCloud(c, d.agents, costState, draw, async () => {
+          try { c = await getJSON('/api/v2/models/local-cost'); } catch (e) { /* keep the last figures */ }
+          draw();
+        }));
+        draw();
+        sections.push(slot);
+      }
+    }
 
     if (d.all_agents && d.total) {
       const requestSeries = [{ key: 'local', label: 'Local (free)', cls: 's1' }, { key: 'paid', label: 'Paid', cls: 's2' }];
