@@ -49,6 +49,8 @@ TTL_S = 120              # Home Assistant asks for the audio within a second or 
 MAX_SAID = 50
 CACHE_S = 60             # a voice chosen in Settings is used at once (the cache is cleared); a yaml edit within a minute
 SAMPLE_TEXT = "Hello! This is how I sound on the house speaker."
+#: Each voice's sample in its own language (Greg, 28 Nov: the French voices read the English sentence).
+SAMPLE_TEXTS = {"en": SAMPLE_TEXT, "fr": "Bonjour ! Voici ma voix sur l'enceinte de la maison."}
 SAMPLE_WAIT_S = 20.0
 MAX_AUDIO = 20 * 1024 * 1024
 
@@ -338,7 +340,8 @@ async def handle_sample(request: "Any") -> "Any":
             return web.json_response({"error": "speaker_off", "message": problem or
                                       "The speaker voices are not switched on on this Logos yet."}, status=503)
         try:
-            fmt, pcm = await synthesize(tts_host.client_address(conf), SAMPLE_TEXT, voice)
+            text = SAMPLE_TEXTS.get(tts.language(voice), SAMPLE_TEXT)
+            fmt, pcm = await synthesize(tts_host.client_address(conf), text, voice)
         except (OSError, ValueError, asyncio.TimeoutError, asyncio.IncompleteReadError) as e:
             logger.warning("speaker voice: no sample of %s: %s", voice, type(e).__name__)
             return web.json_response({"error": "speaker_unreachable",

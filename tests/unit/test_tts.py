@@ -474,3 +474,21 @@ def test_languages_are_kept_with_the_voices(tmp_path):
     assert auth_db.get_agent_voices()["finn"] == {"voice": "en_GB-alan-medium", "voice_fr": None, "set_by": "greg", "langs_off": []}
     auth_db.set_agent_voice("finn", "", "greg")
     assert "finn" not in auth_db.get_agent_voices()
+
+
+def test_each_voice_says_its_sample_in_its_own_language(api, monkeypatch):
+    run, _, _ = api
+    said = []
+
+    async def synth(address, text, voice, wait=0):
+        said.append((voice, text))
+        return (22050, 2, 1), b"\0\0" * 10
+    monkeypatch.setattr(sv, "synthesize", synth)
+    monkeypatch.setattr(sv, "_settings", lambda: ({"TTS_PORT": "10200"}, None))
+    monkeypatch.setattr(sv.tts_host, "client_address", lambda conf: ("127.0.0.1", 10200))
+
+    async def steps(c):
+        return [(await c.get(f"/api/v2/speaker/sample?voice={v}")).status for v in ("fr_FR-siwis-medium", "en_GB-alba-medium")]
+    assert asyncio.run(run(steps)) == [200, 200]
+    assert said == [("fr_FR-siwis-medium", sv.SAMPLE_TEXTS["fr"]), ("en_GB-alba-medium", sv.SAMPLE_TEXT)]
+    assert "Bonjour" in sv.SAMPLE_TEXTS["fr"]

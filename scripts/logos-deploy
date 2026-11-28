@@ -257,7 +257,11 @@ def update_services(rt):
                                           ("gateway.web_host", "WebHost", "logos-reader", "web reader"),
                                           ("gateway.house_host", "HouseHost", "logos-house", "house"),
                                           ("gateway.mail_host", "MailHost", "logos-mail", "mail"),
-                                          ("gateway.advisor_host", "AdvisorHost", "logos-advisor", "advisor")):
+                                          ("gateway.advisor_host", "AdvisorHost", "logos-advisor", "advisor"),
+                                          # The house speaker's services (28 Nov: a wake.py change waited for a hand restart).
+                                          ("gateway.tts_host", "TtsHost", "logos-tts", "speaker voices"),
+                                          ("gateway.stt_host", "SttHost", "logos-stt", "speech to text"),
+                                          ("gateway.wake_host", "WakeHost", "logos-wake", "wake words")):
         if not container_exists(container):
             continue                    # not used on this machine
         try:
