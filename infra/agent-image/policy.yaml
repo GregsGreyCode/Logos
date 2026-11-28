@@ -77,7 +77,7 @@ network_policies:
 
   web:                             # web search through the Logos web reader (gateway/web_service.py),
                                    # which filters what leaves the house. Inspected as MCP: only the
-                                   # handshake, the tool list, search_web, add_private_name,
+                                   # handshake, the tool list, search_web, add_private_name, weather,
                                    # file_request, recent_changes and the read-only docs tools get
                                    # through (the household agent: all but search_web and
                                    # add_private_name).
@@ -98,8 +98,8 @@ network_policies:
           - allow:
               method: tools/call
               tool:
-                any: [search_web, add_private_name, file_request, recent_changes, search_docs, read_doc,
-                      list_docs]
+                any: [search_web, add_private_name, weather, file_request, recent_changes, search_docs,
+                      read_doc, list_docs]
     binaries:
       - path: /opt/hermes/tools/python-*/bin/python3*
 

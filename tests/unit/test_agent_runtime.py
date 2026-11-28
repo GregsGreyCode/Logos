@@ -732,7 +732,7 @@ network_policies:
         rules = yaml.safe_load(r.policy_path("alpha", house).read_text())["network_policies"]
         assert "weather" not in rules
         assert rules["web"]["endpoints"][0]["rules"][-1] == {"allow": {"method": "tools/call",
-                                                                       "tool": {"any": ["file_request", "recent_changes",
+                                                                       "tool": {"any": ["weather", "file_request", "recent_changes",
                                                                        "search_docs", "read_doc", "list_docs"]}}}
         assert [x["allow"]["method"] for x in rules["web"]["endpoints"][0]["rules"]].count("tools/call") == 1
         cfg = yaml.safe_load(r.config_text("alpha", house, changes_token="th"))

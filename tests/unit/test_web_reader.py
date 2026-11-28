@@ -72,7 +72,7 @@ def test_refusals_come_back_as_tool_errors_and_send_nothing(svc):
     assert out["isError"] and "Not done" in out["content"][0]["text"]
     assert not [u for u in svc.seen if isinstance(u, str)]           # nothing was sent to SearXNG
     tools = ws.handle_rpc(svc, "greg", {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_web", "add_private_name"]
+    assert [t["name"] for t in tools] == ["search_web", "add_private_name", "weather"]
     assert svc.agent_for_token("tg") == "greg" and svc.agent_for_token("nope") is None
 
 
@@ -141,7 +141,7 @@ def test_agents_can_add_private_names_but_not_junk(svc, tmp_path):
                                     "params": {"name": "add_private_name", "arguments": {"name": "St Mary's School"}}})
     assert "added" in out["result"]["content"][0]["text"]
     tools = ws.handle_rpc(s, "greg", {"jsonrpc": "2.0", "id": 4, "method": "tools/list"})["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_web", "add_private_name"]
+    assert [t["name"] for t in tools] == ["search_web", "add_private_name", "weather"]
 
 
 # ── weather for the morning briefing (story C4) ─────────────────────────────
@@ -435,12 +435,14 @@ def test_requests_refuse_junk_keys_and_floods():
 
 def test_the_household_token_lists_and_calls_only_file_request(svc):
     svc.changes_agents = {"household": {"token": "th"}}
-    assert svc.mcp_agent("th") == (None, False)               # no Docmost: the token opens nothing here
+    assert svc.mcp_agent("th") == ("household", False)        # no Docmost: the token opens only the weather
+    listed = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 0, "method": "tools/list"}, False)
+    assert [t["name"] for t in listed["result"]["tools"]] == ["weather"]
     page = FakePage()
     svc.requests = ws.Requests(page, {"household": "the household chat"}, log=lambda m: None)
     assert svc.mcp_agent("th") == ("household", False) and svc.mcp_agent("tg") == ("greg", True)
     listed = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, False)
-    assert [t["name"] for t in listed["result"]["tools"]] == ["file_request"]
+    assert [t["name"] for t in listed["result"]["tools"]] == ["weather", "file_request"]
     search = ws.handle_rpc(svc, "household", {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
         "name": "search_web", "arguments": {"query": "boiler"}}}, False)
     assert search["error"]["message"] == "unknown tool: search_web" and not svc.seen
@@ -448,17 +450,17 @@ def test_the_household_token_lists_and_calls_only_file_request(svc):
         "name": "file_request", "arguments": ASK}}, False)
     assert "filed" in filed["result"]["content"][0]["text"] and len(page.entries) == 1
     tools = ws.handle_rpc(svc, "greg", {"jsonrpc": "2.0", "id": 4, "method": "tools/list"})["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_web", "add_private_name", "file_request"]
+    assert [t["name"] for t in tools] == ["search_web", "add_private_name", "weather", "file_request"]
 
 
 def test_recent_changes_tool_for_every_reader_agent(svc, git_dir):
     svc.changes_agents = {"household": {"token": "th"}}
-    assert svc.mcp_agent("th") == (None, False)               # neither changes nor requests: nothing here
+    assert svc.mcp_agent("th") == ("household", False)        # neither changes nor requests: the weather only
     get, _ = fake_github()
     svc.changes = ws.Changes(repos(git_dir), "ghtok", get=get, log=lambda m: None)
     assert svc.mcp_agent("th") == ("household", False)
-    for agent, search, want in (("household", False, ["recent_changes"]),
-                                ("greg", True, ["search_web", "add_private_name", "recent_changes"])):
+    for agent, search, want in (("household", False, ["weather", "recent_changes"]),
+                                ("greg", True, ["search_web", "add_private_name", "weather", "recent_changes"])):
         listed = ws.handle_rpc(svc, agent, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, search)
         assert [t["name"] for t in listed["result"]["tools"]] == want
 
@@ -574,7 +576,7 @@ def test_parts_of_keeps_everything():
 def test_docs_tools_reach_every_reader_agent():
     svc = ws.Service("http://sx", {"greg": {"token": "tg"}}, ws.Filter([]), log=lambda m: None)
     svc.changes_agents = {"household": {"token": "th"}}
-    assert svc.mcp_agent("th") == (None, False)                        # nothing for the household yet
+    assert svc.mcp_agent("th") == ("household", False)                 # the weather only, so far
     svc.docs = ws.Docs(FakeDocmost(), ["home"], log=lambda m: None)
     assert svc.mcp_agent("th") == ("household", False)
     for search in (True, False):
@@ -610,3 +612,143 @@ def test_docs_leave_out_a_password_column_and_keep_ordinary_text():
     assert "hunter2" not in out and "pve1 | root" in out and "| Password |" in out
     for keep in ("Runs Jellyfin on pve1.", "pin the image to 1.2", "| Host | Port |\n|---|---|\n| pve1 | 8006 |"):
         assert ws.redact(keep) == keep
+
+
+# ── the weather anywhere (story WX1) ────────────────────────────────────────
+
+CLACTON = {"name": "Clacton-on-Sea", "latitude": 51.79, "longitude": 1.15, "country_code": "GB",
+           "country": "United Kingdom", "admin1": "England", "admin2": "Essex"}
+PARIS_FR = {"name": "Paris", "latitude": 48.85, "longitude": 2.35, "country_code": "FR", "country": "France",
+            "admin1": "Île-de-France", "admin2": "Paris"}
+PARIS_TX = {"name": "Paris", "latitude": 33.66, "longitude": -95.56, "country_code": "US",
+            "country": "United States", "admin1": "Texas", "admin2": "Lamar"}
+SPRING_US = {"name": "Springfield", "latitude": 39.8, "longitude": -89.64, "country_code": "US",
+             "country": "United States", "admin1": "Illinois", "admin2": "Sangamon"}
+SPRING_GB = {"name": "Springfield", "latitude": 55.6, "longitude": -3.1, "country_code": "GB",
+             "country": "United Kingdom", "admin1": "Scotland", "admin2": "Fife"}
+WEEK = {"current": {"temperature_2m": 9.4, "weather_code": 2, "wind_speed_10m": 12.3},
+        "daily": {"time": ["2026-11-28", "2026-11-29", "2026-11-30"], "weather_code": [61, 3, 0],
+                  "temperature_2m_min": [6.4, 5.0, 2.2], "temperature_2m_max": [11.2, 10.0, 8.0],
+                  "precipitation_probability_max": [70, 20, 0], "wind_speed_10m_max": [18, 30, 5]}}
+PLACES = {"Clacton-on-Sea": [CLACTON], "Paris": [PARIS_FR, PARIS_TX], "Springfield": [SPRING_US, SPRING_GB]}
+
+
+def weather_svc(country="GB", down=False):
+    calls, logs = [], []
+
+    def fetch(url):
+        calls.append(url)
+        if down:
+            raise OSError("down")
+        if url.startswith(ws.GEOCODING):
+            import urllib.parse
+            name = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["name"][0]
+            return {"results": PLACES[name]} if name in PLACES else {"generationtime_ms": 0.1}
+        assert url.startswith(ws.OPEN_METEO)
+        return WEEK
+
+    s = ws.Service("http://x", {"greg": {"token": "t"}}, ws.Filter(["Mum", "Smalltown"]), fetch=fetch,
+                   log=logs.append)
+    s.country, s.calls, s.logs = country, calls, logs
+    return s
+
+
+def test_weather_text_names_the_place_found():
+    s = weather_svc()
+    out = s.weather_anywhere("bere", {"place": "Clacton-on-Sea"}, now=1000)
+    assert out == ("Clacton-on-Sea, Essex: now 9°C, partly cloudy, wind 12 mph. "
+                   "Today: Light rain, 6 to 11°C, 70% chance of rain. Tomorrow: Overcast, 5 to 10°C, "
+                   "windy (up to 30 mph).")
+    geo, fc = s.calls
+    assert "count=5" in geo and "language=en" in geo and "format=json" in geo and "name=Clacton-on-Sea" in geo
+    assert "latitude=51.79" in fc and "current=" in fc and "forecast_days=7" in fc
+    three = s.weather_anywhere("bere", {"place": "Clacton-on-Sea", "days": 3}, now=1000)
+    assert three.endswith("Monday 30 Nov: Clear sky, 2 to 8°C.")
+    assert s.weather_anywhere("bere", {"place": "Clacton-on-Sea", "days": 99}, now=1000) == three
+
+
+def test_weather_prefers_the_home_country_unless_another_is_named():
+    s = weather_svc("GB")
+    assert s.weather_anywhere("greg", {"place": "Springfield"}, now=0).startswith("Springfield, Fife:")
+    assert s.weather_anywhere("greg", {"place": "Springfield, Illinois"}, now=0).startswith(
+        "Springfield, Sangamon, Illinois, United States:")
+    assert s.weather_anywhere("greg", {"place": "Paris"}, now=0).startswith("Paris, Île-de-France, France:")
+    assert s.weather_anywhere("greg", {"place": "Paris, Texas"}, now=0).startswith("Paris, Lamar, Texas")
+    assert s.weather_anywhere("greg", {"place": "Paris, USA"}, now=0).startswith("Paris, Lamar, Texas")
+    assert s.weather_anywhere("greg", {"place": "Paris Texas"}, now=0).startswith("Paris, Lamar, Texas")
+    none = weather_svc("")                                    # no preferred country: Open-Meteo's first
+    assert none.weather_anywhere("greg", {"place": "Springfield"}, now=0).startswith("Springfield, Sangamon")
+    assert ws.choose_place([], "", "GB") is None
+
+
+def test_weather_place_not_found_asks_to_spell_it():
+    s = weather_svc()
+    for args in ({"place": "Clactn"}, {"place": "Nowhere, Atlantis"}):
+        result = ws.handle_rpc(s, "greg", {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "weather", "arguments": args}})["result"]
+        assert not result.get("isError") and "was found" in result["content"][0]["text"]
+        assert "spell" in result["content"][0]["text"]
+    assert not [u for u in s.calls if u.startswith(ws.OPEN_METEO)]
+
+
+def test_weather_is_cached_for_fifteen_minutes_per_place():
+    s = weather_svc()
+    s.weather_anywhere("greg", {"place": "Clacton-on-Sea"}, now=1000)
+    s.weather_anywhere("greg", {"place": "clacton-on-sea", "days": 5}, now=1500)
+    assert len(s.calls) == 2                                       # one lookup, one forecast
+    s.weather_anywhere("greg", {"place": "Paris"}, now=1500)       # another place: asked
+    assert len(s.calls) == 4
+    s.weather_anywhere("greg", {"place": "Clacton-on-Sea"}, now=1000 + 901)
+    assert len(s.calls) == 5 and s.calls[-1].startswith(ws.OPEN_METEO)   # the name is still known
+
+
+def test_weather_errors_are_plain_sentences():
+    s = weather_svc(down=True)
+    result = ws.handle_rpc(s, "greg", {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "weather", "arguments": {"place": "Paris"}}})["result"]
+    assert result["isError"] and result["content"][0]["text"] == (
+        "Not done: the weather service did not answer just now; try again in a minute.")
+    assert any("FAILED (OSError)" in m for m in s.logs) and not any("Paris" in m for m in s.logs)
+    ok = weather_svc()
+    with pytest.raises(ws.Refused, match="private list"):          # a private name never leaves the house
+        ok.weather_anywhere("greg", {"place": "Smalltown"})
+    with pytest.raises(ws.Refused, match="home location"):
+        ok.weather_anywhere("greg", {"place": "home"})
+    with pytest.raises(ws.Refused):
+        ok.weather_anywhere("greg", {"place": " "})
+    with pytest.raises(ws.Refused):
+        ok.weather_anywhere("greg", {"place": "Paris", "days": "lots"})
+    assert not ok.calls
+    ok.place = {"lat": 51.5, "lon": -0.1}
+    assert ok.weather_anywhere("greg", {"place": "home"}).startswith("At home: now 9°C")
+    assert len(ok.calls) == 1 and ok.calls[0].startswith(ws.OPEN_METEO)   # no name sent
+
+
+def test_weather_tool_is_listed_for_every_reader_agent():
+    s = weather_svc()
+    s.changes_agents = {"household": {"token": "th"}}
+    assert s.mcp_agent("th") == ("household", False)
+    for search in (True, False):
+        tool = [t for t in s.tools_for(search) if t["name"] == "weather"]
+        assert tool and tool[0]["inputSchema"]["required"] == ["place"]
+        assert tool[0]["inputSchema"]["properties"]["days"]["maximum"] == 7
+    out = ws.handle_rpc(s, "household", {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "weather", "arguments": {"place": "Clacton-on-Sea"}}}, False)["result"]
+    assert out["content"][0]["text"].startswith("Clacton-on-Sea, Essex: now")
+
+
+def test_preferred_country_comes_from_the_location_file():
+    text = "# where we are\ncountry GB\n51.5074, -0.1278\n"
+    assert wh.parse_location(text) == {"lat": 51.5, "lon": -0.1}
+    assert wh.parse_country(text) == "GB" and wh.parse_country("country: fr") == "FR"
+    assert wh.parse_country("51.5, -0.1") == "" and wh.parse_country("country Britain") == ""
+    cfg = wh.reader_config({"greg": {"web": {"enabled": True}}}, {"greg": "t"}, [], [], None, None, None, "GB")
+    assert cfg["country"] == "GB"
+    assert "country" not in wh.reader_config({}, {}, [], [])
+
+
+def test_weather_instructions_and_policy_name_the_tool():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    assert "use the `weather` tool (it says which place it found)" in (root / "souls/_shared/weather.md").read_text()
+    assert "weather," in (root / "infra/agent-image/policy.yaml").read_text()

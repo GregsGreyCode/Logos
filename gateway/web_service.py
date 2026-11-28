@@ -18,6 +18,13 @@ second port (``WEB_WEATHER_PORT``), plain REST so a sandbox script can call it. 
 Open-Meteo with the household's coordinates, rounded to about 10 km and never a place name,
 at most once an hour, and returns one line of text.
 
+And the weather anywhere (story WX1): the ``weather`` tool takes a town or city, finds it with
+Open-Meteo's geocoding (the household's own country first when a name is ambiguous, the
+``country`` setting) and answers in plain text, naming the place and region it found so a
+misheard place is obvious. The place name passes the privacy filter first, like a search;
+``home`` means the household's own coordinates, never sent as a name. Every agent of the reader
+gets it, the household agent too.
+
 And the daily changes (story DC1): ``GET /changes/<repo>/<days>`` on that same REST port, the
 last days of merged PRs (Logos) or commits and merged PRs (homelab) from the GitHub API, with a
 read-only token that never leaves this container. For Logos each PR is marked live or not:
@@ -37,8 +44,8 @@ key or password is left out of what it returns. The household agent gets them to
 
 Stdlib only. Config (JSON, from ``WEB_CONFIG``):
 ``{"searxng": url, "agents": {name: {"token"}}, "names": [...], "capital_only": [...],
-"weather": {"lat": 51.5, "lon": -0.1}, "changes": {"agents": {name: {"token"}}, "repos": {...}}}``
-(``weather`` and ``changes`` optional). The GitHub token is read from ``WEB_GITHUB_TOKEN`` (a file).
+"weather": {"lat": 51.5, "lon": -0.1}, "country": "GB", "changes": {"agents": {name: {"token"}}, "repos": {...}}}``
+(``weather``, ``country`` and ``changes`` optional). The GitHub token is read from ``WEB_GITHUB_TOKEN`` (a file).
 """
 from __future__ import annotations
 
@@ -63,6 +70,12 @@ MAX_QUERY = 300
 KINDS = {"general": "general", "code": "it", "news": "news"}
 OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
 WEATHER_TTL = 3600
+GEOCODING = "https://geocoding-api.open-meteo.com/v1/search"
+FORECAST_TTL = 900                    # the weather tool asks Open-Meteo at most every 15 minutes per place
+PLACE_TTL = 86400                     # and looks a place name up at most once a day
+WEATHER_TIMEOUT = 5.0
+MAX_PLACE = 100
+MAX_CACHED = 200
 GITHUB_API = "https://api.github.com"
 CHANGES_TTL = 600                     # ask GitHub at most every ten minutes per repo and period
 MAX_DAYS = 14
@@ -83,10 +96,11 @@ def weather_url(lat: float, lon: float) -> str:
         "timezone": "auto", "forecast_days": 1, "wind_speed_unit": "mph"})
 
 
-def weather_line(data: Dict[str, Any]) -> str:
-    """Today's forecast in one line, e.g. "Light rain, 7 to 12°C, 70% chance of rain, windy (up to 31 mph)"."""
+def weather_line(data: Dict[str, Any], day: int = 0) -> str:
+    """A day's forecast in one line (today by default), e.g.
+    "Light rain, 7 to 12°C, 70% chance of rain, windy (up to 31 mph)"."""
     d = data["daily"]
-    first = lambda k: (d.get(k) or [None])[0]
+    first = lambda k: ((d.get(k) or [])[day:day + 1] or [None])[0]
     lo, hi = first("temperature_2m_min"), first("temperature_2m_max")
     parts = [WEATHER_WORDS.get(first("weather_code"), "mixed").capitalize()]
     if lo is not None and hi is not None:
@@ -102,6 +116,98 @@ def weather_line(data: Dict[str, Any]) -> str:
     if wind is not None and wind >= 25:
         parts.append(f"windy (up to {round(wind)} mph)")
     return ", ".join(parts)
+
+def geocode_url(name: str) -> str:
+    return GEOCODING + "?" + urllib.parse.urlencode({"name": name, "count": 5, "language": "en", "format": "json"})
+
+
+def forecast_url(lat: float, lon: float) -> str:
+    """Now and the next seven days for one place (the tool cuts it to the days asked for)."""
+    return OPEN_METEO + "?" + urllib.parse.urlencode({
+        "latitude": f"{float(lat):.2f}", "longitude": f"{float(lon):.2f}",
+        "current": "temperature_2m,weather_code,wind_speed_10m",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max",
+        "timezone": "auto", "forecast_days": 7, "wind_speed_unit": "mph"})
+
+
+UK_WORDS = {"uk", "britain", "great britain", "united kingdom", "england", "scotland", "wales", "northern ireland"}
+US_WORDS = {"us", "usa", "america", "united states of america"}
+
+
+def _matches(qualifier: str, r: Dict[str, Any]) -> bool:
+    """Whether "Texas", "France", "FR" or "UK" names this result's region or country."""
+    q = fold(qualifier).strip(" .")
+    code = str(r.get("country_code") or "").upper()
+    if (q in UK_WORDS and code == "GB") or (q in US_WORDS and code == "US"):
+        return True
+    names = (r.get("country"), r.get("country_code"), r.get("admin1"), r.get("admin2"), r.get("admin3"))
+    return q in {fold(str(n)) for n in names if n}
+
+
+def choose_place(results: List[Dict[str, Any]], qualifier: str = "", country: str = "") -> Optional[Dict[str, Any]]:
+    """The place meant: one in the country or region the person named ("Paris, Texas"), else one in
+    the household's own country, else Open-Meteo's first (the biggest or best known)."""
+    results = [r for r in results if r.get("latitude") is not None and r.get("longitude") is not None]
+    if not results:
+        return None
+    if qualifier:
+        named = [r for r in results if _matches(qualifier, r)]
+        if named:
+            return named[0]
+    if country:
+        home = [r for r in results if str(r.get("country_code") or "").upper() == country.upper()]
+        if home:
+            return home[0]
+    return results[0]
+
+
+def place_label(r: Dict[str, Any], country: str = "") -> str:
+    """"Clacton-on-Sea, Essex" or "Paris, Île-de-France, France": the region says which one it is."""
+    parts = [str(r.get("name") or "").strip()]
+    abroad = str(r.get("country_code") or "").upper() != country.upper()
+    for key in ("admin2", "admin1") if abroad else ("admin2",):
+        region = str(r.get(key) or "").strip()
+        if region and fold(region) not in {fold(p) for p in parts}:
+            parts.append(region)
+    if len(parts) == 1 and r.get("admin1"):          # no county: the region ("England") will do
+        parts.append(str(r["admin1"]))
+    if abroad and r.get("country") and fold(str(r["country"])) not in {fold(p) for p in parts}:
+        parts.append(str(r["country"]))
+    return ", ".join(p for p in parts if p)
+
+
+def _day_name(data: Dict[str, Any], day: int) -> str:
+    if day == 0:
+        return "Today"
+    if day == 1:
+        return "Tomorrow"
+    import datetime as _dt
+    try:
+        when = _dt.date.fromisoformat(str(data["daily"]["time"][day]))
+        return f"{when:%A} {when.day} {when:%b}"
+    except (KeyError, IndexError, ValueError, TypeError):
+        return f"In {day} days"
+
+
+def forecast_text(label: str, data: Dict[str, Any], days: int) -> str:
+    """"Clacton-on-Sea, Essex: now 9°C, partly cloudy, wind 12 mph. Today: Light rain, 6 to 11°C, …"."""
+    out = label + ":"
+    cur = data.get("current") or {}
+    now = []
+    if cur.get("temperature_2m") is not None:
+        now.append(f"{round(cur['temperature_2m'])}°C")
+    if cur.get("weather_code") is not None:
+        now.append(WEATHER_WORDS.get(cur["weather_code"], "mixed"))
+    if cur.get("wind_speed_10m") is not None:
+        now.append(f"wind {round(cur['wind_speed_10m'])} mph")
+    if now:
+        out += " now " + ", ".join(now) + "."
+    daily = data.get("daily") or {}
+    have = len(daily.get("weather_code") or daily.get("time") or [])
+    for day in range(min(days, have)):
+        out += f" {_day_name(data, day)}: {weather_line(data, day)}."
+    return out
+
 
 TOOLS = [{
     "name": "search_web",
@@ -124,6 +230,22 @@ TOOLS = [{
     "inputSchema": {"type": "object", "additionalProperties": False, "required": ["name"], "properties": {
         "name": {"type": "string", "description": "The name, 2 to 60 characters."}}},
 }]
+
+
+WEATHER = {
+    "name": "weather",
+    "description": ("The weather now and the forecast for any town or city, from Open-Meteo. It says which place "
+                    "it found (town and county or country): if that is not the place your person meant, ask them "
+                    "to spell it or to name the county or country with it (\"Paris, Texas\"). place \"home\" is "
+                    "the weather at home. The place name leaves the house, so never put a person's name or an "
+                    "address in it."),
+    "inputSchema": {"type": "object", "additionalProperties": False, "required": ["place"], "properties": {
+        "place": {"type": "string", "description": ("A town or city, in any language, optionally with its county or "
+                                                     "country after a comma: \"Clacton-on-Sea\", \"Paris\", "
+                                                     "\"Paris, Texas\". Or \"home\".")},
+        "days": {"type": "integer", "minimum": 1, "maximum": 7,
+                 "description": "How many days of forecast: 2 (default) for today and tomorrow, up to 7."}}},
+}
 
 
 FILE_REQUEST = {
@@ -227,12 +349,21 @@ def _fetch_json(url: str, timeout: float = 12.0) -> Dict[str, Any]:
         return json.loads(r.read() or b"{}")
 
 
+def _fetch_quick(url: str) -> Dict[str, Any]:
+    return _fetch_json(url, timeout=WEATHER_TIMEOUT)
+
+
 class Service:
     def __init__(self, searxng: str, agents: Dict[str, Dict[str, Any]], check: Filter,
-                 fetch: Callable[[str], Dict[str, Any]] = _fetch_json, log: Callable[[str], None] = print,
+                 fetch: Optional[Callable[[str], Dict[str, Any]]] = None, log: Callable[[str], None] = print,
                  added_file: Optional[str] = None):
-        self.searxng, self.agents, self.filter, self.fetch, self.log = searxng.rstrip("/"), agents, check, fetch, log
+        self.searxng, self.agents, self.filter, self.log = searxng.rstrip("/"), agents, check, log
+        self.fetch = fetch or _fetch_json
+        self.fetch_quick = fetch or _fetch_quick           # the weather tool: 5 s, someone is waiting
         self.place: Optional[Dict[str, float]] = None      # {"lat", "lon"}: set from the config's "weather"
+        self.country = ""                                  # "GB": preferred when a place name is ambiguous
+        self._forecasts: Dict[Tuple[float, float], Tuple[float, Dict[str, Any]]] = {}
+        self._places: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
         self._weather: Tuple[float, str] = (0.0, "")
         self._weather_lock = threading.Lock()
         self.changes: Optional[Changes] = None              # set from the config's "changes" and the GitHub token
@@ -285,6 +416,88 @@ class Service:
             self.log(f"{agent} weather: fetched")
             return line
 
+    def _lookup(self, name: str, now: float) -> List[Dict[str, Any]]:
+        key = fold(name)
+        with self._weather_lock:
+            hit = self._places.get(key)
+            if hit and now - hit[0] < PLACE_TTL:
+                return hit[1]
+        results = [r for r in self.fetch_quick(geocode_url(name)).get("results") or [] if isinstance(r, dict)]
+        with self._weather_lock:
+            if len(self._places) >= MAX_CACHED:
+                self._places.clear()
+            self._places[key] = (now, results)
+        return results
+
+    def find_place(self, place: str, now: float) -> Optional[Dict[str, Any]]:
+        """"Paris, Texas" -> the Paris in Texas; "Clacton-on-Sea" -> the one in our own country."""
+        name, _, qualifier = place.partition(",")
+        name, qualifier = name.strip(), qualifier.strip()
+        if not name:
+            return None
+        found = choose_place(self._lookup(name, now), qualifier, self.country)
+        if found is None and not qualifier and " " in name:          # "Paris France": the last word says where
+            head, _, tail = name.rpartition(" ")
+            named = [r for r in self._lookup(head, now) if _matches(tail, r)]
+            found = choose_place(named)
+        return found
+
+    def forecast(self, lat: float, lon: float, now: float) -> Dict[str, Any]:
+        key = (round(float(lat), 2), round(float(lon), 2))
+        with self._weather_lock:
+            hit = self._forecasts.get(key)
+            if hit and now - hit[0] < FORECAST_TTL:
+                return hit[1]
+        data = self.fetch_quick(forecast_url(*key))
+        if not isinstance(data.get("daily"), dict):
+            raise ValueError("no forecast in the answer")
+        with self._weather_lock:
+            if len(self._forecasts) >= MAX_CACHED:
+                self._forecasts.clear()
+            self._forecasts[key] = (now, data)
+        return data
+
+    def weather_anywhere(self, agent: str, args: Dict[str, Any], now: Optional[float] = None) -> str:
+        """The weather tool: plain text for the agent to pass on."""
+        now = time.time() if now is None else now
+        place = " ".join(str(args.get("place") or "").split())
+        if not place:
+            raise Refused("say which town or city (place), or \"home\".")
+        if len(place) > MAX_PLACE:
+            raise Refused(f"keep the place under {MAX_PLACE} characters: the town, and its county or country.")
+        try:
+            days = max(1, min(7, int(args.get("days") or 2)))
+        except (TypeError, ValueError):
+            raise Refused("days is a number from 1 to 7.")
+        if fold(place) in ("home", "at home", "here"):
+            if not self.place:
+                raise Refused("no home location is set on this machine; ask which town they are in.")
+            spot = {"latitude": self.place["lat"], "longitude": self.place["lon"]}
+            label = "At home"
+        else:
+            try:
+                self.filter.check(place)
+            except Refused:
+                raise Refused("that place contains something from the household's private list, so it cannot "
+                              "leave the house. Use a nearby bigger town, or place \"home\" for the weather at home.")
+            try:
+                spot = self.find_place(place, now)
+            except Exception as e:
+                self.log(f"{agent} weather: place lookup FAILED ({type(e).__name__})")
+                raise Refused("the weather service did not answer just now; try again in a minute.")
+            if spot is None:
+                self.log(f"{agent} weather: place not found")
+                return (f"No place called \"{place}\" was found. Ask your person to spell it, or to say the "
+                        f"county or country with it (for example \"Springfield, Illinois\").")
+            label = place_label(spot, self.country)
+        try:
+            data = self.forecast(spot["latitude"], spot["longitude"], now)
+        except Exception as e:
+            self.log(f"{agent} weather: forecast FAILED ({type(e).__name__})")
+            raise Refused("the weather service did not answer just now; try again in a minute.")
+        self.log(f"{agent} weather: {days} day(s)")
+        return forecast_text(label, data, days)
+
     def agent_for_token(self, token: str, agents: Optional[Dict[str, Dict[str, Any]]] = None) -> Optional[str]:
         for name, a in (self.agents if agents is None else agents).items():
             if token and a.get("token") and hmac.compare_digest(token.encode(), a["token"].encode()):
@@ -292,16 +505,15 @@ class Service:
         return None
 
     def mcp_agent(self, token: str) -> Tuple[Optional[str], bool]:
-        """(agent, may search): web tokens search; a changes token may only file requests, read the
-        changes and read the docs."""
+        """(agent, may search): web tokens search; a changes token may only ask the weather, file
+        requests, read the changes and read the docs."""
         agent = self.agent_for_token(token)
         if agent:
             return agent, True
-        agent = self.agent_for_token(token, self.changes_agents) if (self.requests or self.changes or self.docs) else None
-        return agent, False
+        return self.agent_for_token(token, self.changes_agents), False
 
     def tools_for(self, search: bool) -> List[Dict[str, Any]]:
-        return ((TOOLS if search else []) + ([RECENT_CHANGES] if self.changes else [])
+        return ((TOOLS if search else []) + [WEATHER] + ([RECENT_CHANGES] if self.changes else [])
                 + ([FILE_REQUEST] if self.requests else [])
                 + ([SEARCH_DOCS, READ_DOC, LIST_DOCS] if self.docs else []))
 
@@ -815,6 +1027,8 @@ def handle_rpc(svc: Service, agent: str, req: Dict[str, Any], search: bool = Tru
                 out = svc.search_web(agent, args.get("query"), args.get("kind") or "general")
             elif tool == "add_private_name":
                 out = svc.add_private_name(agent, args.get("name"))
+            elif tool == "weather":
+                out = svc.weather_anywhere(agent, args)
             elif tool == "recent_changes":
                 out = svc.recent_changes(agent, args)
             elif tool == "search_docs":
@@ -825,7 +1039,8 @@ def handle_rpc(svc: Service, agent: str, req: Dict[str, Any], search: bool = Tru
                 out = svc.docs.list(agent)
             else:
                 out = svc.requests.file(agent, args)
-            result = {"content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}]}
+            text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False)
+            result = {"content": [{"type": "text", "text": text}]}
         except Refused as e:
             svc.log(f"{agent} {tool} refused: {str(e).split(',')[0]}")
             result = {"content": [{"type": "text", "text": f"Not done: {e}"}], "isError": True}
@@ -935,6 +1150,7 @@ def main() -> None:
     weather = config.get("weather") or {}
     if "lat" in weather and "lon" in weather:
         svc.place = {"lat": float(weather["lat"]), "lon": float(weather["lon"])}
+    svc.country = str(config.get("country") or "").strip().upper()[:2]
     changes = config.get("changes") or {}
     svc.changes_agents = changes.get("agents") or {}
     token_file = os.environ.get("WEB_GITHUB_TOKEN")

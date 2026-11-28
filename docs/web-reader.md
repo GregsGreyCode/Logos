@@ -20,10 +20,30 @@ agent (sandbox) --MCP, own token--> logos-reader --private network--> logos-sear
   Google often refuses automated searches ("access denied"); SearXNG then pauses it and the
   others answer.
 - **Sandbox rule:** the `web` rule in `infra/agent-image/policy.yaml` lets only the MCP
-  handshake, the tool list, `search_web` and `add_private_name` through.
+  handshake, the tool list, `search_web`, `add_private_name`, `weather` and the tools below through.
 - **Weather:** the reader also serves `GET /weather` on port 8097 for the morning briefing
   (one line from Open-Meteo, cached for an hour; see `docs/briefing.md`). The `weather` rule
   allows only that request.
+
+- **Weather anywhere (story WX1):** the `weather` tool (`place`, `days` 1 to 7, default 2:
+  today and tomorrow) answers in plain text, e.g. "Clacton-on-Sea, Essex: now 9°C, partly
+  cloudy, wind 12 mph. Today: Light rain, 6 to 11°C, 70% chance of rain. Tomorrow: …". The
+  place and its county or country are always named, so a misheard place is obvious.
+  - The reader finds the place with Open-Meteo's geocoding (`geocoding-api.open-meteo.com`,
+    up to 5 matches). A county or country after a comma picks among them ("Paris, Texas");
+    otherwise a match in the household's own country wins, then Open-Meteo's first. No match:
+    a short sentence asking the person to spell it, so the agent can ask.
+  - The preferred country is a line `country GB` in `~/.config/logos/location` (next to the
+    home coordinates); without it no country is preferred. `place: home` uses the home
+    coordinates and never sends a name.
+  - The place name leaves the house, so it passes the privacy filter first (a town on the
+    private list is refused; the agent can use a bigger town nearby or `home`).
+  - Forecasts are cached per place for 15 minutes, place names for a day; each request times
+    out after 5 seconds, and a failure comes back as a plain "try again in a minute".
+  - Every agent of the reader has it, the household agent too (its sandbox rule lets it
+    through with `file_request` and the docs tools). Instructions: `souls/_shared/weather.md`.
+  - Egress: the reader's network `logos-web` is an ordinary Docker network with no host
+    allowlist, so nothing else needs opening.
 
 - **Daily changes (story DC1):** `GET /changes/<repo>/<days>` on the same port 8097, `repo` =
   `logos` or `homelab`, `days` = 1 to 14. Logos: the merged PRs into `v2`, each marked `live`

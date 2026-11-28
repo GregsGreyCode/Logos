@@ -61,7 +61,8 @@ GITHUB_TOKEN_FILE = "github-changes-token"   # in ~/.config/logos; read-only, Lo
 # What /changes can report. live_git: the checkout this machine runs, to mark PRs live or not.
 REPOS = {"logos": {"repo": "GregsGreyCode/Logos", "branch": "v2", "live_git": "/repo-git"},
          "homelab": {"repo": "GregsGreyCode/homelab-infra", "branch": "main", "commits": True}}
-LOCATION_FILE = "location"               # ~/.config/logos/location: "51.5, -0.1" (rounded to 0.1 when used)
+LOCATION_FILE = "location"               # ~/.config/logos/location: "51.5, -0.1" (rounded to 0.1 when used),
+                                         # and optionally "country GB" (the weather tool's preferred country)
 
 NAMES_TEMPLATE = """# Names that must never leave the house in a web search (or, later, a question to the advisor).
 # One per line. People's and agents' names and the pages in each brain's people/ folder are
@@ -135,6 +136,8 @@ def parse_location(text: str) -> Optional[dict]:
     """``location`` file -> {"lat", "lon"} rounded to 0.1 degree (about 10 km), or None."""
     for line in text.splitlines():
         line = line.split("#", 1)[0].replace(",", " ").split()
+        if line and line[0].rstrip(":=").lower() == "country":
+            continue
         if len(line) == 2:
             try:
                 lat, lon = float(line[0]), float(line[1])
@@ -144,6 +147,16 @@ def parse_location(text: str) -> Optional[dict]:
                 return {"lat": round(lat, 1), "lon": round(lon, 1)}
             return None
     return None
+
+
+def parse_country(text: str) -> str:
+    """The ``country GB`` line of the ``location`` file: the country the weather tool prefers when
+    a place name is ambiguous (two letters, ISO 3166). "" when there is none."""
+    for line in text.splitlines():
+        m = re.fullmatch(r"\s*country\s*[:=]?\s*([A-Za-z]{2})\s*", line.split("#", 1)[0])
+        if m:
+            return m.group(1).upper()
+    return ""
 
 
 def parse_names(text: str) -> Tuple[List[str], List[str]]:
@@ -187,12 +200,15 @@ def own_names(agents: Mapping[str, Mapping[str, Any]]) -> List[str]:
 
 def reader_config(agents: Mapping[str, Mapping[str, Any]], tokens: Mapping[str, str],
                   names: List[str], exact: List[str], place: Optional[dict] = None,
-                  changes_tokens: Optional[Mapping[str, str]] = None, docmost: Optional[Mapping[str, str]] = None) -> dict:
+                  changes_tokens: Optional[Mapping[str, str]] = None, docmost: Optional[Mapping[str, str]] = None,
+                  country: str = "") -> dict:
     config = {"searxng": f"http://{SEARXNG}:8080",
               "agents": {n: {"token": tokens[n]} for n in sorted(agents) if uses_web(agents[n]) and tokens.get(n)},
               "names": sorted(set(names)), "capital_only": sorted(set(exact))}
     if place:
         config["weather"] = place
+    if country:
+        config["country"] = country
     changes = {n: {"token": t} for n, t in sorted((changes_tokens or {}).items())
                if t and n in agents and uses_changes(agents[n])}
     if changes:
@@ -238,6 +254,10 @@ class WebHost:
     def place(self) -> Optional[dict]:
         path = config_dir(self.rt.env) / LOCATION_FILE
         return parse_location(path.read_text()) if path.exists() else None
+
+    def country(self) -> str:
+        path = config_dir(self.rt.env) / LOCATION_FILE
+        return parse_country(path.read_text()) if path.exists() else ""
 
     def token_for(self, name: str, env: str = TOKEN_ENV) -> str:
         if hasattr(self.rt, "secret"):           # E7: the host store first (gateway/agent_secrets.py)
@@ -333,7 +353,8 @@ class WebHost:
         self.share_with_household(agents)
         names, exact = self.private_names(agents)
         docmost = self.docmost()
-        config = json.dumps(reader_config(agents, tokens, names, exact, self.place(), changes_tokens, docmost),
+        config = json.dumps(reader_config(agents, tokens, names, exact, self.place(), changes_tokens, docmost,
+                                          self.country()),
                             indent=1, sort_keys=True, ensure_ascii=False)
         login = "".join(f"{k}={docmost[k]}\n" for k in ("DOCMOST_EMAIL", "DOCMOST_PASSWORD") if docmost.get(k))
         github = self.github_token() if changes_agents else ""

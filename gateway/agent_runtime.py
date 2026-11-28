@@ -68,7 +68,7 @@ MANAGED_JOBS = ("brain-commit", "brain-index", "vault-digest", "consolidate", "n
 # on Sundays the week. Each post covers both the agents (Logos) and the home servers (homelab).
 CHANGES_SCRIPTS = ("changes_daily.py", "changes_week.py")
 # What the household agent may call on the web reader: never search_web or add_private_name.
-HOUSEHOLD_READER_TOOLS = ["file_request", "recent_changes", "search_docs", "read_doc", "list_docs"]
+HOUSEHOLD_READER_TOOLS = ["weather", "file_request", "recent_changes", "search_docs", "read_doc", "list_docs"]
 HOME_TARGET = "/opt/data"
 BRAIN_TARGET = "/opt/data/brain"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -710,7 +710,8 @@ class AgentRuntime:
             text = text.rstrip() + "\n\n" + (self.repo / "souls/_shared/mail.md").read_text()
         wh = _sibling("web_host")
         docs = bool(wh.WebHost(self).docmost().get("DOCMOST_READ_ROOTS"))
-        for part in ("requests.md", "changes.md", "docs.md"):   # requests; what changed; the homelab docs (web reader)
+        # The web reader: the weather anywhere; requests; what changed; the homelab docs.
+        for part in ("weather.md", "requests.md", "changes.md", "docs.md"):
             if part == "docs.md" and not docs:
                 continue
             if (wh.uses_web(agent) or wh.uses_changes(agent)) and (self.repo / "souls/_shared" / part).exists():
