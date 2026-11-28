@@ -69,12 +69,17 @@ def handle(args, **_kw) -> str:
     conf = settings()
     if not all(conf.values()):
         return json.dumps({"spoken": False, "tell": "The house speaker is not set up for you. Put it in the chat."})
-    body = {"agent": conf[AGENT_ENV], "token": conf[TOKEN_ENV], "text": str(args.get("text") or ""),
+    body = {"agent": conf[AGENT_ENV], "text": str(args.get("text") or ""),
             "private": bool(args.get("private")), "chime": args.get("chime") is not False}
+    # The token goes in the Authorization header (E7: the only place OpenShell puts the real value in
+    # for a placeholder); a real token also in the body, for an older Logos.
+    if not conf[TOKEN_ENV].startswith("openshell:resolve:"):
+        body["token"] = conf[TOKEN_ENV]
     if isinstance(args.get("person"), str) and args["person"].strip():
         body["person"] = args["person"].strip()
     req = urllib.request.Request(conf[URL_ENV], data=json.dumps(body).encode(), method="POST",
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + conf[TOKEN_ENV]})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             out = json.loads(r.read() or b"{}")

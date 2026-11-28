@@ -100,6 +100,8 @@ class AdvisorHost:
         return {n: a for n in self.rt.defined() for a in [self.rt.load(n)] if uses_advisor(a)}
 
     def token_for(self, name: str) -> str:
+        if hasattr(self.rt, "secret"):           # E7: the host store first (gateway/agent_secrets.py)
+            return self.rt.secret(name, TOKEN_ENV)
         for line in self.rt.get(f"logos-home-{name}", ".env").splitlines():
             if line.startswith(TOKEN_ENV + "="):
                 return line.split("=", 1)[1].strip()

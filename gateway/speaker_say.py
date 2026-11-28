@@ -280,7 +280,8 @@ async def handle_say(request: "Any") -> "Any":
     from aiohttp import web
     try:
         body = await request.json()
-        agent, token, text = str(body["agent"]), str(body["token"]), str(body.get("text") or "")[:4000]
+        from gateway.alert_text import request_token
+        agent, token, text = str(body["agent"]), request_token(request, body), str(body.get("text") or "")[:4000]
     except (ValueError, KeyError, TypeError):
         return web.json_response({"error": "bad_request"}, status=400)
     if not re.fullmatch(r"[a-z0-9_-]{1,64}", agent) or not valid(agent, token):

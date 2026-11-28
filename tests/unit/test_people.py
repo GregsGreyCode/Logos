@@ -256,7 +256,10 @@ def test_the_new_agent_is_defined_outside_the_repo_and_joins_the_household(world
     assert world["mx"].people == {"ann": "a long password"} and world["cal"].people == {"ann": "a long password"}
     assert world["mx"].rooms == [("tok-ann", "@ann-agent:home.test", "@ann:home.test")]
     env = rt.runner.vols["logos-home-ann"][".env"].decode()
-    assert "LOGOS_MATRIX_ACCESS_TOKEN=tok-ann" in env
+    # E7: the agent's chat login secrets are kept on the host, never in its home volume.
+    assert "LOGOS_MATRIX_ACCESS_TOKEN" not in env and "LOGOS_MATRIX_USER_ID=@ann-agent:home.test" in env
+    from gateway import agent_secrets
+    assert agent_secrets.load(world["env"], "ann")["LOGOS_MATRIX_ACCESS_TOKEN"] == "tok-ann"
     # Running it again keeps what is done.
     again = world["mgr"].set_up_agent("ann", "Ann", OPTS)
     assert all(s["state"] == "ok" for s in again) and world["mx"].agents == ["ann"]

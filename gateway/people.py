@@ -505,12 +505,17 @@ class People:
         mx = self.matrix()
         home, _brain = volumes(username)
         self.rt.ensure_volume(home)
+        from gateway import agent_secrets as sec
         cur = parse_env(self.rt.get(home, ".env"))
-        if not (cur.get("LOGOS_MATRIX_ACCESS_TOKEN") and cur.get("LOGOS_MATRIX_USER_ID")):
-            login = mx.agent_login(username, {})
-            cur.update({f"LOGOS_{k}": v for k, v in login.items()})
+        host = sec.load(self.rt.env, username)           # E7: the login's secrets live on the host only
+        login = {**cur, **{k: v for k, v in host.items() if k in sec.HOST_ONLY}}
+        if not (login.get("LOGOS_MATRIX_ACCESS_TOKEN") and login.get("LOGOS_MATRIX_USER_ID")):
+            fresh = {f"LOGOS_{k}": v for k, v in mx.agent_login(username, {}).items()}
+            login.update(fresh)
+            sec.update(self.rt.env, username, {k: v for k, v in fresh.items() if k in sec.HOST_ONLY})
+            cur.update({k: v for k, v in fresh.items() if k not in sec.HOST_ONLY})
             self.rt.put(home, ".env", "".join(f"{k}={v}\n" for k, v in sorted(cur.items())), mode="0600")
-        return mx.direct_room(cur["LOGOS_MATRIX_ACCESS_TOKEN"], cur["LOGOS_MATRIX_USER_ID"], person_mxid)
+        return mx.direct_room(login["LOGOS_MATRIX_ACCESS_TOKEN"], login["LOGOS_MATRIX_USER_ID"], person_mxid)
 
     def _household(self, steps: Steps, joining: bool) -> None:
         if "household" not in self.rt.defined():

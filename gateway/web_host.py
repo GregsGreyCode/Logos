@@ -240,6 +240,8 @@ class WebHost:
         return parse_location(path.read_text()) if path.exists() else None
 
     def token_for(self, name: str, env: str = TOKEN_ENV) -> str:
+        if hasattr(self.rt, "secret"):           # E7: the host store first (gateway/agent_secrets.py)
+            return self.rt.secret(name, env)
         for line in self.rt.get(f"logos-home-{name}", ".env").splitlines():
             if line.startswith(env + "="):
                 return line.split("=", 1)[1].strip()

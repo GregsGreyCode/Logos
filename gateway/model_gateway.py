@@ -378,6 +378,8 @@ class ModelGateway:
         return found
 
     def key_for(self, name: str) -> str:
+        if hasattr(self.rt, "secret"):           # E7: the host store first (gateway/agent_secrets.py)
+            return self.rt.secret(name, KEY_ENV)
         home = f"logos-home-{name}"
         for line in self.rt.get(home, ".env").splitlines():
             if line.startswith(KEY_ENV + "="):

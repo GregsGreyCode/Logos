@@ -228,9 +228,13 @@ def test_the_endpoint_takes_only_the_agents_own_token(env, monkeypatch):
             ok = await c.post(ss.PATH, json={"agent": "greg", "token": good, "text": "Time for the plumber."})
             other = await c.post(ss.PATH, json={"agent": "household", "token": good, "text": "x"})
             bad = await c.post(ss.PATH, json={"agent": "greg"})
-            return ok.status, await ok.json(), other.status, bad.status
-    status, out, other, bad = asyncio.run(run())
-    assert (status, other, bad) == (200, 403, 400)
+            # E7: the token in the Authorization header (where OpenShell resolves a placeholder) also works.
+            header = await c.post(ss.PATH, json={"agent": "greg", "text": "Time for the plumber."},
+                                  headers={"Authorization": "Bearer " + good})
+            wrong = await c.post(ss.PATH, json={"agent": "greg", "text": "x"}, headers={"Authorization": "Bearer nope"})
+            return ok.status, await ok.json(), other.status, bad.status, header.status, wrong.status
+    status, out, other, bad, header, wrong = asyncio.run(run())
+    assert (status, other, bad, header, wrong) == (200, 403, 403, 200, 403)
     assert out["spoken"] is True or out["reason"] == "quiet_hours"           # it depends on when the test runs
     assert ss.token_for("greg", key=b"k") != ss.token_for("household", key=b"k")
 

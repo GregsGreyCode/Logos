@@ -226,6 +226,9 @@ class Runner(Protocol):
         """Run ``argv`` capturing output (``str`` when ``text`` else ``bytes``)."""
         ...
 
+    # Optional: ``run_env(argv, env)`` runs ``argv`` with extra environment variables (how a secret
+    # reaches ``openshell provider create/update --credential KEY`` without ever being in argv).
+
     def call(self, argv: Sequence[str]) -> int:
         """Run ``argv`` attached to this process's stdio; return its exit code."""
         ...
@@ -244,6 +247,10 @@ class SubprocessRunner:
 
     def run(self, argv, *, input=None, text=True):
         p = subprocess.run(list(argv), input=input, text=text, capture_output=True)
+        return Completed(p.returncode, p.stdout, p.stderr)
+
+    def run_env(self, argv, env):
+        p = subprocess.run(list(argv), text=True, capture_output=True, env={**os.environ, **env})
         return Completed(p.returncode, p.stdout, p.stderr)
 
     def call(self, argv):
@@ -415,6 +422,10 @@ class AgentRuntime:
             raise AgentRuntimeError(
                 f"command failed: {' '.join(cmd[:4])} ...\n{ANSI.sub('', p.stderr or p.stdout)[-800:]}")
         return ANSI.sub("", p.stdout)
+
+    def secret(self, name: str, key: str) -> str:
+        """The real value of one of agent ``name``'s secrets (E7): the host store, else its .env."""
+        return _sibling("agent_secrets").lookup(self, name, key)
 
     # ── definitions ──────────────────────────────────────────────────────
 
@@ -764,6 +775,19 @@ class AgentRuntime:
         """Merge managed keys into the agent's .env, keeping secrets already stored there."""
         cur = dict(l.split("=", 1) for l in self.get(home, ".env").splitlines()
                    if "=" in l and not l.startswith("#"))
+        # E7: what the sandbox's .env holds as a placeholder, and what only the host keeps (the Matrix
+        # login), come back from the host store, so every value below is the real one.
+        sec = _sibling("agent_secrets")
+        host = sec.load(self.env, agent["name"])
+        for k, v in list(cur.items()):
+            if sec.is_placeholder(v):
+                if host.get(k):
+                    cur[k] = host[k]
+                else:
+                    del cur[k]
+        for k in sec.HOST_ONLY:
+            if host.get(k) and not cur.get(k):
+                cur[k] = host[k]
         # Telegram is no longer used: drop anything an older `up` stored, the bot token included.
         for key in [k for k in cur if k.startswith("TELEGRAM_")]:
             del cur[key]
@@ -1189,17 +1213,130 @@ class AgentRuntime:
                        + yaml.safe_dump(policy, sort_keys=False))
         return out
 
-    def create_argv(self, name: str, agent: Mapping[str, Any]) -> list[str]:
-        """The full ``openshell sandbox create`` command for ``agent``."""
+    def create_argv(self, name: str, agent: Mapping[str, Any], placeholders: Sequence[str] = ()) -> list[str]:
+        """The full ``openshell sandbox create`` command for ``agent``. ``placeholders``: the secrets
+        (gateway/agent_secrets.py) whose provider is attached, so the sandbox sees a placeholder."""
+        sec = _sibling("agent_secrets")
         cmd = ["openshell", "sandbox", "create", "--name", name, "--no-tty", "--detach",
                "--restart-policy", "always", "--from", agent["image"],
                "--policy", str(self.policy_path(name, agent)),
                "--driver-config-json", json.dumps(mounts_config(name))]
         for p in agent.get("providers") or []:
             cmd += ["--provider", p]
+        for s in placeholders:
+            cmd += ["--provider", sec.provider_name(name, s)]
         limits = {**DEFAULT_LIMITS, **(agent.get("resources") or {})}
         cmd += ["--cpu", str(limits["cpu"]), "--memory", str(limits["memory"])]
-        return cmd + ["--", "sh", "-c", START]
+        return cmd + ["--", "sh", "-c", sec.START_HOOK + START]
+
+    # ── E7: secrets the sandbox only sees as placeholders (gateway/agent_secrets.py) ──
+
+    #: Which sandbox rules each secret is sent to (the endpoints its provider is bound to).
+    SECRET_RULES = {"matrix": ("matrix",), "model": ("lm_studio",), "noticeboard": ("noticeboard", "noticeboard_poll"),
+                    "voice": ("voice",), "calendar": ("calendar",), "web": ("web", "weather"),
+                    "changes": ("changes",), "house": ("house",), "mail": ("mail",), "advisor": ("advisor",),
+                    "alert": ("alerts",), "speaker_say": ("speaker_say",)}
+
+    def secret_endpoints(self, name: str, agent: Mapping[str, Any]) -> dict:
+        """``{secret: (endpoints, binaries)}`` from the agent's rendered sandbox policy: where each of
+        its secrets may be sent. A secret whose rules the policy does not have is left out."""
+        path = Path(self.policy_path(name, agent))
+        policy = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+        rules = policy.get("network_policies") or {}
+        wh = _sibling("web_host")
+        out = {}
+        for secret, names in self.SECRET_RULES.items():
+            names = list(names)
+            if secret == "changes" and not wh.uses_web(agent):
+                names.append("web")          # FR1: the household agent files requests with its changes token
+            if secret == "model" and not _sibling("model_gateway").uses_gateway(agent):
+                continue                     # no gateway, no key
+            eps, bins = [], []
+            for n in names:
+                rule = rules.get(n) or {}
+                eps += [e for e in rule.get("endpoints") or [] if e.get("host")]
+                bins += [b["path"] if isinstance(b, Mapping) else str(b) for b in rule.get("binaries") or []]
+            if eps:
+                out[secret] = (eps, sorted(set(bins)))
+        return out
+
+    def split_secrets(self, name: str, agent: Mapping[str, Any], env_text: str) -> tuple:
+        """``(sandbox_env_text, host_values, placeholders)``: the agent's full .env split into what its
+        home volume gets and what only the host keeps (``~/.config/logos/agent-secrets/<name>.env``).
+        ``placeholders`` lists the secrets the sandbox gets as an OpenShell placeholder instead."""
+        sec = _sibling("agent_secrets")
+        full = sec.parse(env_text)
+        host = {k: full.pop(k) for k in sec.HOST_ONLY if k in full}
+        endpoints = self.secret_endpoints(name, agent)
+        on = []
+        for secret, key in sec.SECRETS.items():
+            if full.get(key) and secret in endpoints and sec.enabled(agent, secret):
+                host[key] = full.pop(key)
+                on.append(secret)
+        return sec.render(full), host, on
+
+    def _openshell_secret(self, argv: Sequence[str], key: str, value: str):
+        """Run an ``openshell provider`` command that reads ``key`` from its environment."""
+        run_env = getattr(self.runner, "run_env", None)
+        if run_env is None:
+            raise AgentRuntimeError("this runner cannot pass a secret through the environment")
+        p = run_env(list(argv), {key: value})
+        if p.returncode != 0:
+            # The CLI never prints credential values; show its message, never the value.
+            raise AgentRuntimeError(f"command failed: {' '.join(argv[:4])} ...\n"
+                                    + ANSI.sub("", _text(p.stderr) or _text(p.stdout))[-400:].replace(value, "<secret>"))
+        return p
+
+    def providers_for(self, name: str) -> list:
+        """The names of the E7 providers OpenShell holds for agent ``name``."""
+        prefix = _sibling("agent_secrets").provider_name(name, "")
+        out = self.run(["openshell", "provider", "list"], check=False)
+        names = [l.split()[0] for l in out.splitlines()[1:] if l.split()]
+        return [n for n in names if n.startswith(prefix) and n[len(prefix):] in
+                {s.replace("_", "-") for s in _sibling("agent_secrets").SECRETS}]
+
+    def sync_providers(self, name: str, agent: Mapping[str, Any], host: Mapping[str, str],
+                       placeholders: Sequence[str]) -> None:
+        """Create or update the profile and provider of each placeholder secret (before the sandbox
+        is created: OpenShell refuses an unknown provider)."""
+        sec = _sibling("agent_secrets")
+        endpoints = self.secret_endpoints(name, agent)
+        existing = set(self.providers_for(name))
+        folder = self.repo / ".rendered" / f"{name}.providers"
+        folder.mkdir(parents=True, exist_ok=True)
+        for secret in placeholders:
+            eps, bins = endpoints[secret]
+            prof = sec.profile(name, secret, eps, bins)
+            pid, path = prof["id"], folder / f"{secret}.yaml"
+            current = self.runner.run(["openshell", "profile", "export", pid])
+            if current.returncode == 0:
+                prof["resource_version"] = (yaml.safe_load(_text(current.stdout)) or {}).get("resource_version", 1)
+            path.write_text(f"# Rendered for agent {name} (E7). No secrets; do not edit or commit.\n"
+                            + yaml.safe_dump(prof, sort_keys=False))
+            if current.returncode == 0:
+                self.run(["openshell", "profile", "update", "-f", str(path), pid])
+            else:
+                self.run(["openshell", "profile", "import", "-f", str(path)])
+            key = sec.SECRETS[secret]
+            pname = sec.provider_name(name, secret)
+            if pname in existing:
+                self._openshell_secret(["openshell", "provider", "update", pname, "--credential", key], key, host[key])
+            else:
+                self._openshell_secret(["openshell", "provider", "create", "--name", pname, "--type", pid,
+                                        "--credential", key], key, host[key])
+
+    def drop_providers(self, name: str, keep: Sequence[str] = ()) -> list:
+        """Delete the E7 providers (and their profiles) of agent ``name`` not in ``keep``. Call it
+        with the sandbox gone: OpenShell will not delete a provider a sandbox still uses."""
+        sec = _sibling("agent_secrets")
+        keep_names = {sec.provider_name(name, s) for s in keep}
+        dropped = []
+        for pname in self.providers_for(name):
+            if pname not in keep_names:
+                self.run(["openshell", "provider", "delete", pname], check=False)
+                self.run(["openshell", "profile", "delete", pname], check=False)
+                dropped.append(pname)
+        return dropped
 
     def down(self, name: str) -> None:
         """Delete the sandbox (volumes are kept) and wait for it to go."""
@@ -1226,31 +1363,30 @@ class AgentRuntime:
         for v in (home, brain):
             self.ensure_volume(v)
         env_text = self.env_file(agent, home)
-        self.put(home, ".env", env_text, mode="0600")
+        # E7: the secrets switched to placeholders, and the Matrix password, stay on the host; the
+        # sandbox's .env gets the rest (and, at start, the placeholders: agent_secrets.START_HOOK).
+        sec = _sibling("agent_secrets")
+        sandbox_env, host_secrets, placeholders = self.split_secrets(name, agent, env_text)
+        sec.save(self.env, name, host_secrets)
+        self.put(home, ".env", sandbox_env, mode="0600")
+        full = sec.parse(env_text)
+
+        def tok(key: str) -> str:
+            """What config.yaml says for a token: a ${VAR} reference to the placeholder, or the value."""
+            if any(sec.SECRETS[s] == key for s in placeholders):
+                return sec.ref(key)
+            return full.get(key, "")
+
         nb = _sibling("noticeboard_host")
-        token = next((l.split("=", 1)[1] for l in env_text.splitlines() if l.startswith(nb.TOKEN_ENV + "=")), "")
         vh = _sibling("voice_host")
-        voice_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
-                            if l.startswith(vh.TOKEN_ENV + "=")), "")
         ch = _sibling("calendar_host")
-        calendar_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
-                               if l.startswith(ch.TOKEN_ENV + "=")), "")
         wh = _sibling("web_host")
-        web_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
-                          if l.startswith(wh.TOKEN_ENV + "=")), "")
-        changes_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
-                              if l.startswith(wh.CHANGES_TOKEN_ENV + "=")), "")
         hh = _sibling("house_host")
-        house_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
-                            if l.startswith(hh.TOKEN_ENV + "=")), "")
         mh = _sibling("mail_host")
-        mail_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
-                           if l.startswith(mh.TOKEN_ENV + "=")), "")
         ah = _sibling("advisor_host")
-        advisor_token = next((l.split("=", 1)[1] for l in env_text.splitlines()
-                              if l.startswith(ah.TOKEN_ENV + "=")), "")
-        self.put(home, "config.yaml", self.config_text(name, agent, token, voice_token, calendar_token, web_token,
-                                                       changes_token, house_token, mail_token, advisor_token))
+        self.put(home, "config.yaml", self.config_text(
+            name, agent, tok(nb.TOKEN_ENV), tok(vh.TOKEN_ENV), tok(ch.TOKEN_ENV), tok(wh.TOKEN_ENV),
+            tok(wh.CHANGES_TOKEN_ENV), tok(hh.TOKEN_ENV), tok(mh.TOKEN_ENV), tok(ah.TOKEN_ENV)), mode="0600")
         for plugin in LOGOS_PLUGINS:
             for path in sorted((self.repo / "infra" / "agent-plugins" / plugin).iterdir()):
                 if path.is_file():
@@ -1341,8 +1477,12 @@ class AgentRuntime:
                     print("model gateway: started with the current agents and budgets")
             except (ValueError, TimeoutError) as e:
                 raise AgentRuntimeError(f"model gateway: {e}")
+        if placeholders:
+            self.sync_providers(name, agent, host_secrets, placeholders)
+            print("secrets: placeholders for " + ", ".join(placeholders))
         self.down(name)
-        self.run(self.create_argv(name, agent))
+        self.drop_providers(name, keep=placeholders)
+        self.run(self.create_argv(name, agent, placeholders))
         for _ in range(60):
             ph = self.phase(name)
             if ph in ("Ready", "Error"):

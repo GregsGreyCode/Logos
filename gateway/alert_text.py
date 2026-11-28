@@ -25,7 +25,7 @@ import re
 import secrets
 import time
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 # aiohttp only in the handlers: the deploy tools load this file with the system Python, which has none.
 
@@ -67,6 +67,15 @@ def token_for(agent: str, env: Optional[Mapping[str, str]] = None) -> str:
 
 def valid(agent: str, token: str, env: Optional[Mapping[str, str]] = None) -> bool:
     return bool(agent) and bool(token) and hmac.compare_digest(token_for(agent, env), token)
+
+
+def request_token(request: Any, body: Mapping[str, Any]) -> str:
+    """The agent's token: ``Authorization: Bearer`` (E7: where OpenShell puts the real value in for a
+    placeholder; it never resolves one in a body), else the older ``token`` field of the body."""
+    auth = str(request.headers.get("Authorization") or "")
+    if auth[:7].lower() == "bearer ":
+        return auth[7:].strip()
+    return str(body.get("token") or "")
 
 
 def sender_is(agent: str, sender: str) -> bool:
@@ -146,7 +155,7 @@ async def handle_put(request: "web.Request") -> "web.Response":
     from aiohttp import web
     try:
         body = await request.json()
-        agent, token = str(body["agent"]), str(body["token"])
+        agent, token = str(body["agent"]), request_token(request, body)
         event_id, text = str(body["event_id"]), str(body.get("text") or "")
     except (ValueError, KeyError, TypeError):
         return web.json_response({"error": "bad_request"}, status=400)

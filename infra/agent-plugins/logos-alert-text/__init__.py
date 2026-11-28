@@ -45,10 +45,14 @@ def settings() -> dict:
 
 
 def note(event_id: str, text: str, conf: dict, timeout: float = 3.0) -> bool:
-    body = json.dumps({"agent": conf[AGENT_ENV], "token": conf[TOKEN_ENV], "event_id": event_id,
-                       "text": text[:SENT_CHARS]}).encode()
-    req = urllib.request.Request(conf[URL_ENV], data=body, method="POST",
-                                 headers={"Content-Type": "application/json"})
+    # The token goes in the Authorization header: with an OpenShell placeholder (E7, docs/secrets.md)
+    # that is the only place the real value is put in. A real token also goes in the body, for an older Logos.
+    fields = {"agent": conf[AGENT_ENV], "event_id": event_id, "text": text[:SENT_CHARS]}
+    if not conf[TOKEN_ENV].startswith("openshell:resolve:"):
+        fields["token"] = conf[TOKEN_ENV]
+    req = urllib.request.Request(conf[URL_ENV], data=json.dumps(fields).encode(), method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + conf[TOKEN_ENV]})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return 200 <= r.status < 300

@@ -57,6 +57,9 @@ class FakeRunner:
         self.slept = 0.0
         self.after_create = "Ready"
         self.fail: dict[tuple, Completed] = {}
+        self.providers: dict[str, str] = {}   # E7: provider name -> profile id
+        self.profiles: set[str] = set()
+        self.env_calls: list[tuple] = []       # (argv, env) of run_env
 
     # -- Runner protocol --
     def run(self, argv, *, input=None, text=True):
@@ -99,7 +102,32 @@ class FakeRunner:
             return Completed(0, "", "")
         if argv[:3] == ["docker", "network", "inspect"]:
             return Completed(0, "172.17.0.1\n", "")
+        if argv[:3] == ["openshell", "provider", "list"]:
+            rows = "".join(f"{n}  {t}  1  0\n" for n, t in self.providers.items())
+            return Completed(0, "NAME  TYPE  CREDENTIAL_KEYS  CONFIG_KEYS\n" + rows, "")
+        if argv[:3] == ["openshell", "provider", "delete"]:
+            self.providers.pop(argv[3], None)
+            return Completed(0, "", "")
+        if argv[:3] == ["openshell", "profile", "export"]:
+            return Completed(0, f"id: {argv[3]}\nresource_version: 3\n", "") if argv[3] in self.profiles \
+                else Completed(1, "", "provider profile not found")
+        if argv[:3] == ["openshell", "profile", "import"]:
+            self.profiles.add(yaml.safe_load(Path(argv[-1]).read_text())["id"])
+            return Completed(0, "Imported 1 provider profile.", "")
+        if argv[:3] == ["openshell", "profile", "update"]:
+            return Completed(0, "", "")
+        if argv[:3] == ["openshell", "profile", "delete"]:
+            self.profiles.discard(argv[3])
+            return Completed(0, "", "")
         raise AssertionError(f"unexpected command: {argv}")
+
+    def run_env(self, argv, env):
+        argv = list(argv)
+        self.calls.append(argv)
+        self.env_calls.append((argv, dict(env)))
+        if argv[:3] == ["openshell", "provider", "create"]:
+            self.providers[argv[argv.index("--name") + 1]] = argv[argv.index("--type") + 1]
+        return Completed(0, "", "")
 
     def call(self, argv):
         self.calls.append(list(argv))
@@ -449,7 +477,7 @@ class TestCreate:
             "--driver-config-json", mounts,
             "--provider", "github",
             "--cpu", "2", "--memory", "2Gi",
-            "--", "sh", "-c", art.START,
+            "--", "sh", "-c", art._sibling("agent_secrets").START_HOOK + art.START,
         ]
         small = r.create_argv("alpha", {**r.load("alpha"), "resources": {"memory": "1Gi"}})
         assert small[small.index("--cpu") + 1] == "2" and small[small.index("--memory") + 1] == "1Gi"
@@ -1297,7 +1325,7 @@ def cli(repo, monkeypatch):
 
         @staticmethod
         def AgentRuntime(_repo):
-            return AgentRuntime(repo, runner, env={})
+            return AgentRuntime(repo, runner, env={"HOME": str(repo), "XDG_CONFIG_HOME": str(repo / ".test-config")})
 
     monkeypatch.setattr(mod, "_runtime_module", lambda: Module)
     mod.runner = runner
