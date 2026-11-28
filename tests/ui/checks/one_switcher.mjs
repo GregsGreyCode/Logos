@@ -17,6 +17,8 @@ for (const [tag, opts] of [
   ['desktop', { viewport: { width: 1440, height: 900 } }],
   ['phone', { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }]]) {
   const ctx = await browser.newContext(opts); const page = await ctx.newPage();
+  // The agent chat's pinned chats list (from 1400 px, Greg 28 Nov) closed, so the bars are compared on their own (wide_chat checks the list).
+  await ctx.addInitScript(() => { try { localStorage.setItem('logos.side.wide', 'closed'); } catch (e) {} });
   const errs = []; page.on('pageerror', (e) => errs.push(`${e.message} @ ${page.url().split('#')[1]} ${(e.stack || '').split('\n')[1] || ''}`));
   await page.goto(BASE + '#/home'); await page.waitForTimeout(1500);
   const at = {};

@@ -1,5 +1,5 @@
 // Chat screen: pick an agent, talk to it, see what it did, reopen earlier conversations.
-import { h, api, getJSON, when, markdown, working, agentLabel, icon, none, focusIfKeyboard } from './util.js';
+import { h, api, getJSON, when, markdown, working, agentLabel, icon, ICONS, none, focusIfKeyboard } from './util.js';
 import { getPref, setPref } from './prefs.js';
 import * as mx from './mx.js';
 import { matrixChat } from './chat-mx.js';
@@ -536,21 +536,40 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   // Reopen it and it stays (remembered) until you hide it again.
   const wide = () => window.matchMedia('(min-width: 600px)').matches;
   const still = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // From 1400 px wide the chats list stays open as a column on the left of the chat (Greg, 28 Nov), unless you closed it
+  // with ≡ on this device. Not a group's panel (its members): that one still opens when asked.
+  const pinWide = !groupId;
+  const bigQuery = window.matchMedia('(min-width: 1400px)');
+  const pinnedNow = () => pinWide && bigQuery.matches;
+  const WIDE_KEY = 'logos.side.wide';
+  const wideClosed = () => { try { return localStorage.getItem(WIDE_KEY) === 'closed'; } catch (e) { return false; } };
+  if (pinWide) side.classList.add('pin-wide');
   function slideAway(focusTab) {
     if (side.classList.contains('tucked')) return;
     const done = () => { side.classList.remove('sliding'); side.style.marginRight = ''; side.classList.add('tucked');
       reopen.classList.add('shown'); reopen.setAttribute('aria-pressed', 'false'); if (focusTab) reopen.focus(); };
-    if (!wide() || still()) return done();
+    if (!wide() || still() || pinnedNow()) return done();
     side.style.marginRight = `-${side.offsetWidth}px`;
     side.classList.add('sliding');
     setTimeout(done, 480);
   }
+  const untuck = () => { side.classList.remove('tucked'); reopen.classList.remove('shown'); reopen.setAttribute('aria-pressed', 'true'); };
   const tuck = (hide) => {
-    setPref('panel', hide ? 'slide' : 'open');
+    // Pinned on a big screen, ≡ shows or hides the column and this device remembers it; the panel setting is for smaller ones.
+    if (pinnedNow()) { try { if (hide) localStorage.setItem(WIDE_KEY, 'closed'); else localStorage.removeItem(WIDE_KEY); } catch (e) { /* this visit only */ } }
+    else setPref('panel', hide ? 'slide' : 'open');
     if (hide) return slideAway(true);
-    side.classList.remove('tucked'); reopen.classList.remove('shown'); reopen.setAttribute('aria-pressed', 'true');
+    untuck();
   };
-  if (getPref('panel', 'slide') !== 'open') setTimeout(() => { if (alive && side.isConnected && !side.contains(document.activeElement)) slideAway(false); }, 1200);
+  if (pinnedNow()) { if (wideClosed()) slideAway(false); }
+  else if (getPref('panel', 'slide') !== 'open') setTimeout(() => { if (alive && side.isConnected && !side.contains(document.activeElement) && !pinnedNow()) slideAway(false); }, 1200);
+  // The window made wider or narrower across 1400 px: the column comes or goes as it would have on opening.
+  const onBig = () => {
+    if (!alive || !pinWide) return;
+    if (pinnedNow()) { if (wideClosed()) slideAway(false); else untuck(); }
+    else if (getPref('panel', 'slide') !== 'open') slideAway(false);
+  };
+  bigQuery.addEventListener('change', onBig);
   const sideScrim = h('div', { class: 'chat-scrim', hidden: true });
   const convBtn = h('button', { type: 'button', class: 'conv-btn', 'aria-label': 'Chats and view settings',
     'aria-controls': 'chat-side', 'aria-expanded': 'false' }, listIcon());
@@ -603,8 +622,9 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
     // No View menu (Greg, 23 Nov: it made no sense here): whether the panel stays open is in Settings › Look,
     // and Chats in the header shows or hides it.
     const sideTop = h('div', { class: 'side-top' });
-    const done = await matrixChat(root, agent, agents, state, { side, sideScrim, reopen, convBtn, sideTop, viewMenu: null, others: othersKept || [] }, threadId, groupId);
-    return () => { alive = false; done(); document.removeEventListener('keydown', onKey); };
+    const bits = { side, sideScrim, reopen, convBtn, sideTop, viewMenu: null, others: othersKept || [] };
+    const done = await twoPanes(root, agent, agents, state, bits, threadId, groupId);
+    return () => { alive = false; done(); bigQuery.removeEventListener('change', onBig); document.removeEventListener('keydown', onKey); };
   }
 
   root.replaceChildren(
@@ -648,4 +668,59 @@ export async function chatView(root, [agentArg, chatArg, threadArg], state) {
   }
   focusIfKeyboard(input);
   return () => { alive = false; stopRecording(); working('chat', false); document.removeEventListener('keydown', onKey); };
+}
+
+// ── Two chats side by side (Greg, 28 Nov) ──────────────────────────────────────────────────────────
+// From 1800 px wide, "Open beside" in a chat's header (the switcher's list) opens a second chat to the right: a full chat of
+// its own (its header, messages and box), e.g. an agent beside the Household Group. The address keeps both:
+// #/chat/<agent>[/group/<room>|/thread/<id>]?beside=<agent>[/group/<room>|/thread/<id>], so a reload keeps them. Narrower,
+// the second one hides (app.css) and the first stays. Each is chat-mx's matrixChat, mounted into its own .chat-pane.
+export function besidePath() {
+  const v = new URLSearchParams(location.hash.split('?')[1] || '').get('beside');
+  return v && /^[\w-]+(\/(group|thread)\/[^/]+)?$/.test(v) ? v : null;
+}
+const pathOf = (href) => String(href || '').split('?')[0].replace(/^#\/chat\/?/, '');
+const plainClick = (e) => !e.defaultPrevented && !e.button && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+
+async function twoPanes(root, agent, agents, state, bits, threadId, groupId) {
+  const here = pathOf(location.hash);
+  const beside = besidePath();
+  const to = (first, second) => `#/chat/${first}${second && second !== first ? `?beside=${second}` : ''}`;
+  bits.openBeside = (href) => { const p = pathOf(href); if (p) location.hash = to(here, p); };
+  const one = h('div', { class: 'chat-pane first pane-active' });
+  const panes = [one];
+  // The chat you last clicked or typed in is the one Ctrl+K switches (agents-void.js hotkeyHere).
+  const mark = (p) => () => { for (const x of panes) x.classList.toggle('pane-active', x === p); };
+  one.addEventListener('focusin', mark(one)); one.addEventListener('pointerdown', mark(one));
+  // A chat link in the first chat keeps the one beside it.
+  one.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href^="#/chat/"]');
+    if (!a || !beside || !plainClick(e)) return;
+    e.preventDefault(); location.hash = to(pathOf(a.getAttribute('href')), beside);
+  });
+  if (!beside) {
+    root.replaceChildren(one);
+    return matrixChat(one, agent, agents, state, bits, threadId, groupId);
+  }
+  const [bName, kind, arg] = beside.split('/');
+  const bAgent = agents.find((a) => a.name === bName) || agent;
+  const two = h('div', { class: 'chat-pane beside' });
+  panes.push(two);
+  two.addEventListener('focusin', mark(two)); two.addEventListener('pointerdown', mark(two));
+  const close = h('button', { type: 'button', class: 'pane-close', 'aria-label': 'Close this chat', title: 'Close this chat',
+    onclick: () => { location.hash = to(here, null); } }, icon(ICONS.close));
+  // A chat link inside the second chat changes only it; its ‹ (all chats) closes it.
+  two.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href^="#/chat"]');
+    if (!a || !plainClick(e)) return;
+    e.preventDefault(); location.hash = to(here, pathOf(a.getAttribute('href')) || null);
+  });
+  const twoBits = { pane: 'beside', side: h('aside', { class: 'side', hidden: true }), sideScrim: null, reopen: null, convBtn: null,
+    sideTop: null, viewMenu: null, others: bits.others, extraTools: [close],
+    go: (hash) => { location.hash = to(here, pathOf(hash) || null); } };
+  root.replaceChildren(one, two);
+  const [d1, d2] = await Promise.all([
+    matrixChat(one, agent, agents, state, bits, threadId, groupId),
+    matrixChat(two, bAgent, agents, state, twoBits, kind === 'thread' ? decodeURIComponent(arg) : null, kind === 'group' ? decodeURIComponent(arg) : null)]);
+  return () => { d1(); d2(); };
 }

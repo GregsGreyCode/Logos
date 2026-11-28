@@ -448,13 +448,16 @@ const phone = () => window.matchMedia('(max-width: 599px)').matches;
 // group (its picture and who is in it in the name; no views). `tools` are the screen's own buttons, just before the pill.
 // In a chat Ctrl+K (⌘K) opens the switcher (Greg, 23 Nov); arrows and Enter move and pick, Escape closes.
 // No logo beside the name (Greg, 28 Nov); the group keeps its picture.
-export function agentBar(agent, active, agents = [], { group = null, tools = [], hotkey = false } = {}) {
+// `beside(href)`: on a very wide screen a button opens the same list to pick a chat to open beside this one (Greg, 28 Nov).
+// With two chats on screen Ctrl+K goes to the one you are in (hotkeyHere).
+export function agentBar(agent, active, agents = [], { group = null, tools = [], hotkey = false, beside = null } = {}) {
   const here = group ? group.link : null;
   const go = PLACE[active] || PLACE.chat;
   const list = h('div', { class: 'switch-list', role: 'listbox', 'aria-label': 'Switch agent or group' });
   const search = agents.length > 5 ? h('input', { type: 'search', class: 'switch-search', placeholder: 'Find an agent…', 'aria-label': 'Find an agent', autocomplete: 'off' }) : null;
+  const besideHead = beside ? h('p', { class: 'switch-beside-head', hidden: true }, 'Open beside this chat') : null;
   const pop = h('div', { class: `switch-pop agent-bar-pop${group ? ' group-pop' : ''}`, hidden: true },
-    search, list, h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
+    besideHead, search, list, h('a', { href: '#/chat', class: 'switch-all' }, 'All agents and chats'));
   const items = agents.map((a) => {
     const on = !group && a.name === agent.name;
     return h('a', { href: go(a.name), class: `switch-item${on ? ' on' : ''}`, role: 'option', 'aria-selected': String(on), 'data-agent': a.name },
@@ -487,14 +490,26 @@ export function agentBar(agent, active, agents = [], { group = null, tools = [],
       const mk = el.querySelector('.agent-mark'); if (mk) mk.className = mk.className.replace(/mood-\w+/, `mood-${md}`);
     }
   };
-  const open = () => {
+  let besideMode = false;
+  const open = (forBeside = false) => {
     if (!groupsShown) addGroups();
+    besideMode = !!(forBeside && beside);
+    pop.classList.toggle('beside-mode', besideMode);
+    if (besideHead) besideHead.hidden = !besideMode;
+    if (besideBtn) besideBtn.setAttribute('aria-expanded', String(besideMode));
     pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); bar.classList.add('open');
     if (search) { search.value = ''; filter(); search.focus(); } else (items.find((el) => el.classList.contains('on')) || items[0])?.focus();
     freshen();
   };
-  const close = (refocus) => { if (pop.hidden) return; pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); bar.classList.remove('open'); if (refocus) btn.focus(); };
-  btn.addEventListener('click', () => (pop.hidden ? open() : close(true)));
+  const close = (refocus) => {
+    if (pop.hidden) return;
+    pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); besideBtn?.setAttribute('aria-expanded', 'false'); bar.classList.remove('open');
+    if (refocus) (besideMode ? besideBtn : btn).focus();
+  };
+  btn.addEventListener('click', () => (pop.hidden || besideMode ? open() : close(true)));
+  const besideBtn = beside ? h('button', { type: 'button', class: 'bar-beside', 'aria-haspopup': 'listbox', 'aria-expanded': 'false',
+    'aria-label': 'Open a chat beside this one', title: 'Open a chat beside this one',
+    onclick: () => (!pop.hidden && besideMode ? close(true) : open(true)) }, icon(ICONS.beside)) : null;
   search?.addEventListener('input', filter);
   pop.addEventListener('keydown', (e) => {
     const vis = shown(), i = vis.indexOf(document.activeElement);
@@ -503,13 +518,19 @@ export function agentBar(agent, active, agents = [], { group = null, tools = [],
     else if (e.key === 'ArrowUp') { e.preventDefault(); (i <= 0 ? (search || vis[vis.length - 1]) : vis[i - 1])?.focus(); }
     else if (e.key === 'Enter' && document.activeElement === search && vis[0]) { e.preventDefault(); vis[0].click(); }
   });
-  pop.addEventListener('click', (e) => { if (e.target.closest('a')) close(false); });
-  const outside = (e) => { if (!bar.isConnected) { document.removeEventListener('pointerdown', outside, true); return; } if (!who.contains(e.target)) close(false); };
+  pop.addEventListener('click', (e) => {
+    const a = e.target.closest('a');
+    if (!a) return;
+    // Picking for the chat beside: it opens there; this chat stays.
+    if (besideMode && a.classList.contains('switch-item')) { e.preventDefault(); close(false); beside(a.getAttribute('href')); return; }
+    close(false);
+  });
+  const outside = (e) => { if (!bar.isConnected) { document.removeEventListener('pointerdown', outside, true); return; } if (!who.contains(e.target) && !besideBtn?.contains(e.target)) close(false); };
   document.addEventListener('pointerdown', outside, true);
   if (hotkey) {
     const key = (e) => {
       if (!bar.isConnected) { document.removeEventListener('keydown', key); return; }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); pop.hidden ? open() : close(true); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && hotkeyHere(bar)) { e.preventDefault(); pop.hidden ? open() : close(true); }
     };
     document.addEventListener('keydown', key);
   }
@@ -541,6 +562,15 @@ export function agentBar(agent, active, agents = [], { group = null, tools = [],
   }
   const bar = h('nav', { class: `agent-bar one-bar${group ? ' group-bar' : ''}${hotkey ? ' has-hotkey' : ''}`, 'aria-label': group ? 'Group' : agent.display_name },
     h('a', { href: '#/chat', class: 'agent-back', 'aria-label': 'All agents and chats', title: 'All agents and chats' }, '‹'),
-    who, ...tools.filter(Boolean), menu);
+    who, ...tools.filter(Boolean), besideBtn, menu);
   return bar;
+}
+// Two chats side by side (Greg, 28 Nov): each is a .chat-pane; the one you last clicked or typed in has .pane-active.
+// Ctrl+K belongs to that one while it is on screen, else to the first on screen. A bar outside any pane always takes it.
+function hotkeyHere(bar) {
+  const pane = bar.closest('.chat-pane');
+  if (!pane) return true;
+  const shown = [...document.querySelectorAll('.chat-pane')].filter((p) => p.querySelector('section.chat')?.offsetParent);
+  const owner = shown.find((p) => p.classList.contains('pane-active')) || shown[0];
+  return owner === pane;
 }

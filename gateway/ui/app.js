@@ -133,7 +133,8 @@ window.addEventListener('resize', () => glow.place());
 async function route() {
   // Updates now lives in Settings (ST1); old links still work.
   if (location.hash.startsWith('#/updates')) { history.replaceState(null, '', '#/settings/updates'); }
-  const [, name = 'home', ...rest] = location.hash.split('/');
+  // A chat's ?beside=… (the second chat beside it on a wide screen, Greg 28 Nov) is not part of the path.
+  const [, name = 'home', ...rest] = location.hash.split('?')[0].split('/');
   const mine = ++visit;
   try { sessionStorage.setItem(`logos.last.${name}`, location.hash); } catch (e) { /* private window: no memory */ }
   dropSheet();
@@ -298,7 +299,7 @@ const SWIPE_TABS = ['#/home', '#/chat', '#/noticeboard'];
 function swipeTabs(el) {
   let s = null, leaving = false;
   const here = () => {
-    const [, name = 'home', ...rest] = location.hash.split('/');
+    const [, name = 'home', ...rest] = location.hash.split('?')[0].split('/');
     if (name === 'home') return 0;
     if (name === 'chat' && !rest[0]) return 1;
     if (name === 'noticeboard') return 2;

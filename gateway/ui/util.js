@@ -52,6 +52,8 @@ export const ICONS = {
   chart: ['M5 20V11', 'M12 20V4', 'M19 20v-6'],
   refresh: ['M20 11a8 8 0 1 0-2.3 5.7', 'M20 4v7h-7'],
   stop: ['M7 7h10v10H7z'],
+  beside: ['M3 5h18v14H3z', 'M12 5v14'],               // two chats side by side (Greg, 28 Nov)
+  close: ['M6 6l12 12', 'M18 6L6 18'],
   trash: ['M5 7h14', 'M10 7V4h4v3', 'M7 7l1 13h8l1-13'],
   // Settings rows (F45)
   palette: ['M12 3a9 9 0 0 0 0 18c1.1 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.8-1.7H17a4 4 0 0 0 4-4c0-4.6-4-8.2-9-8.2z',

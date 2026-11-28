@@ -2989,3 +2989,41 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 .hw-actions { display: flex; gap: 6px; flex: none; }
 .hw-form { padding: 12px 0; border-bottom: 1px solid var(--line); max-width: none; }
 .hw-add { align-self: flex-start; }
+
+/* Big windows (Greg, 28 Nov). One column for the whole chat: the messages, "… is thinking", the queue and note lines and the
+   message box (attach, ask chips, text, mic, Send) share the same left and right edges, centred, wider on a wide screen.
+   --pad is that column's inset; --sb is the message list's scroll bar (chat-mx sets it), taken off its right side so its
+   right edge meets the box's. Text in a bubble keeps a readable line; a table or code too wide for it may use the column. */
+@media (min-width: 600px) {
+  .chat { --col: 760px; --pad: max(24px, calc((100% - var(--col)) / 2)); }
+  .chat .log, .chat .composer, .chat .mx-pending { padding-left: var(--pad); padding-right: var(--pad); }
+  .chat .log { padding-right: max(0px, calc(var(--pad) - var(--sb, 0px))); scrollbar-gutter: stable; }
+  .chat .mx-thinking { padding-left: var(--pad); padding-right: var(--pad); }
+  .chat .model-line, .chat .mx-note { margin-left: var(--pad); margin-right: var(--pad); }
+  .chat .mx-turn.agent, .chat .log > .mx-thread-link { margin-left: 0; }
+  .chat .mx-turn .msg { max-width: min(72ch, calc(100% - 36px)); }
+  .chat .mx-turn.me .msg { max-width: min(60ch, 85%); }
+  .chat .mx-turn.agent .msg:has(> .md-table, > pre) { max-width: 100%; }
+  .chat .mx-turn.agent .msg:has(> .md-table, > pre) > :not(.md-table, pre, button) { max-width: 70ch; }
+  .chat .mx-turn.agent .msg:has(> .md-table, > pre) > .mx-react-open { right: 6px; }
+}
+@media (min-width: 1400px) {
+  .chat { --col: 1000px; }
+  /* The chats list stays open as a column on the left (chat.js pinWide); ≡ hides it, remembered on this device. */
+  .side.pin-wide { order: -1; flex: 0 0 300px; box-sizing: border-box; height: 100vh; overflow-y: auto; border-left: 0; border-right: 1px solid var(--line); }
+}
+/* Two chats side by side from 1800 px (chat.js twoPanes): each pane is a whole chat; narrower, the second one hides. */
+.chat-pane { display: contents; }
+.chat-pane.beside > .side { display: none !important; }
+.chat-pane.beside > .chat { border-left: 1px solid var(--line); }
+.bar-beside { display: none; }
+.bar-beside, .pane-close { flex: none; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0;
+  border: 1px solid var(--line); border-radius: var(--r-small); background: transparent; color: var(--muted); cursor: pointer; }
+.pane-close { display: inline-flex; }
+.bar-beside:hover, .pane-close:hover, .bar-beside[aria-expanded="true"] { color: var(--ink); background: var(--chip); }
+.bar-beside .icon, .pane-close .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.switch-beside-head { margin: 4px 10px 8px; font-size: var(--t-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.switch-beside-head[hidden] { display: none; }
+.beside-mode .switch-all { display: none; }
+@media (min-width: 1800px) { .bar-beside { display: inline-flex; } }
+@media (max-width: 1799px) { .chat-pane.beside { display: none; } }

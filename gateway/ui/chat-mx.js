@@ -123,14 +123,20 @@ export function backGestures(el, back) {
   return () => { el.removeEventListener('touchstart', onStart); el.removeEventListener('touchmove', onMove); el.removeEventListener('touchend', onEnd); };
 }
 
+// Mounted twice on a very wide screen (Greg, 28 Nov): sideBits.pane === 'beside' is the second chat, to the right. It has no
+// chats panel of its own, takes no question from Home, leaves the page's own classes and focus alone, and moves only
+// itself (sideBits.go: a link inside it changes the ?beside= part of the address).
 export async function matrixChat(root, agent, agents, state, sideBits, threadId = null, groupId = null) {
+  const isBeside = sideBits.pane === 'beside';
+  const go = sideBits.go || ((hash) => { location.hash = hash; });
+  const inputId = isBeside ? 'chat-input-2' : 'chat-input';
   const group = groupId || null;
   if (group) threadId = null;               // a group is one conversation (hermes: one session per room)
   const isNew = threadId === 'new';
   let alive = true;
   const off = [];
   const log = h('div', { class: 'log', role: 'log', 'aria-live': 'polite' }, loading('bubbles', 6));
-  const input = h('textarea', { id: 'chat-input', rows: '1', placeholder: isNew ? 'Start a new conversation: its first message is its title'
+  const input = h('textarea', { id: inputId, rows: '1', placeholder: isNew ? 'Start a new conversation: its first message is its title'
     : threadId ? 'Reply' : `Message ${agent.display_name}` });
   // The box grows with what is in it, up to about half the screen, so a long message or a voice
   // transcript can be read and scrolled before it is sent (Greg, 21 Nov).
@@ -221,7 +227,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     return files.length ? sendFiles(input.value) : sendText(input.value);
   };
   const form = h('form', { class: 'composer', onsubmit: (e) => { e.preventDefault(); submit(); } },
-    h('label', { for: 'chat-input', class: 'sr' }, 'Message'), attach, picker, input, voice.mic, send, voice.bar);
+    h('label', { for: inputId, class: 'sr' }, 'Message'), attach, picker, input, voice.mic, send, voice.bar);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
   // Send, Stop or resting, from what is in the box and whether the agent is working (thinkingRow shows it).
   function syncSend() {
@@ -253,10 +259,11 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   const groupWho = h('span', { class: 'when group-who' });
   const mxAgents = agents.filter((a) => a.matrix_id);
   // The chat's own buttons (≡: the chats panel) sit in the bar, just before the view pill (UI review, 28 Nov).
-  const tools = [sideBits.reopen, sideBits.viewMenu, sideBits.convBtn];
+  const tools = [sideBits.reopen, sideBits.viewMenu, sideBits.convBtn, ...(sideBits.extraTools || [])];
+  const beside = sideBits.openBeside || null;
   const headBar = threadId ? null : group
-    ? agentBar(agent, null, mxAgents, { group: { link: main, title: groupTitle, who: groupWho }, tools, hotkey: true })
-    : agentBar(agent, 'chat', mxAgents, { tools, hotkey: true });
+    ? agentBar(agent, null, mxAgents, { group: { link: main, title: groupTitle, who: groupWho }, tools, hotkey: true, beside })
+    : agentBar(agent, 'chat', mxAgents, { tools, hotkey: true, beside });
   const pageTitle = h('h1', { class: 'visually-hidden' }, agent.display_name);
   // While the agent works, its mark in the header and the one in the thinking row pulse together (Greg, 28 Nov): one
   // class on the chat starts both, and both animations are given the same start time so they stay in step.
@@ -288,19 +295,21 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
       h('header', { class: `chat-head${group ? ' group-head' : ''}${headBar ? ' with-bar' : ''}` },
         // The one agent bar (UI review, 28 Nov); inside a thread, its title with a way back.
         headBar || crumb, threadId ? h('h1', { class: 'mx-thread-title' }, convTitle) : pageTitle,
-        ...(headBar ? [] : [sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null])),
+        ...(headBar ? [] : [sideBits.reopen || null, sideBits.viewMenu || null, sideBits.convBtn || null, ...(sideBits.extraTools || [])])),
       group ? null : chipsRow, log, thinkingRow, note, modelLine, pending, form),
-    sideBits.side, sideBits.sideScrim || null);
+    ...[sideBits.side, sideBits.sideScrim].filter(Boolean));
 
   // Phone (Greg, 21 Nov): in a conversation the chat's own header replaces the Logos bar, and you go
   // back to all your agents by swiping right, by pinching (zooming out to the floating agents), or by
   // tapping the agent's mark.
-  document.documentElement.classList.add('in-conv');
-  off.push(() => document.documentElement.classList.remove('in-conv'));
-  off.push(backGestures(root.querySelector('section.chat'), () => { location.hash = '#/chat'; }));
+  if (!isBeside) {
+    document.documentElement.classList.add('in-conv');
+    off.push(() => document.documentElement.classList.remove('in-conv'));
+    off.push(backGestures(root.querySelector('section.chat'), () => { location.hash = '#/chat'; }));
+  }
   // Once per browser, on a touch screen: say the gestures exist.
   try {
-    if (matchMedia('(pointer: coarse)').matches && !localStorage.getItem('logos.tip.back')) {
+    if (!isBeside && matchMedia('(pointer: coarse)').matches && !localStorage.getItem('logos.tip.back')) {
       localStorage.setItem('logos.tip.back', '1');
       const tip = h('div', { class: 'gesture-tip', role: 'status' }, 'Tip: swipe right or pinch to see all your agents');
       root.querySelector('section.chat')?.append(tip);
@@ -652,7 +661,9 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
   log.addEventListener('load', toBottom, true);                       // an image or a video arriving
   const logGrows = new MutationObserver(() => requestAnimationFrame(toBottom));
   logGrows.observe(log, { childList: true, subtree: true });
-  const logResize = new ResizeObserver(toBottom);
+  // The list's scroll bar width, so the message column's right edge meets the box's (app.css --sb, Greg 28 Nov).
+  const measureBar = () => log.closest('section.chat')?.style.setProperty('--sb', `${Math.max(0, log.offsetWidth - log.clientWidth)}px`);
+  const logResize = new ResizeObserver(() => { measureBar(); toBottom(); });
   logResize.observe(log);
   off.push(() => { logGrows.disconnect(); logResize.disconnect(); });
   function draw(stick) {
@@ -804,7 +815,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
         // The title as a notice (agents ignore notices), then the first message inside its thread.
         const r = await c.sendMessage(room.roomId, { msgtype: 'm.notice', body: TITLE_MARK + text.split('\n')[0].slice(0, 80) });
         await c.sendMessage(room.roomId, r.event_id, { msgtype: 'm.text', body: text });
-        location.hash = `${main}/thread/${encodeURIComponent(r.event_id)}`;
+        go(`${main}/thread/${encodeURIComponent(r.event_id)}`);
         return;
       }
       if (threadId) await c.sendMessage(room.roomId, threadId, { msgtype: 'm.text', body: text, ...extra });
@@ -878,7 +889,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     const leaveBtn = h('button', { type: 'button', class: 'btn quiet small danger-text group-leave', onclick: async () => {
       if (Date.now() - leaving > 4000) { leaving = Date.now(); leaveBtn.textContent = 'Tap again to leave'; setTimeout(() => { if (leaveBtn.isConnected && Date.now() - leaving >= 4000) leaveBtn.textContent = 'Leave group'; }, 4100); return; }
       leaveBtn.disabled = true;
-      try { await c.leave(room.roomId); location.hash = '#/chat'; }
+      try { await c.leave(room.roomId); go('#/chat'); }
       catch (err) { groupNote.textContent = `Could not leave: ${err.message}`; leaveBtn.disabled = false; }
     } }, 'Leave group');
     sideBits.side.replaceChildren(sideBits.sideTop || '', h('h2', { class: 'label' }, 'In this group'), memberBox,
@@ -905,6 +916,7 @@ export async function matrixChat(root, agent, agents, state, sideBits, threadId 
     }
   }
   draw(true);
+  if (isBeside) return () => { alive = false; clearTimeout(timer); for (const f of off) f(); };
   const asked = group ? null : takeAskFull(agent.name);       // a question asked on Home (spoken or typed)
   if (asked) sendText(asked.text, asked.voice);
   const drafted = group ? null : takeDraft(agent.name);       // words to finish, from the Calendar

@@ -21,6 +21,8 @@ for (const [tag, opts, menuSel] of [
   ['desktop', { viewport: { width: 1440, height: 900 } }, '.chat-head .side-reopen'],
   ['phone', { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }, null]]) {
   const ctx = await browser.newContext(opts); const page = await ctx.newPage();
+  // The agent chat's pinned chats list (from 1400 px, Greg 28 Nov) closed, so the bars are compared on their own (wide_chat checks the list).
+  await ctx.addInitScript(() => { try { localStorage.setItem('logos.side.wide', 'closed'); } catch (e) {} });
   const errs = []; page.on('pageerror', (e) => errs.push(e.message));
   await page.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/chat/household`); await page.waitForTimeout(2500);
   // The agent chat's right-hand control in the header is its Chat pill (one agent bar, UI review 28 Nov: the pill at the right
