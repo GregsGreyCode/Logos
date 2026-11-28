@@ -132,7 +132,10 @@ const noSideScroll = (page) => page.evaluate(() => document.documentElement.scro
   const grid = await page.locator('.cal-month').boundingBox(), side = await page.locator('.cal-side').boundingBox();
   ok(grid && side && side.x > grid.x + grid.width - 2, 'the picked day sits beside the month');
   ok(await page.locator('.cal-day.today .cal-pill').count() >= 2, 'a desktop month shows the events by name');
-  ok(await page.locator('.cal-goto').isVisible(), 'a date to go to');
+  ok(await page.locator('.cal-title-btn').isVisible() && await page.locator('.cal-goto').count() === 1, 'the month\'s name is the way to go to a date');
+  await page.locator('.cal-goto').evaluate((i) => { i.value = '2027-03-10'; i.dispatchEvent(new Event('change')); }); await page.waitForTimeout(500);
+  ok(/March 2027/.test(await page.locator('.cal-title').textContent()), 'a date picked goes there');
+  await page.locator('.cal-today').click(); await page.waitForTimeout(400);
   await page.screenshot({ path: `${OUT}/calendar-desk-month.png` });
   await page.locator('.cal-views button', { hasText: 'Week' }).click(); await page.waitForTimeout(600);
   const tops = await page.$$eval('.cal-week .cal-col', (els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));

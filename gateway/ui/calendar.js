@@ -142,6 +142,23 @@ function fetchRange(url) {
   return inflight.get(url);
 }
 
+// A month small: its days as links (to that day, or the list from it), dots for what is on, today and the picked day marked.
+function miniMonth(d, map, pal, { today, picked = '', view = 'day' }) {
+  const [a, b] = rangeOf('month', iso(d));
+  const cells = [];
+  for (let x = a; x <= b; x = add(x, 1)) {
+    const key = iso(x), evs = map.get(key) || [];
+    cells.push(h('a', { class: `cal-mini-day${x.getMonth() !== d.getMonth() ? ' other' : ''}${key === today ? ' today' : ''}${key === picked ? ' picked' : ''}`,
+      href: `#/calendar/${view === 'list' ? 'list' : 'day'}/${key}`,
+      'aria-label': `${dayWords(x)}: ${evs.length || 'nothing'}${evs.length ? ` event${evs.length > 1 ? 's' : ''}` : ' on'}`, 'aria-current': key === today ? 'date' : null },
+    h('span', { class: 'cal-num' }, String(x.getDate())),
+    h('span', { class: 'cal-dots', 'aria-hidden': 'true' }, evs.slice(0, 3).map((e) => h('span', { class: 'dot', style: `background:${(pal[e.calendar] || {}).colour || 'var(--muted)'}` })))));
+  }
+  const heads = Array.from({ length: 7 }, (_, i) => h('span', { class: 'cal-dow', 'aria-hidden': 'true' }, add(a, i).toLocaleDateString([], { weekday: 'narrow' })));
+  return [h('a', { class: 'cal-mini-title', href: `#/calendar/month/${iso(d)}` }, d.toLocaleDateString([], { month: 'long', year: 'numeric' })),
+    h('div', { class: 'cal-mini' }, heads, cells)];
+}
+
 function aheadOf(d, span = 2) {
   for (let n = -span; n <= span; n++) {
     const url = urlOf(rangeOf('month', iso(new Date(d.getFullYear(), d.getMonth() + n, 1))));
@@ -166,11 +183,16 @@ export async function calendarView(root, rest, state) {
   let data = null, asked = 0;
   const hidden = loadHidden();
 
-  const title = h('h2', { class: 'cal-title', 'aria-live': 'polite' });
+  // The period shown is the heading, and a button: it opens the date picker (Greg, 28 Nov: one control fewer in the bar).
+  const titleText = h('span', { class: 'cal-title-text', 'aria-live': 'polite' });
   const prev = h('button', { type: 'button', class: 'btn quiet small cal-step', 'aria-label': 'Earlier' }, icon(['M15 6l-6 6 6 6']));
   const next = h('button', { type: 'button', class: 'btn quiet small cal-step', 'aria-label': 'Later' }, icon(ICONS.chevron));
   const todayBtn = h('button', { type: 'button', class: 'btn quiet small cal-today' }, 'Today');
-  const goTo = h('input', { type: 'date', class: 'cal-goto', 'aria-label': 'Go to a date', value: day });
+  const goTo = h('input', { type: 'date', class: 'cal-goto', 'aria-label': 'Go to a date', tabindex: '-1', value: day });
+  const titleBtn = h('button', { type: 'button', class: 'cal-title-btn', title: 'Go to a date', 'aria-haspopup': 'dialog' }, titleText,
+    icon(['M6 9l6 6 6-6']));
+  titleBtn.addEventListener('click', () => { try { goTo.showPicker(); } catch (e) { goTo.focus(); goTo.click(); } });
+  const title = h('h2', { class: 'cal-title' }, titleBtn, goTo);
   const tabs = h('div', { class: 'tabs cal-views', role: 'tablist', 'aria-label': 'Show' },
     VIEWS.map(([k, label]) => h('button', { type: 'button', role: 'tab', 'data-view': k, 'aria-selected': String(k === view) }, label)));
   const addBtn = h('button', { type: 'button', class: 'btn small cal-add' }, icon(ICONS.plus), 'Add');
@@ -181,7 +203,7 @@ export async function calendarView(root, rest, state) {
     h('header', { class: 'page-band' }, h('h1', {}, 'Calendar')),
     h('div', { class: 'cal-bar' },
       h('div', { class: 'cal-nav' }, prev, todayBtn, next, title),
-      h('div', { class: 'cal-tools' }, goTo, tabs, addBtn)),
+      h('div', { class: 'cal-tools' }, tabs, addBtn)),
     note, body);
   root.replaceChildren(page);
 
@@ -194,7 +216,7 @@ export async function calendarView(root, rest, state) {
 
   function drawTitle() {
     const [a, b] = range(), d = parse(day);
-    title.textContent = view === 'month' ? d.toLocaleDateString([], { month: 'long', year: 'numeric' })
+    titleText.textContent = view === 'month' ? d.toLocaleDateString([], { month: 'long', year: 'numeric' })
       : view === 'day' ? dayWords(d, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
         : `${a.toLocaleDateString([], { day: 'numeric', month: 'short' })} – ${b.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`;
     for (const t of tabs.children) t.setAttribute('aria-selected', String(t.dataset.view === view));
@@ -248,13 +270,14 @@ export async function calendarView(root, rest, state) {
       h('span', { class: 'cal-num' }, String(d.getDate())),
       h('span', { class: 'cal-dots', 'aria-hidden': 'true' }, evs.slice(0, 4).map((e) => h('span', { class: `dot ${(pal[e.calendar] || {}).cls || ''}`, style: `background:${(pal[e.calendar] || {}).colour || 'var(--muted)'}` }))),
       h('span', { class: 'cal-chips', 'aria-hidden': 'true' }, evs.slice(0, 3).map((e) => h('span', { class: `cal-pill${e.all_day ? ' all-day' : ''}`, style: `--cal:${(pal[e.calendar] || {}).colour || 'var(--muted)'}` },
-        e.all_day ? '' : h('span', { class: 'cal-ev-time' }, timeOf(e.start) && String(e.start).slice(0, 10) === key ? timeOf(e.start) : ''), e.busy ? 'Busy' : e.title)),
+        // (a space after the time, so a long title can go to the next line instead of out of the cell)
+        e.all_day || !(timeOf(e.start) && String(e.start).slice(0, 10) === key) ? '' : [h('span', { class: 'cal-ev-time' }, timeOf(e.start)), ' '], e.busy ? 'Busy' : e.title)),
       evs.length > 3 ? h('span', { class: 'cal-more' }, `+${evs.length - 3} more`) : null));
       cell.addEventListener('click', () => { selected = key; if (d.getMonth() !== month) { day = key; load(); } else draw(); });
       cell.addEventListener('dblclick', () => { day = key; view = 'day'; load(); });
       cells.push(cell);
     }
-    const grid = h('div', { class: 'cal-month', role: 'grid', 'aria-label': title.textContent }, heads, cells);
+    const grid = h('div', { class: 'cal-month', role: 'grid', 'aria-label': titleText.textContent }, heads, cells);
     const sd = parse(selected);
     const side = h('section', { class: 'cal-side card', 'aria-label': dayWords(sd) },
       h('div', { class: 'cal-side-head' }, h('h3', {}, selected === today ? `Today · ${dayWords(sd, { day: 'numeric', month: 'long' })}` : dayWords(sd)),
@@ -303,11 +326,15 @@ export async function calendarView(root, rest, state) {
       ? (document.activeElement.dataset.day ? `[data-day="${document.activeElement.dataset.day}"]` : document.activeElement.dataset.id ? `[data-id="${CSS.escape(document.activeElement.dataset.id)}"]` : '') : '';
     // The key goes under the calendar (Greg, 27 Nov): under the month grid, else under the days.
     const keyed = (el) => h('div', { class: 'cal-keyed' }, el, legend);
+    // Day and List on a wide screen (Greg, 28 Nov: "the placement of everything isn't very good"): the words in a
+    // readable column, and beside them the month to jump about in, with the key under it.
+    const aside = (el) => h('div', { class: 'cal-split' }, el,
+      h('aside', { class: 'cal-aside', 'aria-label': 'Month' }, h('div', { class: 'cal-aside-month card' }, miniMonth(parse(day), map, pal, { today, picked: day, view })), legend));
     body.dataset.drawn = `${view}/${day}`;
     body.replaceChildren(view === 'month' ? drawMonth(map, pal)
       : view === 'week' ? keyed(drawDays(days, map, pal))
-        : view === 'day' ? keyed(h('div', { class: 'cal-dayview card' }, dayList(map.get(day), pal, day, 'Nothing on this day.', true)))
-          : keyed(drawDays(days, map, pal, { skipEmpty: true, cls: 'cal-agenda' })));
+        : view === 'day' ? aside(h('div', { class: 'cal-dayview card' }, dayList(map.get(day), pal, day, 'Nothing on this day.', true)))
+          : aside(drawDays(days, map, pal, { skipEmpty: true, cls: 'cal-agenda' })));
     addBtn.hidden = false;
     if (had) { const el = body.querySelector(had); if (el) el.focus({ preventScroll: true }); }
   }
@@ -530,21 +557,11 @@ export function monthWidget({ compact = () => false } = {}) {
     last = d;
     if (!d || d.error) { box.replaceChildren(none(d && d.error === 'no_calendar' ? 'No calendar yet.' : 'The calendar could not be read just now.')); return; }
     const small = compact();
-    const now = new Date(), today = iso(now), [a, b] = rangeOf('month', today);
+    const now = new Date(), today = iso(now);
     const pal = paletteFor(d, me), map = byDay(d, loadHidden());
-    const cells = [];
-    for (let x = a; x <= b; x = add(x, 1)) {
-      const key = iso(x), evs = map.get(key) || [];
-      cells.push(h('a', { class: `cal-mini-day${x.getMonth() !== now.getMonth() ? ' other' : ''}${key === today ? ' today' : ''}`, href: `#/calendar/day/${key}`,
-        'aria-label': `${dayWords(x)}: ${evs.length || 'nothing'}${evs.length ? ` event${evs.length > 1 ? 's' : ''}` : ' on'}`, 'aria-current': key === today ? 'date' : null },
-      h('span', { class: 'cal-num' }, String(x.getDate())),
-      h('span', { class: 'cal-dots', 'aria-hidden': 'true' }, evs.slice(0, 3).map((e) => h('span', { class: 'dot', style: `background:${(pal[e.calendar] || {}).colour || 'var(--muted)'}` })))));
-    }
-    const heads = Array.from({ length: 7 }, (_, i) => h('span', { class: 'cal-dow', 'aria-hidden': 'true' }, add(a, i).toLocaleDateString([], { weekday: 'narrow' })));
     const todays = map.get(today) || [];
     box.replaceChildren(...[
-      h('a', { class: 'cal-mini-title', href: `#/calendar/month/${today}` }, now.toLocaleDateString([], { month: 'long', year: 'numeric' })),
-      h('div', { class: 'cal-mini' }, heads, cells),
+      ...miniMonth(now, map, pal, { today }),
       small ? null : h('h3', { class: 'sub-label' }, 'Today'),
       small ? null : todays.length ? h('div', { class: 'home-list home-agenda' }, todays.slice(0, 4).map((e) => h('a', { class: 'home-row home-line', href: `#/calendar/day/${today}/${encodeURIComponent(e.id || '')}` },
         h('span', { class: 'home-time' }, e.all_day || String(e.start).slice(0, 10) !== today ? 'All day' : timeOf(e.start)),

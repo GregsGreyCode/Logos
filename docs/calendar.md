@@ -63,9 +63,10 @@ Béré asked for it on 27 Nov, and Greg made it a full app the same day. It is i
 
 - **Views:** Month (the default), Week, Day and List (the next four weeks, only the days with something on).
   - On a phone the month shows dots, and the day you tap is listed under it. A swipe moves a month or a week.
-  - On a desktop the month shows the events by name, and the day you pick sits beside it.
+  - On a desktop the month shows the events by name (two lines at most), fills the screen's height, and the day you pick sits beside it. Day and List keep their words in a readable column with the month beside them (a day there opens it) and the key under it.
+  - The period shown (the month, the week, the day) is the screen's heading; tap it to go to a date.
   - Day shows each event whole: title, whose, where and the notes, line by line. Week and List wrap long titles; nothing is cut short with "…".
-- **Fast:** what the device kept (five minutes) draws at once; a fresh copy replaces it in place only if something changed, keeping the picked day and an open event. A first visit shows a placeholder. Once a range is drawn, the one before and after are fetched quietly, so Earlier and Later are instant.
+- **Fast:** the calendar is always fetched a whole month at a time (as the month view shows it, so a week or a day is inside it): switching Month, Week, Day and List never waits. This month and the ones either side are fetched quietly when the app opens; two months either side of the one shown are fetched ahead. What the device kept (five minutes) draws at once; a fresh copy replaces it in place only if something changed, keeping the picked day and an open event. A first visit shows a placeholder. `tests/ui/checks/calendar_speed.mjs` times every switch with the calendar answering in 1.6 s.
 - **Calendars:** each has its colour and a switch: yours, Household, then everyone else's. The key with the switches sits under the calendar (under the month grid, above the day's list). The switches are remembered on that device.
 - **An event:** tap it to see all of it (when, calendar, where, notes, whether it repeats).
 - **Who sees what:** exactly what Home shows. It reads with your own read-only key, so you see your calendar, Household and the other people's. Someone without a calendar account sees what their agent sees: busy times show as "Busy".
