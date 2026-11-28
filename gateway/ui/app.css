@@ -3046,3 +3046,48 @@ a.w-agent:focus-visible { outline: 2px solid var(--accent-text); outline-offset:
 .mx-quote-text { font-size: var(--t-sm); opacity: .8; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .msg.flash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color .6s; }
 @media (min-width: 600px) { .chat .mx-reply-bar { margin-left: var(--pad, 24px); margin-right: var(--pad, 24px); } }
+/* ── Lists screen (28 Nov): your personal lists and the shared ones (gateway/ui/lists.js). ─────────────── */
+.lists-page > .lists-top, .lists-page > .lists-body { width: 100%; max-width: 760px; }
+.lists-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.lists-top .lists-msg:empty { visibility: hidden; }
+.lists-new { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.lists-new .icon { width: 16px; height: 16px; }
+.lists-body { display: flex; flex-direction: column; gap: 26px; }
+.lists-sec { display: flex; flex-direction: column; gap: 10px; }
+.lists-sec > .when { margin-top: -6px; }
+.list-card { display: flex; flex-direction: column; gap: 8px; }
+.list-head { display: flex; align-items: center; gap: 8px; }
+.list-head h3 { margin: 0; min-width: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }
+.list-count { flex: none; min-width: 22px; padding: 0 7px; border-radius: 11px; background: var(--raised, var(--surface)); color: var(--muted);
+  font-size: 12px; line-height: 20px; text-align: center; }
+.list-actions { display: flex; gap: 6px; margin-left: auto; flex: none; }
+.list-actions .btn.small { margin-left: 0; }
+.list-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.list-item { display: flex; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid var(--line); }
+.list-items > .list-item:last-child { border-bottom: 0; }
+.list-box { flex: none; position: relative; width: 20px; height: 20px; padding: 0; border-radius: 6px; border: 1.5px solid var(--muted);
+  background: transparent; color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.list-box::before { content: ''; position: absolute; inset: -12px; }              /* a thumb-sized target */
+.list-box .icon { width: 14px; height: 14px; stroke-width: 3; }
+.list-box[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.list-box:hover:not(:disabled) { border-color: var(--accent); }
+.list-text { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; padding: 8px 0; border: 0;
+  background: none; color: var(--ink); font: inherit; font-size: 15px; text-align: left; cursor: text; overflow-wrap: anywhere; }
+.list-item.done .list-text > span:first-child { text-decoration: line-through; color: var(--muted); }
+.list-item.ticking .list-text > span:first-child { color: var(--muted); }
+.list-remove { flex: none; width: 36px; height: 36px; color: var(--muted); border: 0; background: none; }
+.list-remove:hover:not(:disabled) { color: var(--bad); }
+.list-remove .icon { width: 18px; height: 18px; }
+.list-edit, .list-add { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; }
+.list-edit input, .list-add input { flex: 1; min-width: 0; min-height: 40px; padding: 0 12px; border: 1px solid var(--line);
+  border-radius: var(--r-ctl); background: var(--surface); color: var(--ink); font: inherit; font-size: 15px; }
+.list-edit .btn.small, .list-add .btn.small { margin-left: 0; flex: none; }
+.list-item.editing { padding: 6px 0; }
+.list-done summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 6px 0; }
+.lists-dialog .lists-kind { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.lists-dialog .lists-kind label { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 15px; }
+.lists-dialog input[type="text"] { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-ctl);
+  background: var(--surface); color: var(--ink); font: inherit; }
+@media (max-width: 599px) {
+  .lists-page { padding-top: 14px; }
+}

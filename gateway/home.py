@@ -15,7 +15,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 RECENT_SECONDS = 24 * 3600
@@ -293,6 +293,111 @@ def tick_item(runtime: Any, agent: str, list_name: str, item: str, done: bool = 
     except Exception as e:
         return {"error": "refused", "message": str(e)[:200]}
     return {"ok": True}
+
+
+# ── The Lists screen (Greg, 28 Nov): your personal lists and the shared ones, through your own agent's house key, so
+# the house service decides exactly as it does for the agent (yours only; never the other person's personal lists).
+
+LIST_ACTIONS = {"add": "add_items", "tick": "tick_items", "untick": "add_items", "change": "change_item",
+                "remove": "remove_items", "create": "create_list", "move": "move_list", "delete": "delete_list"}
+
+
+def lists_agent(agents: Mapping[str, Mapping[str, Any]], username: str) -> Tuple[Optional[str], bool]:
+    """``(agent, personal)``: your own agent when it works the lists (it has your personal lists too), else the shared
+    agent Home uses (shared lists only), else ``(None, False)``."""
+    from gateway import house_host
+    uses_lists = lambda d: house_host.uses_house(d) and "todo" in ((d.get("house") or {}).get("domains") or [])
+    for name, info in sorted(agents.items()):
+        d = info.get("definition") or {}
+        if ((info.get("owners") or []) == [username] and house_host.list_owner(d) == username
+                and uses_lists(d)):
+            return name, True
+    name = house_agent(agents, username)
+    if name and uses_lists((agents[name].get("definition") or {})):
+        return name, False
+    return None, False
+
+
+def list_args(action: str, body: Mapping[str, Any], personal: bool) -> Dict[str, Any]:
+    """The tool arguments for one change on the Lists screen, checked; raises ValueError in plain words."""
+    if action not in LIST_ACTIONS:
+        raise ValueError("Unknown change.")
+    text = lambda k, n: str(body.get(k) or "").strip()[:n]
+    args: Dict[str, Any] = {}
+    kind = body.get("kind")
+    if kind not in (None, "", "personal", "shared"):
+        raise ValueError("A list is personal or shared.")
+    if kind == "personal" and not personal:
+        raise ValueError("Personal lists need your own agent.")
+    if personal and kind:
+        args["shared"] = kind == "shared"
+    if action in ("create", "move", "delete"):
+        args["name"] = text("name", 40) or text("list", 40)
+        if not args["name"]:
+            raise ValueError("Say which list.")
+        if action == "move":
+            if body.get("to") not in ("shared", "personal"):
+                raise ValueError("Move it to shared or personal.")
+            args.pop("shared", None)
+            args["to"] = body["to"]
+        if action == "delete":
+            args.pop("shared", None)
+        if action == "create" and not personal:
+            args["shared"] = True
+        return args
+    args["list"] = text("list", 80)
+    if not args["list"]:
+        raise ValueError("Say which list.")
+    item = text("item", 200)
+    if not item:
+        raise ValueError("Write the item.")
+    if action == "change":
+        args["item"] = item
+        if body.get("new_title") is not None:
+            args["new_title"] = text("new_title", 200)
+        for k, n in (("details", 1000), ("due", 10)):
+            if body.get(k) is not None:
+                args[k] = text(k, n)
+        if not any(k in args for k in ("new_title", "details", "due")):
+            raise ValueError("Say what to change.")
+    else:
+        args["items"] = [item]
+    return args
+
+
+def all_lists(runtime: Any, agent: str, post=None) -> Dict[str, Any]:
+    """``{"lists": [{"name", "kind", "id"?, "items": [{"text", "done", "due", "details"}]}], "note"?}`` or ``{"error"}``."""
+    from gateway import house_host
+    host = house_host.HouseHost(runtime)
+    token = host.token_for(agent)
+    if not token:
+        return {"error": "no_house"}
+    try:
+        out = rpc_result((post or _post)(host.url(), _call("list_items", {"done": True}), token))
+    except Exception as e:
+        return {"error": "house_unavailable", "message": re.sub(r"^Not done:\s*", "", str(e))[:200]}
+    lists = []
+    for l in out.get("lists") or []:
+        items = [{**_item_of(i), "done": False} for i in l.get("open") or []]
+        items += [{"text": str(t), "due": "", "details": "", "done": True} for t in l.get("done") or []]
+        lists.append({"name": str(l.get("list") or ""), "kind": "personal" if l.get("kind") == "personal" else "shared",
+                      **({"id": str(l["id"])} if l.get("id") else {}), "items": items})
+    return {"lists": lists, **({"note": str(out["note"])[:300]} if out.get("note") else {})}
+
+
+def list_change(runtime: Any, agent: str, action: str, args: Mapping[str, Any], post=None) -> Dict[str, Any]:
+    """One change with the agent's house key: what the service answered, or ``{"error", "message"}``."""
+    from gateway import house_host
+    host = house_host.HouseHost(runtime)
+    token = host.token_for(agent)
+    if not token:
+        return {"error": "no_house", "message": "Lists are not set up."}
+    try:
+        return rpc_result((post or _post)(host.url(), _call(LIST_ACTIONS[action], args), token))
+    except ValueError as e:                        # the service said no: its words, without "Not done: "
+        return {"error": "refused", "message": re.sub(r"^Not done:\s*", "", str(e))[:300]}
+    except Exception:
+        return {"error": "house_unavailable", "message": "The lists could not be reached just now."}
 
 
 # ── Weather (Greg, 22 Nov): Open-Meteo, no key. Only a place's rounded coordinates (about 1 km) or the

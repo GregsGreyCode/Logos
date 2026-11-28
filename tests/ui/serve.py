@@ -157,6 +157,43 @@ for _job in (EXTRA.get('/api/v2/agents/greg/status') or {}).get('jobs', []):
         import datetime as _dt
         _t = _dt.datetime.now(_dt.timezone.utc).date() + _dt.timedelta(days=1)
         _job['next_run'] = f'{_t.isoformat()}T10:00:00+00:00'
+# The Lists screen (28 Nov): your personal lists and the shared ones, made up. It keeps changes until
+# GET /api/v2/lists?reset=1 (each check starts with that). A list called "Fails" refuses every change.
+def _lists_start():
+    I = lambda text, done=False, **kw: {'text': text, 'done': done, 'due': kw.get('due', ''), 'details': kw.get('details', '')}
+    return {'personal': True, 'lists': [
+        {'name': 'Video games', 'kind': 'personal', 'items': [I('Hollow Knight'), I('Celeste', details='the farewell chapter'), I('Tetris', True)]},
+        {'name': 'Shopping list', 'kind': 'shared', 'id': 'todo.example_list', 'items': [I('Oat milk'), I('Lemons', due='2026-12-01'), I('Bread', True)]},
+        {'name': 'To do', 'kind': 'shared', 'id': 'todo.example_todo', 'items': [I('Fix the shelf')]}]}
+LISTS = _lists_start()
+def lists_change(action, b):
+    kind, name = b.get('kind') or None, b.get('name') or b.get('list') or ''
+    found = [l for l in LISTS['lists'] if l['name'].lower() == name.lower() and (kind is None or l['kind'] == kind)]
+    if action == 'create':
+        shared = b.get('kind') == 'shared'
+        LISTS['lists'].append({'name': name, 'kind': 'shared' if shared else 'personal', 'items': [], **({'id': 'todo.example_new'} if shared else {})})
+        return 200, {'list': name, 'kind': 'shared' if shared else 'personal', 'created': True}
+    if not found: return 409, {'error': 'refused', 'message': f"There is no list called '{name}'."}
+    l = found[0]
+    if l['name'] == 'Fails': return 409, {'error': 'refused', 'message': 'Home Assistant is not answering, so nothing was changed.'}
+    item = (b.get('item') or '').strip()
+    have = [i for i in l['items'] if i['text'].lower() == item.lower()]
+    if action == 'add' or action == 'untick':
+        if have: have[0]['done'] = False
+        else: l['items'].append({'text': item, 'done': False, 'due': '', 'details': ''})
+        return 200, {'list': l['name'], 'added': [item]}
+    if action == 'tick': have[0]['done'] = True; return 200, {'list': l['name'], 'ticked': [have[0]['text']]}
+    if action == 'remove': l['items'].remove(have[0]); return 200, {'list': l['name'], 'removed': [have[0]['text']]}
+    if action == 'change': have[0]['text'] = b['new_title']; return 200, {'list': l['name'], 'changed': b['new_title']}
+    if action == 'delete': LISTS['lists'].remove(l); return 200, {'deleted': l['name'], 'kind': 'personal'}
+    if action == 'move':
+        l['kind'] = b['to']
+        if b['to'] == 'shared': l['items'] = [i for i in l['items'] if not i['done']]; l['id'] = 'todo.example_moved'
+        else: l.pop('id', None)
+        out = {'list': l['name'], 'kind': b['to']}
+        if b['to'] == 'personal': out['note'] = 'The shared list is still in Home Assistant too: it can be removed in the Home Assistant app.'
+        return 200, out
+    return 400, {'error': 'refused', 'message': 'Unknown change.'}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, body, ctype):
@@ -181,6 +218,10 @@ class H(http.server.BaseHTTPRequestHandler):
         if p == '/api/v2/calendar':
             import urllib.parse as _u
             return self.send(200, json.dumps(calendar_range(_u.parse_qs(self.path.partition('?')[2]))).encode(), 'application/json')
+        if p == '/api/v2/lists':
+            global LISTS
+            if 'reset=1' in self.path: LISTS = _lists_start()
+            return self.send(200, json.dumps(LISTS).encode(), 'application/json')
         if p in EXTRA: return self.send(200, json.dumps(EXTRA[p]).encode(), 'application/json')
         if p in FAKE: return self.send(200, json.dumps(FAKE[p]).encode(), 'application/json')
         if p.startswith('/api/'): return self.send(200, b'{}', 'application/json')
@@ -194,6 +235,8 @@ class H(http.server.BaseHTTPRequestHandler):
         p = self.path.split('?')[0]
         n = int(self.headers.get('Content-Length') or 0); body = json.loads(self.rfile.read(n) or b'{}') if n else {}
         if p == '/auth/invite/check' and body.get('token') != 'GOODTOKEN': return self.send(410, json.dumps({'error': 'invite_unusable', 'message': 'This invitation link cannot be used.'}).encode(), 'application/json')
+        if p.startswith('/api/v2/lists/'):
+            code, out = lists_change(p.rsplit('/', 1)[1], body); return self.send(code, json.dumps(out).encode(), 'application/json')
         if p in PEOPLE_POST: code, out = PEOPLE_POST[p]; return self.send(code, json.dumps(out).encode(), 'application/json')
         if self.path.endswith('/settings/apply'):
             return self.send(202, json.dumps({'state': 'restarting', 'message': "Recreating Greg's agent: about a minute without replies.", 'seconds': 1, 'lines': []}).encode(), 'application/json')

@@ -4,6 +4,7 @@ import { chatView } from './chat.js';
 import { homeView } from './home.js';
 import { brainView } from './brain.js';
 import { calendarView, warmCalendar } from './calendar.js';
+import { listsView } from './lists.js';
 import { agentsView } from './agents.js';
 import { peopleView } from './people.js';
 import { modelsView } from './models.js';
@@ -20,16 +21,17 @@ import * as mx from './mx.js';
 import * as push from './push.js';
 import * as reach from './reach.js';
 
-const views = { home: homeView, chat: chatView, brain: brainView, calendar: calendarView, noticeboard: noticeboardView, agents: agentsView,
+const views = { home: homeView, chat: chatView, brain: brainView, calendar: calendarView, lists: listsView, noticeboard: noticeboardView, agents: agentsView,
   models: modelsView, people: peopleView, updates: updatesView, advisor: advisorView, settings: settingsView };
 const root = document.getElementById('view');
 let slideNext = null;               // 'left' or 'right': the next screen slides in (swipeTabs, below)
 let cleanup = null;
 
-const NAMES = { home: 'Home', chat: 'Agents', brain: 'Brain', calendar: 'Calendar', noticeboard: 'Notifications', agents: 'Routines', models: 'Models',
+const NAMES = { home: 'Home', chat: 'Agents', brain: 'Brain', calendar: 'Calendar', lists: 'Lists', noticeboard: 'Notifications', agents: 'Routines', models: 'Models',
   people: 'People', updates: 'Updates', advisor: 'Claude Advisor', settings: 'Settings' };
 // The screens in the account panel: the initial, top right, lights up on them.
-const IN_ACCOUNT = ['advisor', 'models', 'people', 'settings'];   // the Calendar is a phone tab (27 Nov), not in the panel
+// Lists (28 Nov) are in the panel on a phone, whose tab bar is full; Home's Lists widget opens them too.
+const IN_ACCOUNT = ['advisor', 'models', 'people', 'settings', 'lists'];   // the Calendar is a phone tab (27 Nov), not in the panel
 
 function soon(name) {
   root.replaceChildren(h('div', { class: 'empty' },

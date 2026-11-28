@@ -107,7 +107,8 @@ export async function homeView(root, rest, state) {
   const listsNote = h('p', { class: 'when home-lists-note', role: 'status' });
   const listsBox = h('div', { class: 'home-lists-row' }, loading('tiles', 2));
   const listsSec = h('section', { class: 'home-lists', 'aria-label': 'Lists' },
-    h('h2', { class: 'label' }, 'Lists'), listsBox, listsNote);
+    // The label opens the Lists screen (28 Nov): your own lists and the shared ones, to change.
+    h('h2', { class: 'label' }, h('a', { class: 'label-link', href: '#/lists' }, 'Lists')), listsBox, listsNote);
   // The lists as they are now in Home Assistant (Greg, 23 Nov: "more of an image of the to-do list rather than an
   // actual to-do list"): read live, and in Full an item can be ticked off. If Home Assistant cannot be reached, the
   // copy the household agent keeps (refreshed every 15 minutes) is shown instead, to read only.

@@ -2128,6 +2128,46 @@ async def handle_home_lists_tick(request: web.Request) -> web.Response:
     return web.json_response(out, status=200 if out.get("ok") else 409)
 
 
+async def handle_lists(request: web.Request) -> web.Response:
+    """GET /api/v2/lists — the Lists screen (Greg, 28 Nov): your personal lists and the shared ones, ticked items too.
+    ``personal`` says whether you have personal lists (your own agent works the lists)."""
+    from gateway import home
+    user = _user(request)
+    agents = await _visible_agents(request, user["username"])
+    name, personal = home.lists_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_lists", "personal": False, "lists": []})
+    out = await asyncio.to_thread(home.all_lists, runtime, name)
+    return web.json_response({**out, "personal": personal})
+
+
+async def handle_lists_change(request: web.Request) -> web.Response:
+    """POST /api/v2/lists/{action} (add, tick, untick, change, remove, create, move, delete) — one change on the Lists
+    screen, through your own agent's house key with exactly its rights (or the shared agent's, for shared lists)."""
+    from gateway import home
+    user = _user(request)
+    action = request.match_info["action"]
+    try:
+        body = await request.json()
+    except ValueError:
+        body = None
+    agents = await _visible_agents(request, user["username"])
+    name, personal = home.lists_agent(agents, user["username"])
+    runtime = agent_chat.runtime_of(request.app.get("sandbox_backend"))
+    if not name or runtime is None:
+        return web.json_response({"error": "no_lists", "message": "Lists are not set up."}, status=503)
+    try:
+        args = home.list_args(action, body if isinstance(body, dict) else {}, personal)
+    except ValueError as e:
+        return web.json_response({"error": "refused", "message": str(e)}, status=400)
+    out = await asyncio.to_thread(home.list_change, runtime, name, action, args)
+    if not out.get("error") and action in ("move", "delete"):
+        auth_db.write_audit_log(user["id"], f"list_{action}", target_type="list", target_id=args["name"][:40],
+                                ip_address=request.remote)
+    return web.json_response(out, status=200 if not out.get("error") else 409 if out["error"] == "refused" else 503)
+
+
 def weather_places_of(prefs: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """The places Home's Weather shows, in your order: ``weather_places``, else the one ``weather_place`` chosen before."""
     if isinstance(prefs.get("weather_places"), list):
@@ -2203,6 +2243,8 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/v2/home/lights", require_csrf(handle_home_lights))
     app.router.add_get("/api/v2/home/lists", handle_home_lists)
     app.router.add_post("/api/v2/home/lists/tick", require_csrf(handle_home_lists_tick))
+    app.router.add_get("/api/v2/lists", handle_lists)
+    app.router.add_post("/api/v2/lists/{action}", require_csrf(handle_lists_change))
     app.router.add_get("/api/v2/weather", handle_weather)
     app.router.add_get("/api/v2/weather/places", handle_weather_places)
     app.router.add_get("/api/v2/model", handle_model)

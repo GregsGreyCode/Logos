@@ -1,4 +1,4 @@
-# House: the lights and the shared lists, through Home Assistant
+# House: the lights and the lists, shared (in Home Assistant) and personal
 
 The household agent, and Greg's and Béré's own agents, can work the lights and their scenes (story H1). Home Assistant runs on its
 own VM on the home network and talks to the Hue Bridge. Logos does not replace it: schedules and automations stay in Home Assistant, and the
@@ -38,6 +38,7 @@ which agent made each change.
   domains (`infra/agent-image/policy.yaml`, filled in by `logos-agent`).
 - The container has its own Docker network (`logos-house`) so it can reach Home Assistant on the
   LAN. It has no DNS, runs read-only as uid 1000 with no capabilities, and is limited to 64 MB.
+  The one place it writes is the `logos-lists` volume, for [personal lists](#personal-lists).
 
 ```yaml
 # agents/household.yaml
@@ -125,7 +126,8 @@ then put the items on it. The tool is `create_list`; the agent says the new list
 **Why it needs a second login.** In Home Assistant a new list is a new **Local To-do**
 integration entry, and only an admin can add integrations. The `logos-household` user is not an
 admin and stays that way. So there is a second, optional login, of an admin user, and the house
-service uses it for exactly one thing:
+service uses it for exactly one thing (and, since 28 Nov, for removing a list moved to
+[personal](#personal-lists)):
 
 - In code (`ListMaker` in `gateway/house_service.py`) the admin login can only start the
   `local_todo` config flow and give it the list's name (`POST /api/config/config_entries/flow`
@@ -170,3 +172,68 @@ access and points here; everything else works as before.
 **Turning it off:** delete the file and run `up` again, and revoke the token in Home Assistant
 (profile > Security). A new list made by an agent shows for everyone straight away: Home
 Assistant entities are not per user, so the non-admin login and the app both see it.
+
+## Personal lists
+
+Decided 28 Nov (Greg): besides the shared lists, each person has **personal lists** that only
+they see, for example a list of video games to play, kept by their own agent. Greg does not
+see Béré's, Béré does not see Greg's, and the household agent sees neither. Shared lists
+(shopping, to-do, a list for a project you share) stay in Home Assistant as above.
+
+**Where they live.** In the house service, not in Home Assistant and not in git: the
+`logos-lists` Docker volume, mounted at `/lists` in `logos-house` (the only place the otherwise
+read-only container can write). One file per person, `<username>.json`, mode 0600 in a 0700
+folder, each change written whole to a temporary file and renamed over the old one. Each list
+has a name, its owner and when it was made; each item its text, whether it is ticked, when it
+was added and when it was ticked (and optional details and a due date). The nightly export
+(`scripts/logos-backup-export`) copies the volume as `lists.tar.gz`.
+
+**Why the house service.** The agents already work the shared lists through it, so personal
+lists are the same tools, not a second system to choose between: one token, one sandbox rule,
+and the service already knows which agent is calling. A separate container would have meant a
+second MCP server with near-identical tools (`my_list_*`), which the local model would have to
+choose between every time. The cost: personal lists need the house service, which needs the
+Home Assistant settings (it is not started without them).
+
+**Who gets them.** An agent whose definition has exactly **one** owner (`owners: [bere]`) and
+`todo` in `house.domains` works on that person's personal lists; `logos-agent up` writes
+`person: bere` into the service's config (`list_owner` in `gateway/house_host.py`). The household
+agent (`role: household`, two owners) has no person, so it gets none and everything it makes is
+shared. The person comes only from that config, never from anything the agent sends.
+
+**The tools**, as a person's own agent sees them:
+
+| Tool | What it does with personal lists |
+| --- | --- |
+| `list_items(list?, done?, shared?)` | No name: every shared list and every personal one, each marked `kind: "shared"` or `"personal"`. With a name, that list, found across both kinds. |
+| `add_items`, `tick_items`, `remove_items`, `change_item` | Find the list by name across both kinds. When a shared and a personal list have the same name the tool asks which: `shared: true` or `false`, or "my ..." for the personal one. |
+| `create_list(name, shared?)` | Personal by default for a person's agent; `shared: true` makes a Home Assistant list as before. The household agent makes shared lists only. |
+| `move_list(name, to)` | `to: "shared"`: a new Home Assistant list (as `create_list`, so it needs the admin login), the open items copied, then the personal list removed; ticked items are left out. `to: "personal"`: every item copied into a personal list, then the Home Assistant list removed (below). |
+| `delete_list(name)` | Deletes a personal list with everything on it. Shared lists are never deleted here. |
+
+`move_list` and `delete_list` are offered only to a person's own agent. The agents' rules
+(`souls/_shared/lists.md`): "my list" or things only about their person go on a personal list;
+shopping, house jobs and anything for both on a shared one; when unsure, ask "Just for you, or
+shared?"; never anything private on a shared list; moving and deleting only when asked, after a
+yes.
+
+**Removing a Home Assistant list** (`move_list` to personal) uses the admin login (see
+[Creating lists](#creating-lists)) for its second and last kind of call: it lists the Local
+To-do entries (`GET /api/config/config_entries/entry?domain=local_todo`) and deletes the one
+whose title is exactly the list's name (`DELETE /api/config/config_entries/entry/<id>`), only
+after the items are saved as a personal list. Anything else stays: the Shopping List integration
+(not a Local To-do entry), a list renamed in Home Assistant, two entries with the same name, or
+no admin login. Then the items are copied but the shared list is still in Home Assistant, and
+the tool says so; it can be removed in the Home Assistant app.
+
+**The Lists screen.** Logos has a Lists screen (`#/lists`; in the menu on a desktop, in the
+account panel on a phone, and Home's Lists label opens it) with two parts: **Yours** (personal)
+and **Shared**. Add, tick, put back, edit and remove items; make a list (yours or shared); share
+one of yours or make a shared one yours, and delete one of yours, each asked first. It goes
+through `/api/v2/lists` with your own agent's house token, so the service decides exactly as it
+does for the agent (`lists_agent` in `gateway/home.py`). Someone whose own agent does not work
+the lists sees the shared lists only, through the household agent.
+
+**Setting it up** on a machine: nothing to configure. Deploy (or `scripts/logos-agent up` each
+agent) so that `logos-house` restarts with the new volume and each agent's sandbox rule lets the
+two new tools through and its instructions include the new rules.

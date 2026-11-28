@@ -16,7 +16,7 @@ for (const hash of ['#/home', '#/chat', '#/noticeboard', '#/brain/greg', '#/agen
 ok(widths.size === 1, `one menu width everywhere (${[...widths]})`);
 for (const [k, v] of Object.entries(bands)) ok(v !== 'none', `${k} has a title in the band: ${v}`);
 const labels = await page.$$eval('.nav-links a:not([hidden]) .nav-label, .nav-group:not([hidden]) > .nav-group-name', (els) => els.map((e) => e.textContent));
-ok(JSON.stringify(labels) === JSON.stringify(['Home', 'Agents', 'Notifications', 'Calendar', 'Brain', 'Routines', 'Settings', 'Manage', 'People', 'Models', 'Claude Advisor']), `menu: ${labels}`);
+ok(JSON.stringify(labels) === JSON.stringify(['Home', 'Agents', 'Notifications', 'Calendar', 'Lists', 'Brain', 'Routines', 'Settings', 'Manage', 'People', 'Models', 'Claude Advisor']), `menu: ${labels}`);
 const ph = await browser.newPage({ viewport: { width: 412, height: 915 }, isMobile: true, hasTouch: true });
 await ph.goto(`http://127.0.0.1:${process.env.PORT || 8779}/#/noticeboard`); await ph.waitForTimeout(1800);
 ok(await ph.locator('.feed-allread').isVisible(), 'phone: Mark all read still there');

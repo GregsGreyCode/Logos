@@ -18,6 +18,7 @@ Logos data is protected in two ways.
 - `state-<agent>.db.gz`: each agent's hermes database (conversations, reasoning, tool calls), a consistent SQLite copy taken while the agent runs.
 - `matrix.tar.gz`: the whole Matrix server (accounts, rooms, encrypted history, media). Matrix is stopped for the few seconds the copy takes, because its database is only consistent at rest; phones and agents reconnect by themselves.
 - `auth.db.gz`: the dashboard's accounts and sessions, a consistent SQLite copy.
+- `lists.tar.gz`: each person's personal lists (the `logos-lists` volume, [house.md](house.md#personal-lists)). Restore into that volume, owned by uid 1000.
 - `people-agents.tar.gz`: the definitions of agents added from People › Add a person, kept outside the repo ([people.md](people.md)).
 - `manifest.json`: when it ran, plus each file's size and sha256.
 

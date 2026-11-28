@@ -109,6 +109,9 @@ def export(out: Path) -> dict:
         mounts += ["-v", "logos-calendar:/cal:ro"]
         script += ["$G -C /cal/collections bundle create /out/calendar.bundle --all",
                    "tar -czf /out/calendar-etc.tar.gz -C /cal etc --exclude etc/service-password"]
+    if "logos-lists" in names:                  # personal lists (28 Nov): one JSON file per person, in the house service
+        mounts += ["-v", "logos-lists:/lists:ro"]
+        script.append("tar -czf /out/lists.tar.gz -C /lists .")
     for a in agents:
         mounts += ["-v", f"logos-brain-{a}:/brain-{a}:ro"]
         script.append(f"$G -C /brain-{a} bundle create /out/brain-{a}.bundle --all")
