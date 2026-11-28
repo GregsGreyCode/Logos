@@ -370,11 +370,15 @@ class AgentRuntime:
         return sorted(p.stem for p in (self.repo / "agents").glob("*.yaml")
                       if not p.stem.endswith(".local"))
 
-    def load(self, name: str) -> dict:
+    def load(self, name: str, settings: bool = True) -> dict:
         path = self.definition_path(name)
         if not path.exists():
             raise AgentRuntimeError(f"no agent definition at {path}")
         agent = yaml.safe_load(path.read_text())
+        # What its people chose in the dashboard (Agents › Settings, story E6), kept outside git
+        # (gateway/agent_settings.py); under the .local.yaml files, so a hand edit there still wins.
+        if settings:
+            merge(agent, _sibling("agent_settings").overlay(self.env, name))
         # Untracked overrides, so personal values (Matrix users and rooms) stay out of git:
         # agents/all.local.yaml applies to every agent (for example the model in use right now,
         # see `scripts/logos-models local use`), then agents/<name>.local.yaml to this one.
@@ -576,7 +580,8 @@ class AgentRuntime:
 
     def soul_text(self, agent: Mapping[str, Any]) -> str:
         """The persona plus the shared rules every agent follows (brain filing, honesty)."""
-        text = ((self.repo / agent["soul"]).read_text().rstrip() + "\n\n"
+        # The persona: the one its people wrote in the dashboard (E6), else the definition's soul: file.
+        text = (_sibling("agent_settings").own_soul(self.repo, self.env, agent).rstrip() + "\n\n"
                 + (self.repo / "souls/_shared/brain.md").read_text())
         judgement = self.repo / "souls/_shared/judgement.md"   # checking facts, verifying, learning from mistakes
         if judgement.exists():
@@ -1129,8 +1134,10 @@ class AgentRuntime:
                     break
                 self.runner.sleep(1)
 
-    def up(self, name: str) -> int:
-        """Create or recreate the sandbox from its definition. 0 when it reaches Ready."""
+    def up(self, name: str, load_model: bool = True) -> int:
+        """Create or recreate the sandbox from its definition. 0 when it reaches Ready.
+        ``load_model=False`` (``--no-model-load``) leaves LM Studio alone: the model guard loads the
+        model at its window when the agent next asks for it."""
         agent = self.load(name)
         try:
             _sibling("model_gateway").require_local_only(name, agent)
@@ -1173,7 +1180,10 @@ class AgentRuntime:
                 if path.is_file():
                     self.put(home, f"plugins/{plugin}/{path.name}", path.read_text())
         self.ensure_vault(brain)
-        self.ensure_model(agent["model"])
+        if load_model:
+            self.ensure_model(agent["model"])
+        else:
+            print("model: not checked or loaded (--no-model-load)")
         soul = self.soul_text(agent)
         if len(soul) > SOUL_MAX_CHARS:
             raise AgentRuntimeError(f"SOUL.md is {len(soul)} characters, over {SOUL_MAX_CHARS}: hermes would cut "
@@ -1265,6 +1275,7 @@ class AgentRuntime:
         print(f"{name}: {ph}")
         if ph == "Ready":
             self.ensure_jobs(name, agent, home)
+            _sibling("agent_settings").note_applied(self.env, name)     # E6: "saved, not in use yet" ends
         return 0 if ph == "Ready" else 1
 
 

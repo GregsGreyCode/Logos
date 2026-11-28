@@ -2,7 +2,10 @@
 """Create, inspect and remove Logos v2 agents (OpenShell 0.1 sandboxes running hermes).
 
 Usage:
-  scripts/logos-agent up <name>       create or recreate the sandbox from agents/<name>.yaml
+  scripts/logos-agent up <name> [--no-model-load]
+                                      create or recreate the sandbox from agents/<name>.yaml (and
+                                      the dashboard's settings for it, docs/agent-settings.md);
+                                      --no-model-load leaves LM Studio alone
   scripts/logos-agent down <name>     delete the sandbox (volumes are kept)
   scripts/logos-agent status [name]   show sandbox phase
   scripts/logos-agent exec <name> -- <cmd...>   run a command inside the sandbox
@@ -42,7 +45,10 @@ def main(argv):
     cmd, name = argv[1], (argv[2] if len(argv) > 2 else None)
     try:
         if cmd == "up" and name:
-            return rt.up(name)
+            extra = argv[3:]
+            if any(a != "--no-model-load" for a in extra):
+                print(__doc__); return 2
+            return rt.up(name, load_model="--no-model-load" not in extra)
         if cmd == "down" and name:
             rt.down(name); print(f"{name}: deleted (volumes kept)"); return 0
         if cmd == "status":

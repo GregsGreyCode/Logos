@@ -55,6 +55,21 @@ def calendar_range(q):
     return {'start': a, 'end': b, 'today': d, 'agent': 'greg', 'can_change': ['personal', 'household'], 'busy': [], 'events': ev,
             'calendars': [{'key': 'personal', 'name': 'Your own calendar', 'busy_only': False}, {'key': 'household', 'name': 'Household', 'busy_only': False},
                           {'key': 'bere', 'name': 'Béré', 'busy_only': False}]}
+# Agent settings (E6): Greg's agent, its soul, two models, the chat settings; a restart that goes well.
+SOUL = "# General\n\nYou are a peer assistant.\n\n## Avoid\n\nNo emojis. No sycophancy.\n"
+FAKE['/api/v2/agents/greg/settings'] = {'name': 'greg', 'display_name': "Greg's agent", 'shared': False, 'pending': False, 'apply': {'state': 'idle'},
+  'soul': {'text': SOUL, 'default': SOUL, 'custom': False, 'limit': 8000, 'total': 24000, 'total_limit': 40000,
+           'history': [{'id': '20261127T101500Z-ab12', 'ts': 1795342500, 'by': 'greg', 'chars': 40, 'what': 'edited'},
+                       {'id': '20261127T101459Z-cd34', 'ts': 1795342499, 'by': '', 'chars': len(SOUL), 'what': 'default'}]},
+  'model': {'default': 'qwen/qwen3.6-35b-a3b', 'context_length': 65536, 'vision': True, 'local': True, 'custom': False, 'locked': None, 'server_up': True,
+            'definition': {'default': 'qwen/qwen3.6-35b-a3b', 'context_length': 65536}, 'context_choices': [16384, 32768, 65536, 96512, 131072],
+            'choices': [{'id': 'qwen/qwen3.6-35b-a3b', 'vision': True, 'max_context': 262144, 'loaded': True, 'loaded_context': 96512},
+                        {'id': 'google/gemma-3-12b', 'vision': True, 'max_context': 131072, 'loaded': False, 'loaded_context': None}]},
+  'chat': {'display_name': {'value': "Greg's agent", 'default': "Greg's agent", 'locked': None},
+           'voice_echo': {'value': False, 'default': False, 'locked': None}}}
+FAKE['/api/v2/agents/greg/settings/soul/20261127T101500Z-ab12'] = {'text': SOUL + "\nKeep it short.\n"}
+FAKE['/api/v2/agents/greg/settings/apply'] = {'state': 'done', 'message': "Greg's agent is back, with the new settings.", 'seconds': 58, 'started': 1, 'finished': 59,
+  'by': 'greg', 'lines': ['model: not checked or loaded (--no-model-load)', 'greg: Ready']}
 EXTRA = json.load(open(os.path.join(HERE, 'extra.json'))) if os.path.exists(os.path.join(HERE, 'extra.json')) else {}
 # The daily question's next run is always tomorrow at 10:00, whatever day the checks run (a fixed date
 # turned into "next Monday" once it had passed, and the routines check failed).
@@ -91,6 +106,15 @@ class H(http.server.BaseHTTPRequestHandler):
             ct = 'text/javascript' if f.endswith(('.js', '.mjs')) else (mimetypes.guess_type(f)[0] or 'application/octet-stream')
             return self.send(200, open(f, 'rb').read(), ct)
         self.send(404, b'', 'text/plain')
-    def do_POST(self): self.send(200, b'{}', 'application/json')
-    def do_PUT(self): self.send(200, b'{"routines": {}}', 'application/json')
+    def do_POST(self):
+        if self.path.endswith('/settings/apply'):
+            return self.send(202, json.dumps({'state': 'restarting', 'message': "Recreating Greg's agent: about a minute without replies.", 'seconds': 1, 'lines': []}).encode(), 'application/json')
+        self.send(200, b'{}', 'application/json')
+    def do_PUT(self):
+        if self.path.endswith('/settings'):
+            body = json.loads(self.rfile.read(int(self.headers.get('Content-Length') or 0)) or b'{}')
+            out = json.loads(json.dumps(FAKE['/api/v2/agents/greg/settings']))
+            if 'soul' in body: out['soul'].update(text=body['soul'], custom=True)
+            return self.send(200, json.dumps({**out, 'pending': True, 'changed': sorted(body), 'warnings': []}).encode(), 'application/json')
+        self.send(200, b'{"routines": {}}', 'application/json')
 http.server.ThreadingHTTPServer(('127.0.0.1', int(sys.argv[2])), H).serve_forever()

@@ -25,7 +25,7 @@ ok((await hash()) === '#/settings/look', `Settings remembers its section (${awai
 await page.goto('http://127.0.0.1:8779/#/brain/greg'); await page.waitForTimeout(1800);
 ok(await page.locator('.brain > .agent-bar .agent-menu > summary').isVisible(), 'Brain: the Chat | Brain | Routines pill on a desktop, in the title band');
 await page.locator('.brain > .agent-bar .agent-menu > summary').click();
-ok((await page.locator('.brain > .agent-bar .agent-menu-list a').allInnerTexts()).map((t) => t.replace(/[↗\s]+$/, '')).join('|') === 'Chat|Brain|Routines', 'Brain: the pill offers Chat, Brain, Routines');
+ok((await page.locator('.brain > .agent-bar .agent-menu-list a').allInnerTexts()).map((t) => t.replace(/[↗\s]+$/, '')).join('|') === 'Chat|Brain|Routines|Settings', 'Brain: the pill offers Chat, Brain, Routines, Settings');
 await page.locator('.brain > .agent-bar .agent-menu-list a', { hasText: 'Chat' }).click(); await page.waitForTimeout(900);
 ok((await hash()) === '#/chat/greg', `Brain › Chat opens the agent's chat (${await hash()})`);
 await page.goto('http://127.0.0.1:8779/#/agents/greg'); await page.waitForTimeout(1800);

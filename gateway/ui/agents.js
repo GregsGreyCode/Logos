@@ -41,7 +41,11 @@ function schedule(s) {
   return dow === '*' ? `Daily ${at}` : `${named[dow] || `${DAYS[Number(dow) % 7]}s`} ${at}`;
 }
 
-export async function agentsView(root, [agentArg]) {
+export async function agentsView(root, [agentArg, sub]) {
+  if (agentArg && sub === 'settings') {             // E6: the agent's settings page (agent-settings.js)
+    const { agentSettingsView } = await import('./agent-settings.js');
+    return agentSettingsView(root, agentArg);
+  }
   let alive = true;
   let data = { agents: [], others: [] };
   root.replaceChildren(h('div', { class: 'page' }, h('h1', {}, 'Routines'), loading('rows', 4)));
@@ -223,7 +227,8 @@ export async function agentsView(root, [agentArg]) {
     detail.replaceChildren(...[                  // (a null would print as the word "null")
       h('div', { class: 'routines-top' },
         h('p', { class: 'routines-intro' }, `What ${agent.display_name} does on its own.`),
-        h('button', { type: 'button', class: 'btn', onclick: () => newRoutine(yours.length) }, '+ New routine')),
+        h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: () => newRoutine(yours.length) }, '+ New routine'),
+          h('a', { class: 'btn quiet', href: `#/agents/${agent.name}/settings` }, 'Settings'))),
       st.jobs == null ? h('div', { class: 'notice' }, `${agent.display_name} did not answer, so the ones you asked for could not be listed.`) : null,
       cards.length ? h('div', { class: 'routine-cards' }, ...cards)
         : none(`Nothing yet. Tap + New routine, or ask ${agent.display_name} to remind you of something.`),

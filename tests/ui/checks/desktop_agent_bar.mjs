@@ -13,7 +13,7 @@ const back = page.locator('.chat-head .agent-back');
 ok(await back.isVisible(), 'desktop: a back button in the chat header');
 await page.locator('.chat-head .agent-menu > summary').click();
 const items = await page.locator('.chat-head .agent-menu-list a').allInnerTexts();
-ok(items.map((t) => t.replace(/[↗\s]+$/, '')).join('|') === 'Chat|Brain|Routines', `desktop: the Chat pill opens to ${items.join(', ')}`);
+ok(items.map((t) => t.replace(/[↗\s]+$/, '')).join('|') === 'Chat|Brain|Routines|Settings', `desktop: the Chat pill opens to ${items.join(', ')}`);
 ok((await page.locator('.chat-head .agent-menu-list a[href^="#/brain"]').count()) === 1, 'desktop: Brain opens the reader in Logos (no Obsidian app)');
 await page.locator('.chat-head .agent-menu > summary').click();
 ok(!(await page.locator('.chat-head .side-reopen').innerText()).includes('Chats'), 'desktop: no "Chats" word button: a small icon');
