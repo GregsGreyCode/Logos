@@ -55,6 +55,23 @@ Element X at 07:00 on weekdays and 09:00 at weekends. See `docs/briefing.md`.
 - Anything another agent proposes waits for your person's yes.
 - Agents never answer "what's on" from memory.
 
+**Reading fast** (27 Nov). `list_events` and `find_free_time` used to ask Radicale to expand
+repeating events (`<C:expand>`); Radicale then ignores the time range and parses every event in
+the calendar, seconds for a calendar imported from Google with years of history. Now:
+- the service asks only for the events in the range, as stored (Radicale answers that from its
+  index), and expands repeats itself with the same library Radicale uses (vobject), applying
+  EXDATE, RDATE and moved or cancelled instances. All-day events count by the reader's own days.
+- each calendar's events are kept in memory a month at a time, with the calendar's
+  last-modified time when read. Each call first asks for that time (one cheap PROPFIND per
+  calendar); unchanged months are not read again. A change by this service clears that
+  calendar at once; a change on a phone shows on the next call. A calendar changed in the last
+  second is always read afresh (the time has one-second steps).
+- the calendars are read at the same time (up to four at once).
+- the service's Radicale account has a cheap password hash (cost 4; its password is 32 random
+  bytes), because Radicale checks it on every request. `up` rehashes it. People keep cost 12.
+- Who may see which calendar is decided before the cache is used, so a calendar never reaches
+  an agent through the cache that it could not read directly.
+
 Every call is logged in `docker logs logos-calendar-service`: the agent, the action and the event id, never the event details. Every change is also in Radicale's git history, as "Changes by logos-service".
 
 ## The Calendar screen in the dashboard

@@ -20,17 +20,21 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import email.utils
 import hmac
 import json
 import os
 import re
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -134,25 +138,81 @@ def build_event(uid: str, title: str, start: Any, end: Any, all_day: bool, locat
     return "\r\n".join(fold(l) for l in lines) + "\r\n"
 
 
+def _fields(ev) -> Dict[str, Any]:
+    def val(name, default=None):
+        return ev.contents[name][0].value if name in ev.contents else default
+    start = val("dtstart")
+    end = val("dtend")
+    if end is None:
+        dur = val("duration")
+        end = start + dur if dur else (start + dt.timedelta(days=1) if not isinstance(start, dt.datetime) else start)
+    return {"uid": val("uid", ""), "title": val("summary", "") or "", "start": start, "end": end,
+            "all_day": not isinstance(start, dt.datetime),
+            "location": val("location", "") or "", "notes": val("description", "") or "",
+            "repeats": "rrule" in ev.contents or "rdate" in ev.contents or "recurrence-id" in ev.contents,
+            "transparent": str(val("transp", "")).upper() == "TRANSPARENT",
+            "cancelled": str(val("status", "")).upper() == "CANCELLED"}
+
+
 def events_in(ics: str) -> List[Dict[str, Any]]:
-    """The VEVENTs in a calendar object (expanded instances included), as plain dicts."""
+    """The VEVENTs in a calendar object, as plain dicts (a repeating one as written, not expanded)."""
     import vobject
-    out = []
+    return [_fields(ev) for cal in vobject.readComponents(ics) for ev in cal.contents.get("vevent", [])]
+
+
+MAX_OCCURRENCES = 5000                  # per repeating event per window: a guard, not a limit people meet
+
+
+def _instant(when: Any, tz: Any) -> dt.datetime:
+    """An event time as a UTC instant. A date is midnight in ``tz``; a floating time is read as UTC,
+    as :func:`show` does."""
+    if isinstance(when, dt.datetime):
+        return (when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)).astimezone(dt.timezone.utc)
+    return dt.datetime.combine(when, dt.time(), tz).astimezone(dt.timezone.utc)
+
+
+def overlaps(ev: Dict[str, Any], a: dt.datetime, b: dt.datetime, tz: Any) -> bool:
+    """Whether an event instance is in the window [a, b), all-day ones by ``tz``'s days (RFC 4791 9.9)."""
+    s, e = _instant(ev["start"], tz), _instant(ev["end"], tz)
+    return (a <= s < b) if e <= s else (s < b and e > a)
+
+
+def _recurrence_key(when: Any) -> Any:
+    if isinstance(when, dt.datetime):
+        return when.astimezone(dt.timezone.utc) if when.tzinfo else when
+    return dt.datetime.combine(when, dt.time())
+
+
+def instances(ics: str, a: dt.datetime, b: dt.datetime) -> List[Dict[str, Any]]:
+    """The event instances in a calendar object that may fall in [a, b): repeats expanded here,
+    with EXDATE, RDATE and moved or cancelled instances (RECURRENCE-ID) applied, the way the
+    server's own expand does. Generous by a day at each end; :func:`overlaps` decides exactly."""
+    import vobject
+    out: List[Dict[str, Any]] = []
+    lo, hi = a - dt.timedelta(days=1), b + dt.timedelta(days=1)
     for cal in vobject.readComponents(ics):
-        for ev in cal.contents.get("vevent", []):
-            def val(name, default=None):
-                return ev.contents[name][0].value if name in ev.contents else default
-            start = val("dtstart")
-            end = val("dtend")
-            if end is None:
-                dur = val("duration")
-                end = start + dur if dur else (start + dt.timedelta(days=1) if not isinstance(start, dt.datetime) else start)
-            out.append({"uid": val("uid", ""), "title": val("summary", "") or "", "start": start, "end": end,
-                        "all_day": not isinstance(start, dt.datetime),
-                        "location": val("location", "") or "", "notes": val("description", "") or "",
-                        "repeats": "rrule" in ev.contents or "recurrence_id" in ev.contents,
-                        "transparent": str(val("transp", "")).upper() == "TRANSPARENT",
-                        "cancelled": str(val("status", "")).upper() == "CANCELLED"})
+        vevents = cal.contents.get("vevent", [])
+        masters = [v for v in vevents if "recurrence-id" not in v.contents]
+        master = masters[0] if len(masters) == 1 else None
+        if master is None or not ("rrule" in master.contents or "rdate" in master.contents):
+            out += [_fields(v) for v in vevents]
+            continue
+        base = _fields(master)
+        length = base["end"] - base["start"]
+        moved = [v for v in vevents if v is not master]
+        replaced = {_recurrence_key(v.recurrence_id.value) for v in moved}
+        rules = master.getrruleset(addRDate=True)
+        aware = isinstance(base["start"], dt.datetime) and base["start"].tzinfo is not None
+        span = ((lo - length, hi) if aware else
+                ((lo - length).replace(tzinfo=None), hi.replace(tzinfo=None)))
+        for n, when in enumerate(rules.between(*span, inc=True)):
+            if n >= MAX_OCCURRENCES:
+                break
+            if _recurrence_key(when) in replaced:
+                continue                            # moved or cancelled: its own VEVENT says how
+            start = when if isinstance(base["start"], dt.datetime) else when.date()
+            out.append({**base, "start": start, "end": start + length, "repeats": True})
+        out += [{**_fields(v), "repeats": True} for v in moved]
     return out
 
 
@@ -177,11 +237,16 @@ class CalDAV:
         h = {"Authorization": self.auth, **{k.replace("_", "-"): v for k, v in headers.items()}}
         return self.http(method, self.base + path, h, body.encode() if body else None)
 
-    def query(self, path: str, start: dt.datetime, end: dt.datetime) -> List[Tuple[str, str]]:
-        """(name, calendar data) of every event in ``path`` overlapping the window, repeats expanded."""
+    def items(self, path: str, start: dt.datetime, end: dt.datetime) -> List[Tuple[str, str]]:
+        """(name, calendar data) of every event object in ``path`` that overlaps the window, as stored
+        (repeating ones not expanded: :func:`instances` does that).
+
+        Not the server's ``<C:expand>``: Radicale then drops the time-range filter and parses and
+        expands every event in the calendar, seconds for a calendar imported with years of history.
+        Without it the time range is answered from Radicale's index."""
         s, e = stamp(start), stamp(end)
         body = (f'<?xml version="1.0" encoding="utf-8"?><C:calendar-query xmlns:D="DAV:" xmlns:C="{CALDAV}">'
-                f'<D:prop><D:getetag/><C:calendar-data><C:expand start="{s}" end="{e}"/></C:calendar-data></D:prop>'
+                f'<D:prop><C:calendar-data/></D:prop>'
                 f'<C:filter><C:comp-filter name="VCALENDAR"><C:comp-filter name="VEVENT">'
                 f'<C:time-range start="{s}" end="{e}"/></C:comp-filter></C:comp-filter></C:filter></C:calendar-query>')
         status, _, raw = self.call("REPORT", path, body, Depth="1", Content_Type="application/xml; charset=utf-8")
@@ -194,6 +259,24 @@ class CalDAV:
             if data is not None and data.text:
                 found.append((urllib.parse.unquote(href.rstrip("/").rsplit("/", 1)[-1]), data.text))
         return found
+
+    def version(self, path: str) -> str:
+        """A token that changes whenever anything in the calendar changes, or "" when it can't be
+        trusted yet. It is the calendar's last-modified time (Radicale: the newest file or folder
+        time, from a few stat calls; its ctag and sync-token read every event, 10x slower). That has
+        one-second steps, so a calendar changed within the last second gives "": a change later in
+        that same second would not move it."""
+        before = time.time()
+        body = '<?xml version="1.0" encoding="utf-8"?><D:propfind xmlns:D="DAV:"><D:prop><D:getlastmodified/></D:prop></D:propfind>'
+        status, _, raw = self.call("PROPFIND", path, body, Depth="0", Content_Type="application/xml; charset=utf-8")
+        if status != 207:
+            return ""
+        try:
+            text = (ET.fromstring(raw).findtext(f".//{{{DAV}}}getlastmodified") or "").strip()
+            changed = email.utils.parsedate_to_datetime(text).timestamp()
+        except (ET.ParseError, TypeError, ValueError):
+            return ""
+        return text if before >= changed + 1 else ""
 
     def get(self, path: str) -> Tuple[str, str]:
         status, headers, raw = self.call("GET", path)
@@ -220,6 +303,60 @@ class CalDAV:
             raise Refused(f"The calendar server refused the change ({status}).")
 
 
+# ── what was read, kept ──────────────────────────────────────────────────────
+
+DAY = dt.timedelta(days=1)
+
+
+def month_of(when: dt.datetime) -> dt.datetime:
+    return dt.datetime(when.year, when.month, 1, tzinfo=dt.timezone.utc)
+
+
+def next_month(m: dt.datetime) -> dt.datetime:
+    return m.replace(year=m.year + m.month // 12, month=m.month % 12 + 1)
+
+
+def months(a: dt.datetime, b: dt.datetime) -> List[dt.datetime]:
+    """The calendar months (UTC) that [a, b) touches."""
+    out, m = [], month_of(a.astimezone(dt.timezone.utc))
+    while m < b:
+        out.append(m)
+        m = next_month(m)
+    return out
+
+
+class EventCache:
+    """Each calendar's event instances, a calendar month (UTC) at a time, with the calendar's
+    version (:meth:`CalDAV.version`) when they were read. Kept by calendar path: who may see a
+    calendar is decided before anything is looked up here."""
+
+    def __init__(self, size: int = 240):
+        self.size, self.lock = size, threading.Lock()
+        self.chunks: "OrderedDict[Tuple[str, dt.datetime], Tuple[str, List[Dict[str, Any]]]]" = OrderedDict()
+
+    def get(self, path: str, month: dt.datetime, version: str) -> Optional[List[Dict[str, Any]]]:
+        with self.lock:
+            hit = self.chunks.get((path, month))
+            if not hit or not version or hit[0] != version:
+                return None
+            self.chunks.move_to_end((path, month))
+            return hit[1]
+
+    def put(self, path: str, month: dt.datetime, version: str, events: List[Dict[str, Any]]) -> None:
+        if not version:
+            return
+        with self.lock:
+            self.chunks[(path, month)] = (version, events)
+            self.chunks.move_to_end((path, month))
+            while len(self.chunks) > self.size:
+                self.chunks.popitem(last=False)
+
+    def forget(self, path: str) -> None:
+        with self.lock:
+            for k in [k for k in self.chunks if k[0] == path]:
+                del self.chunks[k]
+
+
 # ── the service ──────────────────────────────────────────────────────────────
 
 class Service:
@@ -230,6 +367,54 @@ class Service:
     def __init__(self, dav: CalDAV, agents: Dict[str, Dict[str, Any]], log: Callable[[str], None] = print,
                  clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc)):
         self.dav, self.agents, self.log, self.clock = dav, agents, log, clock
+        self.cache = EventCache()
+        self.pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="caldav")
+        self._locks: Dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
+
+    # reading: only ever called with paths taken from the asking agent's own definition
+
+    def _read(self, paths: List[str], a: dt.datetime, b: dt.datetime) -> Dict[str, List[Dict[str, Any]]]:
+        """Each calendar's event instances that may fall in [a, b) (``overlaps`` decides exactly),
+        the calendars read at the same time."""
+        paths = list(dict.fromkeys(paths))
+        if len(paths) <= 1:
+            return {p: self._read_one(p, a, b) for p in paths}
+        return dict(zip(paths, self.pool.map(lambda p: self._read_one(p, a, b), paths)))
+
+    def _read_one(self, path: str, a: dt.datetime, b: dt.datetime) -> List[Dict[str, Any]]:
+        want = months(a - DAY, b + DAY)            # a day each side: all-day events in any time zone
+        version = self.dav.version(path)
+        with self._locks_lock:
+            lock = self._locks.setdefault(path, threading.Lock())
+        with lock:                                  # one read per calendar at a time; the next one hits
+            have = {m: self.cache.get(path, m, version) for m in want}
+            missing = [m for m in want if have[m] is None]
+            if missing:
+                lo, hi = missing[0] - 2 * DAY, next_month(missing[-1]) + 2 * DAY
+                found = [{**ev, "name": name, "notes": ev["notes"][:300]}
+                         for name, ics in self.dav.items(path, lo, hi) for ev in instances(ics, lo, hi)]
+                for m in missing:
+                    have[m] = [ev for ev in found if overlaps(ev, m - DAY, next_month(m) + DAY, dt.timezone.utc)]
+                    self.cache.put(path, m, version, have[m])
+        out, seen = [], set()
+        for m in want:
+            for ev in have[m]:
+                key = (ev["name"], ev["start"], ev["end"], ev["title"])
+                if key not in seen:
+                    seen.add(key)
+                    out.append(ev)
+        return out
+
+    def _put(self, path: str, ics: str, etag: str = "") -> None:
+        try:
+            self.dav.put(path, ics, etag)
+        finally:
+            self._changed(path)
+
+    def _changed(self, path: str) -> None:
+        """This service changed something in ``path``: what was read of it is out of date now."""
+        self.cache.forget(path.rsplit("/", 1)[0] + "/")
 
     def agent_for_token(self, token: str) -> Optional[str]:
         for name, a in self.agents.items():
@@ -274,21 +459,23 @@ class Service:
         a, b = window(start, end, tz)
         events, busy = [], []
         me = self.agents[agent]
-        for read_only, cals in ((False, me.get("full") or {}), (True, me.get("read") or {})):
-            for key, cal in cals.items():
-                for name, ics in self.dav.query(cal["path"], a, b):
-                    for ev in events_in(ics):
-                        if ev["cancelled"]:
-                            continue
-                        item = {"id": f"{key}/{name}", "calendar": key, "title": ev["title"],
-                                "start": show(ev["start"], tz), "end": show(ev["end"], tz),
-                                "all_day": ev["all_day"], "location": ev["location"],
-                                "notes": ev["notes"][:300], "repeats": ev["repeats"]}
-                        if read_only:
-                            item["read_only"] = True        # someone else's: never change it
-                        events.append(item)
-        for key, cal in (self.agents[agent].get("busy") or {}).items():
-            for start_, end_ in self._busy(cal["paths"], a, b):
+        seen = [(read_only, key, cal) for read_only, cals in ((False, me.get("full") or {}), (True, me.get("read") or {}))
+                for key, cal in cals.items()]
+        busy_only = me.get("busy") or {}
+        got = self._read([cal["path"] for _, _, cal in seen] + [p for cal in busy_only.values() for p in cal["paths"]], a, b)
+        for read_only, key, cal in seen:
+            for ev in got[cal["path"]]:
+                if ev["cancelled"] or not overlaps(ev, a, b, tz):
+                    continue
+                item = {"id": f"{key}/{ev['name']}", "calendar": key, "title": ev["title"],
+                        "start": show(ev["start"], tz), "end": show(ev["end"], tz),
+                        "all_day": ev["all_day"], "location": ev["location"],
+                        "notes": ev["notes"][:300], "repeats": ev["repeats"]}
+                if read_only:
+                    item["read_only"] = True        # someone else's: never change it
+                events.append(item)
+        for key, cal in busy_only.items():
+            for start_, end_ in self._busy([ev for p in cal["paths"] for ev in got[p]], a, b, tz):
                 busy.append({"who": cal["label"], "busy_from": show(start_, tz), "busy_until": show(end_, tz)})
         events.sort(key=lambda e: (e["start"], e["title"]))
         busy.sort(key=lambda x: (x["busy_from"], x["who"]))
@@ -298,16 +485,15 @@ class Service:
             out["busy"] = busy
         return out
 
-    def _busy(self, paths: List[str], a: dt.datetime, b: dt.datetime) -> List[Tuple[dt.datetime, dt.datetime]]:
+    @staticmethod
+    def _busy(found: List[Dict[str, Any]], a: dt.datetime, b: dt.datetime, tz: ZoneInfo) -> List[Tuple[dt.datetime, dt.datetime]]:
         spans = []
-        for path in paths:
-            for _, ics in self.dav.query(path, a, b):
-                for ev in events_in(ics):
-                    if ev["cancelled"] or ev["transparent"]:
-                        continue
-                    if ev["all_day"]:
-                        continue                    # an all-day entry (a birthday, "WFH") is not "busy"
-                    spans.append((as_utc(ev["start"], dt.timezone.utc), as_utc(ev["end"], dt.timezone.utc)))
+        for ev in found:
+            if ev["cancelled"] or ev["transparent"] or not overlaps(ev, a, b, tz):
+                continue
+            if ev["all_day"]:
+                continue                            # an all-day entry (a birthday, "WFH") is not "busy"
+            spans.append((as_utc(ev["start"], dt.timezone.utc), as_utc(ev["end"], dt.timezone.utc)))
         return merge(spans)
 
     def add_event(self, agent: str, calendar: str, title: str, start: str, end: str = "",
@@ -330,9 +516,9 @@ class Service:
             raise Refused("The end must be after the start.")
         uid = f"{uuid.uuid4()}@logos"
         name = f"{uid}.ics"
-        self.dav.put(cal["path"] + urllib.parse.quote(name),
-                     build_event(uid, title[:MAX_TEXT], s, e, s_day, str(location or "")[:MAX_TEXT],
-                                 str(notes or "")[:MAX_TEXT], self.clock()))
+        self._put(cal["path"] + urllib.parse.quote(name),
+                  build_event(uid, title[:MAX_TEXT], s, e, s_day, str(location or "")[:MAX_TEXT],
+                              str(notes or "")[:MAX_TEXT], self.clock()))
         self.log(f"{agent} add_event {calendar}/{name}")
         return {"added": {"id": f"{calendar}/{name}", "calendar": calendar, "title": title,
                           "start": show(s, tz), "end": show(e - dt.timedelta(days=1) if s_day else e, tz),
@@ -343,7 +529,7 @@ class Service:
         ics, etag = self.dav.get(path)
         cal = vobject.readOne(ics)
         events = cal.contents.get("vevent", [])
-        if len(events) != 1 or "rrule" in events[0].contents or "recurrence_id" in events[0].contents:
+        if len(events) != 1 or "rrule" in events[0].contents or "recurrence-id" in events[0].contents:
             raise Refused("This is a repeating event. Change or cancel it on the phone; tell your person so.")
         return cal, events[0], etag
 
@@ -398,7 +584,7 @@ class Service:
             ev.dtstamp.value = vutc(self.clock())
         if "sequence" in ev.contents:
             ev.sequence.value = str(int(ev.sequence.value or 0) + 1)
-        self.dav.put(path, cal.serialize(), etag)
+        self._put(path, cal.serialize(), etag)
         self.log(f"{agent} update_event {event_id}")
         return {"updated": {"id": event_id, "title": str(ev.summary.value) if "summary" in ev.contents else "",
                             "start": show(s, tz), "end": show(e - dt.timedelta(days=1) if all_day else e, tz),
@@ -408,7 +594,10 @@ class Service:
         key, path = self._target(agent, event_id)
         _, ev, etag = self._load_single(path)
         title = str(ev.summary.value) if "summary" in ev.contents else ""
-        self.dav.delete(path, etag)
+        try:
+            self.dav.delete(path, etag)
+        finally:
+            self._changed(path)
         self.log(f"{agent} cancel_event {event_id}")
         return {"cancelled": {"id": event_id, "title": title}}
 
@@ -422,12 +611,11 @@ class Service:
             lo, hi = dt.time.fromisoformat(earliest or "08:00"), dt.time.fromisoformat(latest or "21:00")
         except ValueError:
             raise Refused("Give minutes as a number and earliest/latest as HH:MM.")
-        busy: List[Tuple[dt.datetime, dt.datetime]] = []
-        for cal in list((self.agents[agent].get("full") or {}).values()) + list((self.agents[agent].get("read") or {}).values()):
-            busy += self._busy([cal["path"]], a, b)
-        for cal in (self.agents[agent].get("busy") or {}).values():
-            busy += self._busy(cal["paths"], a, b)
-        busy = merge(busy)
+        me = self.agents[agent]
+        paths = ([cal["path"] for cal in list((me.get("full") or {}).values()) + list((me.get("read") or {}).values())]
+                 + [p for cal in (me.get("busy") or {}).values() for p in cal["paths"]])
+        got = self._read(paths, a, b)
+        busy = self._busy([ev for p in dict.fromkeys(paths) for ev in got[p]], a, b, tz)
         slots, day = [], a.astimezone(tz).date()
         while dt.datetime.combine(day, dt.time(), tz) < b and len(slots) < 12:
             s = max(as_utc(dt.datetime.combine(day, lo, tz), tz), a, self.clock())

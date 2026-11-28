@@ -163,7 +163,13 @@ if not os.path.exists(secret) or req["service"] not in people:
     import bcrypt, secrets as _s
     pw = _s.token_urlsafe(32)
     write(secret, pw + "\n")
-    people[req["service"]] = f"{req['service']}:" + bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=12)).decode()
+    people[req["service"]] = f"{req['service']}:" + bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=4)).decode()
+elif not people[req["service"]].split(":", 1)[1].startswith("$2b$04$"):
+    # The service's password is 32 random bytes, so a slow hash adds nothing but ~0.2 s to
+    # every request it makes (Radicale checks the password each time). People keep cost 12.
+    import bcrypt
+    pw = open(secret).read().strip()
+    people[req["service"]] = f"{req['service']}:" + bcrypt.hashpw(pw.encode(), bcrypt.gensalt(rounds=4)).decode()
 write(users, "".join(people[n] + "\n" for n in sorted(people)))
 def git(*a): subprocess.run(["git", *a], cwd=coll, check=True, capture_output=True)
 if not os.path.isdir(f"{coll}/.git"):
